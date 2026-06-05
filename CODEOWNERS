@@ -1,0 +1,14 @@
+# Default ownership
+* @Thulr
+
+# Extension runtime
+/extensions/pi-flows/ @Thulr
+
+# Bundled agents and agent-readiness docs
+/agents/ @Thulr
+/AGENTS.md @Thulr
+
+# Package/release docs
+/package.json @Thulr
+/CHANGELOG.md @Thulr
+/docs/release.md @Thulr

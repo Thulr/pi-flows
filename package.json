@@ -1,0 +1,56 @@
+{
+  "name": "pi-flows",
+  "version": "0.0.1",
+  "private": true,
+  "description": "First-party pi extension for delegating work to local flow agents.",
+  "keywords": ["pi-package", "pi-extension", "subagents", "flows"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Thulr/pi-flows.git"
+  },
+  "homepage": "https://github.com/Thulr/pi-flows#readme",
+  "bugs": "https://github.com/Thulr/pi-flows/issues",
+  "type": "module",
+  "packageManager": "npm@11.11.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0",
+    "pi": ">=0.78.0"
+  },
+  "files": [
+    "agents/*.md",
+    "extensions/pi-flows/index.ts",
+    "docs/*.md",
+    "examples/**",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md"
+  ],
+  "pi": {
+    "extensions": ["./extensions/pi-flows/index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.78.0 <1.0.0",
+    "@earendil-works/pi-agent-core": ">=0.78.0 <1.0.0",
+    "@earendil-works/pi-coding-agent": ">=0.78.0 <1.0.0",
+    "@earendil-works/pi-tui": ">=0.78.0 <1.0.0",
+    "typebox": ">=1.1.0 <2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "preflight": "node scripts/check-pi.mjs",
+    "check": "npm run typecheck && npm test && npm run validate:agents && npm run smoke && npm run pack:dry-run",
+    "smoke": "node scripts/smoke.mjs",
+    "pack:dry-run": "node scripts/check-pack.mjs",
+    "validate:agents": "node scripts/validate-agents.mjs"
+  }
+}
