@@ -1,6 +1,7 @@
 node_modules/
 audit-artifacts/
 tests/
+evals/
 scripts/
 .github/
 .pi/
