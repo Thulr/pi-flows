@@ -17,7 +17,7 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-export const PI_FLOWS_VERSION = "0.0.2";
+export const PI_FLOWS_VERSION = "0.1.0";
 
 const baseDir = path.dirname(fileURLToPath(import.meta.url));
 const packageAgentsDir = path.resolve(baseDir, "../../agents");

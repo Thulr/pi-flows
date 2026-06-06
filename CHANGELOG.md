@@ -8,6 +8,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+## 0.1.0 - 2026-06-06
+
 ### Added
 
 - `returnContract` / `requireEvidence` prompts for preserving required output
