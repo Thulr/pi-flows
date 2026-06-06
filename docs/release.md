@@ -31,16 +31,25 @@
    npm run pack:dry-run
    ```
 
-7. Tag the release and push it. Users install via `pi install git:github.com/Thulr/pi-flows`, so the tag is the release:
+7. Publish to npm — this is what lists pi-flows in the [pi.dev gallery](https://pi.dev/packages):
+
+   ```bash
+   npm login              # one-time, if not already authenticated
+   npm publish --dry-run  # preview the tarball contents
+   npm publish            # publish for real
+   ```
+
+8. Tag the release and push it, so git-install users get the same version:
 
    ```bash
    git tag "v$(node -p "require('./package.json').version")"
    git push origin main --tags
    ```
 
-8. Roll back if needed:
+9. Roll back if needed:
 
    ```bash
+   npm unpublish pi-flows@<version>         # npm allows this only within 72h of publishing
    pi remove -l ./                          # remove a local install
    git push origin :refs/tags/v<version>    # delete a bad tag, then fix and re-tag
    ```

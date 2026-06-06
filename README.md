@@ -41,14 +41,17 @@ pi-flows runs inside the [pi](https://github.com/earendil-works/pi) coding agent
 npm i -g @earendil-works/pi-coding-agent
 ```
 
-Install it from GitHub with the `pi` CLI:
+Install it with the `pi` CLI — from npm for the published release, or from GitHub to track `main`:
 
 ```bash
-# Installs the current main, no clone required
-pi install git:github.com/Thulr/pi-flows
+# From npm (recommended) — the published release
+pi install npm:pi-flows
 
 # Add -l to install into the current project only (.pi/settings.json)
-pi install -l git:github.com/Thulr/pi-flows
+pi install -l npm:pi-flows
+
+# Or track the latest main straight from GitHub, no clone required
+pi install git:github.com/Thulr/pi-flows
 ```
 
 Reload pi with `/reload` (or restart it), then verify:
