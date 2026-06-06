@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { CASES } from "./cases.mjs";
+import { injectModel } from "./model-injection.mjs";
 
 // Load a local .env (provider keys) if present, before any child pi inherits env.
 const dotenvPath = join(process.cwd(), ".env");
@@ -71,21 +72,6 @@ function flowTool() {
 	const tools = new Map();
 	registerPiFlows({ registerCommand() {}, registerTool(tool) { tools.set(tool.name, tool); } });
 	return tools.get("flow");
-}
-
-// Push the chosen model into every agent reference the params expose, so a run does
-// not silently fall back to pricier per-agent (frontmatter) defaults. maxCostUsd caps.
-function injectModel(params) {
-	const p = structuredClone(params);
-	const ref = (r) => { if (r && typeof r === "object" && !r.model) r.model = model; };
-	if (p.agent && !p.model) p.model = model;
-	for (const t of p.tasks ?? []) ref(t);
-	for (const s of p.chain ?? []) ref(s);
-	if (p.evaluate) { ref(p.evaluate.operator); const critics = Array.isArray(p.evaluate.redteam) ? p.evaluate.redteam : [p.evaluate.redteam]; critics.forEach(ref); }
-	if (p.vote) { (p.vote.voters ?? []).forEach(ref); ref(p.vote.debrief); }
-	if (p.route) ref(p.route.controller);
-	if (p.orchestrate) for (const k of ["commander", "recon", "debrief", "verify"]) ref(p.orchestrate[k]);
-	return p;
 }
 
 const sumCost = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.cost ?? 0), 0);
@@ -142,7 +128,7 @@ async function main() {
 		if (dryRun) {
 			result = testCase.mock;
 		} else {
-			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params)), maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? 120000 };
+			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? 120000 };
 			try {
 				result = await flow.execute(`eval:${testCase.name}`, params, new AbortController().signal, undefined, flowCtx);
 			} catch (error) {

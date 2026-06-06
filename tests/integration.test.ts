@@ -111,6 +111,17 @@ test("parallel: shared write-capable cwd is refused before spawning workers", as
 	assert.match(text, /SHARED_WRITE_CWD/);
 });
 
+test("parallel: concurrency 1 serializes write-capable agents sharing cwd", async () => {
+	const { result, calls, text } = await runFlow(
+		{ tasks: [{ agent: "operator", task: "edit a" }, { agent: "operator", task: "edit b" }], concurrency: 1 },
+		{ operator: "EDIT_DONE" },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.equal(calls.length, 2);
+	assert.match(text, /2\/2 succeeded/);
+});
+
 test("chain: the previous step's output is handed to the next step", async () => {
 	const { calls, text } = await runFlow(
 		{
@@ -161,6 +172,17 @@ test("evaluate: shared write-capable critic panels are refused before spawning",
 	assert.match(text, /SHARED_WRITE_CWD/);
 });
 
+test("evaluate: concurrency 1 serializes write-capable critic panels sharing cwd", async () => {
+	const { result, calls, text } = await runFlow(
+		{ task: "x", evaluate: { operator: { agent: "operator" }, redteam: [{ agent: "overwatch" }, { agent: "redteam" }], maxIterations: 1 }, concurrency: 1 },
+		{ operator: "DRAFT", overwatch: "VERDICT: PASS", redteam: "VERDICT: PASS" },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.deepEqual(calls.map((call) => call.agent), ["operator", "overwatch", "redteam"]);
+	assert.match(text, /PASS/);
+});
+
 test("route: the controller's ROUTE choice is dispatched and nothing else runs", async () => {
 	const { calls, text } = await runFlow(
 		{ task: "billing webhook returns 500s", route: { candidates: ["recon", "strategist"], fallback: "recon" } },
@@ -195,6 +217,17 @@ test("vote: shared write-capable voters are refused before spawning", async () =
 	assert.equal(calls.length, 0, "unsafe voter fan-out should be rejected before any voter runs");
 	assert.equal(result.details.error.code, "SHARED_WRITE_CWD");
 	assert.match(text, /SHARED_WRITE_CWD/);
+});
+
+test("vote: concurrency 1 serializes write-capable voters sharing cwd", async () => {
+	const { result, calls, text } = await runFlow(
+		{ task: "make two independent edits", vote: { agent: "operator", count: 2 }, concurrency: 1 },
+		{ operator: "YES" },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.equal(calls.length, 2);
+	assert.match(text, /2\/2 voters succeeded/);
 });
 
 test("orchestrate: commander decomposes, recon workers fan out, debrief merges", async () => {
@@ -243,6 +276,17 @@ test("orchestrate: shared write-capable workers are refused after decomposition 
 
 	assert.deepEqual(calls.map((call) => call.agent), ["commander"]);
 	assert.equal(result.details.error.code, "SHARED_WRITE_CWD");
+});
+
+test("orchestrate: concurrency 1 serializes write-capable workers sharing cwd", async () => {
+	const { result, calls, text } = await runFlow(
+		{ task: "make two edits", orchestrate: { recon: { agent: "operator" }, maxSubtasks: 2 }, concurrency: 1 },
+		{ commander: '["edit auth", "edit billing"]', operator: "EDIT_DONE", debrief: "MERGED_EDITS" },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.deepEqual(calls.map((call) => call.agent), ["commander", "operator", "operator", "debrief"]);
+	assert.match(text, /MERGED_EDITS/);
 });
 
 test("traceFile records child/root spans with trace labels and reportable totals", async () => {

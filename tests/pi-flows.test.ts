@@ -361,14 +361,19 @@ test("shared-write cwd guard blocks concurrent mutating agents but allows read-o
   const repo = await makeTempRepo();
   const discovery = __test.discoverFlowAgents(repo, "user");
   assert.equal(
-    __test.validateSharedWriteCwd(discovery, repo, [{ agent: "recon" }, { agent: "analyst" }], false),
+    __test.validateSharedWriteCwd(discovery, repo, [{ agent: "recon" }, { agent: "analyst" }], false, 4),
     null,
     "read-only agents may share one checkout",
   );
-  const error = __test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], false);
+  const error = __test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], false, 4);
   assert.equal(error?.code, "SHARED_WRITE_CWD");
   assert.equal(
-    __test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], true),
+    __test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], false, 1),
+    null,
+    "concurrency 1 serializes writers, so there is no concurrent shared write",
+  );
+  assert.equal(
+    __test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], true, 4),
     null,
     "explicit override allows intentional shared writes",
   );

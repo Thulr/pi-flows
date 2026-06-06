@@ -443,8 +443,10 @@ function validateSharedWriteCwd(
 	defaultCwd: string,
 	refs: Array<{ agent: string; cwd?: string; tools?: string }>,
 	allowSharedWriteCwd: boolean | undefined,
+	concurrency: number,
 ): FlowError | null {
 	if (allowSharedWriteCwd) return null;
+	if (concurrency <= 1) return null;
 	const mutating = refs.filter((ref) => canMutateWorkspace(discovery, ref));
 	if (mutating.length <= 1) return null;
 	return sharedWriteCwdError(defaultCwd, mutating);
@@ -1711,7 +1713,7 @@ async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 		};
 	}
 	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
-	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, tasks, params.allowSharedWriteCwd);
+	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, tasks, params.allowSharedWriteCwd, concurrency);
 	if (sharedWriteError) {
 		return {
 			content: [{ type: "text", text: formatFlowError(sharedWriteError) }],
@@ -1900,11 +1902,11 @@ async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	if (concurrencyError) {
 		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "evaluate", agentScope, concurrencyError) };
 	}
-	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, evaluatorRefs, params.allowSharedWriteCwd);
+	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, evaluatorRefs, params.allowSharedWriteCwd, concurrency);
 	if (sharedWriteError) {
 		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "evaluate", agentScope, sharedWriteError) };
 	}
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 	const checkTimeoutMs = Math.min(normalizeTimeout(params.timeoutMs), DEFAULT_CHECK_COMMAND_TIMEOUT_MS);
 
 	const results: FlowRunResult[] = [];
@@ -2156,11 +2158,11 @@ async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	if (concurrencyError) {
 		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "vote", agentScope, concurrencyError) };
 	}
-	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, voters, params.allowSharedWriteCwd);
+	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, voters, params.allowSharedWriteCwd, concurrency);
 	if (sharedWriteError) {
 		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "vote", agentScope, sharedWriteError) };
 	}
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 
 	const liveResults: FlowRunResult[] = voters.map((voter) => makeEmptyRunResult(voter.agent, goal, policy));
 	const emitVote = () => {
@@ -2338,6 +2340,7 @@ async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	if (concurrencyError) {
 		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "orchestrate", agentScope, concurrencyError) };
 	}
+	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 
 	const orchestratorRef: FlowAgentRefInput = spec.commander ?? { agent: "commander" };
 	const workerRef: FlowAgentRefInput = spec.recon ?? { agent: "recon" };
@@ -2382,14 +2385,13 @@ async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		for (const warning of prep.warnings) handoffWarnings.add(warning);
 	}
 	if (subtasks.length > 1) {
-		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, subtasks.map(() => workerRef), params.allowSharedWriteCwd);
+		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, subtasks.map(() => workerRef), params.allowSharedWriteCwd, concurrency);
 		if (sharedWriteError) {
 			return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "orchestrate", agentScope, sharedWriteError) };
 		}
 	}
 
 	// 2. Fan out one worker per subtask.
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 	const baseStep = results.length;
 	const liveWorkers: FlowRunResult[] = subtasks.map((subtask) => makeEmptyRunResult(workerRef.agent, subtask, policy));
 	const emitWorkers = () => {
