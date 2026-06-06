@@ -32,8 +32,9 @@ npm run pack:dry-run
 - Do not pass raw user task text in child process argv.
 - Redact secret-shaped content and home paths from returned content/details by default.
 - Keep `README.md`, `docs/flow-reference.md`, TypeBox params, and tests in sync when changing the `flow` contract.
-- Keep `CHANGELOG.md` and `package.json` version aligned for release-facing changes.
+- Keep `CHANGELOG.md`, `package.json`, `PI_FLOWS_VERSION` in `index.ts`, and the release tag in agreement for release-facing changes — the publish workflow fails when the `vX.Y.Z` tag does not match `package.json`.
 - Do not package `audit-artifacts/`, `tests/`, `scripts/`, or local temp files.
+- Write commits as [Conventional Commits](./CONTRIBUTING.md#commit-messages) (`type(scope): summary`).
 
 ## Generated/local artifacts
 

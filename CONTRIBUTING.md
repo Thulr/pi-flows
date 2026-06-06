@@ -33,6 +33,22 @@ Use flow with {"list":true}
 Use flow with {"showConfig":true}
 ```
 
+## Commit messages
+
+pi-flows uses [Conventional Commits](https://www.conventionalcommits.org/). Write
+each commit subject as `type(optional-scope): summary` in the imperative mood:
+
+```text
+feat(flow): add route-mode fallback agent
+fix(safety): redact home paths in trace spans
+docs(readme): document npm install
+```
+
+Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, `build`,
+`perf`. Mark a breaking change with `!` after the type/scope or a
+`BREAKING CHANGE:` footer — e.g. `feat(flow)!: rename evaluate.redteam to critics`.
+This keeps history readable and lets release notes be grouped by type.
+
 ## PR evidence
 
 Include:
