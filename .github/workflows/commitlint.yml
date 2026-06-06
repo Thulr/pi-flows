@@ -1,0 +1,32 @@
+name: Commitlint
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Lint PR commits
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Lint only the PR's own commits. We derive the range from the merge-base
+        # against a freshly fetched base branch rather than github.event.*.base.sha,
+        # which GitHub caches at PR creation and does not refresh when the base moves.
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          base="$(git merge-base FETCH_HEAD "$HEAD_SHA")"
+          echo "Linting ${base}..${HEAD_SHA}"
+          npx commitlint --from "$base" --to "$HEAD_SHA" --verbose
