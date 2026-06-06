@@ -51,8 +51,9 @@ permission, and provenance is generated automatically.
    workflow:
 
    ```bash
-   git tag "v$(node -p "require('./package.json').version")"
-   git push origin --tags
+   tag="v$(node -p "require('./package.json').version")"
+   git tag "$tag"
+   git push origin "$tag"
    ```
 
 7. Confirm: the **Publish** workflow is green, `npm view pi-flows version` shows
