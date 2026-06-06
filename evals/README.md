@@ -13,10 +13,10 @@ stub `pi` but never call a model.
 ## Run
 
 ```bash
-npm run eval                       # all cases
+npm run eval                       # all cases, on your pi default model
 npm run eval -- --filter=route     # only matching cases
-npm run eval -- --model=claude-sonnet-4-6
-npm run eval -- --cap=0.25         # per-case USD ceiling (default 0.10)
+npm run eval -- --model=openai-codex/gpt-5.5   # explicit provider/model
+npm run eval -- --cap=1.00         # per-case USD ceiling (default 0.50)
 npm run eval -- --dry-run          # framework smoke: canned results, no model
 ```
 
@@ -25,19 +25,26 @@ bounded by the flow tool's own `maxCostUsd`, so a runaway delegation is capped.
 
 ## Provider & auth (local dev)
 
-The harness uses whatever model provider `pi` is configured with:
+With no `--model`, the harness uses **your pi default** — `defaultProvider/defaultModel`
+from `~/.pi/agent/settings.json` (e.g. `openai-codex/gpt-5.5`) — so it runs on
+whatever you already use pi with. Auth is pi's own:
 
-- **Subscription / OAuth** — run `pi`, then `/login` (stored in `~/.pi/agent/auth.json`). Nothing else to do.
+- **Subscription / OAuth** — `pi`, then `/login` (stored in `~/.pi/agent/auth.json`). Nothing else to do.
 - **API key** — drop it in a gitignored `.env` (see `.env.example`); `npm run eval` loads it:
 
   ```bash
   cp .env.example .env      # then add e.g. ANTHROPIC_API_KEY=sk-ant-…
   ```
 
-Point a run at a provider you have quota on with `--model=<provider/id>` (e.g.
-`--model=openai/gpt-5`), or use `--model=agent` to run each agent on its own
-frontmatter model. Cases that can't reach the model (auth, credits, network) are
-flagged `⚠` and reported separately from genuine eval failures.
+Override with `--model=<provider/id>` (OAuth providers like `openai-codex` need the
+provider prefix), or `--model=agent` to run each agent on its own frontmatter model.
+Cases that can't reach the model (auth, credits, network) are flagged `⚠` and
+reported separately from real eval failures.
+
+> Reasoning / large-context models report a per-call cost (≈$0.09 for `gpt-5.5`)
+> that the `maxCostUsd` cap counts even when a subscription covers the actual
+> billing — so raise `--cap` (default `0.50`/case) for big fan-out runs if you hit
+> `BUDGET_EXCEEDED`.
 
 ## What's covered
 

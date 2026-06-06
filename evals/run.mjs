@@ -5,35 +5,59 @@
 // `pi` CLI on PATH and a configured model provider, and it spends tokens. It is
 // intentionally NOT part of `npm run check`.
 //
-//   npm run eval                          # run all cases (cheap default model)
+//   npm run eval                          # use your pi default model/provider
 //   npm run eval -- --filter=route        # only matching cases
-//   npm run eval -- --model=claude-sonnet-4-6
-//   npm run eval -- --model=openai/gpt-5  # provider/id — use a provider you have credits on
+//   npm run eval -- --model=openai-codex/gpt-5.5   # provider/id (OAuth providers need the prefix)
 //   npm run eval -- --model=agent         # use each agent's own frontmatter model
-//   npm run eval -- --cap=0.25            # per-case USD ceiling (default 0.10)
+//   npm run eval -- --cap=1.00            # per-case USD ceiling (default 0.50)
 //   npm run eval -- --dry-run             # framework smoke (canned results, no model)
 //
-// Auth is whatever pi uses: an OAuth subscription (`pi` /login, stored in
-// ~/.pi/agent/auth.json) or a provider API key. For local dev you can drop a key
-// in a gitignored `.env` (see .env.example) — `npm run eval` loads it.
+// Model: with no --model, the harness uses your pi default (defaultProvider/
+// defaultModel from ~/.pi/agent/settings.json), so it "just works" with whatever
+// you run pi with. Auth is pi's own — an OAuth subscription (`pi` /login, stored
+// in ~/.pi/agent/auth.json) or a provider API key (drop it in a gitignored .env;
+// see .env.example).
 //
 // Exit code is 0 when every selected case passes, 1 otherwise.
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { CASES } from "./cases.mjs";
+
+// Load a local .env (provider keys) if present, before any child pi inherits env.
+const dotenvPath = join(process.cwd(), ".env");
+if (existsSync(dotenvPath)) {
+	try { process.loadEnvFile(dotenvPath); } catch { /* ignore a malformed .env */ }
+}
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
 	const hit = args.find((a) => a.startsWith(`--${name}=`));
 	return hit ? hit.slice(name.length + 3) : fallback;
 };
-const filter = flag("filter", "");
-const model = flag("model", "claude-haiku-4-5");
-const capUsd = Number(flag("cap", "0.10"));
-const dryRun = args.includes("--dry-run");
-// `--model=agent` (or empty) keeps each agent's own frontmatter model instead of
-// forcing one model across the whole flow.
+
+// pi's configured default, e.g. "openai-codex/gpt-5.5" — used when no --model is given.
+function piDefaultModel() {
+	try {
+		const settings = JSON.parse(readFileSync(join(homedir(), ".pi", "agent", "settings.json"), "utf8"));
+		if (settings.defaultProvider && settings.defaultModel) return `${settings.defaultProvider}/${settings.defaultModel}`;
+		return settings.defaultModel ?? null;
+	} catch {
+		return null;
+	}
+}
+
+const cliModel = flag("model", null);
+const piDefault = piDefaultModel();
+const model = cliModel ?? piDefault ?? "agent";
+const modelSource = cliModel ? "--model" : piDefault ? "pi default" : "agent frontmatter";
+// `--model=agent` (or empty) keeps each agent's own frontmatter model.
 const useAgentModels = ["agent", "default", ""].includes(model);
+const capUsd = Number(flag("cap", "0.50"));
+const dryRun = args.includes("--dry-run");
+const filter = flag("filter", "");
 
 // Resolve a real `pi` from PATH rather than re-running this script. getPiInvocation
 // falls through to { command: "pi" } when argv[1] is not an existing script file.
@@ -45,8 +69,8 @@ function flowTool() {
 	return tools.get("flow");
 }
 
-// Push the chosen (cheap) model into every agent reference the params expose, so a
-// run does not silently use pricier per-agent defaults. maxCostUsd is the hard cap.
+// Push the chosen model into every agent reference the params expose, so a run does
+// not silently fall back to pricier per-agent (frontmatter) defaults. maxCostUsd caps.
 function injectModel(params) {
 	const p = structuredClone(params);
 	const ref = (r) => { if (r && typeof r === "object" && !r.model) r.model = model; };
@@ -98,7 +122,7 @@ async function main() {
 	}
 
 	const flow = flowTool();
-	console.log(`pi-flows evals  ·  model ${useAgentModels ? "(agent frontmatter)" : model}  ·  cap $${capUsd.toFixed(2)}/case${dryRun ? "  ·  DRY RUN" : ""}\n`);
+	console.log(`pi-flows evals  ·  model ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  cap $${capUsd.toFixed(2)}/case${dryRun ? "  ·  DRY RUN" : ""}\n`);
 
 	let passed = 0;
 	let totalCost = 0;
