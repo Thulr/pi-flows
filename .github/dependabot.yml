@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Dev/CI dependencies (pi-flows ships no runtime deps, so this is the real
+  # supply-chain surface). Dependabot opens the update PRs; the commitlint gate
+  # requires Conventional Commit messages, so set conventional prefixes here.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]

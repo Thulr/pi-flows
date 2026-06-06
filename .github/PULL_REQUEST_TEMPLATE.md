@@ -9,6 +9,7 @@
 - [ ] Local extension smoke: `flow {"list":true}`
 - [ ] Docs/examples updated when contracts changed
 - [ ] Changelog updated for user-visible behavior
+- [ ] Commits follow Conventional Commits (`type(scope): summary`)
 
 ## Trust/privacy impact
 

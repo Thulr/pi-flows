@@ -1,0 +1,31 @@
+name: Publish
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for npm trusted publishing (also signs provenance)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest # trusted publishing (OIDC) needs npm >= 11.5.1
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - name: Tag must match package.json version
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($pkg). Bump package.json and PI_FLOWS_VERSION before tagging."
+            exit 1
+          fi
+      - run: npm publish # auth via OIDC trusted publisher; provenance is automatic

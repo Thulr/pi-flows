@@ -3,7 +3,12 @@
   "version": "0.0.1",
   "private": false,
   "description": "First-party pi extension for delegating work to local flow agents.",
-  "keywords": ["pi-package", "pi-extension", "subagents", "flows"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "subagents",
+    "flows"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -30,19 +35,23 @@
     "AGENTS.md"
   ],
   "pi": {
-    "extensions": ["./extensions/pi-flows/index.ts"]
+    "extensions": [
+      "./extensions/pi-flows/index.ts"
+    ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
+    "@earendil-works/pi-agent-core": ">=0.78.0 <1.0.0",
+    "@earendil-works/pi-ai": ">=0.78.0 <1.0.0",
+    "@earendil-works/pi-coding-agent": ">=0.78.0 <1.0.0",
+    "@earendil-works/pi-tui": ">=0.78.0 <1.0.0",
+    "typebox": ">=1.1.0 <2.0.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.0"
+    "@commitlint/cli": "21.0.2",
+    "@commitlint/config-conventional": "21.0.2",
+    "@types/node": "24.12.4",
+    "tsx": "4.22.4",
+    "typescript": "5.9.3"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
