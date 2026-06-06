@@ -8,6 +8,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+## 0.0.2 - 2026-06-06
+
 ### Changed
 
 - Bundled agents now declare a portable `tier` (`fast` / `capable`) instead of a

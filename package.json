@@ -1,6 +1,6 @@
 {
   "name": "pi-flows",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": false,
   "description": "First-party pi extension for delegating work to local flow agents.",
   "keywords": [
