@@ -214,13 +214,13 @@ Create markdown files with YAML frontmatter:
 name: my-agent
 description: What this agent does
 tools: read,grep,find,ls
-model: claude-sonnet-4-5
+tier: capable
 ---
 
 System prompt for the delegated agent.
 ```
 
-`tools: none` disables built-in tools. Omitting `tools` uses pi defaults. Invalid agent files are reported in `/flows status` and `flow showConfig:true`.
+`tier` keeps agents portable — no vendor model is hard-coded. `capable` runs on your pi default model; `fast` runs on `PI_FLOWS_FAST_MODEL` if you set one (e.g. a cheaper model for your provider, like `openai-codex/gpt-5.4-mini`), otherwise your default too. So flows use whatever model you have pi set up with, and the extension never needs updating as providers ship new models. Pin an explicit `model:` to override the tier (a flow-call `model` overrides too). `tools: none` disables built-in tools. Omitting `tools` uses pi defaults. Invalid agent files are reported in `/flows status` and `flow showConfig:true`.
 
 ## Documentation ladder
 

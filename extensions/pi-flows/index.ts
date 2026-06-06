@@ -93,6 +93,7 @@ interface FlowAgent {
 	description: string;
 	tools?: string[];
 	model?: string;
+	tier?: string;
 	systemPrompt: string;
 	source: AgentSource;
 	filePath: string;
@@ -425,6 +426,31 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+// Portable model tiers: a bundled agent declares a capability tier instead of a
+// vendor model, so flows run on whatever model the user has pi set up with. No
+// model ids are hard-coded here — pi gives an extension no stable way to enumerate
+// a provider's models with cost (its registry is not a public export and
+// `pi --list-models` carries no pricing), and a hard-coded map would just go stale
+// as providers ship models. So:
+//
+//   tier: capable  -> omit --model; the child pi uses the user's default model
+//   tier: fast     -> PI_FLOWS_FAST_MODEL if the user set one, else the default
+//   model: <id>    -> explicit pin; always wins (as does a flow `model` override)
+//
+// "fast" is an opt-in the user owns for their own provider (e.g.
+// PI_FLOWS_FAST_MODEL=openai-codex/gpt-5.4-mini) rather than a list we maintain.
+function configuredFastModel(): string | undefined {
+	return process.env.PI_FLOWS_FAST_MODEL?.trim() || undefined;
+}
+
+/** Concrete model for a child run: flow override > agent pin > fast-tier override > pi default (undefined = omit --model, child uses the user's default). */
+function resolveAgentModel(agent: { model?: string; tier?: string }, optionsModel: string | undefined, fastModel: string | undefined): string | undefined {
+	if (optionsModel) return optionsModel;
+	if (agent.model) return agent.model;
+	if (agent.tier === "fast") return fastModel;
+	return undefined;
+}
+
 async function writePromptToTempFile(agentName: string, prompt: string, label = "system"): Promise<{ dir: string; filePath: string }> {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-flow-"));
 	const safeName = agentName.replace(/[^\w.-]+/g, "_");
@@ -516,6 +542,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): { agents: FlowAgen
 			description: frontmatter.description.trim(),
 			tools,
 			model: frontmatter.model?.trim() || undefined,
+			tier: frontmatter.tier?.trim() || undefined,
 			systemPrompt: body.trim(),
 			source,
 			filePath,
@@ -806,7 +833,7 @@ async function runFlowAgent(options: {
 		messages: [],
 		stderr: "",
 		usage: emptyUsage(),
-		model: options.model ?? agent.model,
+		model: resolveAgentModel(agent, options.model, configuredFastModel()),
 		step: options.step,
 		stdoutParseErrors: 0,
 		stdoutSample: "",
@@ -821,7 +848,7 @@ async function runFlowAgent(options: {
 	};
 
 	const args = ["--mode", "json", "-p", "--no-session"];
-	const model = options.model ?? agent.model;
+	const model = resolveAgentModel(agent, options.model, configuredFastModel());
 	if (model) args.push("--model", model);
 
 	const tools = parseToolsOverride(options.tools, agent.tools);
@@ -2223,6 +2250,8 @@ export const __test = {
 	scanForInjection,
 	budgetExceeded,
 	chargeBudget,
+	resolveAgentModel,
+	configuredFastModel,
 };
 
 export default function (pi: ExtensionAPI) {

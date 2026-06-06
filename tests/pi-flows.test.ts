@@ -379,3 +379,35 @@ test("project-local panel critics still fail closed in headless evaluate runs", 
   assert.equal(result.details.error.code, "PROJECT_AGENT_APPROVAL_REQUIRED");
   assert(!JSON.stringify(result).includes("do-not-leak"), "task secret must not leak in the refusal");
 });
+
+test("resolveAgentModel: flow override > agent pin > fast-tier override > pi default", () => {
+  assert.equal(__test.resolveAgentModel({ tier: "fast" }, "override", "fast-x"), "override", "a flow-call model override wins");
+  assert.equal(__test.resolveAgentModel({ model: "pinned", tier: "fast" }, undefined, "fast-x"), "pinned", "an explicit agent.model pin wins over its tier");
+  assert.equal(__test.resolveAgentModel({ tier: "fast" }, undefined, "fast-x"), "fast-x", "fast uses the configured fast model");
+  assert.equal(__test.resolveAgentModel({ tier: "fast" }, undefined, undefined), undefined, "fast with no configured model defers to the pi default");
+  assert.equal(__test.resolveAgentModel({ tier: "capable" }, undefined, "fast-x"), undefined, "capable defers to the user's pi default");
+  assert.equal(__test.resolveAgentModel({}, undefined, "fast-x"), undefined, "no tier/model defers to the pi default");
+});
+
+test("configuredFastModel reads PI_FLOWS_FAST_MODEL, trimmed", () => {
+  const prev = process.env.PI_FLOWS_FAST_MODEL;
+  try {
+    process.env.PI_FLOWS_FAST_MODEL = "  openai-codex/gpt-5.4-mini  ";
+    assert.equal(__test.configuredFastModel(), "openai-codex/gpt-5.4-mini");
+    delete process.env.PI_FLOWS_FAST_MODEL;
+    assert.equal(__test.configuredFastModel(), undefined);
+  } finally {
+    if (prev === undefined) delete process.env.PI_FLOWS_FAST_MODEL;
+    else process.env.PI_FLOWS_FAST_MODEL = prev;
+  }
+});
+
+test("bundled agents declare portable tiers, not hard-coded vendor models", async () => {
+  const repo = await makeTempRepo();
+  const agents = __test.discoverFlowAgents(repo, "user").agents;
+  const recon = agents.find((agent) => agent.name === "recon");
+  const redteam = agents.find((agent) => agent.name === "redteam");
+  assert.equal(recon?.tier, "fast", "recon should be a fast-tier agent");
+  assert.equal(redteam?.tier, "capable", "redteam should be a capable-tier agent");
+  assert.ok(!recon?.model && !redteam?.model, "bundled agents should not hard-code a vendor model");
+});

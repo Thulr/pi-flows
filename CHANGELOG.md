@@ -6,6 +6,18 @@ All notable changes to pi-flows are documented here, following
 that must agree are `package.json`, `PI_FLOWS_VERSION` in
 `extensions/pi-flows/index.ts`, this file, and the release tag.
 
+## Unreleased
+
+### Changed
+
+- Bundled agents now declare a portable `tier` (`fast` / `capable`) instead of a
+  hard-coded Claude model — no vendor model ids ship in the extension, so it does
+  not go stale as providers release models. `capable` uses your pi default model;
+  `fast` uses `PI_FLOWS_FAST_MODEL` if you set one (e.g. a cheaper model for your
+  provider), otherwise your default too. So flows run on whatever model you have pi
+  set up with rather than Anthropic specifically. Pin a `model:` (or pass a
+  flow-call `model`) to override.
+
 ## 0.0.1 - 2026-06-05
 
 Initial public release — a first-party pi extension that delegates work to

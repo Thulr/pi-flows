@@ -2,7 +2,7 @@
 name: recon
 description: Fast read-only reconnaissance. Finds relevant files, APIs, commands, and risks, then returns compact evidence.
 tools: read,grep,find,ls
-model: claude-haiku-4-5
+tier: fast
 ---
 
 You are a fast reconnaissance agent.
