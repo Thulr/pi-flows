@@ -348,6 +348,93 @@ test("budget helpers accumulate spend and trip the ceiling", () => {
   assert.equal(__test.budgetExceeded(tokens), true, "token ceiling counts input+output");
 });
 
+test("return contracts append explicit output and evidence requirements", () => {
+  const task = __test.appendReturnContract("Map the auth flow.", "Return a table with path, purpose, and evidence.", true);
+  assert.match(task, /Map the auth flow/);
+  assert.match(task, /## Return contract/);
+  assert.match(task, /Return a table with path, purpose, and evidence/);
+  assert.match(task, /file:line references/);
+  assert.equal(__test.appendReturnContract("plain", undefined, false), "plain");
+});
+
+test("shared-write cwd guard blocks concurrent mutating agents but allows read-only fan-out", async () => {
+  const repo = await makeTempRepo();
+  const discovery = __test.discoverFlowAgents(repo, "user");
+  assert.equal(
+    __test.validateSharedWriteCwd(discovery, repo, [{ agent: "recon" }, { agent: "analyst" }], false),
+    null,
+    "read-only agents may share one checkout",
+  );
+  const error = __test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], false);
+  assert.equal(error?.code, "SHARED_WRITE_CWD");
+  assert.equal(
+    __test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], true),
+    null,
+    "explicit override allows intentional shared writes",
+  );
+});
+
+test("trace report parser groups by mode and trace label", () => {
+  const raw = [
+    JSON.stringify({
+      trace_id: "trace-1",
+      span_id: "child-1",
+      parent_span_id: "root-1",
+      name: "flow.vote.recon",
+      status: { code: "OK" },
+      attributes: {
+        "flow.mode": "vote",
+        "flow.trace_label": "release-gate",
+        "flow.cost_usd": 0.01,
+        "llm.token_count.prompt": 100,
+        "llm.token_count.completion": 40,
+      },
+    }),
+    JSON.stringify({
+      trace_id: "trace-1",
+      span_id: "root-1",
+      parent_span_id: null,
+      name: "flow.vote",
+      status: { code: "OK" },
+      attributes: {
+        "flow.mode": "vote",
+        "flow.trace_label": "release-gate",
+        "flow.cost_usd_total": 0.01,
+        "flow.token_count_total": 140,
+        "flow.duration_ms_total": 5000,
+        "flow.same_model_vote_warning": true,
+      },
+    }),
+    "{bad-json",
+  ].join("\n");
+
+  const parsed = __test.parseTraceJsonl(raw);
+  assert.equal(parsed.parseErrors, 1);
+  const report = __test.summarizeTraceSpans(parsed.spans, parsed.parseErrors, "trace.jsonl");
+  assert.equal(report.traces, 1);
+  assert.equal(report.successes, 1);
+  assert.equal(report.byMode.vote.traces, 1);
+  assert.equal(report.byLabel["release-gate"].tokens, 140);
+  assert.equal(report.sameModelVoteWarnings, 1);
+  assert.match(__test.formatTraceReport(report), /TPSO: 140 tokens\/success/);
+});
+
+test("flow status helpers summarize live and completed runs", () => {
+  const details = {
+    mode: "parallel",
+    version: PI_FLOWS_VERSION,
+    agentScope: "user",
+    config: {},
+    agentsDir: {},
+    results: [
+      { agent: "recon", agentSource: "package", task: "a", exitCode: 0, messages: [], stderr: "", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.001, contextTokens: 15, turns: 1 } },
+      { agent: "operator", agentSource: "package", task: "b", exitCode: -1, messages: [], stderr: "", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 } },
+    ],
+  } as any;
+  assert.match(__test.flowStatusText(details), /flow parallel: 1\/2/);
+  assert.ok(__test.flowWidgetLines(details).some((line: string) => /running\s+operator/.test(line)));
+});
+
 test("detectRunMode treats evaluate with checkCommand and a critic panel as evaluate", () => {
   assert.deepEqual(__test.detectRunMode({ task: "g", evaluate: { checkCommand: "npm test", redteam: [{ agent: "a" }, { agent: "b" }] } }), { mode: "evaluate" });
 });

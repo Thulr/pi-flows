@@ -8,7 +8,7 @@ pi-flows adds a single `flow` tool to the pi coding agent. It runs your task in 
 
 - **Keep your main context clean.** Sub-agents explore, build, and review in their own subprocess and hand back a compact result — not a wall of tool output.
 - **Proven patterns, one tool.** `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, and `orchestrate` — each a named agent-design pattern (from Anthropic's *Building Effective Agents*, Andrew Ng, and Google's ADK), not an ad-hoc prompt. See [Patterns](./docs/patterns.md).
-- **Safe by default.** Repo-controlled agent prompts fail closed in headless runs, secrets and home paths are redacted, inter-agent handoffs are scanned for prompt injection, and read-only agents (`recon`, `analyst`) ship with no shell. See [Safety model](#safety-model).
+- **Safe by default.** Repo-controlled agent prompts fail closed in headless runs, secrets and home paths are redacted, inter-agent handoffs are scanned for prompt injection, concurrent write agents cannot share one checkout unless you opt in, and read-only agents (`recon`, `analyst`) ship with no shell. See [Safety model](#safety-model).
 - **Bounded — including cost.** Every run is capped on count, time, and nesting depth; `maxCostUsd` / `maxTokens` cap total spend across the whole flow tree.
 - **Inspectable.** Structured errors that name the fix, an offline test suite, and OpenInference-shaped trace export you can read with `jq` or any OpenTelemetry backend.
 
@@ -100,7 +100,7 @@ Project-local agents are repo-controlled prompts. In interactive pi sessions, pi
 
 pi-flows also redacts secret-shaped content and home paths from returned content/details by default. Inter-agent **handoffs** — where one child's output becomes another child's prompt (`{previous}` in chain, the evaluate artifact, vote ballots, orchestrate findings) — are an indirect prompt-injection surface, so pi-flows strips invisible/bidi characters and flags instruction-override markers in that content before reuse, surfacing a warning rather than silently trusting it. See [Privacy & telemetry](./docs/privacy-telemetry.md).
 
-Cost is bounded as well as count and time: pass `maxCostUsd` / `maxTokens` to cap cumulative spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
+Cost is bounded as well as count and time: pass `maxCostUsd` / `maxTokens` to cap cumulative spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Concurrent fan-out also refuses multiple write-capable agents in the same `cwd` (`SHARED_WRITE_CWD`) unless `allowSharedWriteCwd:true` is explicit. Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
 
 ## `flow` tool quick reference
 
@@ -190,20 +190,30 @@ The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits
 ### Orchestrate (decompose → fan out → synthesize)
 
 ```json
-{ "task": "Document how auth works across the codebase", "orchestrate": { "recon": { "agent": "recon" }, "verify": { "agent": "overwatch" }, "maxSubtasks": 5 } }
+{
+  "task": "Document how auth works across the codebase",
+  "returnContract": "Return sections for login, token refresh, session storage, and gaps.",
+  "requireEvidence": true,
+  "orchestrate": {
+    "recon": { "agent": "recon" },
+    "verify": { "agent": "overwatch" },
+    "verifyPolicy": "revise",
+    "maxSubtasks": 5
+  }
+}
 ```
 
-The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call (orchestrator-workers composed with evaluator-optimizer).
+The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` hard-fails on `REVISE`, and `"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
 
 ### Cost budget and tracing
 
 Any mode accepts a cumulative spend ceiling and a trace sink:
 
 ```json
-{ "task": "...", "orchestrate": {}, "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl" }
+{ "task": "...", "orchestrate": {}, "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
 ```
 
-`maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read.
+`maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
 
 ## Agent definition format
 

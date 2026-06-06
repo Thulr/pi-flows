@@ -29,6 +29,10 @@ Exactly one mode is valid per call.
 | `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached, no further child spawns (`BUDGET_EXCEEDED`). Omit to run uncapped. |
 | `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached, no further child spawns (`BUDGET_EXCEEDED`). Omit to run uncapped. |
 | `traceFile` | (none) | Append an OpenInference-shaped JSON span per child (plus a root span) to this JSONL file — trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
+| `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
+| `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
+| `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
+| `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `model` | agent/default | Optional model override. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
 | `cwd` | parent cwd | Child process working directory. |
@@ -40,6 +44,38 @@ The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
 ### Trace export (observability)
 
 Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Spans carry OpenInference-style attributes — `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, `flow.duration_ms`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. The format is plain JSONL: ingest it into any OpenTelemetry/OpenInference backend, or let a coding agent query it directly with `jq`/SQL to self-diagnose a flow. Export is best-effort and never fails a flow.
+
+Summarize a trace file from inside pi:
+
+```text
+/flows report flow-trace.jsonl
+```
+
+Or from a checkout:
+
+```bash
+npm run trace:report -- flow-trace.jsonl
+```
+
+The report groups runs by `flow.mode` and `traceLabel`, with success rate, cost,
+tokens-per-success (TPSO), budget hits, same-model vote warnings, and route
+choices.
+
+## Return contracts and write isolation
+
+`returnContract` and `requireEvidence` exist to prevent summary loss at handoff
+boundaries. They are appended to child prompts in `single`, `parallel`, `chain`,
+`evaluate`, `vote`, `route`, and to `orchestrate` workers/synthesis. Task-level
+contracts override the top-level contract where a mode accepts per-task entries;
+`orchestrate.workerReturnContract` can set a worker-specific contract while the
+top-level `returnContract` still applies to synthesis.
+
+Parallel fan-out is read-optimized by default. If two write-capable agents would
+run concurrently in the same `cwd`, pi-flows returns `SHARED_WRITE_CWD` before
+spawning them. A role is write-capable when its effective tools are pi defaults,
+or include `bash`, `edit`, or `write`. Give each writer a separate worktree/cwd,
+use read-only agents, or set `allowSharedWriteCwd:true` after deciding the shared
+checkout is intentional.
 
 ## Evaluate mode (generator-evaluator loop)
 
@@ -140,7 +176,10 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 | `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON array of subtask strings. |
 | `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
-| `orchestrate.verify` | (none) | Optional critic that checks the merged answer against the goal in one pass (orchestrator-workers composed with evaluator-optimizer). Appends a `VERDICT: PASS/REVISE` note so the synthesis is verified rather than trusted — without a separate flow call. |
+| `orchestrate.verify` | (none) | Optional critic that checks the merged answer against the goal/contract (orchestrator-workers composed with evaluator-optimizer). |
+| `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict; `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`; `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
+| `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
+| `orchestrate.workerReturnContract` | (none) | Contract appended to every worker subtask before fan-out. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Cap on subtasks (also bounded by `maxParallelTasks`). |
 
 If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
@@ -184,6 +223,7 @@ CI to cover every code the tool can return, so it never drifts from the source.
 /flows version
 /flows status
 /flows status all
+/flows report [trace-file]
 ```
 
 Invalid arguments return an error instead of silently falling back to another scope.

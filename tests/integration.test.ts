@@ -21,28 +21,32 @@ import registerPiFlows from "../extensions/pi-flows/index.ts";
 const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
 
-function flowTool() {
+function flowTool(api: Record<string, any> = {}) {
 	const tools = new Map<string, any>();
-	registerPiFlows({ registerCommand() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
+	registerPiFlows({ ...api, registerCommand() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
 	return tools.get("flow");
 }
 
 type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[] };
 
-async function runFlow(params: any, plan: Record<string, string | string[]>) {
+async function runFlow(
+	params: any,
+	plan: Record<string, string | string[]>,
+	options: { api?: Record<string, any>; ui?: Record<string, any> } = {},
+) {
 	const stubDir = await mkdtemp(path.join(tmpdir(), "stub-pi-"));
 	process.env.PI_STUB_DIR = stubDir;
 	process.env.PI_STUB_PLAN = JSON.stringify(plan);
-	const result = await flowTool().execute(
+	const result = await flowTool(options.api).execute(
 		"tool-call-id",
 		params,
 		new AbortController().signal,
 		undefined,
-		{ cwd: stubDir, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } },
+		{ cwd: stubDir, hasUI: false, ui: { confirm: async () => true, notify: () => undefined, ...(options.ui ?? {}) } },
 	);
 	const log = await readFile(path.join(stubDir, "calls.jsonl"), "utf8").catch(() => "");
 	const calls: Call[] = log.split("\n").filter(Boolean).map((line) => JSON.parse(line));
-	return { result, calls, text: result.content[0]?.text ?? "" };
+	return { result, calls, text: result.content[0]?.text ?? "", stubDir };
 }
 
 const byAgent = (calls: Call[], name: string) => calls.filter((call) => call.agent === name);
@@ -59,6 +63,31 @@ test("single: spawns the stub child, returns its text, and accumulates usage", a
 	assert.ok(result.details.results[0].usage.cost > 0, "usage.cost should be accumulated from the child JSONL");
 });
 
+test("single: appends return contracts, updates UI status, and writes a session summary entry", async () => {
+	const statuses: string[] = [];
+	const widgets: string[][] = [];
+	const entries: Array<{ customType: string; data: any }> = [];
+	const { calls } = await runFlow(
+		{ agent: "recon", task: "find MAGIC_TOKEN", returnContract: "Return one sentence with value and evidence path.", requireEvidence: true },
+		{ recon: "MAGIC_TOKEN=xyzzy-42 in settings.txt" },
+		{
+			api: { appendEntry: (customType: string, data: any) => entries.push({ customType, data }) },
+			ui: {
+				setStatus: (_key: string, text: string | undefined) => { if (text) statuses.push(text); },
+				setWidget: (_key: string, content: string[] | undefined) => { if (content) widgets.push(content); },
+			},
+		},
+	);
+
+	assert.match(calls[0].task, /## Return contract/);
+	assert.match(calls[0].task, /Return one sentence with value and evidence path/);
+	assert.match(calls[0].task, /file:line references/);
+	assert.ok(statuses.some((status) => /flow single: ok/.test(status)), "completion status should reach the UI");
+	assert.ok(widgets.some((widget) => widget.some((line) => /recon/.test(line))), "widget should show child agent status");
+	assert.equal(entries[0]?.customType, "pi-flows.run");
+	assert.equal(entries[0]?.data.mode, "single");
+});
+
 test("parallel: fans out every task to its own child", async () => {
 	const { calls } = await runFlow(
 		{ tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }], concurrency: 2 },
@@ -69,6 +98,17 @@ test("parallel: fans out every task to its own child", async () => {
 	const tasks = calls.map((call) => call.task).join("\n");
 	assert.match(tasks, /frontend auth/);
 	assert.match(tasks, /backend auth/);
+});
+
+test("parallel: shared write-capable cwd is refused before spawning workers", async () => {
+	const { result, calls, text } = await runFlow(
+		{ tasks: [{ agent: "operator", task: "edit a" }, { agent: "operator", task: "edit b" }], concurrency: 2 },
+		{ operator: "should not run" },
+	);
+
+	assert.equal(calls.length, 0, "guard should prevent any mutating children from spawning");
+	assert.equal(result.details.error.code, "SHARED_WRITE_CWD");
+	assert.match(text, /SHARED_WRITE_CWD/);
 });
 
 test("chain: the previous step's output is handed to the next step", async () => {
@@ -147,4 +187,52 @@ test("orchestrate: commander decomposes, recon workers fan out, debrief merges",
 	assert.match(workerTasks, /map token refresh/);
 	assert.ok(byAgent(calls, "debrief").length >= 1, "debrief merges the worker findings");
 	assert.match(text, /MERGED_DOC/);
+});
+
+test("orchestrate: verifyPolicy fail returns a structured gate error on REVISE", async () => {
+	const { result, calls, text } = await runFlow(
+		{ task: "document how auth works", orchestrate: { recon: { agent: "recon" }, verify: { agent: "overwatch" }, verifyPolicy: "fail" } },
+		{ commander: '["map login"]', recon: "WORKER_FINDING", debrief: "INCOMPLETE_DOC", overwatch: "VERDICT: REVISE\nmissing token refresh" },
+	);
+
+	assert.deepEqual(calls.map((call) => call.agent), ["commander", "recon", "debrief", "overwatch"]);
+	assert.equal(result.details.error.code, "ORCHESTRATE_VERIFY_FAILED");
+	assert.match(text, /missing token refresh/);
+});
+
+test("orchestrate: verifyPolicy revise reruns debrief until verifier passes", async () => {
+	const { result, calls, text } = await runFlow(
+		{ task: "document how auth works", orchestrate: { recon: { agent: "recon" }, verify: { agent: "overwatch" }, verifyPolicy: "revise", verifyMaxIterations: 2 } },
+		{ commander: '["map login"]', recon: "WORKER_FINDING", debrief: ["INCOMPLETE_DOC", "COMPLETE_DOC"], overwatch: ["VERDICT: REVISE\nmissing token refresh", "VERDICT: PASS\nok"] },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.deepEqual(calls.map((call) => call.agent), ["commander", "recon", "debrief", "overwatch", "debrief", "overwatch"]);
+	assert.match(byAgent(calls, "debrief")[1].task, /missing token refresh/, "revision receives verifier critique");
+	assert.match(text, /COMPLETE_DOC/);
+	assert.match(text, /Verification PASS/);
+});
+
+test("orchestrate: shared write-capable workers are refused after decomposition and before fan-out", async () => {
+	const { result, calls } = await runFlow(
+		{ task: "make two edits", orchestrate: { recon: { agent: "operator" }, maxSubtasks: 2 } },
+		{ commander: '["edit auth", "edit billing"]', operator: "should not run" },
+	);
+
+	assert.deepEqual(calls.map((call) => call.agent), ["commander"]);
+	assert.equal(result.details.error.code, "SHARED_WRITE_CWD");
+});
+
+test("traceFile records child/root spans with trace labels and reportable totals", async () => {
+	const { stubDir } = await runFlow(
+		{ agent: "recon", task: "find the billing routes", traceFile: "flow-trace.jsonl", traceLabel: "smoke-release" },
+		{ recon: "ROUTES: /charge /refund" },
+	);
+
+	const trace = await readFile(path.join(stubDir, "flow-trace.jsonl"), "utf8");
+	const spans = trace.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	assert.equal(spans.length, 2);
+	assert.ok(spans.some((span) => span.parent_span_id === null && span.attributes["flow.trace_label"] === "smoke-release"));
+	assert.ok(spans.some((span) => span.attributes["flow.agent"] === "recon" && span.attributes["flow.trace_label"] === "smoke-release"));
+	assert.ok(spans.some((span) => span.attributes["flow.cost_usd_total"] > 0));
 });

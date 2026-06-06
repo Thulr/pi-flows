@@ -8,6 +8,30 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- `returnContract` / `requireEvidence` prompts for preserving required output
+  shape and concrete evidence through flow handoffs.
+- `orchestrate.verifyPolicy` (`note` / `fail` / `revise`),
+  `orchestrate.verifyMaxIterations`, and `orchestrate.workerReturnContract`.
+  Verification can now be advisory, a hard gate, or a bounded revise-and-retry
+  loop.
+- `traceLabel`, `/flows report [trace-file]`, and `npm run trace:report` for
+  grouped trace summaries (success rate, cost, TPSO, budget hits, and voting /
+  routing warnings).
+- Live flow status/widget updates and a compact `pi-flows.run` session entry.
+
+### Security
+
+- Concurrent write-capable fan-out now refuses shared working directories by
+  default (`SHARED_WRITE_CWD`), with `allowSharedWriteCwd:true` as an explicit
+  override.
+
+### Changed
+
+- Model-in-loop evals now support baseline writing/comparison and include cases
+  for return-contract evidence preservation and same-model vote warnings.
+
 ## 0.0.2 - 2026-06-06
 
 ### Changed

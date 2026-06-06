@@ -10,6 +10,8 @@
 //   npm run eval -- --model=openai-codex/gpt-5.5   # provider/id (OAuth providers need the prefix)
 //   npm run eval -- --model=agent         # use each agent's own frontmatter model
 //   npm run eval -- --cap=1.00            # per-case USD ceiling (default 0.50)
+//   npm run eval -- --write-baseline=evals/baseline.json
+//   npm run eval -- --compare-baseline=evals/baseline.json
 //   npm run eval -- --dry-run             # framework smoke (canned results, no model)
 //
 // Model: with no --model, the harness uses your pi default (defaultProvider/
@@ -20,9 +22,9 @@
 //
 // Exit code is 0 when every selected case passes, 1 otherwise.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { CASES } from "./cases.mjs";
 
@@ -58,6 +60,8 @@ const useAgentModels = ["agent", "default", ""].includes(model);
 const capUsd = Number(flag("cap", "0.50"));
 const dryRun = args.includes("--dry-run");
 const filter = flag("filter", "");
+const writeBaseline = flag("write-baseline", "");
+const compareBaseline = flag("compare-baseline", "");
 
 // Resolve a real `pi` from PATH rather than re-running this script. getPiInvocation
 // falls through to { command: "pi" } when argv[1] is not an existing script file.
@@ -127,6 +131,7 @@ async function main() {
 	let passed = 0;
 	let totalCost = 0;
 	let sawInfraError = false;
+	const summaries = [];
 	for (const testCase of selected) {
 		const flowCtx = { cwd: testCase.cwd ?? process.cwd(), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 		const ctx = { flow, model: useAgentModels ? undefined : model, dryRun, flowCtx };
@@ -166,13 +171,51 @@ async function main() {
 		console.log(`${status} ${testCase.name.padEnd(34)} score ${scored.score.toFixed(2)}  $${cost.toFixed(4)}  ${seconds}s`);
 		const note = scored.pass ? scored.notes : reachedModel ?? scored.notes;
 		if (note) console.log(`    ↳ ${note}`);
+		summaries.push({
+			name: testCase.name,
+			pass: scored.pass,
+			score: scored.score,
+			notes: scored.notes,
+			infraError: reachedModel ?? null,
+			cost,
+			durationMs: Date.now() - startedAt,
+		});
 	}
 
 	console.log(`\n${passed}/${selected.length} passed  ·  total $${totalCost.toFixed(4)}${dryRun ? "  (dry-run, no model)" : ""}`);
+	const baselineRegressions = [];
+	if (writeBaseline) {
+		const baselinePath = resolve(process.cwd(), writeBaseline);
+		writeFileSync(
+			baselinePath,
+			`${JSON.stringify({ createdAt: new Date().toISOString(), model: useAgentModels ? "agent" : model, filter, capUsd, cases: summaries }, null, 2)}\n`,
+			"utf8",
+		);
+		console.log(`Wrote baseline: ${baselinePath}`);
+	}
+	if (compareBaseline) {
+		const baselinePath = resolve(process.cwd(), compareBaseline);
+		const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+		const current = new Map(summaries.map((summary) => [summary.name, summary]));
+		for (const previous of baseline.cases ?? []) {
+			const now = current.get(previous.name);
+			if (!now) continue;
+			if (previous.pass && !now.pass) baselineRegressions.push(`${previous.name}: pass -> fail`);
+			else if (Number.isFinite(previous.score) && Number.isFinite(now.score) && now.score + 0.05 < previous.score) {
+				baselineRegressions.push(`${previous.name}: score ${previous.score.toFixed(2)} -> ${now.score.toFixed(2)}`);
+			}
+		}
+		if (baselineRegressions.length > 0) {
+			console.log("\nBaseline regressions:");
+			for (const regression of baselineRegressions) console.log(`  - ${regression}`);
+		} else {
+			console.log(`Compared baseline: ${baselinePath} (no regressions)`);
+		}
+	}
 	if (sawInfraError) {
 		console.log("\n⚠ Some cases could not reach the model (auth, credits, network, or timeout) — that's an environment issue, not an eval failure.\n  Fixes: add credits / `pi` /login, set a provider key in .env (see .env.example), or pass --model=<provider/id> for a provider you have quota on.");
 	}
-	process.exit(passed === selected.length ? 0 : 1);
+	process.exit(passed === selected.length && baselineRegressions.length === 0 ? 0 : 1);
 }
 
 main().catch((error) => {

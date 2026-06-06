@@ -158,6 +158,31 @@ Fix: verify the command exists and runs from the operator's `cwd` (try it in a
 shell first). A non-runnable check is a configuration error, so the loop aborts
 rather than looping to `maxIterations` against a check that can never pass.
 
+### `ORCHESTRATE_VERIFY_FAILED`
+
+Cause: `orchestrate.verify` was configured as a hard gate (`verifyPolicy:"fail"`
+or `"revise"`), and the verifier either returned `VERDICT: REVISE` after the
+allowed synthesize→verify rounds or the verifier child could not produce a usable
+passing verdict. The merged answer is returned with the verifier critique, but
+the flow result is marked as failed.
+
+Fix: read the verifier critique and rerun after narrowing the task or improving
+the worker/synthesis contract. For advisory-only verification, set
+`orchestrate.verifyPolicy:"note"`. For revision policy, raise
+`orchestrate.verifyMaxIterations` up to the cap or make the acceptance criteria
+more concrete.
+
+### `SHARED_WRITE_CWD`
+
+Cause: two or more write-capable agents would run concurrently in the same
+working directory. Agents with `tools` omitted are treated as write-capable
+because they inherit pi's default toolset; agents whose effective tools include
+`bash`, `edit`, or `write` are also write-capable.
+
+Fix: use read-only agents for parallel fan-out, give each writer a distinct
+`cwd`/worktree, or pass `allowSharedWriteCwd:true` only when concurrent writes in
+one checkout are intentional.
+
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`
 
 Cause: a headless (non-UI) run requested a project-local agent from
