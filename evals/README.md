@@ -17,11 +17,16 @@ npm run eval                       # all cases, on your pi default model
 npm run eval -- --filter=route     # only matching cases
 npm run eval -- --model=openai-codex/gpt-5.5   # explicit provider/model
 npm run eval -- --cap=1.00         # per-case USD ceiling (default 0.50)
+npm run eval -- --write-baseline=evals/baseline.json
+npm run eval -- --compare-baseline=evals/baseline.json
 npm run eval -- --dry-run          # framework smoke: canned results, no model
 ```
 
 Exit code is `0` when every selected case passes, `1` otherwise. Each case is
 bounded by the flow tool's own `maxCostUsd`, so a runaway delegation is capped.
+Baseline comparison fails on pass→fail regressions and score drops greater than
+`0.05`, giving release checks a stable "did this get worse?" gate without adding
+the model evals to normal CI.
 
 ## Provider & auth (local dev)
 
@@ -52,7 +57,9 @@ reported separately from real eval failures.
 | --- | --- |
 | `route-classifies-bug-to-recon` | the controller dispatches a clear bug to `recon` |
 | `recon-retrieves-known-value` | `recon` reads a fixture and reports a known value |
+| `return-contract-preserves-evidence` | a delegated recon task keeps the requested value plus evidence under a return contract |
 | `vote-reaches-known-consensus` | two voters + aggregator reach the correct answer |
+| `vote-warns-on-same-model-voters` | same-agent voting surfaces the correlated-model warning |
 | `evaluate-loop-completes-with-gate` | the generator/critic loop runs with a passing gate |
 | `single-answer-quality-judged` | an answer is graded by the LLM judge (`judge.mjs`) |
 

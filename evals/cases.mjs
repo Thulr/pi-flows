@@ -38,6 +38,23 @@ export const CASES = [
 		mock: { content: [{ type: "text", text: "MAGIC_TOKEN is xyzzy-42" }], details: { mode: "single", results: [{ agent: "recon" }] } },
 	},
 	{
+		name: "return-contract-preserves-evidence",
+		params: {
+			agent: "recon",
+			task: "Find the value assigned to MAGIC_TOKEN in this repo.",
+			returnContract: "Return one sentence containing the value and the evidence path.",
+			requireEvidence: true,
+		},
+		cwd: fixturesRepo,
+		score(r) {
+			const body = text(r);
+			const found = /xyzzy-42/.test(body);
+			const cited = /settings\.txt/i.test(body) || /MAGIC_TOKEN/i.test(body);
+			return { pass: found && cited, score: found && cited ? 1 : found ? 0.5 : 0, notes: found && cited ? "value and evidence survived the contract" : `missing value or evidence: ${body.slice(0, 160)}` };
+		},
+		mock: { content: [{ type: "text", text: "MAGIC_TOKEN is xyzzy-42 in evals/fixtures/repo/settings.txt." }], details: { mode: "single", results: [{ agent: "recon" }] } },
+	},
+	{
 		name: "vote-reaches-known-consensus",
 		params: { task: "Is the regex /^(a+)+$/ vulnerable to catastrophic backtracking? Answer YES or NO and give a one-line reason.", vote: { voters: [{ agent: "recon" }, { agent: "overwatch" }], debrief: { agent: "debrief" } } },
 		score(r) {
@@ -45,6 +62,17 @@ export const CASES = [
 			return { pass: yes, score: yes ? 1 : 0, notes: yes ? "consensus: yes (vulnerable)" : `expected YES: ${text(r).slice(0, 120)}` };
 		},
 		mock: { content: [{ type: "text", text: "Flow vote: 2/2 voters succeeded. Consensus: YES, it is vulnerable to catastrophic backtracking." }], details: { mode: "vote", results: [{ agent: "recon" }, { agent: "overwatch" }] } },
+	},
+	{
+		name: "vote-warns-on-same-model-voters",
+		params: { task: "Is 2+2=4? Answer YES or NO and give a one-line reason.", vote: { agent: "recon", count: 2 } },
+		score(r) {
+			const body = text(r);
+			const warned = /share model|same-model|Vendor-diverse/i.test(body);
+			const yes = /\byes\b/i.test(body);
+			return { pass: warned && yes, score: warned && yes ? 1 : warned ? 0.5 : 0, notes: warned && yes ? "same-model warning surfaced with correct answer" : `warning or answer missing: ${body.slice(0, 160)}` };
+		},
+		mock: { content: [{ type: "text", text: '> ⚠ All 2 voters share model "(default)". Vendor-diverse voting breaks correlated errors.\n\nYES, 2+2=4.' }], details: { mode: "vote", results: [{ agent: "recon" }, { agent: "recon" }] } },
 	},
 	{
 		name: "evaluate-loop-completes-with-gate",
