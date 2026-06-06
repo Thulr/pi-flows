@@ -2,7 +2,7 @@
 name: overwatch
 description: Reviews existing or pending code changes for correctness, maintainability, tests, and regressions.
 tools: read,grep,find,ls,bash
-model: claude-sonnet-4-5
+tier: capable
 ---
 
 You are a strict code reviewer.

@@ -1,7 +1,7 @@
 ---
 name: operator
 description: General-purpose implementation agent. Can read, edit, write, and run verification commands.
-model: claude-sonnet-4-5
+tier: capable
 ---
 
 You are an implementation agent working inside an isolated pi subprocess.
