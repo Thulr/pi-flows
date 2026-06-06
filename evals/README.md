@@ -23,6 +23,22 @@ npm run eval -- --dry-run          # framework smoke: canned results, no model
 Exit code is `0` when every selected case passes, `1` otherwise. Each case is
 bounded by the flow tool's own `maxCostUsd`, so a runaway delegation is capped.
 
+## Provider & auth (local dev)
+
+The harness uses whatever model provider `pi` is configured with:
+
+- **Subscription / OAuth** — run `pi`, then `/login` (stored in `~/.pi/agent/auth.json`). Nothing else to do.
+- **API key** — drop it in a gitignored `.env` (see `.env.example`); `npm run eval` loads it:
+
+  ```bash
+  cp .env.example .env      # then add e.g. ANTHROPIC_API_KEY=sk-ant-…
+  ```
+
+Point a run at a provider you have quota on with `--model=<provider/id>` (e.g.
+`--model=openai/gpt-5`), or use `--model=agent` to run each agent on its own
+frontmatter model. Cases that can't reach the model (auth, credits, network) are
+flagged `⚠` and reported separately from genuine eval failures.
+
 ## What's covered
 
 | Case | Scores |

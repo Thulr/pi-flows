@@ -7,3 +7,4 @@ scripts/
 .pi/
 *.log
 .DS_Store
+.env

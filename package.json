@@ -61,6 +61,6 @@
     "smoke": "node scripts/smoke.mjs",
     "pack:dry-run": "node scripts/check-pack.mjs",
     "validate:agents": "node scripts/validate-agents.mjs",
-    "eval": "node --import tsx evals/run.mjs"
+    "eval": "node --env-file-if-exists=.env --import tsx evals/run.mjs"
   }
 }
