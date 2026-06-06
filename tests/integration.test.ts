@@ -150,6 +150,17 @@ test("evaluate: a failing checkCommand gate forces REVISE and skips the LLM crit
 	assert.equal(byAgent(calls, "redteam").length, 0, "a non-zero gate is an automatic REVISE — the critic never runs");
 });
 
+test("evaluate: shared write-capable critic panels are refused before spawning", async () => {
+	const { result, calls, text } = await runFlow(
+		{ task: "x", evaluate: { operator: { agent: "operator" }, redteam: [{ agent: "overwatch" }, { agent: "redteam" }] } },
+		{ operator: "should not run", overwatch: "should not run", redteam: "should not run" },
+	);
+
+	assert.equal(calls.length, 0, "unsafe critic fan-out should be rejected before the generator runs");
+	assert.equal(result.details.error.code, "SHARED_WRITE_CWD");
+	assert.match(text, /SHARED_WRITE_CWD/);
+});
+
 test("route: the controller's ROUTE choice is dispatched and nothing else runs", async () => {
 	const { calls, text } = await runFlow(
 		{ task: "billing webhook returns 500s", route: { candidates: ["recon", "strategist"], fallback: "recon" } },
@@ -173,6 +184,17 @@ test("vote: every voter runs the same task and the aggregator sees all ballots",
 	assert.match(debrief.task, /RECON_SAYS_YES/);
 	assert.match(debrief.task, /OVERWATCH_SAYS_YES/);
 	assert.match(text, /CONSENSUS_YES/);
+});
+
+test("vote: shared write-capable voters are refused before spawning", async () => {
+	const { result, calls, text } = await runFlow(
+		{ task: "make two independent edits", vote: { agent: "operator", count: 2 } },
+		{ operator: "should not run" },
+	);
+
+	assert.equal(calls.length, 0, "unsafe voter fan-out should be rejected before any voter runs");
+	assert.equal(result.details.error.code, "SHARED_WRITE_CWD");
+	assert.match(text, /SHARED_WRITE_CWD/);
 });
 
 test("orchestrate: commander decomposes, recon workers fan out, debrief merges", async () => {

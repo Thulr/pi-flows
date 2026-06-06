@@ -1900,6 +1900,10 @@ async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	if (concurrencyError) {
 		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "evaluate", agentScope, concurrencyError) };
 	}
+	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, evaluatorRefs, params.allowSharedWriteCwd);
+	if (sharedWriteError) {
+		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "evaluate", agentScope, sharedWriteError) };
+	}
 	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 	const checkTimeoutMs = Math.min(normalizeTimeout(params.timeoutMs), DEFAULT_CHECK_COMMAND_TIMEOUT_MS);
 
@@ -2151,6 +2155,10 @@ async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	const concurrencyError = validateConcurrency(params.concurrency);
 	if (concurrencyError) {
 		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "vote", agentScope, concurrencyError) };
+	}
+	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, voters, params.allowSharedWriteCwd);
+	if (sharedWriteError) {
+		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "vote", agentScope, sharedWriteError) };
 	}
 	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 
