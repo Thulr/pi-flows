@@ -63,6 +63,8 @@ Include:
 
 Tests must not require a live model/provider. Use fake/no-run paths for contract checks. Any new child-process behavior should be covered by an offline test seam or a no-model smoke.
 
+`tests/integration.test.ts` covers the spawn/orchestrate path end to end by pointing pi-flows at a stub `pi` (`tests/fixtures/stub-pi.mjs`) instead of a live model: the stub replies from a per-agent plan and logs every child invocation, so tests assert the wiring and handoffs (chain `{previous}`, the evaluate loop, vote ballots, route dispatch, orchestrate fan-out) offline. Add cases there when you change how children are spawned, sequenced, or how their output flows between agents.
+
 ## Release changes
 
 If a user-visible behavior changes, update:
