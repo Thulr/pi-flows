@@ -1,8 +1,10 @@
 node_modules/
 audit-artifacts/
 tests/
+evals/
 scripts/
 .github/
 .pi/
 *.log
 .DS_Store
+.env

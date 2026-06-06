@@ -3,3 +3,4 @@ node_modules/
 audit-artifacts/
 .DS_Store
 *.log
+.env

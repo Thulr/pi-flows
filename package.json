@@ -60,6 +60,7 @@
     "check": "npm run typecheck && npm test && npm run validate:agents && npm run smoke && npm run pack:dry-run",
     "smoke": "node scripts/smoke.mjs",
     "pack:dry-run": "node scripts/check-pack.mjs",
-    "validate:agents": "node scripts/validate-agents.mjs"
+    "validate:agents": "node scripts/validate-agents.mjs",
+    "eval": "node --import tsx evals/run.mjs"
   }
 }
