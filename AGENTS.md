@@ -6,6 +6,7 @@ Read this before editing the repo.
 
 - Extension entrypoint: `extensions/pi-flows/index.ts`
 - Bundled agent prompts: `agents/*.md`
+- Tests: `tests/pi-flows.test.ts` (offline contract) + `tests/integration.test.ts` (execution path against a stub `pi`)
 - User docs: `README.md`, `docs/*.md`, `examples/README.md`
 
 ## Required checks
