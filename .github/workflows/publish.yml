@@ -19,7 +19,7 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm install -g npm@latest # trusted publishing (OIDC) needs npm >= 11.5.1
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run check
       - name: Tag must match package.json version
         run: |
