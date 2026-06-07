@@ -62,6 +62,7 @@
     "pack:dry-run": "node scripts/check-pack.mjs",
     "validate:agents": "node scripts/validate-agents.mjs",
     "eval": "node --import tsx evals/run.mjs",
+    "eval:compare": "node --import tsx evals/compare.mjs",
     "trace:report": "node scripts/trace-report.mjs"
   }
 }

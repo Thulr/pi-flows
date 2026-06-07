@@ -10,9 +10,12 @@
 //   npm run eval -- --model=openai-codex/gpt-5.5   # provider/id (OAuth providers need the prefix)
 //   npm run eval -- --model=agent         # use each agent's own frontmatter model
 //   npm run eval -- --cap=1.00            # per-case USD ceiling (default 0.50)
+//   npm run eval -- --judge-model=anthropic/claude-opus-4-8   # cross-model judge (default below)
 //   npm run eval -- --write-baseline=evals/baseline.json
 //   npm run eval -- --compare-baseline=evals/baseline.json
 //   npm run eval -- --dry-run             # framework smoke (canned results, no model)
+//
+// For the flows-vs-plain A/B ("does pi-flows beat plain pi?") see `npm run eval:compare`.
 //
 // Model: with no --model, the harness uses your pi default (defaultProvider/
 // defaultModel from ~/.pi/agent/settings.json), so it "just works" with whatever
@@ -20,14 +23,21 @@
 // in ~/.pi/agent/auth.json) or a provider API key (drop it in a gitignored .env;
 // see .env.example).
 //
+// Judge: every case is ALSO graded by a cross-model LLM judge — a single tool-less
+// `redteam` call (see judge.mjs) — so answer quality is checked independently of
+// the subject model. Defaults to anthropic/claude-sonnet-4-6 (override with
+// --judge-model or PI_FLOWS_JUDGE_MODEL). Point it at a different vendor than
+// --model so the judge never grades its own model family. A case passes only when
+// the objective check AND the judge agree.
+//
 // Exit code is 0 when every selected case passes, 1 otherwise.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { CASES } from "./cases.mjs";
+import { caseCwd, flowTool, piDefaultModel, scoreArm } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
+import { exportCases } from "./export-cases.mjs";
 
 // Load a local .env (provider keys) if present, before any child pi inherits env.
 const dotenvPath = join(process.cwd(), ".env");
@@ -41,17 +51,6 @@ const flag = (name, fallback) => {
 	return hit ? hit.slice(name.length + 3) : fallback;
 };
 
-// pi's configured default, e.g. "openai-codex/gpt-5.5" — used when no --model is given.
-function piDefaultModel() {
-	try {
-		const settings = JSON.parse(readFileSync(join(homedir(), ".pi", "agent", "settings.json"), "utf8"));
-		if (settings.defaultProvider && settings.defaultModel) return `${settings.defaultProvider}/${settings.defaultModel}`;
-		return settings.defaultModel ?? null;
-	} catch {
-		return null;
-	}
-}
-
 const cliModel = flag("model", null);
 const piDefault = piDefaultModel();
 const model = cliModel ?? piDefault ?? "agent";
@@ -63,33 +62,8 @@ const dryRun = args.includes("--dry-run");
 const filter = flag("filter", "");
 const writeBaseline = flag("write-baseline", "");
 const compareBaseline = flag("compare-baseline", "");
-
-// Resolve a real `pi` from PATH rather than re-running this script. getPiInvocation
-// falls through to { command: "pi" } when argv[1] is not an existing script file.
-process.argv[1] = "";
-
-function flowTool() {
-	const tools = new Map();
-	registerPiFlows({ registerCommand() {}, registerTool(tool) { tools.set(tool.name, tool); } });
-	return tools.get("flow");
-}
-
-const sumCost = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.cost ?? 0), 0);
-
-// Distinguish "couldn't reach the model" (auth/credits/network/timeout) from "ran
-// but scored low". Returns a short reason string, or null.
-function infraError(result) {
-	if (result?.details?.error) return result.details.error.message ?? String(result.details.error.code ?? "flow error");
-	for (const child of result?.details?.results ?? []) {
-		if (child?.error) return child.error.message ?? "child error";
-		if ((typeof child?.exitCode === "number" && child.exitCode !== 0) || child?.stopReason === "error" || child?.stopReason === "timeout") {
-			return child?.errorMessage ?? `child ${child.stopReason ?? "exited with error"}`;
-		}
-	}
-	const text = result?.content?.[0]?.text ?? "";
-	if (/"type":\s*"error"|invalid_request_error|authentication|out of (extra )?usage|rate.?limit|\b40[13]\b|api[_ -]?key/i.test(text)) return "provider/API error";
-	return null;
-}
+// Cross-model judge: a different vendor than the subject under test breaks self-grading.
+const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-sonnet-4-6";
 
 function preflight() {
 	if (dryRun) return true;
@@ -105,6 +79,10 @@ function preflight() {
 async function main() {
 	if (!preflight()) process.exit(2);
 
+	// Keep the external-evaluator manifest (evals/thulr-cases.json) in sync so tools
+	// like thulr-evaluator can read each case's criterion without importing this JS.
+	exportCases();
+
 	const selected = CASES.filter((c) => !filter || c.name.includes(filter));
 	if (selected.length === 0) {
 		console.error(`No eval cases match --filter=${filter}. Available: ${CASES.map((c) => c.name).join(", ")}`);
@@ -112,15 +90,16 @@ async function main() {
 	}
 
 	const flow = flowTool();
-	console.log(`pi-flows evals  ·  model ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  cap $${capUsd.toFixed(2)}/case${dryRun ? "  ·  DRY RUN" : ""}\n`);
+	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${dryRun ? "(skipped)" : judgeModel}  ·  cap $${capUsd.toFixed(2)}/case${dryRun ? "  ·  DRY RUN" : ""}\n`);
 
 	let passed = 0;
 	let totalCost = 0;
 	let sawInfraError = false;
 	const summaries = [];
 	for (const testCase of selected) {
-		const flowCtx = { cwd: testCase.cwd ?? process.cwd(), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
+		const flowCtx = { cwd: caseCwd(testCase, { dryRun }), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 		const ctx = { flow, model: useAgentModels ? undefined : model, dryRun, flowCtx };
+		const judgeCtx = { flow, model: judgeModel, dryRun, flowCtx };
 		const startedAt = Date.now();
 
 		let result;
@@ -128,7 +107,7 @@ async function main() {
 		if (dryRun) {
 			result = testCase.mock;
 		} else {
-			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? 120000 };
+			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? 120000 };
 			try {
 				result = await flow.execute(`eval:${testCase.name}`, params, new AbortController().signal, undefined, flowCtx);
 			} catch (error) {
@@ -136,32 +115,24 @@ async function main() {
 			}
 		}
 
-		let scored;
-		if (thrown) {
-			scored = { pass: false, score: 0, notes: `flow threw: ${thrown.message}` };
-		} else {
-			try {
-				scored = await testCase.score(result, ctx);
-			} catch (error) {
-				scored = { pass: false, score: 0, notes: `scorer threw: ${error.message}` };
-			}
-		}
-
-		const cost = sumCost(result);
+		const { pass, score, objective, judged, reachedModel, cost } = await scoreArm({ result, thrown, testCase, ctx, judgeCtx });
 		totalCost += cost;
-		if (scored.pass) passed++;
-		const reachedModel = thrown ? thrown.message : infraError(result);
-		const status = scored.pass ? "✓" : reachedModel ? "⚠" : "✗";
-		if (!scored.pass && reachedModel) sawInfraError = true;
+		if (pass) passed++;
+		if (!pass && reachedModel) sawInfraError = true;
+		const status = pass ? "✓" : reachedModel ? "⚠" : "✗";
 		const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-		console.log(`${status} ${testCase.name.padEnd(34)} score ${scored.score.toFixed(2)}  $${cost.toFixed(4)}  ${seconds}s`);
-		const note = scored.pass ? scored.notes : reachedModel ?? scored.notes;
-		if (note) console.log(`    ↳ ${note}`);
+		console.log(`${status} ${testCase.name.padEnd(34)} score ${score.toFixed(2)}  $${cost.toFixed(4)}  ${seconds}s`);
+		const breakdown = `obj ${(objective.score ?? 0).toFixed(2)}${objective.pass ? "" : "✗"} · judge ${(judged.score ?? 0).toFixed(2)}${judged.pass ? "" : "✗"}`;
+		const reason = reachedModel ?? (pass ? (judged.reasoning && !judged.reasoning.startsWith("(") ? judged.reasoning : objective.notes) : !objective.pass ? objective.notes : judged.reasoning);
+		console.log(`    ↳ ${breakdown}${reason ? `  ·  ${reason}` : ""}`);
 		summaries.push({
 			name: testCase.name,
-			pass: scored.pass,
-			score: scored.score,
-			notes: scored.notes,
+			pass,
+			score,
+			objectiveScore: objective.score,
+			judgeScore: judged.score,
+			notes: objective.notes,
+			judgeReasoning: judged.reasoning,
 			infraError: reachedModel ?? null,
 			cost,
 			durationMs: Date.now() - startedAt,
@@ -174,7 +145,7 @@ async function main() {
 		const baselinePath = resolve(process.cwd(), writeBaseline);
 		writeFileSync(
 			baselinePath,
-			`${JSON.stringify({ createdAt: new Date().toISOString(), model: useAgentModels ? "agent" : model, filter, capUsd, cases: summaries }, null, 2)}\n`,
+			`${JSON.stringify({ createdAt: new Date().toISOString(), model: useAgentModels ? "agent" : model, judgeModel: dryRun ? null : judgeModel, filter, capUsd, cases: summaries }, null, 2)}\n`,
 			"utf8",
 		);
 		console.log(`Wrote baseline: ${baselinePath}`);

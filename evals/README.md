@@ -6,6 +6,12 @@ loop run to completion, does a judge-able answer hold up. This complements the
 offline unit/integration tests (`npm test`), which prove the *plumbing* against a
 stub `pi` but never call a model.
 
+Every case is scored on **two independent axes**: a deterministic objective check
+(known answer, chosen route, passing gate) **and** a cross-model LLM judge that
+grades the answer against one literal criterion. The judge runs on a *different*
+vendor than the subject under test (default `anthropic/claude-sonnet-4-6`), so no
+model grades its own family. A case passes only when both agree.
+
 > These run **real** `flow` delegations through **real** `pi`, so they need the
 > `pi` CLI on PATH and a configured model provider, and **they spend tokens**.
 > They are intentionally not part of `npm run check` / CI.
@@ -15,7 +21,8 @@ stub `pi` but never call a model.
 ```bash
 npm run eval                       # all cases, on your pi default model
 npm run eval -- --filter=route     # only matching cases
-npm run eval -- --model=openai-codex/gpt-5.5   # explicit provider/model
+npm run eval -- --model=openai-codex/gpt-5.5   # explicit subject provider/model
+npm run eval -- --judge-model=anthropic/claude-opus-4-8   # judge model (default: anthropic/claude-sonnet-4-6)
 npm run eval -- --cap=1.00         # per-case USD ceiling (default 0.50)
 npm run eval -- --write-baseline=evals/baseline.json
 npm run eval -- --compare-baseline=evals/baseline.json
@@ -55,13 +62,55 @@ reported separately from real eval failures.
 
 | Case | Scores |
 | --- | --- |
-| `route-classifies-bug-to-recon` | the controller dispatches a clear bug to `recon` |
+| `route-classifies-bug-to-recon` | the controller routes a real webhook-500 bug to `recon`, which finds the undeclared-`ledger` root cause in the fixture |
 | `recon-retrieves-known-value` | `recon` reads a fixture and reports a known value |
 | `return-contract-preserves-evidence` | a delegated recon task keeps the requested value plus evidence under a return contract |
 | `vote-reaches-known-consensus` | two voters + aggregator reach the correct answer |
 | `vote-warns-on-same-model-voters` | same-agent voting surfaces the correlated-model warning |
-| `evaluate-loop-completes-with-gate` | the generator/critic loop runs with a passing gate |
-| `single-answer-quality-judged` | an answer is graded by the LLM judge (`judge.mjs`) |
+| `evaluate-loop-completes-with-gate` | the operator builds `isPrime.js` against a real `node` gate (asserts 0/1/2/negative edge cases); the loop revises until it passes |
+| `single-answer-quality-judged` | an answer is graded purely by the LLM judge (`judge.mjs`) |
+
+Plus: **every** case above is independently graded by the cross-model judge
+(default `anthropic/claude-sonnet-4-6`, override with `--judge-model` /
+`PI_FLOWS_JUDGE_MODEL`) against a single literal `criterion`. The table's objective
+checks gate *behaviour*; the judge gates *answer quality*; a case passes only when
+both agree. Pointing the judge at a different vendor than `--model` is what keeps it
+from grading its own model family — the calibration gap the old single-judge setup
+had.
+
+## Flows vs plain pi (A/B)
+
+Does pi-flows actually beat plain pi? `npm run eval:compare` runs every case through
+**two arms on the same subject model** and grades both with the same objective scorer
+and the same cross-model judge:
+
+- **flows** — the case's flow params (specialist agents + orchestration)
+- **plain** — one headless `pi --no-extensions` call with the raw task (no flows loaded,
+  pi's default system prompt and tools)
+
+```bash
+npm run eval:compare                    # all cases, both arms
+npm run eval:compare -- --pairwise      # add order-controlled pairwise judging (the sensitive metric)
+npm run eval:compare -- --filter=vote   # scope to keep cost down (runs both arms per case)
+npm run eval:compare -- --write=evals/compare.json
+npm run eval:compare -- --dry-run       # wiring smoke, no model
+
+# Diagnose WHY an arm scored as it did — capture per-child OpenInference spans for the
+# flows arm (the flow tool honors the env var; plain pi has no spans):
+PI_FLOWS_TRACE_FILE=/tmp/ab.jsonl npm run eval:compare -- --pairwise --write=evals/compare.json
+npm run trace:report -- /tmp/ab.jsonl
+```
+
+Absolute judge scores cluster (0.7/0.8/0.9/1.0) and can't resolve small gaps, so a
+±0.04 "lift" is within judge noise. **`--pairwise`** is the sensitive metric: it shows
+the judge both answers at once and asks which is better — run twice with positions
+swapped to cancel order bias, scored a win only when both orderings agree — and tells
+the judge *not to reward length* (so flows' compact-summary style isn't penalized).
+A few objective checks are pi-flows-only by construction (route dispatch, the
+same-model vote warning); plain pi can't satisfy them, so read those as *capabilities
+flows adds*, not plain losses. Give a case a `baselinePrompt` when its flow params
+encode goal info outside `task` (e.g. a return contract) so the plain arm is graded on
+the same goal.
 
 ## Add a case
 
@@ -72,7 +121,8 @@ Append to `cases.mjs`:
   name: "my-case",
   params: { agent: "recon", task: "…" },   // the flow tool input
   cwd: "/optional/working/dir",
-  score(result, ctx) {                       // may be async (use the judge)
+  criterion: "One strict, literal statement a correct answer must satisfy.",  // graded by the cross-model judge
+  score(result, ctx) {                       // objective, deterministic check
     const ok = /expected/.test(result.content[0].text);
     return { pass: ok, score: ok ? 1 : 0, notes: "…" };
   },
@@ -80,8 +130,8 @@ Append to `cases.mjs`:
 }
 ```
 
-Prefer **objective** scoring (a known answer, the chosen route, a passing gate).
-Reach for the LLM judge (`judge(ctx, { criteria, answer })`) only for genuinely
-subjective quality — it asks for one `0..1` score plus a `PASS`/`FAIL` verdict
-against a single criterion. Always provide a `mock` so `--dry-run` can exercise
-the case offline.
+Keep `score` **objective** (a known answer, the chosen route, a passing gate) — it
+gates behaviour. Write `criterion` as a single literal statement of what a correct
+answer must say; the judge grades the answer text against it on a different vendor
+than the subject, and the case passes only when both agree. Always provide a `mock`
+so `--dry-run` can exercise the runner offline.

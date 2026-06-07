@@ -6,6 +6,8 @@ These examples are designed to be copy/pasteable in pi after loading the extensi
 pi -e ./extensions/pi-flows/index.ts
 ```
 
+> **You don't type these JSON objects.** You talk to pi in plain English and it builds the `flow` call for you — choosing the agent and mode from what you ask. The objects below are the exact contract pi produces, copy/pasteable when you want to verify behavior or take manual control. Most have a natural-language equivalent; the single-agent example below, for instance, is just *"scout the repo for the extension entrypoint and summarize what it registers."*
+
 ## No-model smoke checks
 
 ```text
@@ -18,6 +20,8 @@ Use flow with {"showConfig":true}
 Expected: output lists all nine bundled agents (`recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, `debrief`).
 
 ## Single-agent example
+
+Plain English: *"scout the repo for the extension entrypoint and summarize what it registers."* The call pi builds:
 
 ```json
 { "agent": "recon", "task": "Find the extension entrypoint and summarize what it registers" }
