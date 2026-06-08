@@ -99,7 +99,7 @@ async function main() {
 	for (const testCase of selected) {
 		const flowCtx = { cwd: caseCwd(testCase, { dryRun }), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 		const ctx = { flow, model: useAgentModels ? undefined : model, dryRun, flowCtx };
-		const judgeCtx = { flow, model: judgeModel, dryRun, flowCtx };
+		const judgeCtx = { flow, model: judgeModel, dryRun, flowCtx, maxCostUsd: capUsd };
 		const startedAt = Date.now();
 
 		let result;

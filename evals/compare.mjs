@@ -73,7 +73,7 @@ async function runArm(kind, testCase, flow, signal) {
 	const cwd = caseCwd(testCase, { dryRun });
 	const flowCtx = { cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 	const ctx = { flow, model: subjectModel, dryRun, flowCtx };
-	const judgeCtx = { flow, model: judgeModel, dryRun, flowCtx };
+	const judgeCtx = { flow, model: judgeModel, dryRun, flowCtx, maxCostUsd: capUsd };
 	const startedAt = Date.now();
 
 	let result;
@@ -81,7 +81,7 @@ async function runArm(kind, testCase, flow, signal) {
 	if (dryRun) {
 		result = testCase.mock;
 	} else if (kind === "flows") {
-		const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? 120000 };
+		const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? 120000 };
 		try {
 			result = await flow.execute(`cmp:flows:${testCase.name}`, params, signal, undefined, flowCtx);
 		} catch (error) {
@@ -145,7 +145,7 @@ async function main() {
 
 		let pv = null;
 		if (pairwise && !flows.reachedModel && !plain.reachedModel && testCase.criterion) {
-			const judgeCtx = { flow, model: judgeModel, dryRun, flowCtx: { cwd: process.cwd(), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } } };
+			const judgeCtx = { flow, model: judgeModel, dryRun, flowCtx: { cwd: process.cwd(), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } }, maxCostUsd: capUsd };
 			pv = await pairwiseVerdict(judgeCtx, { criteria: testCase.criterion, flowsAnswer: flows.answer, plainAnswer: plain.answer });
 			pairwiseCost += pv.cost ?? 0;
 		}

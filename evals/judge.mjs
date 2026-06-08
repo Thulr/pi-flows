@@ -45,7 +45,7 @@ export async function judge(ctx, { criteria, answer }) {
 
 	const result = await ctx.flow.execute(
 		"eval:judge",
-		{ agent: "redteam", task, model: ctx.model, tools: "none", maxCostUsd: 0.1, timeoutMs: 120000 },
+		{ agent: "redteam", task, model: ctx.model, tools: "none", maxCostUsd: Math.min(ctx.maxCostUsd ?? 0.1, 0.1), timeoutMs: 120000 },
 		new AbortController().signal,
 		undefined,
 		ctx.flowCtx,
@@ -96,7 +96,7 @@ export async function judgePairwise(ctx, { criteria, answerA, answerB }) {
 
 	const result = await ctx.flow.execute(
 		"eval:pairwise",
-		{ agent: "redteam", task, model: ctx.model, tools: "none", maxCostUsd: 0.1, timeoutMs: 120000 },
+		{ agent: "redteam", task, model: ctx.model, tools: "none", maxCostUsd: Math.min(ctx.maxCostUsd ?? 0.1, 0.1), timeoutMs: 120000 },
 		new AbortController().signal,
 		undefined,
 		ctx.flowCtx,
