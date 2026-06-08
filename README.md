@@ -14,13 +14,21 @@ pi-flows adds a single `flow` tool to the pi coding agent. It runs your task in 
 
 ## What it looks like
 
-Load the extension in pi, then delegate a single read-only task:
+You talk to pi in plain English — it reads the `flow` tool and writes the call for you. Load the extension, then just ask:
 
 ```text
-Use flow with {"agent":"recon","task":"Find the API routes for billing"}
+Have a read-only agent find the API routes for billing.
 ```
 
-`recon` runs in its own subprocess and hands back just the findings. When you need a *verified* result instead of a single pass, reach for another mode:
+pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing"}`; these docs show the JSON as the exact contract, for when you want to verify it or take manual control.)
+
+Ask for a *verified* result and pi reaches for a stronger mode on its own:
+
+```text
+Add a /health endpoint that returns 200 and a JSON status, with a test — and don't call it done until `npm test` passes.
+```
+
+pi runs this as an evaluate loop — the `operator` builds the change, a separate `redteam` critic judges the result, and `npm test` must exit `0`, revising until both pass or it hits `maxIterations`. The call behind it:
 
 ```json
 {
@@ -29,7 +37,7 @@ Use flow with {"agent":"recon","task":"Find the API routes for billing"}
 }
 ```
 
-The `operator` builds the change, a separate `redteam` critic judges the result, and `npm test` must exit `0` — the loop revises until both pass or it hits `maxIterations`. → [Quickstart](./docs/quickstart.md)
+→ [Quickstart](./docs/quickstart.md)
 
 ## Install
 
@@ -54,11 +62,11 @@ pi install -l npm:pi-flows
 pi install git:github.com/Thulr/pi-flows
 ```
 
-Reload pi with `/reload` (or restart it), then verify:
+Reload pi with `/reload` (or restart it), then verify — `/flows version` is a command, and the second line is plain English that pi turns into a `flow` call:
 
 ```text
 /flows version
-Use flow with {"list":true}
+list the available flow agents
 ```
 
 Success looks like all nine bundled agents in the `flow list` output — `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`. If pi isn't found, see [Troubleshooting → `pi: command not found`](./docs/troubleshooting.md#pi-command-not-found). → [Quickstart](./docs/quickstart.md)
@@ -103,6 +111,8 @@ pi-flows also redacts secret-shaped content and home paths from returned content
 Cost is bounded as well as count and time: pass `maxCostUsd` / `maxTokens` to cap cumulative spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Concurrent fan-out also refuses multiple write-capable agents in the same `cwd` (`SHARED_WRITE_CWD`) unless `allowSharedWriteCwd:true` is explicit. Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
 
 ## `flow` tool quick reference
+
+You don't type these objects — you describe what you want and pi builds the call. This is the exact contract behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
 
 ### List
 

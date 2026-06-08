@@ -30,6 +30,8 @@ If this fails with `pi: command not found`, see
 
 ## 3. Run no-model smoke checks in pi
 
+These are exact tool invocations, handy for smoke-testing without a model call. In normal use you don't write JSON — you just talk to pi (step 4).
+
 ```text
 /flows help
 /flows status
@@ -51,8 +53,12 @@ Expected output includes these bundled agents:
 
 ## 4. Run a delegated task
 
+Just ask pi in plain English. You don't have to name an agent or write JSON — pi reads your intent and picks the right one:
+
 ```text
-Use flow recon to find the extension entrypoint
+Scout the codebase and find the extension entrypoint.
 ```
+
+pi delegates this to `recon` (a read-only scout) and hands back the findings. Want to be explicit instead? Name the agent — *"use recon to find the extension entrypoint"* — or pass the exact call `{"agent":"recon","task":"..."}`.
 
 If your provider credentials are not configured, use the no-model checks above first and then see [Troubleshooting](./troubleshooting.md).

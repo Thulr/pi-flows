@@ -4,3 +4,6 @@ audit-artifacts/
 .DS_Store
 *.log
 .env
+
+# Generated manifest for external evaluators (evals/export-cases.mjs)
+evals/thulr-cases.json
