@@ -1,0 +1,102 @@
+{
+  "id": "run-7-unix1780892078541330000",
+  "created_at": "unix:1780892078541330000",
+  "source": {
+    "tool": "thulr-evaluator",
+    "trace_digest": "",
+    "n_cases": 7
+  },
+  "repro": {
+    "subject_model": "",
+    "judge_model": "anthropic/claude-sonnet-4-6",
+    "config_version": null,
+    "prompt_version": null,
+    "evaluator_set": [
+      "criterion"
+    ],
+    "thulr_version": "0.1.0",
+    "seed": null
+  },
+  "summary": [
+    {
+      "dimension": "criterion",
+      "n": 7,
+      "pass_count": 7,
+      "score_mean": 1.0,
+      "score_stddev": 0.0
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "evaluate-loop-completes-with-gate",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "recon-retrieves-known-value",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "return-contract-preserves-evidence",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "route-classifies-bug-to-recon",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "single-answer-quality-judged",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "vote-reaches-known-consensus",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "vote-warns-on-same-model-voters",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    }
+  ],
+  "calibration_ref": null
+}

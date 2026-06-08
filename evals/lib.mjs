@@ -54,6 +54,26 @@ export function infraError(result) {
 	return null;
 }
 
+// Objective-only scoring: the deterministic behaviour check, plus whether the run
+// reached the model and what it cost. run.mjs uses this — the quality axis is no
+// longer an in-process LLM judge but thulr, which grades the emitted answer and
+// calibrates against the objectiveScore this returns. compare.mjs still uses the
+// two-axis scoreArm below so its flows-vs-plain arms are graded identically.
+export async function scoreObjective({ result, thrown, testCase, ctx }) {
+	let objective;
+	if (thrown) {
+		objective = { pass: false, score: 0, notes: `run threw: ${thrown.message}` };
+	} else {
+		try {
+			objective = await testCase.score(result, ctx);
+		} catch (error) {
+			objective = { pass: false, score: 0, notes: `scorer threw: ${error.message}` };
+		}
+	}
+	const reachedModel = thrown ? thrown.message : (infraError(result) ?? null);
+	return { objective, reachedModel, cost: sumCost(result), answer: answerText(result) };
+}
+
 // Score one arm's result on two independent axes — objective (deterministic) and
 // the cross-model LLM judge — and combine. A case passes only when both agree. Used
 // identically by run.mjs and compare.mjs so flows and plain arms are graded the same.

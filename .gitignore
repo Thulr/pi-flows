@@ -5,5 +5,12 @@ audit-artifacts/
 *.log
 .env
 
-# Generated manifest for external evaluators (evals/export-cases.mjs)
+# Generated eval artifacts (evals/run.mjs, compare.mjs) — regenerated each run.
+# The gate baseline (evals/thulr-baseline.json) is committed so CI and teammates
+# gate against a known-good reference; everything else below is local-only.
 evals/thulr-cases.json
+evals/thulr-trace.jsonl
+evals/labels.json
+evals/baseline.json
+evals/compare.json
+.thulr/
