@@ -19,9 +19,8 @@ only when both axes agree, and the run is gated only when thulr finds a regressi
 
 > These run **real** `flow` delegations through **real** `pi`, so they need the
 > `pi` CLI on PATH and a configured model provider, and **they spend tokens**.
-> They also need the [`thulr-evaluator`](https://github.com/Thulr/thulr) CLI on
-> PATH (the calibrated eval gate). They are intentionally not part of `npm run
-> check` / CI.
+> They also need the [`thulr`](https://github.com/Thulr/thulr) CLI on PATH (the
+> calibrated eval gate). They are intentionally not part of `npm run check` / CI.
 
 ## Run
 
@@ -45,24 +44,23 @@ score-guardrail below) does. Each case is bounded by the flow tool's own
 
 ## How the thulr gate works
 
-The harness no longer judges in-process. Instead it **emits three artifacts** and
-shells out to the `thulr-evaluator` CLI for the
-`judge → calibrate → gate → baseline` pipeline:
+The harness no longer judges in-process. It emits **one self-contained trace** and
+shells out to the `thulr` CLI for the `judge → calibrate → gate → baseline` pipeline:
 
 | Artifact | What | Committed? |
 | --- | --- | --- |
-| `evals/thulr-trace.jsonl` | one span per case carrying the final answer to grade | no (regenerated) |
-| `evals/labels.json` | the `objectiveScore` labels (thulr `--baseline-run`) | no (regenerated) |
-| `evals/thulr-cases.json` | the `name` + `criterion` manifest (thulr `--cases`) | no (from `cases.mjs`) |
+| `evals/thulr-trace.jsonl` | one span per case — answer + criterion + objective label, all **inline** | no (regenerated) |
 | `evals/thulr-baseline.json` | the baseline EvalRun thulr gates against | **yes** |
 
 The pipeline, per `npm run eval`:
 
-1. Run every flow, compute the objective check → write the trace + labels.
-2. `thulr judge` grades each case's answer against its `criterion` → an EvalRun.
+1. Run every flow, compute the objective check → write the self-contained trace.
+2. `thulr judge --trace <file>` grades each case's answer against its inline
+   `criterion` → an EvalRun. thulr 0.1.1 reads everything from the trace — no
+   separate cases-manifest or labels files.
 3. `thulr calibrate` prints **TPR/TNR** — how well the judge's verdicts track the
-   deterministic labels. (An uncalibrated judge can silently certify regressions;
-   this is the calibration the old single-judge setup lacked.)
+   inline deterministic labels. (An uncalibrated judge can silently certify
+   regressions; this is the calibration the old single-judge setup lacked.)
 4. `thulr gate` compares the EvalRun to `evals/thulr-baseline.json` with a 0.05
    noise band and **fails the run on a regression** (it exits `10`). It guards two
    axes on the `criterion` dimension: `--guardrail` (a **pass-rate** drop) and
@@ -74,16 +72,16 @@ The pipeline, per `npm run eval`:
 
 ### The trace contract (don't break this)
 
-thulr grades the **last `AGENT` span's `output.value`** for each
-`flow.trace_label`; it **ignores the CHAIN root** and **rejects spans without
-numeric `start_time_unix_ms` / `end_time_unix_ms`**. (These facts were established
-by probing the real CLI, not assumed — see `evals/thulr.mjs`.) So the harness
-emits exactly **one AGENT span per case** carrying the canonical final answer (the
-same text the objective scorer graded). This deliberately does **not** reuse a
-flow's internal multi-span trace, where the last child is often a critic or voter
-rather than the synthesized answer — which would grade the wrong text. The
-`flow`-tool's richer OpenInference trace (`PI_FLOWS_TRACE_FILE` / `/flows report`)
-is a separate, diagnostics-only path.
+thulr ingests a **self-contained** JSONL trace: it groups spans by `thulr.case_id`
+and grades the **latest span's `output.value`**, with the case's `thulr.criterion`
+and its objective `thulr.deterministic_label` (a boolean) carried **inline** in the
+span attributes (plus a numeric `end_time_unix_ms`). So the harness emits exactly
+**one span per case** carrying the canonical final answer (the same text the
+objective scorer graded) alongside its criterion and label — no separate cases or
+labels files. This deliberately does **not** reuse a flow's internal multi-span
+trace, where the latest child is often a critic or voter rather than the synthesized
+answer. The `flow`-tool's richer OpenInference trace (`PI_FLOWS_TRACE_FILE` /
+`/flows report`) is a separate, diagnostics-only path.
 
 ## Provider & auth (local dev)
 
@@ -104,9 +102,9 @@ need the provider prefix), or `--model=agent` to run each agent on its own
 frontmatter model. Cases that can't reach the model (auth, credits, network) are
 flagged `⚠`, excluded from judging, and reported separately from real eval failures.
 
-Run `thulr-evaluator doctor` to confirm the gate's environment (version, workspace,
-judge binary). If `thulr-evaluator` is missing, install it and put it on PATH, or
-smoke-test the harness offline with `npm run eval -- --dry-run`.
+Run `thulr doctor` to confirm the gate's environment (version, workspace, judge
+binary). If `thulr` is missing, install it and put it on PATH, or smoke-test the
+harness offline with `npm run eval -- --dry-run`.
 
 > Reasoning / large-context models report a per-call cost (≈$0.09 for `gpt-5.5`)
 > that the `maxCostUsd` cap counts even when a subscription covers the actual

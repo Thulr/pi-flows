@@ -26,11 +26,10 @@
 //      runs on a different vendor than the subject (default anthropic/claude-
 //      sonnet-4-6) so it never grades its own family.
 //
-// The harness emits three artifacts thulr reads and shells out to the
-// `thulr-evaluator` CLI for judge -> calibrate -> gate -> baseline:
-//   evals/thulr-trace.jsonl  – one AGENT span per case carrying the final answer
-//   evals/labels.json        – the objectiveScore labels (thulr --baseline-run)
-//   evals/thulr-cases.json   – the name + criterion manifest (thulr --cases)
+// The harness emits ONE self-contained trace (evals/thulr-trace.jsonl) — each case's
+// answer, criterion, and objective label inline — and shells out to the `thulr` CLI
+// for judge -> calibrate -> gate -> baseline. thulr 0.1.1 reads everything from the
+// trace, so there are no separate cases-manifest or labels files.
 //
 // Exit code is 0 when every selected case passes (objective AND thulr criterion)
 // and thulr's gate reports no regression; 1 otherwise.
@@ -40,7 +39,6 @@ import { dirname, join, resolve } from "node:path";
 import { CASES } from "./cases.mjs";
 import { caseCwd, flowTool, scoreObjective, DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
-import { exportCases } from "./export-cases.mjs";
 import * as thulr from "./thulr.mjs";
 
 // Load a local .env (provider keys) if present, before any child pi inherits env.
@@ -74,7 +72,6 @@ const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL
 const p = (relPath) => resolve(process.cwd(), relPath);
 const rel = (abs) => (abs.startsWith(`${process.cwd()}/`) ? abs.slice(process.cwd().length + 1) : abs);
 const TRACE = p("evals/thulr-trace.jsonl");
-const LABELS = p("evals/labels.json");
 const CANDIDATE = p(".thulr/runs/candidate.json");
 const BASELINE_DEFAULT = p("evals/thulr-baseline.json");
 
@@ -93,7 +90,7 @@ function preflight() {
 		return false;
 	}
 	if (!thulr.available()) {
-		console.error("✗ `thulr-evaluator` was not found on PATH.\n  The eval gate now judges answer quality and blocks regressions through thulr.\n  Install it (e.g. `cargo install thulr-evaluator`) so it is on PATH,\n  or smoke-test the harness offline with: npm run eval -- --dry-run");
+		console.error("✗ `thulr` was not found on PATH.\n  The eval gate now judges answer quality and blocks regressions through thulr.\n  Install it (e.g. `cargo install thulr`) so it is on PATH,\n  or smoke-test the harness offline with: npm run eval -- --dry-run");
 		return false;
 	}
 	return true;
@@ -101,9 +98,6 @@ function preflight() {
 
 async function main() {
 	if (!preflight()) process.exit(2);
-
-	// Keep the cases manifest (name + criterion) in sync for thulr's --cases input.
-	const CASES_MANIFEST = exportCases();
 
 	const selected = CASES.filter((c) => !filter || c.name.includes(filter));
 	if (selected.length === 0) {
@@ -114,9 +108,9 @@ async function main() {
 	const flow = flowTool();
 	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${dryRun ? "(skipped)" : judgeModel}  ·  cap $${capUsd.toFixed(2)}/case  ·  timeout ${Math.round(timeoutMs / 1000)}s/agent${dryRun ? "  ·  DRY RUN" : ""}\n`);
 
-	// --- Phase 1: run every flow, score the objective axis, emit the thulr trace + labels ---
+	// --- Phase 1: run every flow, score the objective axis, emit the self-contained thulr trace ---
 	thulr.startTrace(TRACE);
-	const labelRows = [];
+	let judgedCount = 0;
 	const summaries = [];
 	let totalCost = 0;
 	let sawInfraError = false;
@@ -146,8 +140,8 @@ async function main() {
 		// Only cases that reached the model carry a real answer to judge and a
 		// trustworthy label to calibrate against; infra failures are reported as ⚠.
 		if (!reachedModel) {
-			thulr.appendCaseSpans(TRACE, { name: testCase.name, answer, startMs: startedAt, endMs: endedAt });
-			labelRows.push({ name: testCase.name, objectiveScore: objective.score ?? 0, pass: !!objective.pass, score: objective.score ?? 0, notes: objective.notes });
+			thulr.appendCaseSpans(TRACE, { name: testCase.name, answer, criterion: testCase.criterion, label: !!objective.pass, endMs: endedAt, model: useAgentModels ? undefined : model });
+			judgedCount += 1;
 		}
 
 		// Hard cases are score-tracked (◐), not pass/fail — a partial objective score is expected.
@@ -165,16 +159,15 @@ async function main() {
 	// --- Phase 2: thulr judge -> calibrate -> gate -> baseline (skipped in dry-run) ---
 	const verdicts = new Map();
 	let gateResult = null;
-	if (labelRows.length > 0) thulr.writeLabels(LABELS, { model: useAgentModels ? "agent" : model, cases: labelRows });
 
 	if (dryRun) {
-		console.log(`\n(dry-run) emitted ${labelRows.length} case(s) to ${rel(TRACE)} + ${rel(LABELS)}; thulr judge/gate skipped (no tokens).`);
-	} else if (labelRows.length === 0) {
+		console.log(`\n(dry-run) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; thulr judge/gate skipped (no tokens).`);
+	} else if (judgedCount === 0) {
 		console.log("\nNo case reached the model — skipping thulr judge (nothing to grade).");
 	} else {
 		mkdirSync(dirname(CANDIDATE), { recursive: true });
-		console.log(`\nthulr judge (${judgeModel})  ·  ${labelRows.length} case${labelRows.length === 1 ? "" : "s"}`);
-		thulr.judge({ trace: TRACE, labels: LABELS, cases: CASES_MANIFEST, model: judgeModel, out: CANDIDATE });
+		console.log(`\nthulr judge (${judgeModel})  ·  ${judgedCount} case${judgedCount === 1 ? "" : "s"}`);
+		thulr.judge({ trace: TRACE, model: judgeModel, out: CANDIDATE });
 		const evalRun = JSON.parse(readFileSync(CANDIDATE, "utf8"));
 		for (const c of evalRun.cases ?? []) verdicts.set(c.case_id, c.dims?.criterion ?? {});
 		for (const s of summaries) {
