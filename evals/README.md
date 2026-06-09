@@ -26,7 +26,7 @@ only when both axes agree, and the run is gated only when thulr finds a regressi
 ## Run
 
 ```bash
-npm run eval                       # all cases, on your pi default model
+npm run eval                       # all cases, on the default eval model (openai-codex/codex)
 npm run eval -- --filter=route     # only matching cases
 npm run eval -- --model=openai-codex/gpt-5.5   # explicit subject provider/model
 npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default: anthropic/claude-sonnet-4-6)
@@ -36,9 +36,12 @@ npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a 
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 ```
 
-Exit code is `0` when every selected case passes (objective **and** thulr's
-criterion) **and** thulr's gate reports no regression; `1` otherwise. Each case is
-bounded by the flow tool's own `maxCostUsd`, so a runaway delegation is capped.
+Exit code is `0` when every selected **behaviour** case passes (objective **and**
+thulr's criterion) **and** thulr's gate reports no regression; `1` otherwise.
+*Hard* cases (`hard: true`) are **score-tracked, not pass-gated** — a partial score
+is expected and does not fail the run; only a regression in it (caught by the
+score-guardrail below) does. Each case is bounded by the flow tool's own
+`maxCostUsd`, so a runaway delegation is capped.
 
 ## How the thulr gate works
 
@@ -60,9 +63,12 @@ The pipeline, per `npm run eval`:
 3. `thulr calibrate` prints **TPR/TNR** — how well the judge's verdicts track the
    deterministic labels. (An uncalibrated judge can silently certify regressions;
    this is the calibration the old single-judge setup lacked.)
-4. `thulr gate` compares the EvalRun to `evals/thulr-baseline.json` on the
-   `criterion` guardrail with a 0.05 noise band, and **fails the run on a
-   regression** (it exits `10`). The first run has no baseline — seed one with
+4. `thulr gate` compares the EvalRun to `evals/thulr-baseline.json` with a 0.05
+   noise band and **fails the run on a regression** (it exits `10`). It guards two
+   axes on the `criterion` dimension: `--guardrail` (a **pass-rate** drop) and
+   `--score-guardrail` (a **mean-score** drop that holds pass-rate — thulr's
+   "Gap 1", catching quality drift like `1.00 → 0.85` that every verdict still
+   passing would hide). The first run has no baseline — seed one with
    `--write-baseline`.
 5. `--write-baseline` promotes a passing run to `evals/thulr-baseline.json`.
 
@@ -81,9 +87,10 @@ is a separate, diagnostics-only path.
 
 ## Provider & auth (local dev)
 
-With no `--model`, the harness uses **your pi default** — `defaultProvider/defaultModel`
-from `~/.pi/agent/settings.json` (e.g. `openai-codex/gpt-5.5`) — so it runs on
-whatever you already use pi with. Auth is pi's own (thulr also judges via `pi`):
+With no `--model`, the harness uses its **standardized default** — `DEFAULT_EVAL_MODEL`
+(`openai-codex/codex`; override with `--model=<provider/id>` or `PI_FLOWS_EVAL_MODEL`)
+— so the baseline is reproducible and the flows-vs-plain A/B compares like-for-like.
+Auth is pi's own (thulr also judges via `pi`):
 
 - **Subscription / OAuth** — `pi`, then `/login` (stored in `~/.pi/agent/auth.json`). Nothing else to do.
 - **API key** — drop it in a gitignored `.env` (see `.env.example`); `npm run eval` loads it:
@@ -180,3 +187,24 @@ gates behaviour *and* becomes thulr's calibration label. Write `criterion` as a
 single literal statement of what a correct answer must say; thulr grades the answer
 text against it on a different vendor than the subject. Always provide a `mock` so
 `--dry-run` can exercise the runner — and the artifact emission — offline.
+
+### Hard cases (`hard: true`)
+
+For **score-tracked** cases — ones that intentionally land mid-scale so a better
+prompt/config has room to climb (headroom for thulr's optimizer) — add `hard: true`
+and a **multi-part `criterion`** a single pass usually only partly satisfies (e.g.
+"names all FOUR defects"). Make `score` return a fraction (`hits / total`). Hard
+cases feed the EvalRun and the `--score-guardrail`, but **don't have to pass** for
+the run to be green — only a regression in their mean score blocks. Keep the `mock`
+a *complete* answer so `--dry-run` stays green. See `review-finds-all-webhook-defects`
+(4 defects) and `review-finds-session-cache-defects` (3 defects) — multi-defect code
+reviews where a typical pass misses the subtler ones (signature verification, TTL
+validation), so a sharper prompt has room to climb.
+
+A *frontier* subject model exhausts these small fixtures (it finds every defect), so
+the score pins at 1.0 with no headroom. Rather than pin a different model per case,
+the whole suite runs on one cheaper/faster model — `DEFAULT_EVAL_MODEL`
+(`openai-codex/codex`; override with `--model` or `PI_FLOWS_EVAL_MODEL`). A cheaper
+model leaves real headroom on the harder cases *and* is where the flows-vs-plain A/B
+(`npm run eval:compare`) shows the extension's lift — plain pi on a frontier model
+already aces everything, which hides it.

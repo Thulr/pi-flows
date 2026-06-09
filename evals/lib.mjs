@@ -10,6 +10,12 @@ import { judge } from "./judge.mjs";
 export const answerText = (r) => r?.content?.[0]?.text ?? "";
 export const sumCost = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.cost ?? 0), 0);
 
+// Default subject model for the eval suite. The harness standardizes on one
+// cheaper/faster model (NOT the pi default) so the baseline is reproducible and the
+// flows-vs-plain A/B shows the extension's lift — a frontier model aces plain pi and
+// hides it. Override per-run with --model=<provider/id> or PI_FLOWS_EVAL_MODEL.
+export const DEFAULT_EVAL_MODEL = process.env.PI_FLOWS_EVAL_MODEL ?? "openai-codex/codex";
+
 // pi's configured default, e.g. "openai-codex/gpt-5.5" — used when no --model is given.
 export function piDefaultModel() {
 	try {

@@ -28,7 +28,7 @@ import { join, resolve } from "node:path";
 import { runPlainPi } from "./baseline-pi.mjs";
 import { CASES } from "./cases.mjs";
 import { judgePairwise } from "./judge.mjs";
-import { answerText, caseCwd, flowTool, piDefaultModel, scoreArm } from "./lib.mjs";
+import { answerText, caseCwd, flowTool, scoreArm, DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 
 const dotenvPath = join(process.cwd(), ".env");
@@ -43,8 +43,7 @@ const flag = (name, fallback) => {
 };
 
 const cliModel = flag("model", null);
-const piDefault = piDefaultModel();
-const model = cliModel ?? piDefault ?? "agent";
+const model = cliModel ?? DEFAULT_EVAL_MODEL;
 const useAgentModels = ["agent", "default", ""].includes(model);
 const subjectModel = useAgentModels ? undefined : model;
 const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-sonnet-4-6";

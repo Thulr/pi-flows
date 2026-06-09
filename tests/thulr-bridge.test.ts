@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traceSpansForCase, buildLabels, gateBlocks } from "../evals/thulr.mjs";
+import { traceSpansForCase, buildLabels, gateBlocks, gateArgs } from "../evals/thulr.mjs";
 
 // The trace contract was established empirically (see evals/README.md): thulr's
 // judge grades the LAST `AGENT` span's `output.value` per `flow.trace_label`,
@@ -49,4 +49,25 @@ test("buildLabels carries per-case objectiveScore and the subject model", () => 
 test("gateBlocks is true only for the thulr FAIL exit code (10)", () => {
 	assert.equal(gateBlocks(10), true);
 	assert.equal(gateBlocks(0), false);
+});
+
+// The gate must guard BOTH axes: a pass-rate regression (--guardrail) and a
+// mean-SCORE regression that holds pass-rate (--score-guardrail, thulr's "Gap 1").
+// A quality drift from 1.00 -> 0.85 that keeps every verdict PASS still blocks.
+test("gateArgs passes both the pass-rate and mean-score guardrails", () => {
+	const args = gateArgs({
+		baseline: "base.json",
+		candidate: "cand.json",
+		guardrails: ["criterion"],
+		scoreGuardrails: ["criterion"],
+		noiseBand: 0.05,
+	});
+
+	assert.deepEqual(args, [
+		"gate",
+		"--guardrail", "criterion",
+		"--score-guardrail", "criterion",
+		"--noise-band", "0.05",
+		"base.json", "cand.json",
+	]);
 });

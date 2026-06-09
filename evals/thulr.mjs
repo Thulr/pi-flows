@@ -87,6 +87,25 @@ export function gateBlocks(exitCode) {
 	return exitCode === 10;
 }
 
+/**
+ * Build the `thulr-evaluator gate` argv. Two guard axes:
+ *   - guardrails (`--guardrail`): a dimension's PASS-RATE regressing fails the gate.
+ *   - scoreGuardrails (`--score-guardrail`): a dimension's mean SCORE regressing
+ *     fails the gate even if pass-rate holds (thulr's "Gap 1") — catches quality
+ *     drift (1.00 -> 0.85) that every verdict still passing would otherwise hide.
+ *
+ * @param {{baseline: string, candidate: string, guardrails?: string[], scoreGuardrails?: string[], noiseBand?: number}} input
+ * @returns {string[]}
+ */
+export function gateArgs({ baseline, candidate, guardrails = [], scoreGuardrails = [], noiseBand }) {
+	const args = ["gate"];
+	for (const dim of guardrails) args.push("--guardrail", dim);
+	for (const dim of scoreGuardrails) args.push("--score-guardrail", dim);
+	if (noiseBand !== undefined) args.push("--noise-band", String(noiseBand));
+	args.push(baseline, candidate);
+	return args;
+}
+
 // ---------------------------------------------------------------------------
 // I/O wrappers (exercised by `npm run eval -- --dry-run` and the real run)
 // ---------------------------------------------------------------------------
@@ -154,12 +173,8 @@ export function calibrate(evalRun) {
  * Gate a candidate EvalRun against a baseline EvalRun. Free. Returns the exit
  * code (10 = FAIL), whether it blocks, and the human-readable report.
  */
-export function gate({ baseline, candidate, guardrails = [], noiseBand }) {
-	const args = ["gate"];
-	for (const dim of guardrails) args.push("--guardrail", dim);
-	if (noiseBand !== undefined) args.push("--noise-band", String(noiseBand));
-	args.push(baseline, candidate);
-	const { code, stdout } = run(args, { allowExit: [0, 10] });
+export function gate({ baseline, candidate, guardrails = [], scoreGuardrails = [], noiseBand }) {
+	const { code, stdout } = run(gateArgs({ baseline, candidate, guardrails, scoreGuardrails, noiseBand }), { allowExit: [0, 10] });
 	return { exitCode: code, blocks: gateBlocks(code), report: stdout };
 }
 

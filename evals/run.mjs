@@ -38,7 +38,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { CASES } from "./cases.mjs";
-import { caseCwd, flowTool, piDefaultModel, scoreObjective } from "./lib.mjs";
+import { caseCwd, flowTool, scoreObjective, DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { exportCases } from "./export-cases.mjs";
 import * as thulr from "./thulr.mjs";
@@ -57,9 +57,8 @@ const flag = (name, fallback) => {
 const has = (name) => args.includes(`--${name}`) || args.some((a) => a.startsWith(`--${name}=`));
 
 const cliModel = flag("model", null);
-const piDefault = piDefaultModel();
-const model = cliModel ?? piDefault ?? "agent";
-const modelSource = cliModel ? "--model" : piDefault ? "pi default" : "agent frontmatter";
+const model = cliModel ?? DEFAULT_EVAL_MODEL;
+const modelSource = cliModel ? "--model" : process.env.PI_FLOWS_EVAL_MODEL ? "PI_FLOWS_EVAL_MODEL" : "eval default";
 // `--model=agent` (or empty) keeps each agent's own frontmatter model.
 const useAgentModels = ["agent", "default", ""].includes(model);
 const capUsd = Number(flag("cap", "0.50"));
@@ -147,13 +146,17 @@ async function main() {
 			labelRows.push({ name: testCase.name, objectiveScore: objective.score ?? 0, pass: !!objective.pass, score: objective.score ?? 0, notes: objective.notes });
 		}
 
-		const status = reachedModel ? "⚠" : objective.pass ? "✓" : "✗";
+		// Hard cases are score-tracked (◐), not pass/fail — a partial objective score is expected.
+		const status = reachedModel ? "⚠" : testCase.hard ? "◐" : objective.pass ? "✓" : "✗";
 		const seconds = ((endedAt - startedAt) / 1000).toFixed(1);
 		console.log(`${status} ${testCase.name.padEnd(34)} obj ${(objective.score ?? 0).toFixed(2)}  $${cost.toFixed(4)}  ${seconds}s`);
 		console.log(`    ↳ ${reachedModel ?? objective.notes ?? ""}`);
-		summaries.push({ name: testCase.name, objective, reachedModel, cost, durationMs: endedAt - startedAt });
+		summaries.push({ name: testCase.name, hard: !!testCase.hard, objective, reachedModel, cost, durationMs: endedAt - startedAt });
 	}
-	console.log(`\n${summaries.filter((s) => !s.reachedModel && s.objective.pass).length}/${selected.length} objective checks passed  ·  total $${totalCost.toFixed(4)}${dryRun ? "  (dry-run, no model)" : ""}`);
+	const behaviourCases = summaries.filter((s) => !s.hard);
+	const hardCount = summaries.length - behaviourCases.length;
+	const objPassed = behaviourCases.filter((s) => !s.reachedModel && s.objective.pass).length;
+	console.log(`\n${objPassed}/${behaviourCases.length} behaviour checks passed${hardCount ? `  ·  ${hardCount} hard case${hardCount === 1 ? "" : "s"} score-tracked` : ""}  ·  total $${totalCost.toFixed(4)}${dryRun ? "  (dry-run, no model)" : ""}`);
 
 	// --- Phase 2: thulr judge -> calibrate -> gate -> baseline (skipped in dry-run) ---
 	const verdicts = new Map();
@@ -173,7 +176,8 @@ async function main() {
 		for (const s of summaries) {
 			if (s.reachedModel) continue;
 			const v = verdicts.get(s.name) ?? {};
-			console.log(`${v.verdict === false ? "✗" : "✓"} ${s.name.padEnd(34)} criterion ${(v.score ?? 0).toFixed(2)}`);
+			const glyph = s.hard ? "◐" : v.verdict === false ? "✗" : "✓";
+			console.log(`${glyph} ${s.name.padEnd(34)} criterion ${(v.score ?? 0).toFixed(2)}`);
 		}
 
 		// Calibration: how well the judge's verdicts track the deterministic labels.
@@ -181,7 +185,7 @@ async function main() {
 		process.stdout.write(thulr.calibrate(CANDIDATE));
 
 		if (gateBaseline) {
-			gateResult = thulr.gate({ baseline: gateBaseline, candidate: CANDIDATE, guardrails: ["criterion"], noiseBand: 0.05 });
+			gateResult = thulr.gate({ baseline: gateBaseline, candidate: CANDIDATE, guardrails: ["criterion"], scoreGuardrails: ["criterion"], noiseBand: 0.05 });
 			console.log(`\ngate vs ${rel(gateBaseline)}:`);
 			process.stdout.write(gateResult.report);
 		} else {
@@ -198,15 +202,16 @@ async function main() {
 		}
 	}
 
-	// A case passes only when its behaviour check AND thulr's criterion agree (the
-	// two-axis contract). In dry-run there is no judge, so the objective axis stands.
-	const passed = summaries.filter((s) => !s.reachedModel && s.objective.pass && (dryRun || verdicts.get(s.name)?.verdict !== false)).length;
-	console.log(`\n${passed}/${selected.length} passed${gateResult ? `  ·  gate ${gateResult.blocks ? "FAIL" : "ok"}` : ""}`);
+	// A behaviour case passes only when its objective check AND thulr's criterion
+	// agree (the two-axis contract). Hard cases are score-tracked, not pass-gated —
+	// only a regression in their score (caught by --score-guardrail) blocks the run.
+	const passed = behaviourCases.filter((s) => !s.reachedModel && s.objective.pass && (dryRun || verdicts.get(s.name)?.verdict !== false)).length;
+	console.log(`\n${passed}/${behaviourCases.length} behaviour cases passed${hardCount ? `  ·  ${hardCount} hard score-tracked` : ""}${gateResult ? `  ·  gate ${gateResult.blocks ? "FAIL" : "ok"}` : ""}`);
 
 	if (sawInfraError) {
 		console.log("\n⚠ Some cases could not reach the model (auth, credits, network, or timeout) — that's an environment issue, not an eval failure.\n  Fixes: add credits / `pi` /login, set a provider key in .env (see .env.example), or pass --model=<provider/id> for a provider you have quota on.");
 	}
-	process.exit(passed === selected.length && !gateResult?.blocks ? 0 : 1);
+	process.exit(passed === behaviourCases.length && !gateResult?.blocks ? 0 : 1);
 }
 
 main().catch((error) => {

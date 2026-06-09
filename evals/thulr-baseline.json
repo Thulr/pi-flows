@@ -1,10 +1,10 @@
 {
-  "id": "run-7-unix1780892078541330000",
-  "created_at": "unix:1780892078541330000",
+  "id": "run-9-unix1780974069825667000",
+  "created_at": "unix:1780974069825667000",
   "source": {
     "tool": "thulr-evaluator",
     "trace_digest": "",
-    "n_cases": 7
+    "n_cases": 9
   },
   "repro": {
     "subject_model": "",
@@ -14,16 +14,17 @@
     "evaluator_set": [
       "criterion"
     ],
-    "thulr_version": "0.1.0",
-    "seed": null
+    "thulr_version": "0.1.1",
+    "seed": null,
+    "criteria_digest": "485d700f981e8bca"
   },
   "summary": [
     {
       "dimension": "criterion",
-      "n": 7,
-      "pass_count": 7,
-      "score_mean": 1.0,
-      "score_stddev": 0.0
+      "n": 9,
+      "pass_count": 9,
+      "score_mean": 0.99444443,
+      "score_stddev": 0.016666668
     }
   ],
   "cases": [
@@ -33,7 +34,7 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 0.95
         }
       }
     },
@@ -49,6 +50,26 @@
     },
     {
       "case_id": "return-contract-preserves-evidence",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "review-finds-all-webhook-defects",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "review-finds-session-cache-defects",
       "deterministic_label": true,
       "dims": {
         "criterion": {

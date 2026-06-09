@@ -126,4 +126,45 @@ export const CASES = [
 		},
 		mock: { content: [{ type: "text", text: "Because the second model treats the first model's output as part of its instructions, an attacker who controls that output can smuggle commands the second model then obeys." }], details: { mode: "single", results: [{ agent: "analyst" }] } },
 	},
+	// --- Harder cases (hard:true) -------------------------------------------------
+	// Multi-part criteria that a single pass typically only partially satisfies, so
+	// thulr's judge scores them mid-scale (not 1.0) and a better prompt/config can
+	// climb — i.e. real headroom for the optimizer. They are score-TRACKED, not
+	// pass-gated: they feed the EvalRun + the --score-guardrail, but run.mjs does not
+	// require them to pass for exit 0 (only a regression in their score blocks).
+	{
+		name: "review-finds-all-webhook-defects",
+		hard: true,
+		params: { agent: "recon", task: "Review billing-webhook.js in this repo for ALL production-correctness defects. Name each distinct defect you find and why it matters." },
+		cwd: fixturesRepo,
+		baselinePrompt: "Review billing-webhook.js for ALL production-correctness defects, not just the most obvious one. Name each distinct defect and why it matters.",
+		criterion: "The review identifies ALL FOUR distinct defects: (1) recordPayment references `ledger`, which is never declared/initialized, so every call throws a ReferenceError (500); (2) no idempotency/deduplication, so a duplicate or retried delivery double-counts the payment; (3) no verification of the webhook's signature/authenticity, so a forged request is accepted as a real payment; (4) no input validation or error handling, so a malformed `req.body.data.object` throws unhandled and 500s. Fewer than four is incomplete.",
+		score(r) {
+			const body = text(r);
+			const ledger = /ledger/i.test(body) && /(never (declared|defined|initiali)|undeclared|undefined|referenceerror|not (declared|defined|initiali))/i.test(body);
+			const idempotency = /idempoten|dedup|duplicat|replay|retr(y|ied|ies)|deliver(ed|y|ies)[^.]{0,24}(twice|again|multiple|more than once)|double[- ]?(count|charg|bill|pay)/i.test(body);
+			const signature = /signatur|verif|authentic|hmac|webhook secret|signing secret|spoof|forge|unauthenticated|anyone (can|could) (post|call|send|forge)|no auth/i.test(body);
+			const validation = /(no|missing|lack|without|absent)[^.]{0,24}(validat|saniti[sz]|error handl|guard|null check|type check)|req\.body[^.]{0,30}(undefined|missing|malformed|unchecked|unvalidated)|malformed (payload|body|request|invoice)|unhandled|try.?\/?catch|throws? if[^.]{0,24}(body|payload|missing|malformed)/i.test(body);
+			const found = [ledger && "undeclared-ledger", idempotency && "no-idempotency", signature && "no-signature-check", validation && "no-input-validation"].filter(Boolean);
+			return { pass: found.length === 4, score: found.length / 4, notes: `defects: ${found.join(", ") || "none"} (${found.length}/4)` };
+		},
+		mock: { content: [{ type: "text", text: "Four defects: (1) recordPayment references `ledger`, never declared, so every call throws a ReferenceError and 500s; (2) no idempotency/dedup, so a duplicate webhook delivery double-counts the payment; (3) no signature/authenticity verification, so a forged request is accepted as a real payment; (4) no input validation or error handling, so a malformed req.body.data.object throws unhandled and 500s." }], details: { mode: "single", results: [{ agent: "recon" }] } },
+	},
+	{
+		name: "review-finds-session-cache-defects",
+		hard: true,
+		params: { agent: "recon", task: "Review session-cache.js in this repo for ALL correctness and reliability defects. Name each distinct defect you find and why it matters." },
+		cwd: fixturesRepo,
+		baselinePrompt: "Review session-cache.js for ALL correctness and reliability defects, not just the most obvious one. Name each distinct defect and why it matters.",
+		criterion: "The review identifies ALL THREE distinct defects: (1) getSession reads `entry.expiresAt` without checking the id exists, so an unknown/missing id dereferences `undefined` and throws a TypeError; (2) expired entries are never evicted (getSession returns null but leaves them), so the store grows unbounded — a memory leak; (3) ttlSeconds is never validated, so a missing, NaN, or negative TTL produces a broken/garbage expiry. Fewer than three is incomplete.",
+		score(r) {
+			const body = text(r);
+			const existence = /(entry|session|id)[^.]{0,40}(undefined|missing|absent|does(n'?t| not) exist|not (found|present|exist)|no[^.]{0,10}(existence|null|presence) check)|throws?[^.]{0,30}(unknown|missing|absent|undefined|no .{0,8}(id|session|entry))|typeerror|crash[^.]{0,20}(missing|unknown|absent|undefined)/i.test(body);
+			const leak = /memory leak|never (evict|delet|remov|clean|free|purg)|unbounded|grow[^.]{0,16}(forever|unbounded|indefinit|without bound)|not[^.]{0,8}(evict|delet|remov|clean|purg)|\bleak/i.test(body);
+			const ttl = /ttlseconds|\bttl\b/i.test(body) && /validat|negativ|\bnan\b|invalid|unchecked|non-numeric|immortal|never expir/i.test(body);
+			const found = [existence && "no-existence-check", leak && "memory-leak", ttl && "no-ttl-validation"].filter(Boolean);
+			return { pass: found.length === 3, score: found.length / 3, notes: `defects: ${found.join(", ") || "none"} (${found.length}/3)` };
+		},
+		mock: { content: [{ type: "text", text: "Three defects: (1) getSession reads `entry.expiresAt` without checking the id exists, so an unknown id dereferences undefined and throws a TypeError; (2) expired entries are never evicted, so the store grows unbounded — a memory leak; (3) ttlSeconds is never validated, so a missing, NaN, or negative TTL produces a broken expiry." }], details: { mode: "single", results: [{ agent: "recon" }] } },
+	},
 ];
