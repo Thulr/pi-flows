@@ -62,6 +62,10 @@ const modelSource = cliModel ? "--model" : process.env.PI_FLOWS_EVAL_MODEL ? "PI
 // `--model=agent` (or empty) keeps each agent's own frontmatter model.
 const useAgentModels = ["agent", "default", ""].includes(model);
 const capUsd = Number(flag("cap", "0.50"));
+// Per-agent timeout. Default 120s for remote models; crank it up for slow local
+// models (llama.cpp etc.) that legitimately take minutes per turn — they're free,
+// so a long ceiling beats spurious timeouts. Override: --timeout=600000 (ms) or PI_FLOWS_TIMEOUT_MS.
+const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "120000"));
 const dryRun = args.includes("--dry-run");
 const filter = flag("filter", "");
 // Cross-model judge: a different vendor than the subject under test breaks self-grading.
@@ -108,7 +112,7 @@ async function main() {
 	}
 
 	const flow = flowTool();
-	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${dryRun ? "(skipped)" : judgeModel}  ·  cap $${capUsd.toFixed(2)}/case${dryRun ? "  ·  DRY RUN" : ""}\n`);
+	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${dryRun ? "(skipped)" : judgeModel}  ·  cap $${capUsd.toFixed(2)}/case  ·  timeout ${Math.round(timeoutMs / 1000)}s/agent${dryRun ? "  ·  DRY RUN" : ""}\n`);
 
 	// --- Phase 1: run every flow, score the objective axis, emit the thulr trace + labels ---
 	thulr.startTrace(TRACE);
@@ -126,7 +130,7 @@ async function main() {
 		if (dryRun) {
 			result = testCase.mock;
 		} else {
-			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? 120000 };
+			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? timeoutMs };
 			try {
 				result = await flow.execute(`eval:${testCase.name}`, params, new AbortController().signal, undefined, flowCtx);
 			} catch (error) {
