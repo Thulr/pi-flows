@@ -2,7 +2,7 @@
   "name": "pi-flows",
   "version": "0.1.0",
   "private": false,
-  "description": "First-party pi extension for delegating work to local flow agents.",
+  "description": "Delegate pi work to isolated, budgeted sub-agents with verification loops and tracing.",
   "keywords": [
     "pi-package",
     "pi-extension",

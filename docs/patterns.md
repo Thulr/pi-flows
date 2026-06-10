@@ -15,6 +15,9 @@ The patterns come from a companion agent-design knowledge base (the **ai-wiki**)
 | `vote` | Parallelization (voting) / self-consistency | Anthropic pattern 3; vendor-diverse voting |
 | `route` | Routing | Anthropic pattern 2 |
 | `orchestrate` | Orchestrator-Workers + synthesis | Anthropic pattern 8; wiki `sub-agent-pattern`; Deep Research |
+| `graph` | Static DAG / workflow graph | Google ADK graph workflows |
+| `loop` | Generic bounded loop workflow | Google ADK loop agents |
+| `search` | Tree/search over candidate paths | Tree of Thoughts; bounded beam search |
 
 ## Choosing a mode (least machinery that works)
 
@@ -26,6 +29,9 @@ The wiki's central discipline: add the **minimum** coordination that solves the 
 4. A high-stakes answer where non-deterministic errors matter → **`vote`** (use different models to break correlated blind spots).
 5. A heterogeneous request that should go to one specialist → **`route`**.
 6. One large task that splits into independent parts needing a merged answer → **`orchestrate`**.
+7. Explicit dependencies or conditional handoffs across several steps → **`graph`**.
+8. Repeat-until-done work that is not just generator/evaluator → **`loop`**.
+9. Several plausible plans/artifacts should be generated, scored, and refined → **`search`**.
 
 Reach for the first mode that fits. If `single` works, do not `orchestrate`.
 
@@ -35,6 +41,9 @@ Reach for the first mode that fits. If `single` works, do not `orchestrate`.
 - **`vote`** — independent voters suppress non-deterministic errors; *different models* additionally break correlated blind spots, and pi-flows **warns when every voter shares one model** (same-model voting mostly catches sampling noise); free-text answers are reconciled by an aggregator agent, since exact-match majority is meaningless for prose. (`effective-agent-patterns` §Parallelization)
 - **`route`** — the router sees each candidate's description, its choice is validated against the candidate set, and a `fallback` handles the wiki's "misclassification" failure mode; an ambiguous mention is never guessed. (`effective-agent-patterns` §Routing)
 - **`orchestrate`** — star topology, one-way dispatch, workers return compact summaries, fan-out is capped; the deep-research shape. An optional **`verify`** critic checks the merged answer against the goal in the same call, composing orchestrator-workers with evaluator-optimizer. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` turns `REVISE` into a structured gate failure, and `"revise"` feeds the verifier critique back into `debrief` for bounded synthesize→verify repair. (`sub-agent-pattern`, `generator-evaluator-harness`)
+- **`graph`** — explicit static DAG: node ids, dependencies, wave-by-wave execution, `{node.id}` handoffs, and optional synthesis. It stays bounded (16 nodes) and inherits the existing write-collision and budget guards.
+- **`loop`** — generic loop with a hard iteration cap. Without a judge, the body must emit `LOOP: DONE`; with a judge, `VERDICT: PASS` stops the loop. This covers ADK-style loop agents without opening unbounded recursion.
+- **`search`** — bounded beam search: generate candidates, score each with `SCORE: 0..100`, keep a beam, refine for capped rounds, and synthesize the winner.
 
 ## Bundled agents → roles
 
@@ -75,6 +84,8 @@ What the harness enforces regardless of what an agent does — the bounded-execu
 - **Native read-only agents.** `recon` and `analyst` ship without a shell, so their read-only boundary is enforced by the toolset, not prompt instructions (`native-enforcement-vs-prompt-enforcement`).
 - **Deterministic verification available.** `evaluate.checkCommand` makes verification a harness-run command (level-1 code assertions), not a property the critic is merely asked to check.
 - **Trace export + reports.** `traceFile` / `PI_FLOWS_TRACE_FILE` emit OpenInference-shaped JSONL spans per child; `/flows report` and `npm run trace:report` summarize success rate, cost, TPSO, budget hits, and routing/voting warnings by mode and trace label (`llm-observability`).
+- **Human checkpoints.** `checkpoint.before:"spawn"` or `"finalize"` asks for explicit UI approval and fails closed in headless runs.
+- **Opt-in Reflexion lessons.** `reflexion.enabled:true` reads/appends redacted local lessons in `.pi/flow-reflections.jsonl`; it is disabled by default.
 - **Star topology.** One-way dispatch with a compact return — no agent-to-agent chatter, so there is no coordination surface to runaway.
 
 Verification of a returned artifact is **not** automatic for most modes — that is what `evaluate` (with an optional `checkCommand` gate) and `orchestrate.verify` are for. Reach for them when a handoff must be checked rather than trusted.
@@ -84,7 +95,7 @@ Verification of a returned artifact is **not** automatic for most modes — that
 Honest gaps, with rationale:
 
 - **Mesh / peer-to-peer (pi-to-pi).** pi-flows is deliberately star-topology only — one-way dispatch with a compact summary return, no agent-to-agent chatter. The wiki rates mesh topologies experimental and higher-overhead, and the star/sub-agent shape is the one it rates most reliable. Peer-to-peer is a separate tool's job.
-- **Reflexion (episodic memory across trials).** `evaluate` now revises in place *within* a single run (the generator is re-shown its prior artifact plus critique), but it still does not carry a natural-language "lessons learned" buffer across *separate* runs. A future mode could add this; the wiki notes the open problem is summarizing/consolidating old episodes so they don't bloat context.
+- **Automatic Reflexion memory.** pi-flows has opt-in local lessons (`reflexion.enabled:true`) but does not persist lessons automatically. The open problem is still summarizing/consolidating old episodes so they do not bloat context or smuggle stale guidance into future runs.
 - **Programmatic majority voting.** `vote` returns free-text answers, so consensus is decided by an aggregator agent rather than exact-match majority (the runtime does warn when voters share one model). A discrete-answer weighted/majority tally for classification-style tasks could be added later.
 - **Structured-output decoding for control tokens.** Verdict/route/subtask decisions are parsed from the child's free text with marker-first, fail-safe parsers. Constrained decoding (`structured-generation`) would make them airtight, but that needs host-side support in `pi`; the fail-safe fallbacks (unparseable verdict → REVISE, bad route → fallback) are the mitigation until then.
 

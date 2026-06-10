@@ -27,6 +27,12 @@ export const DEFAULT_CONCURRENCY = 4;
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 export const DEFAULT_EVALUATE_ITERATIONS = 3;
 export const MAX_EVALUATE_ITERATIONS = 8;
+const MAX_GRAPH_NODES = 16;
+const DEFAULT_LOOP_ITERATIONS = 3;
+const MAX_LOOP_ITERATIONS = 8;
+const DEFAULT_SEARCH_CANDIDATES = 3;
+const DEFAULT_SEARCH_BEAM_WIDTH = 1;
+const DEFAULT_SEARCH_ROUNDS = 2;
 /** Max nesting of flow-within-flow delegation. A flow call at or beyond this depth is refused. */
 export const MAX_FLOW_DEPTH = 2;
 export const MODEL_VISIBLE_OUTPUT_CAP = 50 * 1024;
@@ -38,7 +44,7 @@ const CHECK_OUTPUT_CAP = 16 * 1024;
 
 type AgentSource = "package" | "user" | "project";
 type AgentScope = "user" | "project" | "all";
-type FlowMode = "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "list" | "config";
+type FlowMode = "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search" | "list" | "config";
 type DiscoveryIssueSeverity = "warning" | "error";
 type VerifyPolicy = "note" | "fail" | "revise";
 
@@ -63,6 +69,12 @@ export const FLOW_ERROR_CODES = [
 	"BUDGET_EXCEEDED",
 	"CHECK_COMMAND_FAILED",
 	"ORCHESTRATE_VERIFY_FAILED",
+	"GRAPH_INVALID",
+	"GRAPH_CYCLE",
+	"LOOP_DID_NOT_CONVERGE",
+	"SEARCH_NO_CANDIDATES",
+	"CHECKPOINT_APPROVAL_REQUIRED",
+	"CHECKPOINT_APPROVAL_DENIED",
 	"SHARED_WRITE_CWD",
 	"PROJECT_AGENT_APPROVAL_REQUIRED",
 	"PROJECT_AGENT_APPROVAL_DENIED",
@@ -399,6 +411,55 @@ function appendReturnContract(task: string, contract: string | undefined, requir
 	}
 	if (sections.length === 0) return task;
 	return [task, "\n## Return contract", ...sections.map((section) => `- ${section}`)].join("\n");
+}
+
+function reflexionFile(defaultCwd: string, params: any): string | null {
+	const spec = params.reflexion;
+	if (!spec?.enabled) return null;
+	return path.resolve(defaultCwd, spec.file ?? ".pi/flow-reflections.jsonl");
+}
+
+function readReflexions(defaultCwd: string, params: any, policy: CapturePolicy): string {
+	const filePath = reflexionFile(defaultCwd, params);
+	if (!filePath) return "";
+	const maxEntries = Number.isFinite(params.reflexion?.maxEntries) ? Math.max(1, Math.min(20, Math.floor(params.reflexion.maxEntries))) : 5;
+	try {
+		const lines = fsSync.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean).slice(-maxEntries);
+		const entries = lines
+			.map((line) => {
+				try {
+					const parsed = JSON.parse(line);
+					return typeof parsed.lesson === "string" ? `- ${sanitizeText(parsed.lesson, policy, 2048)}` : null;
+				} catch {
+					return null;
+				}
+			})
+			.filter(Boolean);
+		if (entries.length === 0) return "";
+		return `\n## Relevant lessons from prior flow runs\n${entries.join("\n")}\n`;
+	} catch {
+		return "";
+	}
+}
+
+async function appendReflexion(defaultCwd: string, params: any, mode: FlowMode, lesson: string, policy: CapturePolicy): Promise<void> {
+	const filePath = reflexionFile(defaultCwd, params);
+	if (!filePath) return;
+	const sanitized = sanitizeText(capModelVisibleText(lesson), policy, 4096).trim();
+	if (!sanitized) return;
+	await fs.mkdir(path.dirname(filePath), { recursive: true }).catch(() => undefined);
+	await withFileMutationQueue(filePath, async () => {
+		await fs.appendFile(
+			filePath,
+			`${JSON.stringify({ createdAt: new Date().toISOString(), mode, traceLabel: params.traceLabel, lesson: sanitized })}\n`,
+			"utf8",
+		);
+	}).catch(() => undefined);
+}
+
+function withReflexion(defaultCwd: string, params: any, task: string, policy: CapturePolicy): string {
+	const reflexions = readReflexions(defaultCwd, params, policy);
+	return reflexions ? `${task}${reflexions}` : task;
 }
 
 function effectiveTools(discovery: FlowDiscovery, ref: { agent: string; tools?: string }): string[] | undefined | null {
@@ -1440,6 +1501,19 @@ function requestedAgentNames(params: any): Set<string> {
 		if (params.orchestrate.debrief?.agent) requested.add(params.orchestrate.debrief.agent);
 		if (params.orchestrate.verify?.agent) requested.add(params.orchestrate.verify.agent);
 	}
+	if (params.graph) {
+		for (const node of params.graph.nodes ?? []) if (node?.agent) requested.add(node.agent);
+		if (params.graph.debrief?.agent) requested.add(params.graph.debrief.agent);
+	}
+	if (params.loop) {
+		if (params.loop.body?.agent) requested.add(params.loop.body.agent);
+		if (params.loop.judge?.agent) requested.add(params.loop.judge.agent);
+	}
+	if (params.search) {
+		if (params.search.generator?.agent) requested.add(params.search.generator.agent);
+		if (params.search.scorer?.agent) requested.add(params.search.scorer.agent);
+		if (params.search.debrief?.agent) requested.add(params.search.debrief.agent);
+	}
 	return requested;
 }
 
@@ -1448,6 +1522,35 @@ function projectAgentsForRequest(discovery: FlowDiscovery, params: any): FlowAge
 	return Array.from(requested)
 		.map((name) => discovery.agents.find((agent) => agent.name === name))
 		.filter((agent): agent is FlowAgent => agent?.source === "project");
+}
+
+async function checkpointApproval(params: any, ctx: any, mode: FlowMode, when: "spawn" | "finalize", preview?: string): Promise<FlowError | null> {
+	const checkpoint = params.checkpoint;
+	if (!checkpoint) return null;
+	const target = checkpoint.before ?? "spawn";
+	if (target !== when) return null;
+	const message = checkpoint.message ?? (when === "spawn" ? `Run flow mode "${mode}" now?` : `Return the final result from flow mode "${mode}"?`);
+	if (!ctx.hasUI) {
+		return flowError(
+			"CHECKPOINT_APPROVAL_REQUIRED",
+			`Human checkpoint required before ${when}.`,
+			`This flow requested checkpoint.before="${when}", but the current context has no UI to collect approval.`,
+			"Run in an interactive UI, remove the checkpoint, or choose a non-interactive gate such as checkCommand.",
+		);
+	}
+	const ok = await ctx.ui.confirm(
+		when === "spawn" ? "Approve flow run?" : "Approve final flow result?",
+		preview ? `${message}\n\n${sanitizeText(preview, { recordContent: true, redactSecrets: true }, 2048)}` : message,
+	);
+	if (!ok) {
+		return flowError(
+			"CHECKPOINT_APPROVAL_DENIED",
+			`Human checkpoint denied before ${when}.`,
+			"The interactive approval prompt was declined.",
+			"Review the flow request/result and retry if it should proceed.",
+		);
+	}
+	return null;
 }
 
 function toolErrorDetails(discovery: FlowDiscovery, mode: FlowMode, agentScope: AgentScope, error: FlowError): FlowDetails {
@@ -1529,7 +1632,7 @@ function flowsHelpText(): string {
 // New orchestration patterns are added by writing a handler + a detectRunMode
 // discriminator + schema fields, without editing the dispatch core (OCP).
 
-type RunMode = Extract<FlowMode, "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate">;
+type RunMode = Extract<FlowMode, "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search">;
 
 interface ModeDeps {
 	params: any;
@@ -1554,7 +1657,10 @@ function detectRunMode(params: any): { mode: RunMode } | { error: FlowError } {
 	const hasVote = Boolean(params.vote);
 	const hasRoute = Boolean(params.route);
 	const hasOrchestrate = Boolean(params.orchestrate);
-	const hasObjectMode = hasChain || hasTasks || hasEvaluate || hasVote || hasRoute || hasOrchestrate;
+	const hasGraph = Boolean(params.graph);
+	const hasLoop = Boolean(params.loop);
+	const hasSearch = Boolean(params.search);
+	const hasObjectMode = hasChain || hasTasks || hasEvaluate || hasVote || hasRoute || hasOrchestrate || hasGraph || hasLoop || hasSearch;
 	// Single is the fallback shape (agent + task) only when no richer mode object is present.
 	const hasSingle = Boolean(params.agent && params.task && !hasObjectMode);
 
@@ -1566,6 +1672,9 @@ function detectRunMode(params: any): { mode: RunMode } | { error: FlowError } {
 		[hasVote, "vote"],
 		[hasRoute, "route"],
 		[hasOrchestrate, "orchestrate"],
+		[hasGraph, "graph"],
+		[hasLoop, "loop"],
+		[hasSearch, "search"],
 	];
 	const active = signals.filter(([on]) => on).map(([, mode]) => mode);
 	if (active.length !== 1) {
@@ -1573,7 +1682,7 @@ function detectRunMode(params: any): { mode: RunMode } | { error: FlowError } {
 			error: flowError(
 				"INVALID_MODE",
 				"Invalid flow parameters.",
-				"Exactly one mode is required: list:true, showConfig:true, agent+task, tasks[], chain[], evaluate{}, vote{}, route{}, or orchestrate{}.",
+				"Exactly one mode is required: list:true, showConfig:true, agent+task, tasks[], chain[], evaluate{}, vote{}, route{}, orchestrate{}, graph{}, loop{}, or search{}.",
 				"Choose one mode and remove conflicting keys. Run showConfig:true to inspect defaults before execution.",
 			),
 		};
@@ -1621,9 +1730,30 @@ function parseVerdict(text: string): "pass" | "revise" {
 	return "revise";
 }
 
+function parseLoopStatus(text: string): "done" | "continue" {
+	const markerMatch = text.match(/LOOP\s*[:=]\s*([A-Za-z]+)/i);
+	if (markerMatch) return /^(done|pass|stop|complete|completed)$/i.test(markerMatch[1]) ? "done" : "continue";
+	const json = extractLastJsonBlock(text);
+	if (json && typeof json.loop === "string") return /^(done|pass|stop|complete|completed)$/i.test(json.loop) ? "done" : "continue";
+	if (json && typeof json.done === "boolean") return json.done ? "done" : "continue";
+	return "continue";
+}
+
+function parseScore(text: string): number | null {
+	const markerMatch = text.match(/SCORE\s*[:=]\s*(-?\d+(?:\.\d+)?)/i);
+	const raw = markerMatch ? Number(markerMatch[1]) : Number(extractLastJsonBlock(text)?.score);
+	if (!Number.isFinite(raw)) return null;
+	return Math.max(0, Math.min(100, raw));
+}
+
 function clampIterations(value: number | undefined): number {
 	if (value === undefined || !Number.isFinite(value)) return DEFAULT_EVALUATE_ITERATIONS;
 	return Math.max(1, Math.min(MAX_EVALUATE_ITERATIONS, Math.floor(value)));
+}
+
+function clampLoopIterations(value: number | undefined): number {
+	if (value === undefined || !Number.isFinite(value)) return DEFAULT_LOOP_ITERATIONS;
+	return Math.max(1, Math.min(MAX_LOOP_ITERATIONS, Math.floor(value)));
 }
 
 /** Current flow nesting depth from PI_FLOWS_DEPTH, clamped to a non-negative integer so hostile or garbage env values cannot disable the depth guard. */
@@ -1886,7 +2016,7 @@ async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		);
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "evaluate", agentScope, error) };
 	}
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
 
 	const generatorRef: FlowAgentRefInput = spec.operator ?? { agent: "operator" };
 	// The critic may be a single agent or a panel (god-metric → decomposed evaluators:
@@ -2072,6 +2202,7 @@ async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		: `Flow evaluate: did not pass within ${maxIterations} iteration${maxIterations === 1 ? "" : "s"}${gate} — returning the last attempt with the final critique.`;
 	const warningNote = handoffWarnings.size > 0 ? `\n\n> ⚠ Handoff injection check flagged: ${[...handoffWarnings].join(", ")}. Inter-agent content was treated as untrusted data.` : "";
 	const body = passed ? finalArtifact : `## Last attempt\n\n${finalArtifact}\n\n## Final critique\n\n${critique}`;
+	await appendReflexion(defaultCwd, params, "evaluate", passed ? `Evaluate passed for task "${goal}". Final artifact:\n${finalArtifact}` : `Evaluate did not pass for task "${goal}". Final critique:\n${critique}`, policy);
 	return {
 		content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${body}`) }],
 		details: makeDetails("evaluate")(results),
@@ -2116,7 +2247,7 @@ async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		);
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "vote", agentScope, error) };
 	}
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
 
 	// Build voters: explicit heterogeneous list (vendor-diverse) or one agent repeated `count` times.
 	let voters: FlowAgentRefInput[];
@@ -2556,10 +2687,292 @@ async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				: ` Verification not completed by ${verifyRef.agent}.`
 		: "";
 	const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}.${verificationSummary}`;
+	await appendReflexion(defaultCwd, params, "orchestrate", `Orchestrate completed for task "${goal}". Verification: ${verificationSummary || "not requested"}. Final answer:\n${resultText(synthesized)}${verifyNote}`, policy);
 	return {
 		content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`) }],
 		details: makeDetails("orchestrate")(results),
 	};
+}
+
+function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
+	let rendered = template.replace(/\{task\}/g, task ?? "");
+	for (const [id, output] of outputs) rendered = rendered.replace(new RegExp(`\\{node\\.${escapeRegExp(id)}\\}`, "g"), output);
+	return rendered;
+}
+
+async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
+	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
+	const spec = params.graph ?? {};
+	const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
+	if (nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) {
+		const error = flowError(
+			"GRAPH_INVALID",
+			"Graph mode needs 1..16 nodes.",
+			"graph.nodes must be a non-empty static DAG of agent nodes, bounded so graph mode cannot become unbounded orchestration.",
+			`Provide between 1 and ${MAX_GRAPH_NODES} graph nodes.`,
+		);
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+	}
+
+	const ids = new Set<string>();
+	for (const node of nodes) {
+		if (!node?.id || !node.agent || !node.task || ids.has(node.id)) {
+			const error = flowError("GRAPH_INVALID", "Graph nodes require unique id, agent, and task fields.", "A graph node was missing a required field or reused an id.", "Give every graph node a unique id plus agent and task.");
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+		}
+		ids.add(node.id);
+	}
+	for (const node of nodes) {
+		for (const dep of node.dependsOn ?? []) {
+			if (!ids.has(dep)) {
+				const error = flowError("GRAPH_INVALID", `Graph node "${node.id}" depends on unknown node "${dep}".`, "Every dependsOn entry must reference another graph node id.", "Fix dependsOn ids or add the missing node.");
+				return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+			}
+		}
+	}
+
+	const concurrencyError = validateConcurrency(params.concurrency);
+	if (concurrencyError) return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "graph", agentScope, concurrencyError) };
+	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const results: FlowRunResult[] = [];
+	const outputs = new Map<string, string>();
+	const completed = new Set<string>();
+	const remaining = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
+	const contractedTask = params.task ? withReflexion(defaultCwd, params, appendReturnContract(params.task, params.returnContract, params.requireEvidence), policy) : undefined;
+	let wave = 0;
+
+	while (remaining.size > 0) {
+		const ready = [...remaining.values()].filter((node) => (node.dependsOn ?? []).every((dep: string) => completed.has(dep)));
+		if (ready.length === 0) {
+			const error = flowError("GRAPH_CYCLE", "Graph has a cycle or unsatisfied dependency.", "No remaining graph node is runnable even though some nodes are incomplete.", "Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node.");
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+		}
+		wave += 1;
+		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, ready, params.allowSharedWriteCwd, concurrency);
+		if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "graph", agentScope, sharedWriteError) };
+
+		const live = ready.map((node) => makeEmptyRunResult(node.agent, node.task, policy));
+		const emit = () => {
+			const done = completed.size + live.filter((result) => result.exitCode !== -1).length;
+			onUpdate?.({ content: [{ type: "text", text: `Flow graph: ${done}/${nodes.length} nodes done` }], details: makeDetails("graph")([...results, ...live]) });
+		};
+		const baseStep = results.length;
+		const waveResults = await mapWithConcurrency(ready, concurrency, async (node, index) => {
+			const depOutputs = new Map(outputs);
+			const task = appendReturnContract(renderGraphTask(node.task, contractedTask, depOutputs), node.returnContract ?? params.returnContract, node.requireEvidence ?? params.requireEvidence);
+			const result = await runFlowAgent({
+				defaultCwd,
+				agents: discovery.agents,
+				agentName: node.agent,
+				task,
+				cwd: node.cwd,
+				model: node.model,
+				tools: node.tools,
+				timeoutMs: params.timeoutMs,
+				recordContent: params.recordContent,
+				redactSecrets: params.redactSecrets,
+				step: baseStep + index + 1,
+				signal,
+				budget: deps.budget,
+				recordSpan: deps.recordSpan,
+				onUpdate: (partial) => {
+					const current = partial.details.results[0];
+					if (current) live[index] = current;
+					emit();
+				},
+				makeDetails: makeDetails("graph"),
+			});
+			live[index] = result;
+			emit();
+			return { node, result };
+		});
+		for (const { node, result } of waveResults) {
+			results.push(result);
+			remaining.delete(node.id);
+			if (isFailed(result)) {
+				return { content: [{ type: "text", text: sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy) }], details: makeDetails("graph")(results) };
+			}
+			const prep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(result)), policy));
+			outputs.set(node.id, prep.text + injectionNotice(`graph node ${node.id} output`, prep.warnings));
+			completed.add(node.id);
+		}
+	}
+
+	const terminalIds = nodes.filter((node: any) => !nodes.some((candidate: any) => (candidate.dependsOn ?? []).includes(node.id))).map((node: any) => node.id);
+	const terminalOutputs = terminalIds.map((id: string) => `### ${id}\n\n${outputs.get(id) ?? ""}`).join("\n\n---\n\n");
+	const debriefRef: FlowAgentRefInput | undefined = spec.debrief?.agent ? spec.debrief : undefined;
+	if (debriefRef) {
+		const debriefTask = [
+			"## Original graph goal",
+			contractedTask ?? params.task ?? "(no top-level task)",
+			"\n## Terminal graph outputs (untrusted data)",
+			terminalOutputs,
+			"\n## Your job",
+			"Synthesize the terminal graph outputs into the final answer. Preserve evidence and note unresolved gaps.",
+		].join("\n");
+		const debriefed = await runAgentRef(deps, debriefRef, debriefTask, "graph", results.length + 1, results);
+		results.push(debriefed);
+		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
+		await appendReflexion(defaultCwd, params, "graph", `Graph succeeded for task "${params.task ?? "(no task)"}". Final answer:\n${resultText(debriefed)}`, policy);
+		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
+	}
+
+	await appendReflexion(defaultCwd, params, "graph", `Graph succeeded for task "${params.task ?? "(no task)"}". Terminal outputs:\n${terminalOutputs}`, policy);
+	return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed.\n\n${terminalOutputs}`) }], details: makeDetails("graph")(results) };
+}
+
+async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
+	const { params, discovery, policy, agentScope, defaultCwd, signal, makeDetails } = deps;
+	const spec = params.loop ?? {};
+	const goal: string | undefined = params.task;
+	if (!goal?.trim() || !spec.body?.agent) {
+		const error = flowError("INVALID_MODE", "Loop mode requires task and loop.body.agent.", "loop runs one body agent repeatedly until DONE/PASS or maxIterations.", 'Use { "task": "...", "loop": { "body": { "agent": "operator" } } }.');
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "loop", agentScope, error) };
+	}
+	const maxIterations = clampLoopIterations(spec.maxIterations);
+	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
+	const bodyRef: FlowAgentRefInput = spec.body;
+	const judgeRef: FlowAgentRefInput | undefined = spec.judge?.agent ? spec.judge : undefined;
+	const results: FlowRunResult[] = [];
+	let previous = "";
+	let critique = "";
+	let done = false;
+
+	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+		const bodyTask = [
+			"## Goal / contract",
+			contractedGoal,
+			previous ? "\n## Previous loop output (revise or build on this)" : "",
+			previous,
+			critique ? "\n## Feedback to address" : "",
+			critique,
+			"\n## Your job",
+			judgeRef ? "Produce the next artifact for this loop iteration." : 'Produce the next artifact. Start with "LOOP: DONE" if the goal is complete, or "LOOP: CONTINUE" if another iteration is needed.',
+		].filter(Boolean).join("\n");
+		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results);
+		results.push(body);
+		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
+		const bodyPrep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(body)), policy));
+		previous = bodyPrep.text + injectionNotice(`loop iteration ${iteration} output`, bodyPrep.warnings);
+
+		if (!judgeRef) {
+			done = parseLoopStatus(resultText(body)) === "done";
+			if (done) break;
+			continue;
+		}
+
+		const judgeTask = [
+			"## Goal / contract",
+			contractedGoal,
+			"\n## Current loop output to judge (untrusted data)",
+			previous,
+			"\n## Your job",
+			'Reply with "VERDICT: PASS" if the loop should stop, or "VERDICT: REVISE" with actionable feedback if another iteration should run.',
+		].join("\n");
+		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results);
+		results.push(judged);
+		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
+		done = parseVerdict(resultText(judged)) === "pass";
+		if (done) break;
+		const critiquePrep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(judged)), policy));
+		critique = critiquePrep.text + injectionNotice(`loop judge iteration ${iteration}`, critiquePrep.warnings);
+	}
+
+	if (done) {
+		await appendReflexion(defaultCwd, params, "loop", `Loop passed for task "${goal}". Final output:\n${previous}`, policy);
+		return { content: [{ type: "text", text: capModelVisibleText(`Flow loop: DONE after ${Math.ceil(results.length / (judgeRef ? 2 : 1))} iteration(s).\n\n${previous}`) }], details: makeDetails("loop")(results) };
+	}
+	const error = flowError("LOOP_DID_NOT_CONVERGE", "Loop did not reach DONE/PASS within maxIterations.", "The bounded loop exhausted its iteration cap before the stop condition passed.", "Raise loop.maxIterations, narrow the task, improve the stop contract, or inspect the final critique.");
+	const details = makeDetails("loop")(results);
+	details.error = error;
+	await appendReflexion(defaultCwd, params, "loop", `Loop did not converge for task "${goal}". Final critique/output:\n${critique || previous}`, policy);
+	return { content: [{ type: "text", text: capModelVisibleText(`${formatFlowError(error)}\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}`) }], details };
+}
+
+async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
+	const { params, discovery, policy, agentScope, defaultCwd, signal, makeDetails } = deps;
+	const spec = params.search ?? {};
+	const goal: string | undefined = params.task;
+	if (!goal?.trim()) {
+		const error = flowError("INVALID_MODE", "Search mode requires a task.", "search mode generates and scores candidate paths for a top-level goal.", 'Add a task, e.g. { "task": "...", "search": {} }.');
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
+	}
+	const generatorRef: FlowAgentRefInput = spec.generator ?? { agent: "strategist" };
+	const scorerRef: FlowAgentRefInput = spec.scorer ?? { agent: "redteam" };
+	const debriefRef: FlowAgentRefInput = spec.debrief ?? { agent: "debrief" };
+	const candidateCount = Number.isFinite(spec.candidates) ? Math.max(1, Math.min(MAX_PARALLEL_TASKS, Math.floor(spec.candidates))) : DEFAULT_SEARCH_CANDIDATES;
+	const beamWidth = Number.isFinite(spec.beamWidth) ? Math.max(1, Math.min(candidateCount, Math.floor(spec.beamWidth))) : DEFAULT_SEARCH_BEAM_WIDTH;
+	const rounds = Number.isFinite(spec.maxRounds) ? Math.max(1, Math.min(4, Math.floor(spec.maxRounds))) : DEFAULT_SEARCH_ROUNDS;
+	const concurrencyError = validateConcurrency(params.concurrency);
+	if (concurrencyError) return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "search", agentScope, concurrencyError) };
+	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const repeatedGenerators = Array.from({ length: candidateCount }, () => generatorRef);
+	const generatorWriteError = validateSharedWriteCwd(discovery, defaultCwd, repeatedGenerators, params.allowSharedWriteCwd, concurrency);
+	if (generatorWriteError) return { content: [{ type: "text", text: formatFlowError(generatorWriteError) }], details: toolErrorDetails(discovery, "search", agentScope, generatorWriteError) };
+	const repeatedScorers = Array.from({ length: candidateCount }, () => scorerRef);
+	const scorerWriteError = validateSharedWriteCwd(discovery, defaultCwd, repeatedScorers, params.allowSharedWriteCwd, concurrency);
+	if (scorerWriteError) return { content: [{ type: "text", text: formatFlowError(scorerWriteError) }], details: toolErrorDetails(discovery, "search", agentScope, scorerWriteError) };
+
+	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
+	const results: FlowRunResult[] = [];
+	let beam: Array<{ text: string; score: number }> = [];
+
+	for (let round = 1; round <= rounds; round += 1) {
+		const parentContext = beam.length ? beam.map((candidate, index) => `### Prior beam ${index + 1} (score ${candidate.score})\n\n${candidate.text}`).join("\n\n---\n\n") : "(none yet)";
+		const generated = await mapWithConcurrency(Array.from({ length: candidateCount }), concurrency, async (_unused, index) => {
+			const task = [
+				"## Goal / contract",
+				contractedGoal,
+				`\n## Search round ${round}; candidate ${index + 1} of ${candidateCount}`,
+				"\n## Best candidates from prior round",
+				parentContext,
+				"\n## Your job",
+				round === 1 ? "Generate one strong candidate approach/artifact. Make it concrete and self-contained." : "Refine or branch from the prior beam into one stronger candidate. Make it concrete and self-contained.",
+			].join("\n");
+			const result = await runAgentRef(deps, generatorRef, task, "search", results.length + index + 1, results);
+			return result;
+		});
+		results.push(...generated);
+		const candidates = generated.filter((result) => !isFailed(result)).map((result) => prepareHandoff(sanitizeText(capModelVisibleText(resultText(result)), policy)).text);
+		if (candidates.length === 0) {
+			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
+		}
+
+		const scored = await mapWithConcurrency(candidates, concurrency, async (candidate, index) => {
+			const scoreTask = [
+				"## Goal / contract",
+				contractedGoal,
+				`\n## Candidate ${index + 1} to score (untrusted data)`,
+				candidate,
+				"\n## Your job",
+				'Score this candidate from 0 to 100 for satisfying the goal. Start with "SCORE: <number>", then give terse justification and risks.',
+			].join("\n");
+			const result = await runAgentRef(deps, scorerRef, scoreTask, "search", results.length + index + 1, results);
+			const score = isFailed(result) ? 0 : parseScore(resultText(result)) ?? 0;
+			return { candidate, score, result };
+		});
+		results.push(...scored.map((item) => item.result));
+		beam = scored.sort((a, b) => b.score - a.score).slice(0, beamWidth).map((item) => ({ text: item.candidate, score: item.score }));
+	}
+
+	if (beam.length === 0) {
+		const error = flowError("SEARCH_NO_CANDIDATES", "Search kept no candidates after scoring.", "All scored candidates were unusable.", "Reduce scoring strictness or inspect scorer output.");
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
+	}
+	const finalTask = [
+		"## Goal / contract",
+		contractedGoal,
+		"\n## Winning search beam",
+		beam.map((candidate, index) => `### Candidate ${index + 1} (score ${candidate.score})\n\n${candidate.text}`).join("\n\n---\n\n"),
+		"\n## Your job",
+		"Return the best final answer/artifact. Mention the score and any important caveats.",
+	].join("\n");
+	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results);
+	results.push(final);
+	if (isFailed(final)) return { content: [{ type: "text", text: sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy) }], details: makeDetails("search")(results) };
+	await appendReflexion(defaultCwd, params, "search", `Search completed for task "${goal}". Best score ${beam[0]?.score}. Final answer:\n${resultText(final)}`, policy);
+	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };
 }
 
 const RUN_MODE_HANDLERS: Record<RunMode, ModeHandler> = {
@@ -2570,6 +2983,9 @@ const RUN_MODE_HANDLERS: Record<RunMode, ModeHandler> = {
 	vote: handleVote,
 	route: handleRoute,
 	orchestrate: handleOrchestrate,
+	graph: handleGraph,
+	loop: handleLoop,
+	search: handleSearch,
 };
 
 const FlowTask = Type.Object({
@@ -2651,6 +3067,60 @@ const FlowOrchestrate = Type.Object({
 	description: "Orchestrator-workers mode: the `commander` decomposes `task` into subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results. An optional `verify` critic checks the merged answer.",
 });
 
+const FlowGraphNode = Type.Object({
+	id: Type.String({ description: "Unique node id. Later nodes can reference this output as {node.<id>}." }),
+	agent: Type.String({ description: "Agent to run for this graph node." }),
+	task: Type.String({ description: "Task for this graph node. May use {task} and {node.<id>} placeholders for dependency outputs." }),
+	dependsOn: Type.Optional(Type.Array(Type.String(), { description: "Node ids that must complete before this node can run." })),
+	cwd: Type.Optional(Type.String({ description: "Working directory for this node process" })),
+	model: Type.Optional(Type.String({ description: "Optional model override for this node" })),
+	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
+	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this node's task." })),
+	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this node's return.", default: false })),
+});
+
+const FlowGraph = Type.Object({
+	nodes: Type.Array(FlowGraphNode, { minItems: 1, maxItems: MAX_GRAPH_NODES, description: "Static DAG nodes. Ready nodes run in parallel by dependency wave." }),
+	debrief: Type.Optional(FlowAgentRef),
+}, {
+	description: "Static graph/DAG mode: run agent nodes once their dependencies complete, pass dependency outputs through {node.<id>} placeholders, and optionally synthesize terminal outputs via debrief.",
+});
+
+const FlowLoop = Type.Object({
+	body: FlowAgentRef,
+	judge: Type.Optional(FlowAgentRef),
+	maxIterations: Type.Optional(Type.Number({ description: `Max loop iterations. Integer 1..${MAX_LOOP_ITERATIONS}. Default ${DEFAULT_LOOP_ITERATIONS}.`, minimum: 1, maximum: MAX_LOOP_ITERATIONS, default: DEFAULT_LOOP_ITERATIONS })),
+}, {
+	description: 'Generic bounded loop mode. The body repeats until it emits "LOOP: DONE" (without judge) or an optional judge emits "VERDICT: PASS"; otherwise it stops at maxIterations.',
+});
+
+const FlowSearch = Type.Object({
+	generator: Type.Optional(FlowAgentRef),
+	scorer: Type.Optional(FlowAgentRef),
+	debrief: Type.Optional(FlowAgentRef),
+	candidates: Type.Optional(Type.Number({ description: `Candidates generated per round. Integer 1..${MAX_PARALLEL_TASKS}. Default ${DEFAULT_SEARCH_CANDIDATES}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS, default: DEFAULT_SEARCH_CANDIDATES })),
+	beamWidth: Type.Optional(Type.Number({ description: `Candidates retained per round. Default ${DEFAULT_SEARCH_BEAM_WIDTH}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS, default: DEFAULT_SEARCH_BEAM_WIDTH })),
+	maxRounds: Type.Optional(Type.Number({ description: `Search/refinement rounds. Integer 1..4. Default ${DEFAULT_SEARCH_ROUNDS}.`, minimum: 1, maximum: 4, default: DEFAULT_SEARCH_ROUNDS })),
+}, {
+	description: "Bounded tree/beam-search mode: generate candidate paths, score each with SCORE: 0..100, retain a beam, repeat, then debrief the winning beam.",
+});
+
+const FlowCheckpoint = Type.Object({
+	before: Type.Optional(
+		StringEnum(["spawn", "finalize"] as const, {
+			description: '"spawn" asks for approval before any child agents run. "finalize" asks after children run before returning the final answer.',
+			default: "spawn",
+		}),
+	),
+	message: Type.Optional(Type.String({ description: "Human-readable approval message shown in the UI." })),
+});
+
+const FlowReflexion = Type.Object({
+	enabled: Type.Boolean({ description: "Opt in to local cross-run lessons for this flow call. Disabled by default." }),
+	file: Type.Optional(Type.String({ description: "JSONL file for lessons, relative to cwd. Default .pi/flow-reflections.jsonl." })),
+	maxEntries: Type.Optional(Type.Number({ description: "Recent lessons to prepend to compatible prompts. Default 5, cap 20.", minimum: 1, maximum: 20, default: 5 })),
+});
+
 const FlowParams = Type.Object({
 	list: Type.Optional(Type.Boolean({ description: "List available flow agents instead of running one" })),
 	showConfig: Type.Optional(Type.Boolean({ description: "Show effective flow config, agent dirs, discovery issues, and defaults without running an agent" })),
@@ -2662,6 +3132,11 @@ const FlowParams = Type.Object({
 	vote: Type.Optional(FlowVote),
 	route: Type.Optional(FlowRoute),
 	orchestrate: Type.Optional(FlowOrchestrate),
+	graph: Type.Optional(FlowGraph),
+	loop: Type.Optional(FlowLoop),
+	search: Type.Optional(FlowSearch),
+	checkpoint: Type.Optional(FlowCheckpoint),
+	reflexion: Type.Optional(FlowReflexion),
 	agentScope: Type.Optional(
 		StringEnum(["user", "project", "all"] as const, {
 			description: 'Agent scope. "user" = bundled + ~/.pi/agent/flow-agents (default). "project" = bundled + .pi/flow-agents. "all" = all sources.',
@@ -2697,7 +3172,10 @@ export const __test = {
 	renderTaskTemplate,
 	detectRunMode,
 	parseVerdict,
+	parseLoopStatus,
+	parseScore,
 	clampIterations,
+	clampLoopIterations,
 	currentFlowDepth,
 	parseRoute,
 	parseSubtasks,
@@ -2764,7 +3242,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Flow",
 		description: [
 			"Run first-party flow agents in isolated pi subprocesses.",
-			"Modes: list, showConfig, single (agent + task), parallel (tasks array), chain (sequential chain array with {task}/{previous}), evaluate (generator→evaluator loop that revises until PASS or maxIterations), vote (same task across N voters, optionally aggregated), route (classify task and dispatch to one candidate), orchestrate (decompose task → fan out workers → synthesize).",
+			"Modes: list, showConfig, single (agent + task), parallel (tasks array), chain (sequential chain array with {task}/{previous}), evaluate (generator→evaluator loop that revises until PASS or maxIterations), vote (same task across N voters, optionally aggregated), route (classify task and dispatch to one candidate), orchestrate (decompose task → fan out workers → synthesize), graph (static DAG), loop (generic bounded loop), search (bounded beam search).",
 			"Default scope includes bundled agents and ~/.pi/agent/flow-agents; project-local .pi/flow-agents requires agentScope project/all and explicit trust in headless runs.",
 		].join(" "),
 		promptSnippet: "Delegate work to first-party flow agents with isolated context windows",
@@ -2773,6 +3251,8 @@ export default function (pi: ExtensionAPI) {
 			"Use flow evaluate when output quality must be checked by a separate critic (generate → evaluate → revise) instead of trusting a single pass.",
 			"Use flow vote (especially with different models) to suppress non-deterministic errors on a high-stakes question; add an aggregator to get one synthesized answer.",
 			"Use flow route to classify a heterogeneous request and dispatch it to the right specialist; use orchestrate to split a big task into parallel subtasks and synthesize the results.",
+			"Use flow graph for explicit dependency DAGs, loop for bounded repeat-until-done work, and search for generate-score-refine candidate exploration.",
+			"Use checkpoint for human approval before spawning children or before finalizing a result; it fails closed in headless contexts.",
 			"Use flow list:true before delegation if you do not know which flow agents are available.",
 			"Use flow showConfig:true to inspect effective dirs, defaults, and discovery issues before debugging.",
 			"Use flow agentScope:'all' only for trusted repositories because project-local flow agents are repo-controlled prompts.",
@@ -2877,6 +3357,14 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
+			const spawnCheckpointError = await checkpointApproval(params, ctx, mode, "spawn");
+			if (spawnCheckpointError) {
+				return {
+					content: [{ type: "text", text: formatFlowError(spawnCheckpointError) }],
+					details: toolErrorDetails(discovery, mode, agentScope, spawnCheckpointError),
+				};
+			}
+
 			const handler = RUN_MODE_HANDLERS[mode as RunMode];
 			if (!handler) {
 				const error = flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state.");
@@ -2901,6 +3389,11 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			const output = await handler({ params, discovery, policy, agentScope, defaultCwd: ctx.cwd, signal, onUpdate: statusOnUpdate, budget, recordSpan: traceSink?.record, makeDetails });
+			const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text);
+			if (finalCheckpointError) {
+				output.details.error = finalCheckpointError;
+				output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];
+			}
 			updateFlowUi(ctx, output.details);
 			appendFlowSessionEntry(pi, output.details);
 			if (traceSink) {
@@ -2965,6 +3458,32 @@ export default function (pi: ExtensionAPI) {
 				const worker = args.orchestrate.recon?.agent ?? "recon";
 				return new Text(
 					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `orchestrate →${worker}`) + theme.fg("muted", ` [${scope}]`),
+					0,
+					0,
+				);
+			}
+			if (args.graph) {
+				const count = args.graph.nodes?.length ?? 0;
+				const suffix = args.graph.debrief?.agent ? `→${args.graph.debrief.agent}` : "";
+				return new Text(
+					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `graph ${count}${suffix}`) + theme.fg("muted", ` [${scope}]`),
+					0,
+					0,
+				);
+			}
+			if (args.loop) {
+				const body = args.loop.body?.agent ?? "agent";
+				const judge = args.loop.judge?.agent ? `→${args.loop.judge.agent}` : "";
+				return new Text(
+					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `loop ${body}${judge}`) + theme.fg("muted", ` [${scope}]`),
+					0,
+					0,
+				);
+			}
+			if (args.search) {
+				const count = args.search.candidates ?? DEFAULT_SEARCH_CANDIDATES;
+				return new Text(
+					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `search ${count}`) + theme.fg("muted", ` [${scope}]`),
 					0,
 					0,
 				);

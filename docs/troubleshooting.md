@@ -78,9 +78,9 @@ one conflicting mode, or a required field for the chosen mode (most modes need a
 top-level `task`) was missing.
 
 Fix: choose exactly one of `list:true`, `showConfig:true`, `agent`+`task`,
-`tasks[]`, `chain[]`, `evaluate{}`, `vote{}`, `route{}`, or `orchestrate{}`, and
-supply that mode's required fields. Run `showConfig:true` to inspect defaults
-before execution.
+`tasks[]`, `chain[]`, `evaluate{}`, `vote{}`, `route{}`, `orchestrate{}`,
+`graph{}`, `loop{}`, or `search{}`, and supply that mode's required fields. Run
+`showConfig:true` to inspect defaults before execution.
 
 ### `INVALID_SCOPE`
 
@@ -171,6 +171,54 @@ the worker/synthesis contract. For advisory-only verification, set
 `orchestrate.verifyPolicy:"note"`. For revision policy, raise
 `orchestrate.verifyMaxIterations` up to the cap or make the acceptance criteria
 more concrete.
+
+### `GRAPH_INVALID`
+
+Cause: `graph` mode was given an invalid static DAG: no nodes, too many nodes,
+duplicate/missing node ids, missing `agent`/`task`, or a `dependsOn` reference to
+an unknown node.
+
+Fix: provide 1-16 graph nodes. Every node needs a unique `id`, `agent`, and
+`task`; every `dependsOn` value must match another node id.
+
+### `GRAPH_CYCLE`
+
+Cause: no remaining graph node could run because the dependency graph contains a
+cycle or an unsatisfied dependency chain.
+
+Fix: remove cycles. At least one node must have no dependencies, and every
+dependency chain must eventually reach an already-runnable node.
+
+### `LOOP_DID_NOT_CONVERGE`
+
+Cause: `loop` mode reached `loop.maxIterations` before the body emitted
+`LOOP: DONE` or the optional judge emitted `VERDICT: PASS`.
+
+Fix: narrow the task, improve the stop condition, add a judge with concrete
+criteria, or raise `loop.maxIterations` within the cap.
+
+### `SEARCH_NO_CANDIDATES`
+
+Cause: `search` mode generated no usable candidates, or scoring eliminated all
+candidates before final synthesis.
+
+Fix: narrow the task, reduce `search.candidates`, choose a generator better
+suited to the work, or inspect scorer output for overly strict scoring.
+
+### `CHECKPOINT_APPROVAL_REQUIRED`
+
+Cause: a flow requested a human checkpoint (`checkpoint.before`) in a headless
+non-UI context, so pi-flows could not collect approval.
+
+Fix: run in an interactive pi session, remove the checkpoint for non-interactive
+runs, or replace the human gate with a deterministic gate such as
+`evaluate.checkCommand`.
+
+### `CHECKPOINT_APPROVAL_DENIED`
+
+Cause: the interactive human checkpoint prompt was declined.
+
+Fix: review the flow request or final result and retry if it should proceed.
 
 ### `SHARED_WRITE_CWD`
 

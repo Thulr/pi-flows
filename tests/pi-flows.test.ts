@@ -154,6 +154,15 @@ test("parseVerdict reads PASS/REVISE markers, JSON fallback, and fails safe", ()
   assert.equal(__test.parseVerdict("no verdict anywhere in here"), "revise", "unparseable verdict must fail safe to revise");
 });
 
+test("parseLoopStatus and parseScore read control markers conservatively", () => {
+  assert.equal(__test.parseLoopStatus("LOOP: DONE\nfinal"), "done");
+  assert.equal(__test.parseLoopStatus('```json\n{"done":true}\n```'), "done");
+  assert.equal(__test.parseLoopStatus("no marker"), "continue");
+  assert.equal(__test.parseScore("SCORE: 93\nstrong"), 93);
+  assert.equal(__test.parseScore('```json\n{"score":120}\n```'), 100);
+  assert.equal(__test.parseScore("no score"), null);
+});
+
 test("clampIterations defaults to 3 and clamps to 1..8", () => {
   assert.equal(__test.clampIterations(undefined), 3);
   assert.equal(__test.clampIterations(0), 1);
@@ -220,6 +229,9 @@ test("detectRunMode recognizes vote, route, orchestrate, and conflicts", () => {
   assert.deepEqual(__test.detectRunMode({ task: "x", vote: {} }), { mode: "vote" });
   assert.deepEqual(__test.detectRunMode({ task: "x", route: {} }), { mode: "route" });
   assert.deepEqual(__test.detectRunMode({ task: "x", orchestrate: {} }), { mode: "orchestrate" });
+  assert.deepEqual(__test.detectRunMode({ task: "x", graph: { nodes: [] } }), { mode: "graph" });
+  assert.deepEqual(__test.detectRunMode({ task: "x", loop: { body: { agent: "operator" } } }), { mode: "loop" });
+  assert.deepEqual(__test.detectRunMode({ task: "x", search: {} }), { mode: "search" });
   const conflict = __test.detectRunMode({ vote: {}, route: {} });
   assert("error" in conflict && conflict.error.code === "INVALID_MODE", "vote + route is a conflict");
 });
@@ -450,6 +462,15 @@ test("requestedAgentNames covers panel critics and orchestrate.verify (so projec
 
   const orchNames = __test.requestedAgentNames({ task: "g", orchestrate: { verify: { agent: "verifier" } } });
   assert.ok(orchNames.has("verifier"), "orchestrate.verify agent should be a requested agent");
+
+  const graphNames = __test.requestedAgentNames({ graph: { nodes: [{ id: "a", agent: "node-a", task: "x" }], debrief: { agent: "merge" } } });
+  for (const name of ["node-a", "merge"]) assert.ok(graphNames.has(name), `${name} should be a requested agent`);
+
+  const loopNames = __test.requestedAgentNames({ loop: { body: { agent: "body" }, judge: { agent: "judge" } } });
+  for (const name of ["body", "judge"]) assert.ok(loopNames.has(name), `${name} should be a requested agent`);
+
+  const searchNames = __test.requestedAgentNames({ search: { generator: { agent: "gen" }, scorer: { agent: "score" }, debrief: { agent: "final" } } });
+  for (const name of ["gen", "score", "final"]) assert.ok(searchNames.has(name), `${name} should be a requested agent`);
 });
 
 test("project-local panel critics still fail closed in headless evaluate runs", async () => {
