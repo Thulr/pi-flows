@@ -40,6 +40,10 @@ function git(args) {
   return execFileSync("git", args, { encoding: "buffer" }).toString("utf8");
 }
 
+function gitBuffer(args) {
+  return execFileSync("git", args, { encoding: "buffer" });
+}
+
 function splitNul(output) {
   return output.split("\0").filter(Boolean).map((file) => file.replaceAll("\\", "/"));
 }
@@ -130,9 +134,14 @@ for (const file of files) {
     }
   }
 
-  const absolute = path.join(root, file);
-  if (!existsSync(absolute) || !statSync(absolute).isFile()) continue;
-  const buffer = readFileSync(absolute);
+  let buffer;
+  if (mode === "staged") {
+    buffer = gitBuffer(["show", `:${file}`]);
+  } else {
+    const absolute = path.join(root, file);
+    if (!existsSync(absolute) || !statSync(absolute).isFile()) continue;
+    buffer = readFileSync(absolute);
+  }
   if (!isText(buffer)) continue;
   const lines = buffer.toString("utf8").split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {

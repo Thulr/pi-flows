@@ -221,9 +221,10 @@ export function requestedAgentNames(params: any): Set<string> {
 	for (const task of params.tasks ?? []) requested.add(task.agent);
 	for (const step of params.chain ?? []) requested.add(step.agent);
 	if (params.evaluate) {
-		if (params.evaluate.operator?.agent) requested.add(params.evaluate.operator.agent);
+		requested.add(params.evaluate.operator?.agent ?? "operator");
 		const critics = Array.isArray(params.evaluate.redteam) ? params.evaluate.redteam : [params.evaluate.redteam];
 		for (const critic of critics) if (critic?.agent) requested.add(critic.agent);
+		if (!critics.some((critic: any) => critic?.agent)) requested.add("redteam");
 	}
 	if (params.vote) {
 		if (params.vote.agent) requested.add(params.vote.agent);
@@ -231,14 +232,14 @@ export function requestedAgentNames(params: any): Set<string> {
 		if (params.vote.debrief?.agent) requested.add(params.vote.debrief.agent);
 	}
 	if (params.route) {
-		if (params.route.controller?.agent) requested.add(params.route.controller.agent);
+		requested.add(params.route.controller?.agent ?? "controller");
 		for (const candidate of params.route.candidates ?? []) if (typeof candidate === "string") requested.add(candidate);
 		if (typeof params.route.fallback === "string") requested.add(params.route.fallback);
 	}
 	if (params.orchestrate) {
-		if (params.orchestrate.commander?.agent) requested.add(params.orchestrate.commander.agent);
-		if (params.orchestrate.recon?.agent) requested.add(params.orchestrate.recon.agent);
-		if (params.orchestrate.debrief?.agent) requested.add(params.orchestrate.debrief.agent);
+		requested.add(params.orchestrate.commander?.agent ?? "commander");
+		requested.add(params.orchestrate.recon?.agent ?? "recon");
+		requested.add(params.orchestrate.debrief?.agent ?? "debrief");
 		if (params.orchestrate.verify?.agent) requested.add(params.orchestrate.verify.agent);
 	}
 	if (params.graph) {
@@ -250,9 +251,9 @@ export function requestedAgentNames(params: any): Set<string> {
 		if (params.loop.judge?.agent) requested.add(params.loop.judge.agent);
 	}
 	if (params.search) {
-		if (params.search.generator?.agent) requested.add(params.search.generator.agent);
-		if (params.search.scorer?.agent) requested.add(params.search.scorer.agent);
-		if (params.search.debrief?.agent) requested.add(params.search.debrief.agent);
+		requested.add(params.search.generator?.agent ?? "strategist");
+		requested.add(params.search.scorer?.agent ?? "redteam");
+		requested.add(params.search.debrief?.agent ?? "debrief");
 	}
 	return requested;
 }

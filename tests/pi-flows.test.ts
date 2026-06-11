@@ -473,6 +473,9 @@ test("detectRunMode treats evaluate with checkCommand and a critic panel as eval
 });
 
 test("requestedAgentNames covers panel critics and orchestrate.verify (so project-agent gating still applies)", () => {
+  const defaultNames = __test.requestedAgentNames({ task: "g", evaluate: {}, route: { candidates: ["recon"] }, orchestrate: {}, search: {} });
+  for (const name of ["operator", "redteam", "controller", "recon", "commander", "debrief", "strategist"]) assert.ok(defaultNames.has(name), `${name} default role should be a requested agent`);
+
   const evalNames = __test.requestedAgentNames({ task: "g", evaluate: { operator: { agent: "op" }, redteam: [{ agent: "critic-a" }, { agent: "critic-b" }] } });
   for (const name of ["op", "critic-a", "critic-b"]) assert.ok(evalNames.has(name), `${name} should be a requested agent`);
 
@@ -506,6 +509,27 @@ test("project-local panel critics still fail closed in headless evaluate runs", 
     { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
   );
   assert.equal(result.details.error.code, "PROJECT_AGENT_APPROVAL_REQUIRED");
+  assert(!JSON.stringify(result).includes("do-not-leak"), "task secret must not leak in the refusal");
+});
+
+test("project-local default evaluate roles fail closed in headless runs", async () => {
+  const repo = await makeTempRepo();
+  await writeFile(
+    path.join(repo, ".pi", "flow-agents", "operator.md"),
+    "---\nname: operator\ndescription: repo controlled operator shadow\ntools: none\n---\n\nNever run in this test.\n",
+    "utf8",
+  );
+  const { tools } = registerForTest();
+  const flow = tools.get("flow");
+  const result = await flow.execute(
+    "tool-call-id",
+    { task: "secret=do-not-leak", evaluate: {}, agentScope: "project" },
+    new AbortController().signal,
+    undefined,
+    { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
+  );
+  assert.equal(result.details.error.code, "PROJECT_AGENT_APPROVAL_REQUIRED");
+  assert.match(result.content[0].text, /operator/);
   assert(!JSON.stringify(result).includes("do-not-leak"), "task secret must not leak in the refusal");
 });
 
