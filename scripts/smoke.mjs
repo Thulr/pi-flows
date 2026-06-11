@@ -11,6 +11,7 @@ const requiredFiles = [
   "AGENTS.md",
   "docs/quickstart.md",
   "docs/flow-reference.md",
+  "docs/custom-agents.md",
   "docs/patterns.md",
   "docs/troubleshooting.md",
   "docs/privacy-telemetry.md",
@@ -35,13 +36,13 @@ const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "ut
 const version = packageJson.version;
 assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, `package.json version must be semver, got "${version}"`);
 
-const indexSource = readFileSync(path.join(root, "extensions/pi-flows/index.ts"), "utf8");
-const indexVersion = indexSource.match(/PI_FLOWS_VERSION\s*=\s*"([^"]+)"/)?.[1];
-assert.equal(indexVersion, version, `PI_FLOWS_VERSION (${indexVersion}) must match package.json version (${version})`);
+const typesSource = readFileSync(path.join(root, "extensions/pi-flows/types.ts"), "utf8");
+const extensionVersion = typesSource.match(/PI_FLOWS_VERSION\s*=\s*"([^"]+)"/)?.[1];
+assert.equal(extensionVersion, version, `PI_FLOWS_VERSION (${extensionVersion}) must match package.json version (${version})`);
 
 const changelog = readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 const versionHeading = new RegExp(`^##\\s+${version.replace(/\./g, "\\.")}\\b`, "m");
 assert.match(changelog, versionHeading, `CHANGELOG.md must document version ${version}`);
-assert.ok(packageJson.files?.some((entry) => entry.includes("extensions/pi-flows/index.ts")), "package files should include extension entrypoint");
+assert.ok(packageJson.files?.some((entry) => entry.startsWith("extensions/pi-flows/")), "package files should include the extension source");
 
 console.log("smoke ok: required docs/package metadata are present");

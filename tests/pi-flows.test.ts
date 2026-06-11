@@ -61,6 +61,22 @@ test("discovers invalid project agent frontmatter as a diagnostic", async () => 
   assert(discovery.issues.some((issue: any) => issue.code === "AGENT_FRONTMATTER_INVALID"));
 });
 
+test("project agents shadow bundled agents by name, with a visible diagnostic", async () => {
+  const repo = await makeTempRepo();
+  await writeFile(
+    path.join(repo, ".pi", "flow-agents", "recon.md"),
+    "---\nname: recon\ndescription: project override of the bundled recon agent\ntools: none\n---\n\nProject recon prompt.\n",
+    "utf8",
+  );
+  const discovery = __test.discoverFlowAgents(repo, "project");
+  const recon = discovery.agents.find((agent: any) => agent.name === "recon");
+  assert.equal(recon?.source, "project", "the project agent must win the name collision");
+  assert(
+    discovery.issues.some((issue: any) => issue.code === "AGENT_NAME_SHADOWED"),
+    "shadowing must surface as a discovery issue, never silently",
+  );
+});
+
 test("headless project-local agents fail closed by default", async () => {
   const repo = await makeTempRepo();
   await writeFile(
@@ -134,7 +150,7 @@ test("too many tasks returns a structured limit error without spawning", async (
 });
 
 test("task text is passed by temp-file reference, not inline argv", async () => {
-  const source = await readFile(new URL("../extensions/pi-flows/index.ts", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extensions/pi-flows/runner.ts", import.meta.url), "utf8");
   assert(!source.includes("args.push(`Task:"), "raw task text must not be pushed into argv");
   assert.match(source, /writePromptToTempFile\(agent\.name, `Task: \$\{options\.task\}/);
   assert.match(source, /args\.push\(`@\$\{taskPrompt\.filePath\}`\)/);
@@ -152,6 +168,15 @@ test("parseVerdict reads PASS/REVISE markers, JSON fallback, and fails safe", ()
   assert.equal(__test.parseVerdict("VERDICT: APPROVED"), "pass");
   assert.equal(__test.parseVerdict('intro prose\n```json\n{"verdict":"pass"}\n```'), "pass");
   assert.equal(__test.parseVerdict("no verdict anywhere in here"), "revise", "unparseable verdict must fail safe to revise");
+});
+
+test("parseLoopStatus and parseScore read control markers conservatively", () => {
+  assert.equal(__test.parseLoopStatus("LOOP: DONE\nfinal"), "done");
+  assert.equal(__test.parseLoopStatus('```json\n{"done":true}\n```'), "done");
+  assert.equal(__test.parseLoopStatus("no marker"), "continue");
+  assert.equal(__test.parseScore("SCORE: 93\nstrong"), 93);
+  assert.equal(__test.parseScore('```json\n{"score":120}\n```'), 100);
+  assert.equal(__test.parseScore("no score"), null);
 });
 
 test("clampIterations defaults to 3 and clamps to 1..8", () => {
@@ -220,6 +245,9 @@ test("detectRunMode recognizes vote, route, orchestrate, and conflicts", () => {
   assert.deepEqual(__test.detectRunMode({ task: "x", vote: {} }), { mode: "vote" });
   assert.deepEqual(__test.detectRunMode({ task: "x", route: {} }), { mode: "route" });
   assert.deepEqual(__test.detectRunMode({ task: "x", orchestrate: {} }), { mode: "orchestrate" });
+  assert.deepEqual(__test.detectRunMode({ task: "x", graph: { nodes: [] } }), { mode: "graph" });
+  assert.deepEqual(__test.detectRunMode({ task: "x", loop: { body: { agent: "operator" } } }), { mode: "loop" });
+  assert.deepEqual(__test.detectRunMode({ task: "x", search: {} }), { mode: "search" });
   const conflict = __test.detectRunMode({ vote: {}, route: {} });
   assert("error" in conflict && conflict.error.code === "INVALID_MODE", "vote + route is a conflict");
 });
@@ -445,11 +473,23 @@ test("detectRunMode treats evaluate with checkCommand and a critic panel as eval
 });
 
 test("requestedAgentNames covers panel critics and orchestrate.verify (so project-agent gating still applies)", () => {
+  const defaultNames = __test.requestedAgentNames({ task: "g", evaluate: {}, route: { candidates: ["recon"] }, orchestrate: {}, search: {} });
+  for (const name of ["operator", "redteam", "controller", "recon", "commander", "debrief", "strategist"]) assert.ok(defaultNames.has(name), `${name} default role should be a requested agent`);
+
   const evalNames = __test.requestedAgentNames({ task: "g", evaluate: { operator: { agent: "op" }, redteam: [{ agent: "critic-a" }, { agent: "critic-b" }] } });
   for (const name of ["op", "critic-a", "critic-b"]) assert.ok(evalNames.has(name), `${name} should be a requested agent`);
 
   const orchNames = __test.requestedAgentNames({ task: "g", orchestrate: { verify: { agent: "verifier" } } });
   assert.ok(orchNames.has("verifier"), "orchestrate.verify agent should be a requested agent");
+
+  const graphNames = __test.requestedAgentNames({ graph: { nodes: [{ id: "a", agent: "node-a", task: "x" }], debrief: { agent: "merge" } } });
+  for (const name of ["node-a", "merge"]) assert.ok(graphNames.has(name), `${name} should be a requested agent`);
+
+  const loopNames = __test.requestedAgentNames({ loop: { body: { agent: "body" }, judge: { agent: "judge" } } });
+  for (const name of ["body", "judge"]) assert.ok(loopNames.has(name), `${name} should be a requested agent`);
+
+  const searchNames = __test.requestedAgentNames({ search: { generator: { agent: "gen" }, scorer: { agent: "score" }, debrief: { agent: "final" } } });
+  for (const name of ["gen", "score", "final"]) assert.ok(searchNames.has(name), `${name} should be a requested agent`);
 });
 
 test("project-local panel critics still fail closed in headless evaluate runs", async () => {
@@ -469,6 +509,27 @@ test("project-local panel critics still fail closed in headless evaluate runs", 
     { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
   );
   assert.equal(result.details.error.code, "PROJECT_AGENT_APPROVAL_REQUIRED");
+  assert(!JSON.stringify(result).includes("do-not-leak"), "task secret must not leak in the refusal");
+});
+
+test("project-local default evaluate roles fail closed in headless runs", async () => {
+  const repo = await makeTempRepo();
+  await writeFile(
+    path.join(repo, ".pi", "flow-agents", "operator.md"),
+    "---\nname: operator\ndescription: repo controlled operator shadow\ntools: none\n---\n\nNever run in this test.\n",
+    "utf8",
+  );
+  const { tools } = registerForTest();
+  const flow = tools.get("flow");
+  const result = await flow.execute(
+    "tool-call-id",
+    { task: "secret=do-not-leak", evaluate: {}, agentScope: "project" },
+    new AbortController().signal,
+    undefined,
+    { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
+  );
+  assert.equal(result.details.error.code, "PROJECT_AGENT_APPROVAL_REQUIRED");
+  assert.match(result.content[0].text, /operator/);
   assert(!JSON.stringify(result).includes("do-not-leak"), "task secret must not leak in the refusal");
 });
 

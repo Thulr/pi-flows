@@ -2,7 +2,7 @@
   "name": "pi-flows",
   "version": "0.1.0",
   "private": false,
-  "description": "First-party pi extension for delegating work to local flow agents.",
+  "description": "Delegate pi work to isolated, budgeted sub-agents with verification loops and tracing.",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -25,7 +25,7 @@
   },
   "files": [
     "agents/*.md",
-    "extensions/pi-flows/index.ts",
+    "extensions/pi-flows/**/*.ts",
     "docs/*.md",
     "examples/**",
     "README.md",
@@ -50,14 +50,19 @@
     "@commitlint/cli": "21.0.2",
     "@commitlint/config-conventional": "21.0.2",
     "@types/node": "24.12.4",
+    "husky": "9.1.7",
     "tsx": "4.22.4",
     "typescript": "5.9.3"
   },
   "scripts": {
+    "prepare": "husky",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "preflight": "node scripts/check-pi.mjs",
-    "check": "npm run typecheck && npm test && npm run validate:agents && npm run smoke && npm run pack:dry-run",
+    "check": "npm run typecheck && npm run lint:length && npm run scan:privacy && npm test && npm run validate:agents && npm run smoke && npm run pack:dry-run",
+    "lint:length": "node scripts/check-file-length.mjs",
+    "scan:privacy": "node scripts/privacy-scan.mjs",
+    "scan:privacy:staged": "node scripts/privacy-scan.mjs --staged",
     "smoke": "node scripts/smoke.mjs",
     "pack:dry-run": "node scripts/check-pack.mjs",
     "validate:agents": "node scripts/validate-agents.mjs",

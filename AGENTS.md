@@ -4,7 +4,9 @@ Read this before editing the repo.
 
 ## Project shape
 
-- Extension entrypoint: `extensions/pi-flows/index.ts`
+- Extension entrypoint: `extensions/pi-flows/index.ts` (registers the `flow` tool and `/flows` command; re-exports the public API)
+- Extension modules: `extensions/pi-flows/*.ts` — `types.ts` (constants, types, error codes), `sanitize.ts` (redaction, caps, injection scan), `validate.ts`, `parse.ts`, `agents.ts` (discovery), `runner.ts` (child-process core), `trace.ts`, `reflexion.ts`, `ui.ts`, `schema.ts` (TypeBox params)
+- Mode handlers: `extensions/pi-flows/modes/*.ts`, one file per mode, registered in `modes/registry.ts` (`RUN_MODE_HANDLERS`). Add a new mode by writing a handler file, registering it, and extending `detectRunMode` + `schema.ts` — the dispatch core in `index.ts` does not change.
 - Bundled agent prompts: `agents/*.md`
 - Tests: `tests/pi-flows.test.ts` (offline contract) + `tests/integration.test.ts` (execution path against a stub `pi`)
 - User docs: `README.md`, `docs/*.md`, `examples/README.md`
@@ -32,8 +34,9 @@ npm run pack:dry-run
 - Never run project-local `.pi/flow-agents` in headless (non-UI) contexts unless `confirmProjectAgents:false` is explicit and the repo has been reviewed.
 - Do not pass raw user task text in child process argv.
 - Redact secret-shaped content and home paths from returned content/details by default.
+- Do not commit internal research notes or generated audit/eval artifacts (`docs/research/`, `audit-artifacts/`, `.thulr/`, generated eval traces).
 - Keep `README.md`, `docs/flow-reference.md`, TypeBox params, and tests in sync when changing the `flow` contract.
-- Keep `CHANGELOG.md`, `package.json`, `PI_FLOWS_VERSION` in `index.ts`, and the release tag in agreement for release-facing changes — the publish workflow fails when the `vX.Y.Z` tag does not match `package.json`.
+- Keep `CHANGELOG.md`, `package.json`, `PI_FLOWS_VERSION` in `extensions/pi-flows/types.ts`, and the release tag in agreement for release-facing changes — the publish workflow fails when the `vX.Y.Z` tag does not match `package.json`.
 - Do not package `audit-artifacts/`, `tests/`, `scripts/`, or local temp files.
 - Write commits as [Conventional Commits](./CONTRIBUTING.md#commit-messages) (`type(scope): summary`).
 

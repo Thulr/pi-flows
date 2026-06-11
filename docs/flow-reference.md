@@ -15,6 +15,9 @@ Exactly one mode is valid per call.
 | Vote | `{ "task": "...", "vote": { "voters": [{ "agent": "recon" }, { "agent": "overwatch" }] } }` | Yes |
 | Route | `{ "task": "...", "route": { "candidates": ["recon","strategist"] } }` | Yes |
 | Orchestrate | `{ "task": "...", "orchestrate": {} }` | Yes |
+| Graph | `{ "task": "...", "graph": { "nodes": [{ "id": "a", "agent": "recon", "task": "..." }] } }` | Yes |
+| Loop | `{ "task": "...", "loop": { "body": { "agent": "operator" } } }` | Yes |
+| Search | `{ "task": "...", "search": { "candidates": 3 } }` | Yes |
 
 ## Parameters
 
@@ -33,6 +36,8 @@ Exactly one mode is valid per call.
 | `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
+| `checkpoint` | (none) | Optional human approval gate. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
+| `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
 | `model` | agent/default | Optional model override. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
 | `cwd` | parent cwd | Child process working directory. |
@@ -183,6 +188,97 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Cap on subtasks (also bounded by `maxParallelTasks`). |
 
 If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
+
+## Graph mode (static DAG)
+
+`graph` runs a bounded static DAG. Nodes run once all `dependsOn` nodes have
+completed, and ready nodes in the same dependency wave may run in parallel.
+
+```json
+{
+  "task": "Map auth",
+  "graph": {
+    "nodes": [
+      { "id": "frontend", "agent": "recon", "task": "Find frontend auth for {task}" },
+      { "id": "backend", "agent": "recon", "task": "Find backend auth for {task}" },
+      { "id": "summary", "agent": "strategist", "dependsOn": ["frontend", "backend"], "task": "Plan from:\n{node.frontend}\n{node.backend}" }
+    ],
+    "debrief": { "agent": "debrief" }
+  }
+}
+```
+
+Each node has `id`, `agent`, `task`, optional `dependsOn`, and the usual
+`model`/`tools`/`cwd` overrides. Node tasks can use `{task}` and dependency
+output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
+
+## Loop mode (generic bounded loop)
+
+`loop` repeats a body agent until the body emits `LOOP: DONE`, or until an
+optional judge emits `VERDICT: PASS`.
+
+```json
+{
+  "task": "Draft release notes",
+  "loop": {
+    "body": { "agent": "operator" },
+    "judge": { "agent": "redteam" },
+    "maxIterations": 3
+  }
+}
+```
+
+If the loop reaches `maxIterations` without a stop signal, pi-flows returns
+`LOOP_DID_NOT_CONVERGE` with the last output/critique.
+
+## Search mode (bounded beam search)
+
+`search` generates candidate paths, scores each candidate with `SCORE: 0..100`,
+keeps the best beam, optionally refines for more rounds, then debriefs the
+winning beam.
+
+```json
+{
+  "task": "Pick a cache strategy",
+  "search": {
+    "generator": { "agent": "strategist" },
+    "scorer": { "agent": "redteam", "tools": "none" },
+    "debrief": { "agent": "debrief" },
+    "candidates": 3,
+    "beamWidth": 1,
+    "maxRounds": 2
+  }
+}
+```
+
+Use `search` when several plausible plans or artifacts should be explored and
+ranked before synthesis. It is intentionally bounded by candidate count, beam
+width, rounds, concurrency, timeout, and cost/token ceilings.
+
+If `scorer` is omitted, it defaults to `redteam` with `tools:"none"` so
+parallel scoring cannot mutate the workspace.
+
+## Human checkpoints and Reflexion
+
+`checkpoint` adds an explicit human approval gate:
+
+```json
+{ "task": "...", "evaluate": {}, "checkpoint": { "before": "spawn" } }
+```
+
+`before:"spawn"` asks before any child agent runs. `before:"finalize"` asks after
+child work finishes but before the final answer is returned. In headless
+contexts, checkpoints fail closed with `CHECKPOINT_APPROVAL_REQUIRED`.
+
+`reflexion` is opt-in local cross-run learning:
+
+```json
+{ "task": "...", "loop": { "body": { "agent": "operator" } }, "reflexion": { "enabled": true } }
+```
+
+When enabled, recent lessons are read from `.pi/flow-reflections.jsonl` and
+prepended to compatible prompts. Completed `evaluate`, `orchestrate`, `graph`,
+`loop`, and `search` runs append redacted lessons to that JSONL file.
 
 ## Details object
 

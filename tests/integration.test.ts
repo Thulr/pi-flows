@@ -289,6 +289,108 @@ test("orchestrate: concurrency 1 serializes write-capable workers sharing cwd", 
 	assert.match(text, /MERGED_EDITS/);
 });
 
+test("graph: runs dependency waves and debriefs terminal outputs", async () => {
+	const { calls, text } = await runFlow(
+		{
+			task: "map auth",
+			graph: {
+				nodes: [
+					{ id: "frontend", agent: "recon", task: "find frontend auth for {task}" },
+					{ id: "backend", agent: "recon", task: "find backend auth for {task}" },
+					{ id: "summary", agent: "strategist", dependsOn: ["frontend", "backend"], task: "plan from:\n{node.frontend}\n{node.backend}" },
+				],
+				debrief: { agent: "debrief" },
+			},
+		},
+		{ recon: ["FRONTEND_AUTH", "BACKEND_AUTH"], strategist: "GRAPH_PLAN", debrief: "GRAPH_FINAL" },
+	);
+
+	assert.equal(byAgent(calls, "recon").length, 2);
+	assert.match(byAgent(calls, "strategist")[0].task, /FRONTEND_AUTH/);
+	assert.match(byAgent(calls, "strategist")[0].task, /BACKEND_AUTH/);
+	assert.match(byAgent(calls, "debrief")[0].task, /GRAPH_PLAN/);
+	assert.match(text, /GRAPH_FINAL/);
+});
+
+test("loop: judge feedback drives another body iteration until PASS", async () => {
+	const { calls, text } = await runFlow(
+		{ task: "draft release notes", loop: { body: { agent: "operator" }, judge: { agent: "redteam" }, maxIterations: 3 }, concurrency: 1 },
+		{ operator: ["DRAFT_A", "DRAFT_B"], redteam: ["VERDICT: REVISE\nmissing migration note", "VERDICT: PASS\nok"] },
+	);
+
+	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam", "operator", "redteam"]);
+	assert.match(byAgent(calls, "operator")[1].task, /missing migration note/);
+	assert.match(text, /DONE/);
+	assert.match(text, /DRAFT_B/);
+});
+
+test("search: generates candidates, scores them, and debriefs the winning beam", async () => {
+	const { calls, text } = await runFlow(
+		{
+			task: "pick a cache strategy",
+			search: { generator: { agent: "recon" }, scorer: { agent: "debrief" }, debrief: { agent: "debrief" }, candidates: 2, beamWidth: 1, maxRounds: 1 },
+			concurrency: 1,
+		},
+		{ recon: ["CANDIDATE_LOW", "CANDIDATE_HIGH"], debrief: ["SCORE: 20\nweak", "SCORE: 95\nstrong", "FINAL_HIGH"] },
+	);
+
+	assert.equal(byAgent(calls, "recon").length, 2);
+	assert.equal(byAgent(calls, "debrief").length, 3);
+	assert.match(byAgent(calls, "debrief")[2].task, /CANDIDATE_HIGH/);
+	assert.doesNotMatch(byAgent(calls, "debrief")[2].task, /CANDIDATE_LOW/);
+	assert.match(text, /FINAL_HIGH/);
+});
+
+test("search: default scorer is tool-disabled so parallel scoring does not trip shared-write guard", async () => {
+	const { calls, text } = await runFlow(
+		{ task: "pick a rollout plan", search: { maxRounds: 1 } },
+		{ strategist: "CANDIDATE_DEFAULT", redteam: "SCORE: 88\nok", debrief: "FINAL_DEFAULT" },
+	);
+
+	assert.equal(byAgent(calls, "strategist").length, 3);
+	const scoringCalls = byAgent(calls, "redteam");
+	assert.equal(scoringCalls.length, 3);
+	assert.ok(scoringCalls.every((call) => call.args.includes("--no-builtin-tools")));
+	assert.match(text, /FINAL_DEFAULT/);
+	assert.doesNotMatch(text, /SHARED_WRITE_CWD/);
+});
+
+test("checkpoint: headless spawn approval fails closed before spawning", async () => {
+	const { result, calls, text } = await runFlow(
+		{ agent: "recon", task: "find routes", checkpoint: { before: "spawn" } },
+		{ recon: "should not run" },
+	);
+
+	assert.equal(calls.length, 0);
+	assert.equal(result.details.error.code, "CHECKPOINT_APPROVAL_REQUIRED");
+	assert.match(text, /CHECKPOINT_APPROVAL_REQUIRED/);
+});
+
+test("reflexion: enabled runs append a local lesson and feed it into later runs", async () => {
+	const first = await runFlow(
+		{ task: "draft docs", loop: { body: { agent: "operator" }, maxIterations: 1 }, reflexion: { enabled: true, file: "reflections.jsonl" } },
+		{ operator: "LOOP: DONE\nLESSON_ONE" },
+	);
+	const reflectionFile = path.join(first.stubDir, "reflections.jsonl");
+	const raw = await readFile(reflectionFile, "utf8");
+	assert.match(raw, /LESSON_ONE/);
+
+	process.env.PI_STUB_DIR = first.stubDir;
+	process.env.PI_STUB_PLAN = JSON.stringify({ operator: "LOOP: DONE\nSECOND" });
+	const result = await flowTool().execute(
+		"tool-call-id",
+		{ task: "draft docs again", loop: { body: { agent: "operator" }, maxIterations: 1 }, reflexion: { enabled: true, file: "reflections.jsonl" } },
+		new AbortController().signal,
+		undefined,
+		{ cwd: first.stubDir, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } },
+	);
+	const log = await readFile(path.join(first.stubDir, "calls.jsonl"), "utf8");
+	const calls: Call[] = log.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	assert.match(calls.at(-1)?.task ?? "", /Relevant lessons from prior flow runs/);
+	assert.match(calls.at(-1)?.task ?? "", /LESSON_ONE/);
+	assert.match(result.content[0]?.text ?? "", /SECOND/);
+});
+
 test("traceFile records child/root spans with trace labels and reportable totals", async () => {
 	const { stubDir } = await runFlow(
 		{ agent: "recon", task: "find the billing routes", traceFile: "flow-trace.jsonl", traceLabel: "smoke-release" },

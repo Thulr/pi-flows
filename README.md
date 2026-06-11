@@ -1,16 +1,34 @@
 # pi-flows
 
-**Delegate work to isolated sub-agents from inside [pi](https://github.com/earendil-works/pi) — with proven multi-agent patterns, safety, cost limits, and tracing built in.**
+**Use [pi](https://github.com/earendil-works/pi) for the work you want to keep out of your main session: repo scouting, parallel investigation, implementation plus review, and large-task decomposition.**
 
-pi-flows adds a single `flow` tool to the pi coding agent. It runs your task in separate, disposable pi subprocesses — from a single specialist to a parallel fan-out, a generate-and-critique loop, or a full decompose-and-synthesize — so heavy exploration and verification happen in clean contexts instead of bloating your main session.
+pi-flows adds a `flow` tool that runs separate, disposable pi subprocesses and returns compact findings to the parent session. Instead of asking one long-running chat to explore, edit, review, remember every file it opened, and stay within budget, you can send bounded work to specialized child agents and keep the main thread focused on the decision.
 
-## Why use it
+## When it helps you
 
-- **Keep your main context clean.** Sub-agents explore, build, and review in their own subprocess and hand back a compact result — not a wall of tool output.
-- **Proven patterns, one tool.** `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, and `orchestrate` — each a named agent-design pattern (from Anthropic's *Building Effective Agents*, Andrew Ng, and Google's ADK), not an ad-hoc prompt. See [Patterns](./docs/patterns.md).
-- **Safe by default.** Repo-controlled agent prompts fail closed in headless runs, secrets and home paths are redacted, inter-agent handoffs are scanned for prompt injection, concurrent write agents cannot share one checkout unless you opt in, and read-only agents (`recon`, `analyst`) ship with no shell. See [Safety model](#safety-model).
-- **Bounded — including cost.** Every run is capped on count, time, and nesting depth; `maxCostUsd` / `maxTokens` cap total spend across the whole flow tree.
-- **Inspectable.** Structured errors that name the fix, an offline test suite, and OpenInference-shaped trace export you can read with `jq` or any OpenTelemetry backend.
+Use pi-flows when the next step would otherwise make your main pi session noisy, expensive, or hard to trust:
+
+| Your situation | What you ask pi | What pi-flows gives back |
+|---|---|---|
+| You need to understand a code path before touching it. | "Have a read-only agent find the billing routes." | A compact, cited recon report from an agent that cannot mutate the repo or run shell commands. |
+| You have several independent areas to inspect. | "Check frontend auth and backend auth in parallel." | Separate child runs with capped fan-out instead of one context stuffed with every file. |
+| You want an implementation checked before you accept it. | "Add `/health` with a test, and don't call it done until `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
+| You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
+| You care what the delegation cost. | "Run this with a $0.25 cap and save a trace." | Cumulative cost/token ceilings plus OpenInference-shaped JSONL traces and `/flows report`. |
+
+## Why this instead of another sub-agent extension
+
+pi-flows is a small harness, not just a folder of specialist prompts. The distinction matters when you want delegation to be repeatable and auditable.
+
+- **Native isolation over prompt promises.** `recon` and `analyst` run with read-only tools and no shell, so exploration cannot accidentally edit files. Concurrent write-capable agents cannot share one checkout unless you explicitly opt in.
+- **Verification is a first-class mode.** `evaluate` runs builder and critic in separate child contexts, can require `npm test` or another `checkCommand`, and revises under a hard iteration cap. This is stronger than asking one agent to "double-check itself."
+- **Multiple proven patterns share one contract.** `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, and `orchestrate` are all exposed through the same `flow` tool, so you can start with a scout and only add coordination when the task needs it. See [Patterns](./docs/patterns.md).
+- **Delegation is bounded.** Count, concurrency, timeout, nesting depth, total tokens, and total USD spend are capped by the harness. A runaway fan-out returns `BUDGET_EXCEEDED` instead of quietly burning through the rest of the task.
+- **Handoffs are treated as an attack surface.** Content passed from one child to another is capped, redacted, stripped of invisible/bidi characters, and scanned for instruction-override markers before reuse.
+- **You can inspect what happened.** Structured errors include cause and fix fields, traces are plain JSONL, and `/flows report` summarizes success rate, cost, token use, budget hits, route choices, and voting warnings.
+- **It stays inside pi.** You install it as a pi package, use your existing pi provider setup, and talk to pi in plain English. The JSON in these docs is the contract behind the scenes, not something you must write for normal use.
+
+You probably do **not** need pi-flows if you only want a single custom prompt, a long-lived autonomous swarm, or peer-to-peer agents that talk to each other. pi-flows deliberately uses a star topology: parent delegates bounded work, children return compact results, parent decides.
 
 ## What it looks like
 
@@ -96,11 +114,10 @@ Or install your working copy as a package with `pi install -l ./`. See [Developm
 
 ## What it adds
 
-- `flow` tool: runs isolated pi subprocesses for single, parallel, chain, evaluate (generator-evaluator), vote, route, and orchestrate delegation.
+- `flow` tool: runs isolated pi subprocesses for single, parallel, chain, evaluate (generator-evaluator), vote, route, orchestrate, graph, loop, and search delegation.
 - `/flows` command: lists available flow agents and shows help/status/version output.
 - Bundled agents in [`agents/`](./agents/): `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`.
-- User agents: `~/.pi/agent/flow-agents/*.md`.
-- Project agents: `.pi/flow-agents/*.md` when `agentScope: "project"` or `"all"` is used.
+- Your own agents, no code required — one markdown file (frontmatter + system prompt) per agent. User agents live in `~/.pi/agent/flow-agents/*.md`; project agents in `.pi/flow-agents/*.md` (loaded with `agentScope: "project"` or `"all"`, and trust-gated). Project shadows user shadows bundled, with a visible diagnostic. See [Custom agents](./docs/custom-agents.md).
 
 ## Safety model
 
@@ -215,6 +232,46 @@ The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits
 
 The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` hard-fails on `REVISE`, and `"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
 
+### Graph (static DAG)
+
+```json
+{
+  "task": "Map auth",
+  "graph": {
+    "nodes": [
+      { "id": "frontend", "agent": "recon", "task": "Find frontend auth for {task}" },
+      { "id": "backend", "agent": "recon", "task": "Find backend auth for {task}" },
+      { "id": "summary", "agent": "strategist", "dependsOn": ["frontend", "backend"], "task": "Plan from:\n{node.frontend}\n{node.backend}" }
+    ],
+    "debrief": { "agent": "debrief" }
+  }
+}
+```
+
+Ready nodes run by dependency wave, with the same caps, redaction, trace, and write-collision guards as other modes.
+
+### Loop (bounded repeat-until-done)
+
+```json
+{
+  "task": "Draft release notes",
+  "loop": { "body": { "agent": "operator" }, "judge": { "agent": "redteam" }, "maxIterations": 3 }
+}
+```
+
+The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDICT: PASS`.
+
+### Search (bounded beam search)
+
+```json
+{
+  "task": "Pick a cache strategy",
+  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam", "tools": "none" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 }
+}
+```
+
+`search` generates candidate paths, scores each with `SCORE: 0..100`, keeps the best beam, and debriefs the winner. The default scorer is `redteam` with tools disabled so parallel scoring stays read-only.
+
 ### Cost budget and tracing
 
 Any mode accepts a cumulative spend ceiling and a trace sink:
@@ -224,6 +281,15 @@ Any mode accepts a cumulative spend ceiling and a trace sink:
 ```
 
 `maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
+
+### Human checkpoints and Reflexion
+
+```json
+{ "task": "...", "evaluate": {}, "checkpoint": { "before": "spawn" } }
+{ "task": "...", "loop": { "body": { "agent": "operator" } }, "reflexion": { "enabled": true } }
+```
+
+`checkpoint.before:"spawn"` asks for approval before any child runs; `"finalize"` asks before returning the final result. Headless runs fail closed. `reflexion.enabled:true` opts into local cross-run lessons in `.pi/flow-reflections.jsonl`.
 
 ## Agent definition format
 

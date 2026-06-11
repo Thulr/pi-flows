@@ -1,0 +1,123 @@
+{
+  "id": "run-9-unix1781129226181055000",
+  "created_at": "unix:1781129226181055000",
+  "source": {
+    "tool": "thulr",
+    "trace_digest": "",
+    "n_cases": 9
+  },
+  "repro": {
+    "subject_model": "openai-codex/gpt-5.4-mini",
+    "judge_model": "anthropic/claude-haiku-4-5",
+    "config_version": null,
+    "prompt_version": "pi-flows@0.1.0",
+    "evaluator_set": [
+      "criterion"
+    ],
+    "thulr_version": "0.1.2",
+    "seed": null,
+    "criteria_digest": "485d700f981e8bca"
+  },
+  "summary": [
+    {
+      "dimension": "criterion",
+      "n": 9,
+      "pass_count": 9,
+      "score_mean": 0.98481476,
+      "score_stddev": 0.019245014
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "evaluate-loop-completes-with-gate",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 0.98333335
+        }
+      }
+    },
+    {
+      "case_id": "recon-retrieves-known-value",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 0.98333335
+        }
+      }
+    },
+    {
+      "case_id": "return-contract-preserves-evidence",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "review-finds-all-webhook-defects",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "review-finds-session-cache-defects",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "route-classifies-bug-to-recon",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 0.99333334
+        }
+      }
+    },
+    {
+      "case_id": "single-answer-quality-judged",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 0.96999997
+        }
+      }
+    },
+    {
+      "case_id": "vote-reaches-known-consensus",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0
+        }
+      }
+    },
+    {
+      "case_id": "vote-warns-on-same-model-voters",
+      "deterministic_label": true,
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 0.93333334
+        }
+      }
+    }
+  ],
+  "calibration_ref": null
+}

@@ -1,9 +1,18 @@
 node_modules/
 .pi/
 audit-artifacts/
+docs/research/
 .DS_Store
 *.log
 .env
 
-# Generated manifest for external evaluators (evals/export-cases.mjs)
-evals/thulr-cases.json
+# Generated eval artifacts (evals/run.mjs, compare.mjs) — regenerated each run.
+# The gate baseline (evals/thulr-baseline.json) is committed so CI and teammates
+# gate against a known-good reference; everything else below is local-only.
+# (thulr 0.1.1 reads ONE self-contained trace — criterion + label inline — so the
+# old labels.json / thulr-cases.json files are gone.)
+evals/thulr-trace.jsonl
+evals/thulr-trace.dry-run.jsonl
+evals/baseline.json
+evals/compare.json
+.thulr/

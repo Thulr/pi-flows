@@ -9,6 +9,16 @@ import { judge } from "./judge.mjs";
 
 export const answerText = (r) => r?.content?.[0]?.text ?? "";
 export const sumCost = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.cost ?? 0), 0);
+export const sumTokens = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.input ?? 0) + (x?.usage?.output ?? 0), 0);
+
+// Default subject model for the eval suite. The harness standardizes on the
+// CHEAPEST model pi's codex provider exposes (gpt-5.4-mini: $0.75/M in, $4.50/M out
+// — vs $1.75/$14 for codex-spark, $5/$30 for gpt-5.5), NOT the pi default, so the
+// baseline is reproducible, runs stay cheap, and the flows-vs-plain A/B shows the
+// extension's lift — a frontier model aces plain pi and hides it. An exact model ID
+// (not a fuzzy pattern like "codex") so pi can't silently resolve it elsewhere.
+// Override per-run with --model=<provider/id> or PI_FLOWS_EVAL_MODEL.
+export const DEFAULT_EVAL_MODEL = process.env.PI_FLOWS_EVAL_MODEL ?? "openai-codex/gpt-5.4-mini";
 
 // pi's configured default, e.g. "openai-codex/gpt-5.5" — used when no --model is given.
 export function piDefaultModel() {
@@ -52,6 +62,26 @@ export function infraError(result) {
 	const text = result?.content?.[0]?.text ?? "";
 	if (/"type":\s*"error"|invalid_request_error|authentication|out of (extra )?usage|rate.?limit|\b40[13]\b|api[_ -]?key/i.test(text)) return "provider/API error";
 	return null;
+}
+
+// Objective-only scoring: the deterministic behaviour check, plus whether the run
+// reached the model and what it cost. run.mjs uses this — the quality axis is no
+// longer an in-process LLM judge but thulr, which grades the emitted answer and
+// calibrates against the objectiveScore this returns. compare.mjs still uses the
+// two-axis scoreArm below so its flows-vs-plain arms are graded identically.
+export async function scoreObjective({ result, thrown, testCase, ctx }) {
+	let objective;
+	if (thrown) {
+		objective = { pass: false, score: 0, notes: `run threw: ${thrown.message}` };
+	} else {
+		try {
+			objective = await testCase.score(result, ctx);
+		} catch (error) {
+			objective = { pass: false, score: 0, notes: `scorer threw: ${error.message}` };
+		}
+	}
+	const reachedModel = thrown ? thrown.message : (infraError(result) ?? null);
+	return { objective, reachedModel, cost: sumCost(result), answer: answerText(result) };
 }
 
 // Score one arm's result on two independent axes — objective (deterministic) and
