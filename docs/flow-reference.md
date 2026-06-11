@@ -242,7 +242,7 @@ winning beam.
   "task": "Pick a cache strategy",
   "search": {
     "generator": { "agent": "strategist" },
-    "scorer": { "agent": "redteam" },
+    "scorer": { "agent": "redteam", "tools": "none" },
     "debrief": { "agent": "debrief" },
     "candidates": 3,
     "beamWidth": 1,
@@ -254,6 +254,9 @@ winning beam.
 Use `search` when several plausible plans or artifacts should be explored and
 ranked before synthesis. It is intentionally bounded by candidate count, beam
 width, rounds, concurrency, timeout, and cost/token ceilings.
+
+If `scorer` is omitted, it defaults to `redteam` with `tools:"none"` so
+parallel scoring cannot mutate the workspace.
 
 ## Human checkpoints and Reflexion
 

@@ -341,6 +341,20 @@ test("search: generates candidates, scores them, and debriefs the winning beam",
 	assert.match(text, /FINAL_HIGH/);
 });
 
+test("search: default scorer is tool-disabled so parallel scoring does not trip shared-write guard", async () => {
+	const { calls, text } = await runFlow(
+		{ task: "pick a rollout plan", search: { maxRounds: 1 } },
+		{ strategist: "CANDIDATE_DEFAULT", redteam: "SCORE: 88\nok", debrief: "FINAL_DEFAULT" },
+	);
+
+	assert.equal(byAgent(calls, "strategist").length, 3);
+	const scoringCalls = byAgent(calls, "redteam");
+	assert.equal(scoringCalls.length, 3);
+	assert.ok(scoringCalls.every((call) => call.args.includes("--no-builtin-tools")));
+	assert.match(text, /FINAL_DEFAULT/);
+	assert.doesNotMatch(text, /SHARED_WRITE_CWD/);
+});
+
 test("checkpoint: headless spawn approval fails closed before spawning", async () => {
 	const { result, calls, text } = await runFlow(
 		{ agent: "recon", task: "find routes", checkpoint: { before: "spawn" } },

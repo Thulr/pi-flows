@@ -266,11 +266,11 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
 ```json
 {
   "task": "Pick a cache strategy",
-  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 }
+  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam", "tools": "none" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 }
 }
 ```
 
-`search` generates candidate paths, scores each with `SCORE: 0..100`, keeps the best beam, and debriefs the winner.
+`search` generates candidate paths, scores each with `SCORE: 0..100`, keeps the best beam, and debriefs the winner. The default scorer is `redteam` with tools disabled so parallel scoring stays read-only.
 
 ### Cost budget and tracing
 

@@ -15,7 +15,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
 	}
 	const generatorRef: FlowAgentRefInput = spec.generator ?? { agent: "strategist" };
-	const scorerRef: FlowAgentRefInput = spec.scorer ?? { agent: "redteam" };
+	const scorerRef: FlowAgentRefInput = spec.scorer ?? { agent: "redteam", tools: "none" };
 	const debriefRef: FlowAgentRefInput = spec.debrief ?? { agent: "debrief" };
 	const candidateCount = Number.isFinite(spec.candidates) ? Math.max(1, Math.min(MAX_PARALLEL_TASKS, Math.floor(spec.candidates))) : DEFAULT_SEARCH_CANDIDATES;
 	const beamWidth = Number.isFinite(spec.beamWidth) ? Math.max(1, Math.min(candidateCount, Math.floor(spec.beamWidth))) : DEFAULT_SEARCH_BEAM_WIDTH;
