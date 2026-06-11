@@ -11,8 +11,12 @@
 //   npm run eval -- --model=agent         # use each agent's own frontmatter model
 //   npm run eval -- --cap=1.00            # per-case USD ceiling on flow delegations (default 0.50)
 //   npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default below)
+//   npm run eval -- --samples=3           # judge each case 3x: majority verdict, mean score, judge-noise stddev + flake warnings
 //   npm run eval -- --write-baseline      # promote this run to evals/thulr-baseline.json (the gate baseline)
 //   npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
+//   npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as a JUnit XML testsuite (CI ingestion)
+//   npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate — the
+//                                         # command-template mode for `thulr run-experiment` / `thulr optimize`
 //   npm run eval -- --dry-run             # framework smoke (canned results, no model, no thulr calls)
 //
 // For the flows-vs-plain A/B ("does pi-flows beat plain pi?") see `npm run eval:compare`.
@@ -24,20 +28,23 @@
 //   2. thulr's calibrated LLM judge grades each case's answer against one literal
 //      criterion, then gates QUALITY regressions vs a baseline EvalRun. The judge
 //      runs on a different vendor than the subject (default anthropic/claude-
-//      sonnet-4-6) so it never grades its own family.
+//      haiku-4-5 — cheap models on both axes) so it never grades its own family.
 //
 // The harness emits ONE self-contained trace (evals/thulr-trace.jsonl) — each case's
-// answer, criterion, and objective label inline — and shells out to the `thulr` CLI
-// for judge -> calibrate -> gate -> baseline. thulr 0.1.1 reads everything from the
-// trace, so there are no separate cases-manifest or labels files.
+// answer, criterion, objective label, task text, and cost/token telemetry inline —
+// and shells out to the `thulr` CLI (0.1.2) for judge -> calibrate -> gate ->
+// baseline. thulr reads everything from the trace, so there are no separate
+// cases-manifest or labels files.
 //
 // Exit code is 0 when every selected case passes (objective AND thulr criterion)
-// and thulr's gate reports no regression; 1 otherwise.
+// and thulr's gate reports no regression; 1 otherwise. In --trace-only mode the
+// exit code only says whether a judgeable trace was emitted — the driver
+// (thulr run-experiment / optimize) owns judging and selection.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { CASES } from "./cases.mjs";
-import { caseCwd, flowTool, scoreObjective, DEFAULT_EVAL_MODEL } from "./lib.mjs";
+import { caseCwd, flowTool, scoreObjective, sumTokens, DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import * as thulr from "./thulr.mjs";
 
@@ -66,14 +73,30 @@ const capUsd = Number(flag("cap", "0.50"));
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "120000"));
 const dryRun = args.includes("--dry-run");
 const filter = flag("filter", "");
-// Cross-model judge: a different vendor than the subject under test breaks self-grading.
-const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-sonnet-4-6";
+// Cross-model judge: a different vendor than the subject under test breaks
+// self-grading. Default is the cheap anthropic tier — the suite standardizes on
+// cheap models for both axes; escalate per-run (--judge-model=anthropic/claude-
+// sonnet-4-6) when a verdict needs a stronger second opinion.
+const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-haiku-4-5";
+// Judge repeat-sampling (thulr 0.1.2): each case judged N times, majority verdict +
+// mean score; the EvalRun's score_stddev becomes judge noise. Costs N× judge spend.
+const samples = Math.min(10, Math.max(1, Number(flag("samples", "1")) || 1));
+// Emit-the-trace-and-stop: the command-template mode `thulr run-experiment` and
+// `thulr optimize` drive ("the template MUST emit a structured JSONL trace to {out}").
+const traceOnly = has("trace-only");
 
 const p = (relPath) => resolve(process.cwd(), relPath);
 const rel = (abs) => (abs.startsWith(`${process.cwd()}/`) ? abs.slice(process.cwd().length + 1) : abs);
-const TRACE = p("evals/thulr-trace.jsonl");
+// Dry-run gets its own trace path: mock spans must never clobber the last real
+// trace (which re-judging with a different judge model depends on).
+const TRACE = p(flag("trace-out", dryRun ? "evals/thulr-trace.dry-run.jsonl" : "evals/thulr-trace.jsonl"));
 const CANDIDATE = p(".thulr/runs/candidate.json");
 const BASELINE_DEFAULT = p("evals/thulr-baseline.json");
+// Reproducibility stamp for the trace/EvalRun: the agent prompts ship with the
+// package, so the package version IS the prompt version.
+const PROMPT_VERSION = `pi-flows@${JSON.parse(readFileSync(p("package.json"), "utf8")).version}`;
+// Optional CI artifact: the gate verdict re-rendered as a JUnit XML testsuite.
+const junitOut = has("junit") ? p(flag("junit", "") || ".thulr/runs/gate.junit.xml") : null;
 
 // Gate against an explicit baseline, else the default if it already exists (the
 // first run has nothing to gate against and just seeds it via --write-baseline).
@@ -89,8 +112,19 @@ function preflight() {
 		console.error("✗ `pi` was not found on PATH.\n  The eval harness needs the pi CLI and a configured model provider.\n  Install: npm i -g @earendil-works/pi-coding-agent\n  Or smoke-test the harness offline with: npm run eval -- --dry-run");
 		return false;
 	}
-	if (!thulr.available()) {
-		console.error("✗ `thulr` was not found on PATH.\n  The eval gate now judges answer quality and blocks regressions through thulr.\n  Install it (e.g. `cargo install thulr`) so it is on PATH,\n  or smoke-test the harness offline with: npm run eval -- --dry-run");
+	// Trace-only mode never invokes thulr — the driver (run-experiment/optimize) does.
+	if (traceOnly) return true;
+	// `thulr doctor` is the real preflight: it verifies the binary, the workspace,
+	// the store, AND that thulr's judge binary (pi) resolves — and exits 1 when
+	// any check fails, with the structured report saying which.
+	const doc = thulr.doctor();
+	if (!doc.ok) {
+		const why = doc.report === null
+			? "`thulr` was not found on PATH."
+			: doc.report.judge_bin_found === false
+				? `thulr is installed but its judge binary \`${doc.report.judge_bin}\` was not found on PATH.`
+				: "`thulr doctor` reports an unhealthy environment.";
+		console.error(`✗ ${why}\n  The eval gate judges answer quality and blocks regressions through thulr.\n  Install it (e.g. \`cargo install thulr\`), run \`thulr doctor\` for the full diagnosis,\n  or smoke-test the harness offline with: npm run eval -- --dry-run`);
 		return false;
 	}
 	return true;
@@ -106,7 +140,8 @@ async function main() {
 	}
 
 	const flow = flowTool();
-	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${dryRun ? "(skipped)" : judgeModel}  ·  cap $${capUsd.toFixed(2)}/case  ·  timeout ${Math.round(timeoutMs / 1000)}s/agent${dryRun ? "  ·  DRY RUN" : ""}\n`);
+	const judgeLabel = dryRun || traceOnly ? "(skipped)" : samples > 1 ? `${judgeModel} ×${samples} samples` : judgeModel;
+	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${judgeLabel}  ·  cap $${capUsd.toFixed(2)}/case  ·  timeout ${Math.round(timeoutMs / 1000)}s/agent${dryRun ? "  ·  DRY RUN" : traceOnly ? "  ·  TRACE ONLY" : ""}\n`);
 
 	// --- Phase 1: run every flow, score the objective axis, emit the self-contained thulr trace ---
 	thulr.startTrace(TRACE);
@@ -139,8 +174,10 @@ async function main() {
 
 		// Only cases that reached the model carry a real answer to judge and a
 		// trustworthy label to calibrate against; infra failures are reported as ⚠.
+		// Task text, cost, tokens, and the prompt version ride along per thulr's
+		// trace contract — judge context plus repro metadata in the EvalRun.
 		if (!reachedModel) {
-			thulr.appendCaseSpans(TRACE, { name: testCase.name, answer, criterion: testCase.criterion, label: !!objective.pass, endMs: endedAt, model: useAgentModels ? undefined : model });
+			thulr.appendCaseSpans(TRACE, { name: testCase.name, answer, criterion: testCase.criterion, label: !!objective.pass, endMs: endedAt, model: useAgentModels ? undefined : model, task: testCase.params.task, costUsd: cost, tokensTotal: sumTokens(result), promptVersion: PROMPT_VERSION });
 			judgedCount += 1;
 		}
 
@@ -160,14 +197,22 @@ async function main() {
 	const verdicts = new Map();
 	let gateResult = null;
 
+	if (traceOnly) {
+		// Re-run-mode contract: the driver (thulr run-experiment / optimize) judges,
+		// ranks, and selects. Exit 0 iff a judgeable trace was emitted — objective
+		// misses are labels in the trace, not a candidate failure.
+		console.log(`\n(trace-only) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; judge/gate left to the driver.`);
+		process.exit(judgedCount > 0 ? 0 : 1);
+	}
+
 	if (dryRun) {
 		console.log(`\n(dry-run) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; thulr judge/gate skipped (no tokens).`);
 	} else if (judgedCount === 0) {
 		console.log("\nNo case reached the model — skipping thulr judge (nothing to grade).");
 	} else {
 		mkdirSync(dirname(CANDIDATE), { recursive: true });
-		console.log(`\nthulr judge (${judgeModel})  ·  ${judgedCount} case${judgedCount === 1 ? "" : "s"}`);
-		thulr.judge({ trace: TRACE, model: judgeModel, out: CANDIDATE });
+		console.log(`\nthulr judge (${judgeModel}${samples > 1 ? ` ×${samples} samples` : ""})  ·  ${judgedCount} case${judgedCount === 1 ? "" : "s"}`);
+		thulr.judge({ trace: TRACE, model: judgeModel, out: CANDIDATE, samples });
 		const evalRun = JSON.parse(readFileSync(CANDIDATE, "utf8"));
 		for (const c of evalRun.cases ?? []) verdicts.set(c.case_id, c.dims?.criterion ?? {});
 		for (const s of summaries) {
@@ -175,6 +220,12 @@ async function main() {
 			const v = verdicts.get(s.name) ?? {};
 			const glyph = s.hard ? "◐" : v.verdict === false ? "✗" : "✓";
 			console.log(`${glyph} ${s.name.padEnd(34)} criterion ${(v.score ?? 0).toFixed(2)}`);
+		}
+		// With repeat sampling, the EvalRun's score_stddev is the pooled within-case
+		// sample variance — i.e. how noisy the judge itself is on this suite.
+		if (samples > 1) {
+			const crit = (evalRun.summary ?? []).find((d) => d.dimension === "criterion");
+			if (crit) console.log(`  judge noise across ${samples} samples: score stddev ±${(crit.score_stddev ?? 0).toFixed(3)}`);
 		}
 
 		// Calibration: how well the judge's verdicts track the deterministic labels.
@@ -185,8 +236,16 @@ async function main() {
 			gateResult = thulr.gate({ baseline: gateBaseline, candidate: CANDIDATE, guardrails: ["criterion"], scoreGuardrails: ["criterion"], noiseBand: 0.05 });
 			console.log(`\ngate vs ${rel(gateBaseline)}:`);
 			process.stdout.write(gateResult.report);
+			if (junitOut) {
+				// Gate is free, so render the same comparison a second time as JUnit
+				// XML — one testcase per case×dimension — for CI test ingestion.
+				const junit = thulr.gate({ baseline: gateBaseline, candidate: CANDIDATE, guardrails: ["criterion"], scoreGuardrails: ["criterion"], noiseBand: 0.05, format: "junit" });
+				mkdirSync(dirname(junitOut), { recursive: true });
+				writeFileSync(junitOut, junit.report, "utf8");
+				console.log(`junit gate report written to ${rel(junitOut)}`);
+			}
 		} else {
-			console.log(`\nNo gate baseline yet (${rel(BASELINE_DEFAULT)} absent) — seed it with: npm run eval -- --write-baseline`);
+			console.log(`\nNo gate baseline yet (${rel(BASELINE_DEFAULT)} absent) — seed it with: npm run eval -- --write-baseline${junitOut ? "  (--junit skipped: nothing to gate)" : ""}`);
 		}
 
 		if (writeBaseline) {

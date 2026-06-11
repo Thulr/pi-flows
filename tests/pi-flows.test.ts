@@ -61,6 +61,22 @@ test("discovers invalid project agent frontmatter as a diagnostic", async () => 
   assert(discovery.issues.some((issue: any) => issue.code === "AGENT_FRONTMATTER_INVALID"));
 });
 
+test("project agents shadow bundled agents by name, with a visible diagnostic", async () => {
+  const repo = await makeTempRepo();
+  await writeFile(
+    path.join(repo, ".pi", "flow-agents", "recon.md"),
+    "---\nname: recon\ndescription: project override of the bundled recon agent\ntools: none\n---\n\nProject recon prompt.\n",
+    "utf8",
+  );
+  const discovery = __test.discoverFlowAgents(repo, "project");
+  const recon = discovery.agents.find((agent: any) => agent.name === "recon");
+  assert.equal(recon?.source, "project", "the project agent must win the name collision");
+  assert(
+    discovery.issues.some((issue: any) => issue.code === "AGENT_NAME_SHADOWED"),
+    "shadowing must surface as a discovery issue, never silently",
+  );
+});
+
 test("headless project-local agents fail closed by default", async () => {
   const repo = await makeTempRepo();
   await writeFile(
@@ -134,7 +150,7 @@ test("too many tasks returns a structured limit error without spawning", async (
 });
 
 test("task text is passed by temp-file reference, not inline argv", async () => {
-  const source = await readFile(new URL("../extensions/pi-flows/index.ts", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extensions/pi-flows/runner.ts", import.meta.url), "utf8");
   assert(!source.includes("args.push(`Task:"), "raw task text must not be pushed into argv");
   assert.match(source, /writePromptToTempFile\(agent\.name, `Task: \$\{options\.task\}/);
   assert.match(source, /args\.push\(`@\$\{taskPrompt\.filePath\}`\)/);

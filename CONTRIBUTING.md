@@ -15,9 +15,21 @@ npm run check
 
 ```bash
 npm run typecheck
+npm run lint:length
+npm run scan:privacy
 npm test
 npm run validate:agents
 ```
+
+`lint:length` fails when a source file exceeds its line cap (500 for
+extension/script/eval code, 800 for tests). When it fires, split the file into
+focused modules — `extensions/pi-flows/modes/` is the pattern — rather than
+raising the cap.
+
+`scan:privacy` blocks obvious secrets, high-signal PII, generated local artifacts,
+and internal-only paths. Keep research notes under `docs/research/`; that directory
+is intentionally ignored and must not be force-added to a PR. The Husky pre-commit
+hook runs the staged variant automatically after `npm ci` / `npm install`.
 
 Load locally:
 

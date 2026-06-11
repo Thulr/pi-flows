@@ -10,7 +10,7 @@ if (result.status !== 0) {
 
 const [pack] = JSON.parse(result.stdout);
 const files = pack.files.map((file) => file.path);
-const forbidden = [/^audit-artifacts\//, /^docs\/audits\//, /^node_modules\//, /^tests\//, /^scripts\//, /\.log$/];
+const forbidden = [/^audit-artifacts\//, /^docs\/audits\//, /^docs\/research\//, /^node_modules\//, /^tests\//, /^scripts\//, /\.log$/];
 for (const file of files) {
   for (const pattern of forbidden) assert.ok(!pattern.test(file), `pack includes forbidden file: ${file}`);
 }

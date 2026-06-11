@@ -94,6 +94,9 @@ export const CASES = [
 		name: "evaluate-loop-completes-with-gate",
 		workspace: true,
 		params: {
+			// The operator->redteam->revise loop legitimately runs past the default
+			// 120s/agent on a cheap subject model; the case declares its own clock.
+			timeoutMs: 300_000,
 			task: "In the current working directory, create a file `isPrime.js` that exports a function `isPrime(n)` via CommonJS (`module.exports = { isPrime }`), returning true if and only if n is a prime number. Handle edge cases correctly: 0 and 1 are NOT prime, 2 IS prime, and negative numbers are NOT prime.",
 			evaluate: {
 				operator: { agent: "operator" },
@@ -135,7 +138,9 @@ export const CASES = [
 	{
 		name: "review-finds-all-webhook-defects",
 		hard: true,
-		params: { agent: "recon", task: "Review billing-webhook.js in this repo for ALL production-correctness defects. Name each distinct defect you find and why it matters." },
+		// Exhaustive multi-defect reviews on a cheap reasoning subject can take
+		// >300s; hard cases are meaty by design, so they declare a longer clock.
+		params: { agent: "recon", timeoutMs: 600_000, task: "Review billing-webhook.js in this repo for ALL production-correctness defects. Name each distinct defect you find and why it matters." },
 		cwd: fixturesRepo,
 		baselinePrompt: "Review billing-webhook.js for ALL production-correctness defects, not just the most obvious one. Name each distinct defect and why it matters.",
 		criterion: "The review identifies ALL FOUR distinct defects: (1) recordPayment references `ledger`, which is never declared/initialized, so every call throws a ReferenceError (500); (2) no idempotency/deduplication, so a duplicate or retried delivery double-counts the payment; (3) no verification of the webhook's signature/authenticity, so a forged request is accepted as a real payment; (4) no input validation or error handling, so a malformed `req.body.data.object` throws unhandled and 500s. Fewer than four is incomplete.",
@@ -153,7 +158,7 @@ export const CASES = [
 	{
 		name: "review-finds-session-cache-defects",
 		hard: true,
-		params: { agent: "recon", task: "Review session-cache.js in this repo for ALL correctness and reliability defects. Name each distinct defect you find and why it matters." },
+		params: { agent: "recon", timeoutMs: 600_000, task: "Review session-cache.js in this repo for ALL correctness and reliability defects. Name each distinct defect you find and why it matters." },
 		cwd: fixturesRepo,
 		baselinePrompt: "Review session-cache.js for ALL correctness and reliability defects, not just the most obvious one. Name each distinct defect and why it matters.",
 		criterion: "The review identifies ALL THREE distinct defects: (1) getSession reads `entry.expiresAt` without checking the id exists, so an unknown/missing id dereferences `undefined` and throws a TypeError; (2) expired entries are never evicted (getSession returns null but leaves them), so the store grows unbounded — a memory leak; (3) ttlSeconds is never validated, so a missing, NaN, or negative TTL produces a broken/garbage expiry. Fewer than three is incomplete.",

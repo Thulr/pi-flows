@@ -9,12 +9,16 @@ import { judge } from "./judge.mjs";
 
 export const answerText = (r) => r?.content?.[0]?.text ?? "";
 export const sumCost = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.cost ?? 0), 0);
+export const sumTokens = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.input ?? 0) + (x?.usage?.output ?? 0), 0);
 
-// Default subject model for the eval suite. The harness standardizes on one
-// cheaper/faster model (NOT the pi default) so the baseline is reproducible and the
-// flows-vs-plain A/B shows the extension's lift — a frontier model aces plain pi and
-// hides it. Override per-run with --model=<provider/id> or PI_FLOWS_EVAL_MODEL.
-export const DEFAULT_EVAL_MODEL = process.env.PI_FLOWS_EVAL_MODEL ?? "openai-codex/codex";
+// Default subject model for the eval suite. The harness standardizes on the
+// CHEAPEST model pi's codex provider exposes (gpt-5.4-mini: $0.75/M in, $4.50/M out
+// — vs $1.75/$14 for codex-spark, $5/$30 for gpt-5.5), NOT the pi default, so the
+// baseline is reproducible, runs stay cheap, and the flows-vs-plain A/B shows the
+// extension's lift — a frontier model aces plain pi and hides it. An exact model ID
+// (not a fuzzy pattern like "codex") so pi can't silently resolve it elsewhere.
+// Override per-run with --model=<provider/id> or PI_FLOWS_EVAL_MODEL.
+export const DEFAULT_EVAL_MODEL = process.env.PI_FLOWS_EVAL_MODEL ?? "openai-codex/gpt-5.4-mini";
 
 // pi's configured default, e.g. "openai-codex/gpt-5.5" — used when no --model is given.
 export function piDefaultModel() {

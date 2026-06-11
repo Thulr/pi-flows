@@ -1,20 +1,20 @@
 {
-  "id": "run-9-unix1780974069825667000",
-  "created_at": "unix:1780974069825667000",
+  "id": "run-9-unix1781129226181055000",
+  "created_at": "unix:1781129226181055000",
   "source": {
-    "tool": "thulr-evaluator",
+    "tool": "thulr",
     "trace_digest": "",
     "n_cases": 9
   },
   "repro": {
-    "subject_model": "",
-    "judge_model": "anthropic/claude-sonnet-4-6",
+    "subject_model": "openai-codex/gpt-5.4-mini",
+    "judge_model": "anthropic/claude-haiku-4-5",
     "config_version": null,
-    "prompt_version": null,
+    "prompt_version": "pi-flows@0.1.0",
     "evaluator_set": [
       "criterion"
     ],
-    "thulr_version": "0.1.1",
+    "thulr_version": "0.1.2",
     "seed": null,
     "criteria_digest": "485d700f981e8bca"
   },
@@ -23,8 +23,8 @@
       "dimension": "criterion",
       "n": 9,
       "pass_count": 9,
-      "score_mean": 0.99444443,
-      "score_stddev": 0.016666668
+      "score_mean": 0.98481476,
+      "score_stddev": 0.019245014
     }
   ],
   "cases": [
@@ -34,7 +34,7 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 0.95
+          "score": 0.98333335
         }
       }
     },
@@ -44,7 +44,7 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 0.98333335
         }
       }
     },
@@ -84,7 +84,7 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 0.99333334
         }
       }
     },
@@ -94,7 +94,7 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 0.96999997
         }
       }
     },
@@ -114,7 +114,7 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 0.93333334
         }
       }
     }

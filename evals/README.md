@@ -14,7 +14,7 @@ Every case is scored on **two independent axes**:
    `criterion` and **gates quality regressions** against a baseline.
 
 The judge runs on a *different* vendor than the subject under test (default
-`anthropic/claude-sonnet-4-6`), so no model grades its own family. A case passes
+`anthropic/claude-haiku-4-5`), so no model grades its own family. A case passes
 only when both axes agree, and the run is gated only when thulr finds a regression.
 
 > These run **real** `flow` delegations through **real** `pi`, so they need the
@@ -25,13 +25,16 @@ only when both axes agree, and the run is gated only when thulr finds a regressi
 ## Run
 
 ```bash
-npm run eval                       # all cases, on the default eval model (openai-codex/codex)
+npm run eval                       # all cases, on the default eval model (openai-codex/gpt-5.4-mini)
 npm run eval -- --filter=route     # only matching cases
 npm run eval -- --model=openai-codex/gpt-5.5   # explicit subject provider/model
-npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default: anthropic/claude-sonnet-4-6)
+npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default: anthropic/claude-haiku-4-5)
+npm run eval -- --samples=3        # judge each case 3×: majority verdict, mean score, flake warnings (3× judge spend)
 npm run eval -- --cap=1.00         # per-case USD ceiling on flow delegations (default 0.50)
 npm run eval -- --write-baseline   # promote this run to evals/thulr-baseline.json (the gate baseline)
 npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
+npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as JUnit XML (CI test ingestion)
+npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 ```
 
@@ -52,12 +55,17 @@ shells out to the `thulr` CLI for the `judge → calibrate → gate → baseline
 | `evals/thulr-trace.jsonl` | one span per case — answer + criterion + objective label, all **inline** | no (regenerated) |
 | `evals/thulr-baseline.json` | the baseline EvalRun thulr gates against | **yes** |
 
-The pipeline, per `npm run eval`:
+The pipeline, per `npm run eval` (preflighted by `thulr doctor --json`, which
+verifies the binary, workspace, store, and that thulr's judge binary `pi` resolves):
 
 1. Run every flow, compute the objective check → write the self-contained trace.
 2. `thulr judge --trace <file>` grades each case's answer against its inline
-   `criterion` → an EvalRun. thulr 0.1.1 reads everything from the trace — no
-   separate cases-manifest or labels files.
+   `criterion` → an EvalRun. thulr (0.1.2) reads everything from the trace — no
+   separate cases-manifest or labels files. With `--samples=N` each case is judged
+   N times and aggregated (majority verdict, ties fail safe; mean score) — the
+   EvalRun's `score_stddev` then reports **judge noise** instead of cross-case
+   spread, and thulr warns when cases flip verdicts across samples. Use it when a
+   gate verdict looks flaky before believing (or rebaselining over) the result.
 3. `thulr calibrate` prints **TPR/TNR** — how well the judge's verdicts track the
    inline deterministic labels. (An uncalibrated judge can silently certify
    regressions; this is the calibration the old single-judge setup lacked.)
@@ -67,18 +75,32 @@ The pipeline, per `npm run eval`:
    `--score-guardrail` (a **mean-score** drop that holds pass-rate — thulr's
    "Gap 1", catching quality drift like `1.00 → 0.85` that every verdict still
    passing would hide). The first run has no baseline — seed one with
-   `--write-baseline`.
+   `--write-baseline`. With `--junit=<path>` the same comparison is also written
+   as a JUnit XML testsuite (one testcase per case×dimension) for CI ingestion.
 5. `--write-baseline` promotes a passing run to `evals/thulr-baseline.json`.
+
+Inspect what the gate machinery holds at any time — all free: `thulr list runs`
+(stored EvalRuns and their store keys), `thulr inspect-trace --trace
+evals/thulr-trace.jsonl` (judge-grade telemetry coverage per case), and
+`thulr dashboard` (a local browser view over the stored event streams under
+`.thulr/events/`, which every judge/gate run records by default).
 
 ### The trace contract (don't break this)
 
-thulr ingests a **self-contained** JSONL trace: it groups spans by `thulr.case_id`
-and grades the **latest span's `output.value`**, with the case's `thulr.criterion`
-and its objective `thulr.deterministic_label` (a boolean) carried **inline** in the
-span attributes (plus a numeric `end_time_unix_ms`). So the harness emits exactly
-**one span per case** carrying the canonical final answer (the same text the
-objective scorer graded) alongside its criterion and label — no separate cases or
-labels files. This deliberately does **not** reuse a flow's internal multi-span
+thulr ingests a **self-contained** JSONL trace (`docs/trace-contract.md` in the
+thulr repo): it groups spans by `thulr.case_id` and grades the **latest span's
+`output.value`**, with the case's `thulr.criterion` and its objective
+`thulr.deterministic_label` (a boolean) carried **inline** in the span attributes
+(plus a numeric `end_time_unix_ms`). So the harness emits exactly **one span per
+case** carrying the canonical final answer (the same text the objective scorer
+graded) alongside its criterion and label — no separate cases or labels files.
+Each span also carries the contract's optional context/repro attributes: the task
+text as `input.value` (judge context), `thulr.cost_usd` and
+`llm.token_count.total` (per-case spend, summed into the EvalRun), and
+`thulr.prompt_version` stamped `pi-flows@<package version>` — the agent prompts
+ship with the package, so the package version *is* the prompt version (and
+`thulr query-traces --prompt-version` can slice traces by it). Sanity-check a
+trace for free with `thulr inspect-trace --trace evals/thulr-trace.jsonl`. This deliberately does **not** reuse a flow's internal multi-span
 trace, where the latest child is often a critic or voter rather than the synthesized
 answer. The `flow`-tool's richer OpenInference trace (`PI_FLOWS_TRACE_FILE` /
 `/flows report`) is a separate, diagnostics-only path.
@@ -86,7 +108,8 @@ answer. The `flow`-tool's richer OpenInference trace (`PI_FLOWS_TRACE_FILE` /
 ## Provider & auth (local dev)
 
 With no `--model`, the harness uses its **standardized default** — `DEFAULT_EVAL_MODEL`
-(`openai-codex/codex`; override with `--model=<provider/id>` or `PI_FLOWS_EVAL_MODEL`)
+(`openai-codex/gpt-5.4-mini`, the cheapest model pi's codex provider exposes;
+override with `--model=<provider/id>` or `PI_FLOWS_EVAL_MODEL`)
 — so the baseline is reproducible and the flows-vs-plain A/B compares like-for-like.
 Auth is pi's own (thulr also judges via `pi`):
 
@@ -102,9 +125,17 @@ need the provider prefix), or `--model=agent` to run each agent on its own
 frontmatter model. Cases that can't reach the model (auth, credits, network) are
 flagged `⚠`, excluded from judging, and reported separately from real eval failures.
 
-Run `thulr doctor` to confirm the gate's environment (version, workspace, judge
-binary). If `thulr` is missing, install it and put it on PATH, or smoke-test the
-harness offline with `npm run eval -- --dry-run`.
+The harness preflights the gate's environment with `thulr doctor --json` (version,
+workspace, store, judge binary) and reports thulr's own diagnosis on failure. If
+`thulr` is missing, install it and put it on PATH, or smoke-test the harness
+offline with `npm run eval -- --dry-run`.
+
+> **Judging on a local model** (e.g. pi-llama's `llama-cpp/...` provider, handy
+> when a cloud judge is out of quota): thulr's default judge invocation passes
+> `--no-extensions` to `pi`, which unloads extension-provided model providers, so
+> the judge fails with "Model not found". Point thulr at the committed wrapper
+> that re-enables extensions:
+> `THULR_JUDGE_BIN="$PWD/scripts/thulr-judge-pi.sh" thulr judge --trace … --model llama-cpp/…`
 
 > Reasoning / large-context models report a per-call cost (≈$0.09 for `gpt-5.5`)
 > that the `maxCostUsd` cap counts even when a subscription covers the actual
@@ -124,7 +155,7 @@ harness offline with `npm run eval -- --dry-run`.
 | `single-answer-quality-judged` | an answer is graded purely by the LLM judge |
 
 Plus: **every** case above is independently graded by thulr's cross-model judge
-(default `anthropic/claude-sonnet-4-6`, override with `--judge-model` /
+(default `anthropic/claude-haiku-4-5`, override with `--judge-model` /
 `PI_FLOWS_JUDGE_MODEL`) against a single literal `criterion`. The table's objective
 checks gate *behaviour* and label the run; thulr's judge gates *answer quality*; a
 case passes only when both agree. Pointing the judge at a different vendor than
@@ -161,6 +192,54 @@ pi-flows-only by construction (route dispatch, the same-model vote warning); pla
 pi can't satisfy them, so read those as *capabilities flows adds*, not plain losses.
 Give a case a `baselinePrompt` when its flow params encode goal info outside `task`
 (e.g. a return contract) so the plain arm is graded on the same goal.
+
+## Experiments: champion/challenger (and the optimizer)
+
+The hard cases exist to give a better config **headroom to climb** — and thulr's
+experiment loop is how a climb gets measured honestly instead of eyeballed.
+`npm run eval -- --trace-only --trace-out={out}` is the harness's **re-run mode**:
+it runs every flow and emits the self-contained trace, leaving judge/rank/select
+to the driver. That makes the harness a drop-in command template for
+`thulr run-experiment` / `thulr optimize` (exit code only says whether a judgeable
+trace was emitted; objective misses travel as labels in the trace).
+
+```bash
+# 1. Seed a champion — any full run persists its EvalRun at .thulr/runs/candidate.json
+npm run eval
+
+# 2. Frame the experiment (deterministic 70/30 train/test split; guardrails block promotion)
+thulr experiment new subject-model-bakeoff \
+  --hypothesis "a cheaper local subject model matches codex on the hard review cases" \
+  --champion .thulr/runs/candidate.json \
+  --guardrail criterion --score-guardrail criterion
+
+# 3. Let thulr drive: per candidate it runs the template, judges the emitted trace,
+#    registers the challenger, ranks on the train split, and selects.
+cat > /tmp/candidates.json <<'EOF'
+[
+  { "label": "qwen3-coder-30b", "params": { "model": "llama-cpp/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_XL" } },
+  { "label": "gpt-5.5",         "params": { "model": "openai-codex/gpt-5.5" } }
+]
+EOF
+thulr run-experiment .thulr/experiments/subject-model-bakeoff.json \
+  --candidates /tmp/candidates.json \
+  --template "node --import tsx evals/run.mjs --trace-only --trace-out={out} --model={param.model}" \
+  --model anthropic/claude-haiku-4-5
+
+# Or hands-off — grid axes, judged every round, held-out-validated, bounded budget:
+thulr optimize .thulr/experiments/subject-model-bakeoff.json \
+  --template "node --import tsx evals/run.mjs --trace-only --trace-out={out} --model={param.model}" \
+  --grid "model=openai-codex/gpt-5.4-mini,openai-codex/gpt-5.5" \
+  --max-rounds 3 --model anthropic/claude-haiku-4-5
+```
+
+Selection is overfit-guarded: a challenger must beat the champion on the **train**
+split, clear every guardrail, **and** validate on the **held-out** split; within-band
+margins are honest ties, and `experiment promote` writes an append-only audit
+record. `thulr experiment show .thulr/experiments/<id>.json` prints the full state,
+and `thulr dashboard` watches a run live. **Cost note:** every candidate is a full
+suite run on the subject model plus a judge pass — scope with `--filter` in the
+template or `--max-candidates` before launching a wide grid.
 
 ## Add a case
 
@@ -202,7 +281,7 @@ validation), so a sharper prompt has room to climb.
 A *frontier* subject model exhausts these small fixtures (it finds every defect), so
 the score pins at 1.0 with no headroom. Rather than pin a different model per case,
 the whole suite runs on one cheaper/faster model — `DEFAULT_EVAL_MODEL`
-(`openai-codex/codex`; override with `--model` or `PI_FLOWS_EVAL_MODEL`). A cheaper
+(`openai-codex/gpt-5.4-mini`; override with `--model` or `PI_FLOWS_EVAL_MODEL`). A cheaper
 model leaves real headroom on the harder cases *and* is where the flows-vs-plain A/B
 (`npm run eval:compare`) shows the extension's lift — plain pi on a frontier model
 already aces everything, which hides it.
