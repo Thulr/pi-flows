@@ -1,6 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 
-export const PI_FLOWS_VERSION = "0.1.0";
+export const PI_FLOWS_VERSION = "0.1.1";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const DEFAULT_CONCURRENCY = 4;

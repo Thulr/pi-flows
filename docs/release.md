@@ -23,7 +23,7 @@ permission, and provenance is generated automatically.
 
 1. Move `CHANGELOG.md` notes from `Unreleased` into a dated, versioned section.
 2. Bump the version in **both** `package.json` and `PI_FLOWS_VERSION` in
-   `extensions/pi-flows/index.ts`. The publish workflow fails if the tag does
+   `extensions/pi-flows/types.ts`. The publish workflow fails if the tag does
    not match `package.json`.
 3. Verify locally:
 

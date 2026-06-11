@@ -8,6 +8,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+## 0.1.1 - 2026-06-10
+
 ### Added
 
 - Custom agents are now a documented public extension point:
