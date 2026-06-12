@@ -18,7 +18,7 @@
     "seed": null,
     "criteria_digest": "a9e72f7a2f517ca3",
     "judge": {
-      "bin": "/Users/justin/Dev/pi-flow/scripts/thulr-judge-pi.sh",
+      "bin": "scripts/thulr-judge-pi.sh",
       "bin_source": "flag",
       "model_source": "flag"
     }

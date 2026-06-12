@@ -97,13 +97,16 @@ const redaction = flag("redaction", null);
 const rate = Number(flag("rate", "0"));
 const efficiencyGuardrails = flags("efficiency-guardrail");
 const noiseBand = Number(flag("noise-band", "0.05"));
-const judgeBin = flag("judge-bin", null) ?? process.env.THULR_JUDGE_BIN ?? (existsSync(resolve(process.cwd(), "scripts/thulr-judge-pi.sh")) ? resolve(process.cwd(), "scripts/thulr-judge-pi.sh") : null);
 // Emit-the-trace-and-stop: the command-template mode `thulr run-experiment` and
 // `thulr optimize` drive ("the template MUST emit a structured JSONL trace to {out}").
 const traceOnly = has("trace-only");
 
 const p = (relPath) => resolve(process.cwd(), relPath);
-const rel = (abs) => (abs.startsWith(`${process.cwd()}/`) ? abs.slice(process.cwd().length + 1) : abs);
+const rel = (path) => (path.startsWith(`${process.cwd()}/`) ? path.slice(process.cwd().length + 1) : path);
+const stableRepoPath = (path) => path ? rel(path) : path;
+const defaultJudgeBin = "scripts/thulr-judge-pi.sh";
+const configuredJudgeBin = flag("judge-bin", null) ?? process.env.THULR_JUDGE_BIN ?? null;
+const judgeBin = stableRepoPath(configuredJudgeBin ?? (existsSync(p(defaultJudgeBin)) ? defaultJudgeBin : null));
 // Dry-run gets its own trace path: mock spans must never clobber the last real
 // trace (which re-judging with a different judge model depends on).
 const TRACE = p(flag("trace-out", dryRun ? "evals/thulr-trace.dry-run.jsonl" : "evals/thulr-trace.jsonl"));
