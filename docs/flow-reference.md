@@ -121,7 +121,7 @@ The `redteam` signals its verdict with a `VERDICT: PASS` or `VERDICT: REVISE` li
 
 ## Vote mode (parallelization / voting)
 
-Runs the same `task` across two or more voters, then either aggregates the answers via a `debrief` agent or returns all of them. Independent voters suppress non-deterministic errors; **different models** (vendor-diverse voting) additionally break correlated blind spots.
+Runs the same `task` across two or more voters, then either aggregates the answers via a `debrief` agent or returns all of them. Independent voters suppress non-deterministic errors; **different models** (vendor-diverse voting) additionally break correlated blind spots. When every voter has the same agent/model identity, pi-flows keeps the original task but adds complementary voter stances (solver, skeptic, evidence checker, etc.) so the ballots are not identical prompt replays.
 
 ```json
 {
@@ -135,8 +135,8 @@ Runs the same `task` across two or more voters, then either aggregates the answe
 
 | Field | Default | Notes |
 |---|---|---|
-| `vote.voters` | (none) | Explicit voter list (heterogeneous models recommended). Each runs the same `task`. |
-| `vote.agent` + `vote.count` | count `3` | Same-agent voting: run one agent `count` times. `count` is `2..8`. |
+| `vote.voters` | (none) | Explicit voter list (heterogeneous models recommended). Each runs the same goal; identical agent/model voters get complementary stances. |
+| `vote.agent` + `vote.count` | count `3` | Same-agent voting: run one agent `count` times with complementary stances. `count` is `2..8`. |
 | `vote.debrief` | (none) | Optional `debrief` agent that merges the voter answers. Without it, all voter answers are returned for the parent to judge. |
 
 At least 2 voters are required (`TOO_FEW_VOTERS` otherwise) and at most `maxParallelTasks`. `concurrency` controls fan-out. Voter answers are free text, so consensus is decided by the `debrief` agent, not by programmatic majority.
@@ -162,7 +162,7 @@ The `controller` signals its choice with a `ROUTE: <agent>` line (JSON `{ "route
 
 ## Orchestrate mode (decompose → fan out → synthesize)
 
-The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results — the deep-research / orchestrator-workers shape.
+The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results — the deep-research / orchestrator-workers shape. Each worker sees both the overall goal/contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
 
 ```json
 {
@@ -179,7 +179,7 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 | Field | Default | Notes |
 |---|---|---|
 | `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON array of subtask strings. |
-| `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel. Use `analyst` for deeper per-subtask investigation. |
+| `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel, with the overall goal/contract included for context. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
 | `orchestrate.verify` | (none) | Optional critic that checks the merged answer against the goal/contract (orchestrator-workers composed with evaluator-optimizer). |
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict; `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`; `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |

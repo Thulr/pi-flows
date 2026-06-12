@@ -20,7 +20,7 @@ function judgeInfraError(result) {
 		}
 	}
 	const text = result?.content?.[0]?.text ?? "";
-	if (/"type":\s*"error"|invalid_request_error|authentication|out of (extra )?usage|rate.?limit|\b40[13]\b|api[_ -]?key|model .*not found|unknown model/i.test(text)) return "judge provider/model error";
+	if (/"type":\s*"error"|invalid_request_error|authentication|unauthorized|forbidden|out of (extra )?usage|rate.?limit|\b40[13]\b|api[_ -]?key (missing|required|invalid|not found)|missing .*api[_ -]?key|invalid .*api[_ -]?key|model .*not found|unknown model/i.test(text)) return "judge provider/model error";
 	return null;
 }
 

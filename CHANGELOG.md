@@ -8,6 +8,36 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Changed
+
+- Evals: emit thulr's richer trace metadata (`thulr.expected_behavior`,
+  `thulr.failure_modes`, `thulr.config_version`, `thulr.task.input`, and
+  zero-valued cost/token metrics), inspect traces before paid judging, feed
+  `thulr label-failures` into calibration, and support `--eval-set`,
+  `--redaction`, `--rate`, and repeatable `--efficiency-guardrail=<metric>` in
+  the thulr-backed eval harness. The harness now passes the committed
+  `scripts/thulr-judge-pi.sh` judge wrapper to thulr by default, and the
+  provider-error detector no longer treats ordinary security-review mentions of
+  API keys, authentication gaps, or missing signature checks as provider auth
+  failures. The `recon-retrieves-known-value` fixture now asks for
+  `SAMPLE_IDENTIFIER=xyzzy-42` instead of token-shaped wording, and its judge
+  criterion accepts the exact terse answer `xyzzy-42`, matching the task's
+  "report exactly that value" instruction. The suite now appends fixed
+  calibration canaries (wrong and partial answers) to every thulr trace so TNR
+  has negative/mid-score signal; the full judged EvalRun keeps them for
+  calibration while the release gate uses a filtered candidate. The terminal
+  summary now prints thulr's numeric score, pass-rate, and efficiency deltas from
+  `thulr gate --json` before the human gate report, and `--noise-band=<n>` makes
+  guardrail tolerance explicit.
+- Vote/orchestrate quality: same-agent/model voters now receive complementary
+  stances so ballots are not identical prompt replays, and orchestrate workers
+  now see the overall goal/contract alongside their assigned subtask before
+  synthesis.
+- Recon quality: debugging and code-review delegations now tell `recon` not to
+  stop at the first plausible issue and to check common production-correctness
+  classes such as initialization/null guards, validation, auth/signature,
+  idempotency/retry behavior, cleanup, error handling, and boundary cases.
+
 ## 0.1.1 - 2026-06-10
 
 ### Added

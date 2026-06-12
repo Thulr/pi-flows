@@ -10,6 +10,12 @@ import { judge } from "./judge.mjs";
 export const answerText = (r) => r?.content?.[0]?.text ?? "";
 export const sumCost = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.cost ?? 0), 0);
 export const sumTokens = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.input ?? 0) + (x?.usage?.output ?? 0), 0);
+export const subjectModelName = (r, fallback) => {
+	const models = new Set((r?.details?.results ?? []).map((x) => x?.model).filter(Boolean));
+	if (models.size === 1) return [...models][0];
+	if (models.size > 1) return [...models].sort().join(",");
+	return fallback;
+};
 
 // Default subject model for the eval suite. The harness standardizes on the
 // CHEAPEST model pi's codex provider exposes (gpt-5.4-mini: $0.75/M in, $4.50/M out
@@ -60,7 +66,7 @@ export function infraError(result) {
 		}
 	}
 	const text = result?.content?.[0]?.text ?? "";
-	if (/"type":\s*"error"|invalid_request_error|authentication|out of (extra )?usage|rate.?limit|\b40[13]\b|api[_ -]?key/i.test(text)) return "provider/API error";
+	if (/"type":\s*"error"|invalid_request_error|authentication[_ -]?error|authentication (failed|required)|auth (failed|required)|out of (extra )?usage|rate.?limit|\b40[13]\b|provider failed|(?:provider|model|judge|anthropic|openai|codex|claude|pi|api)[^\n]{0,80}api[_ -]?key[^\n]{0,40}(missing|required|invalid|not found)|api[_ -]?key[^\n]{0,40}(missing|required|invalid|not found)[^\n]{0,80}(?:provider|model|judge|anthropic|openai|codex|claude|pi|api)/i.test(text)) return "provider/API error";
 	return null;
 }
 

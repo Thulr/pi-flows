@@ -5,6 +5,35 @@ import { withReflexion } from "../reflexion.ts";
 import { toolErrorDetails } from "../agents.ts";
 import { mapWithConcurrency, runAgentRef, runFlowAgent } from "../runner.ts";
 
+const VOTER_STANCES = [
+	"Primary solver: answer the task directly and state the strongest evidence for your conclusion.",
+	"Skeptical reviewer: look for counterexamples, edge cases, and reasons the obvious answer might be wrong before concluding.",
+	"Evidence checker: verify the key factual or code-level claims and identify any unsupported assumptions.",
+	"Completeness reviewer: check whether the answer covers every requested part of the task, not just the easiest part.",
+	"Risk analyst: focus on failure modes, ambiguity, and production-impact caveats that a direct answer might miss.",
+	"Minimalist verifier: produce the shortest answer that is still fully correct and justified.",
+	"Alternative-path solver: use a different line of reasoning than the most obvious approach, then give your conclusion.",
+	"Adversarial validator: try to disprove the likely consensus; if it still holds, say why.",
+];
+
+function sameVoterIdentity(a: FlowAgentRefInput, b: FlowAgentRefInput) {
+	return a.agent === b.agent && (a.model ?? "") === (b.model ?? "");
+}
+
+function shouldDiversifyVoterPrompts(voters: FlowAgentRefInput[]) {
+	return voters.length > 1 && voters.every((voter) => sameVoterIdentity(voter, voters[0]));
+}
+
+function voterTask(baseTask: string, index: number, total: number, diversify: boolean) {
+	if (!diversify) return baseTask;
+	return [
+		baseTask,
+		"\n## Voting role",
+		`You are voter ${index + 1}/${total}. ${VOTER_STANCES[index % VOTER_STANCES.length]}`,
+		"Work independently. Do not assume other voters will catch missing cases. Return your own best answer to the original task.",
+	].join("\n");
+}
+
 export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
 	const spec = params.vote ?? {};
@@ -66,6 +95,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "vote", agentScope, sharedWriteError) };
 	}
 
+	const diversifyVoters = shouldDiversifyVoterPrompts(voters);
 	const liveResults: FlowRunResult[] = voters.map((voter) => makeEmptyRunResult(voter.agent, goal, policy));
 	const emitVote = () => {
 		const done = liveResults.filter((result) => result.exitCode !== -1).length;
@@ -77,7 +107,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			defaultCwd,
 			agents: discovery.agents,
 			agentName: voter.agent,
-			task: contractedGoal,
+			task: voterTask(contractedGoal, index, voters.length, diversifyVoters),
 			cwd: voter.cwd,
 			model: voter.model,
 			tools: voter.tools,

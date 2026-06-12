@@ -204,7 +204,7 @@ Two optional reliability levers: **`checkCommand`** is a deterministic gate (a s
 }
 ```
 
-Runs the same task across ≥2 voters (use different models to break correlated errors) and synthesizes one answer via the optional `debrief` aggregator. Without it, all answers are returned.
+Runs the same task across ≥2 voters (use different models to break correlated errors) and synthesizes one answer via the optional `debrief` aggregator. When voters share the same agent/model, pi-flows adds complementary stances so ballots are not identical prompt replays. Without an aggregator, all answers are returned.
 
 ### Route (classify → dispatch)
 
@@ -230,7 +230,7 @@ The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits
 }
 ```
 
-The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` hard-fails on `REVISE`, and `"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
+The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel with the overall goal/contract plus their assigned subtask, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` hard-fails on `REVISE`, and `"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
 
 ### Graph (static DAG)
 

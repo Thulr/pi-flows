@@ -1,30 +1,35 @@
 {
-  "id": "run-9-unix1781129226181055000",
-  "created_at": "unix:1781129226181055000",
+  "id": "run-9-unix1781222937558563000",
+  "created_at": "unix:1781222937558563000",
   "source": {
     "tool": "thulr",
-    "trace_digest": "",
+    "trace_digest": "e68af98962a9470e",
     "n_cases": 9
   },
   "repro": {
     "subject_model": "openai-codex/gpt-5.4-mini",
     "judge_model": "anthropic/claude-haiku-4-5",
-    "config_version": null,
-    "prompt_version": "pi-flows@0.1.0",
+    "config_version": "pi-flows-eval:openai-codex/gpt-5.4-mini",
+    "prompt_version": "pi-flows@0.1.1",
     "evaluator_set": [
       "criterion"
     ],
     "thulr_version": "0.1.2",
     "seed": null,
-    "criteria_digest": "485d700f981e8bca"
+    "criteria_digest": "a9e72f7a2f517ca3",
+    "judge": {
+      "bin": "/Users/justin/Dev/pi-flow/scripts/thulr-judge-pi.sh",
+      "bin_source": "flag",
+      "model_source": "flag"
+    }
   },
   "summary": [
     {
       "dimension": "criterion",
       "n": 9,
       "pass_count": 9,
-      "score_mean": 0.98481476,
-      "score_stddev": 0.019245014
+      "score_mean": 0.9722222,
+      "score_stddev": 0.06666666
     }
   ],
   "cases": [
@@ -34,8 +39,14 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 0.98333335
+          "score": 1.0
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.0615909,
+        "tokens_total": 38515,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
@@ -44,8 +55,14 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 0.98333335
+          "score": 1.0
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.0047205,
+        "tokens_total": 1565,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
@@ -56,26 +73,44 @@
           "verdict": true,
           "score": 1.0
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.0114837,
+        "tokens_total": 12624,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
       "case_id": "review-finds-all-webhook-defects",
-      "deterministic_label": true,
+      "deterministic_label": false,
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 0.95
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.16067145,
+        "tokens_total": 37804,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
       "case_id": "review-finds-session-cache-defects",
-      "deterministic_label": true,
+      "deterministic_label": false,
       "dims": {
         "criterion": {
           "verdict": true,
           "score": 1.0
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.14053035,
+        "tokens_total": 41365,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
@@ -84,8 +119,14 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 0.99333334
+          "score": 1.0
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.16563,
+        "tokens_total": 22032,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
@@ -94,8 +135,14 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 0.96999997
+          "score": 1.0
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.009879,
+        "tokens_total": 12132,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
@@ -106,6 +153,12 @@
           "verdict": true,
           "score": 1.0
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.0193473,
+        "tokens_total": 20200,
+        "steps": 2,
+        "tool_errors": 0
       }
     },
     {
@@ -114,8 +167,14 @@
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 0.93333334
+          "score": 0.8
         }
+      },
+      "efficiency": {
+        "cost_usd": 0.01885125,
+        "tokens_total": 23955,
+        "steps": 2,
+        "tool_errors": 0
       }
     }
   ],
