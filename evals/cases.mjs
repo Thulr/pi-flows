@@ -15,6 +15,10 @@
 //   score(result, ctx) -> { pass, score, notes }   // objective, deterministic
 //   mock      – a canned result used by `run.mjs --dry-run` to exercise the runner
 //               offline. It should make `score` pass and document the expected shape.
+//
+// CALIBRATION_CASES are fixed judge canaries, not live flow delegations. They put
+// known-bad and partial answers into thulr's EvalRun so calibration has true
+// negatives and score headroom without making the subject run slower or flakier.
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -39,34 +43,34 @@ export const CASES = [
 	},
 	{
 		name: "recon-retrieves-known-value",
-		params: { agent: "recon", task: "Find the value assigned to MAGIC_TOKEN in this repo and report exactly that value." },
+		params: { agent: "recon", task: "Find the value assigned to SAMPLE_IDENTIFIER in this repo and report exactly that value." },
 		cwd: fixturesRepo,
-		criterion: "The response states that the value of MAGIC_TOKEN is xyzzy-42.",
+		criterion: "The response contains the exact SAMPLE_IDENTIFIER value `xyzzy-42`; a terse answer of only `xyzzy-42` is acceptable.",
 		score(r) {
 			const found = /xyzzy-42/.test(text(r));
-			return { pass: found, score: found ? 1 : 0, notes: found ? "found MAGIC_TOKEN=xyzzy-42" : `value not found: ${text(r).slice(0, 120)}` };
+			return { pass: found, score: found ? 1 : 0, notes: found ? "found SAMPLE_IDENTIFIER=xyzzy-42" : `value not found: ${text(r).slice(0, 120)}` };
 		},
-		mock: { content: [{ type: "text", text: "MAGIC_TOKEN is xyzzy-42" }], details: { mode: "single", results: [{ agent: "recon" }] } },
+		mock: { content: [{ type: "text", text: "SAMPLE_IDENTIFIER is xyzzy-42" }], details: { mode: "single", results: [{ agent: "recon" }] } },
 	},
 	{
 		name: "return-contract-preserves-evidence",
 		params: {
 			agent: "recon",
-			task: "Find the value assigned to MAGIC_TOKEN in this repo.",
+			task: "Find the value assigned to SAMPLE_IDENTIFIER in this repo.",
 			returnContract: "Return one sentence containing the value and the evidence path.",
 			requireEvidence: true,
 		},
 		cwd: fixturesRepo,
 		// The plain-pi A/B arm has no return-contract feature, so give it the same goal in the prompt — a fair control.
-		baselinePrompt: "Find the value assigned to MAGIC_TOKEN in this repo. Reply with one sentence containing the value and the evidence path (the file it lives in).",
-		criterion: "The response contains both the MAGIC_TOKEN value (xyzzy-42) and a citation of where it was found (a file name or path such as settings.txt).",
+		baselinePrompt: "Find the value assigned to SAMPLE_IDENTIFIER in this repo. Reply with one sentence containing the value and the evidence path (the file it lives in).",
+		criterion: "The response contains both the SAMPLE_IDENTIFIER value (xyzzy-42) and a citation of where it was found (a file name or path such as settings.txt).",
 		score(r) {
 			const body = text(r);
 			const found = /xyzzy-42/.test(body);
-			const cited = /settings\.txt/i.test(body) || /MAGIC_TOKEN/i.test(body);
+			const cited = /settings\.txt/i.test(body) || /SAMPLE_IDENTIFIER/i.test(body);
 			return { pass: found && cited, score: found && cited ? 1 : found ? 0.5 : 0, notes: found && cited ? "value and evidence survived the contract" : `missing value or evidence: ${body.slice(0, 160)}` };
 		},
-		mock: { content: [{ type: "text", text: "MAGIC_TOKEN is xyzzy-42 in evals/fixtures/repo/settings.txt." }], details: { mode: "single", results: [{ agent: "recon" }] } },
+		mock: { content: [{ type: "text", text: "SAMPLE_IDENTIFIER is xyzzy-42 in evals/fixtures/repo/settings.txt." }], details: { mode: "single", results: [{ agent: "recon" }] } },
 	},
 	{
 		name: "vote-reaches-known-consensus",
@@ -171,5 +175,35 @@ export const CASES = [
 			return { pass: found.length === 3, score: found.length / 3, notes: `defects: ${found.join(", ") || "none"} (${found.length}/3)` };
 		},
 		mock: { content: [{ type: "text", text: "Three defects: (1) getSession reads `entry.expiresAt` without checking the id exists, so an unknown id dereferences undefined and throws a TypeError; (2) expired entries are never evicted, so the store grows unbounded — a memory leak; (3) ttlSeconds is never validated, so a missing, NaN, or negative TTL produces a broken expiry." }], details: { mode: "single", results: [{ agent: "recon" }] } },
+	},
+];
+
+export const CALIBRATION_CASES = [
+	{
+		name: "calibration-known-value-wrong",
+		task: "Find the value assigned to SAMPLE_IDENTIFIER in this repo and report exactly that value.",
+		answer: "SAMPLE_IDENTIFIER is xyzzx-42.",
+		criterion: "The response contains the exact SAMPLE_IDENTIFIER value `xyzzy-42`; no near-miss spelling or alternate value is acceptable.",
+		expectedBehavior: "A correct answer must report exactly `xyzzy-42`.",
+		objective: { pass: false, score: 0, notes: "known-bad fixture: wrong SAMPLE_IDENTIFIER value" },
+		failureModes: ["final_answer.factually_wrong"],
+	},
+	{
+		name: "calibration-webhook-partial-review",
+		task: "Review billing-webhook.js in this repo for ALL production-correctness defects. Name each distinct defect you find and why it matters.",
+		answer: "The main production defect is that recordPayment references `ledger`, which is never declared, so webhook calls throw and return 500. It should also validate the payload shape before reading req.body.data.object.",
+		criterion: "The review identifies ALL FOUR distinct defects: (1) recordPayment references `ledger`, which is never declared/initialized, so every call throws a ReferenceError (500); (2) no idempotency/deduplication, so a duplicate or retried delivery double-counts the payment; (3) no verification of the webhook's signature/authenticity, so a forged request is accepted as a real payment; (4) no input validation or error handling, so a malformed `req.body.data.object` throws unhandled and 500s. Fewer than four is incomplete.",
+		expectedBehavior: "A correct answer must name all four webhook defects; naming only ledger and validation is partial.",
+		objective: { pass: false, score: 0.5, notes: "known-partial fixture: names 2/4 webhook defects" },
+		failureModes: ["final_answer.incomplete"],
+	},
+	{
+		name: "calibration-consensus-wrong-answer",
+		task: "Is the regex /^(a+)+$/ vulnerable to catastrophic backtracking? Answer YES or NO and give a one-line reason.",
+		answer: "NO. The anchors keep the input bounded, so this regex is safe from catastrophic backtracking.",
+		criterion: "The response concludes YES — the regex /^(a+)+$/ IS vulnerable to catastrophic backtracking (ReDoS).",
+		expectedBehavior: "A correct answer must conclude YES and mention the nested quantifier/backtracking risk.",
+		objective: { pass: false, score: 0, notes: "known-bad fixture: wrong ReDoS conclusion" },
+		failureModes: ["final_answer.factually_wrong"],
 	},
 ];

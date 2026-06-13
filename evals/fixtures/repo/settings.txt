@@ -1,4 +1,4 @@
 # Sample config used by the recon-retrieval eval case.
 SERVICE_NAME=billing
-MAGIC_TOKEN=xyzzy-42
+SAMPLE_IDENTIFIER=xyzzy-42
 LOG_LEVEL=info

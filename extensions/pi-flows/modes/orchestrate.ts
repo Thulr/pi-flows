@@ -83,12 +83,25 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const done = liveWorkers.filter((result) => result.exitCode !== -1).length;
 		onUpdate?.({ content: [{ type: "text", text: `Flow orchestrate: ${done}/${liveWorkers.length} workers done` }], details: makeDetails("orchestrate")([...results, ...liveWorkers]) });
 	};
+	const makeWorkerTask = (subtask: string) =>
+		appendReturnContract(
+			[
+				"## Overall goal / contract",
+				contractedGoal,
+				"\n## Assigned subtask",
+				subtask,
+				"\n## Your job",
+				"Investigate only the assigned subtask, but aim the findings at the overall goal. Return concrete findings, evidence, risks, and unknowns that the final synthesizer can use.",
+			].join("\n"),
+			spec.workerReturnContract,
+			false,
+		);
 	const workerResults = await mapWithConcurrency(subtasks, concurrency, async (subtask, index) => {
 		const result = await runFlowAgent({
 			defaultCwd,
 			agents: discovery.agents,
 			agentName: workerRef.agent,
-			task: appendReturnContract(subtask, spec.workerReturnContract ?? params.returnContract, params.requireEvidence),
+			task: makeWorkerTask(subtask),
 			cwd: workerRef.cwd,
 			model: workerRef.model,
 			tools: workerRef.tools,

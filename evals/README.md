@@ -16,6 +16,12 @@ Every case is scored on **two independent axes**:
 The judge runs on a *different* vendor than the subject under test (default
 `anthropic/claude-haiku-4-5`), so no model grades its own family. A case passes
 only when both axes agree, and the run is gated only when thulr finds a regression.
+The trace also includes fixed **calibration canaries**: known-wrong and partial
+answers that are not live flow delegations. They give thulr true-negative and
+mid-score examples so TNR is meaningful instead of every row collapsing into
+"passed." The full judged EvalRun keeps them for calibration; the release gate
+uses a filtered gate candidate so expected-fail canaries do not invert the
+product pass-rate guardrail.
 
 > These run **real** `flow` delegations through **real** `pi`, so they need the
 > `pi` CLI on PATH and a configured model provider, and **they spend tokens**.
@@ -29,7 +35,11 @@ npm run eval                       # all cases, on the default eval model (opena
 npm run eval -- --filter=route     # only matching cases
 npm run eval -- --model=openai-codex/gpt-5.5   # explicit subject provider/model
 npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default: anthropic/claude-haiku-4-5)
+npm run eval -- --judge-bin=/path/to/judge-wrapper   # override thulr's judge command
 npm run eval -- --samples=3        # judge each case 3×: majority verdict, mean score, flake warnings (3× judge spend)
+npm run eval -- --eval-set=.thulr/eval-sets/release.json   # overlay promoted criteria / guardrail authority
+npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/token regressions
+npm run eval -- --noise-band=0.10  # regression tolerance for score/pass-rate/efficiency guardrails (default 0.05)
 npm run eval -- --cap=1.00         # per-case USD ceiling on flow delegations (default 0.50)
 npm run eval -- --write-baseline   # promote this run to evals/thulr-baseline.json (the gate baseline)
 npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
@@ -52,32 +62,52 @@ shells out to the `thulr` CLI for the `judge → calibrate → gate → baseline
 
 | Artifact | What | Committed? |
 | --- | --- | --- |
-| `evals/thulr-trace.jsonl` | one span per case — answer + criterion + objective label, all **inline** | no (regenerated) |
+| `evals/thulr-trace.jsonl` | two spans per case — case context plus final answer, criterion, expected behavior, objective label, failure tags, version, and efficiency metrics all **inline** | no (regenerated) |
 | `evals/thulr-baseline.json` | the baseline EvalRun thulr gates against | **yes** |
+| `.thulr/runs/candidate.labels.json` | failure-label report from `thulr label-failures`, fed into calibration | no (regenerated) |
 
 The pipeline, per `npm run eval` (preflighted by `thulr doctor --json`, which
 verifies the binary, workspace, store, and that thulr's judge binary `pi` resolves):
 
-1. Run every flow, compute the objective check → write the self-contained trace.
-2. `thulr judge --trace <file>` grades each case's answer against its inline
+1. Run every flow, compute the objective check, add calibration canaries → write
+   the self-contained trace.
+2. `thulr inspect-trace --json` checks the trace for judge-grade coverage before
+   any judge tokens are spent. Required trace issues fail the run immediately.
+3. `thulr label-failures --trace <file>` applies thulr's failure-mode ontology
+   and writes labels for calibration/triage.
+4. `thulr judge --trace <file>` grades each case's answer against its inline
    `criterion` → an EvalRun. thulr (0.1.2) reads everything from the trace — no
    separate cases-manifest or labels files. With `--samples=N` each case is judged
    N times and aggregated (majority verdict, ties fail safe; mean score) — the
    EvalRun's `score_stddev` then reports **judge noise** instead of cross-case
    spread, and thulr warns when cases flip verdicts across samples. Use it when a
    gate verdict looks flaky before believing (or rebaselining over) the result.
-3. `thulr calibrate` prints **TPR/TNR** — how well the judge's verdicts track the
-   inline deterministic labels. (An uncalibrated judge can silently certify
-   regressions; this is the calibration the old single-judge setup lacked.)
-4. `thulr gate` compares the EvalRun to `evals/thulr-baseline.json` with a 0.05
-   noise band and **fails the run on a regression** (it exits `10`). It guards two
-   axes on the `criterion` dimension: `--guardrail` (a **pass-rate** drop) and
+5. `thulr calibrate --labels .thulr/runs/candidate.labels.json` prints **TPR/TNR**
+   — how well the judge's verdicts track the inline deterministic labels, with
+   failure labels included in the report. (An uncalibrated judge can silently
+   certify regressions; this is the calibration the old single-judge setup lacked.)
+6. Before gating, pi-flows writes `.thulr/runs/candidate.gate.json`, which is the
+   judged EvalRun with calibration canaries filtered out and summaries
+   recomputed. `thulr gate` compares that gate candidate to
+   `evals/thulr-baseline.json` with a 0.05 noise band by default (`--noise-band`
+   overrides it) and **fails the run on a regression** (it exits `10`). It guards
+   two axes on the `criterion` dimension: `--guardrail` (a **pass-rate** drop) and
    `--score-guardrail` (a **mean-score** drop that holds pass-rate — thulr's
    "Gap 1", catching quality drift like `1.00 → 0.85` that every verdict still
-   passing would hide). The first run has no baseline — seed one with
-   `--write-baseline`. With `--junit=<path>` the same comparison is also written
-   as a JUnit XML testsuite (one testcase per case×dimension) for CI ingestion.
-5. `--write-baseline` promotes a passing run to `evals/thulr-baseline.json`.
+   passing would hide). Add repeatable `--efficiency-guardrail=<metric>` for
+   thulr's efficiency axes (`cost_usd`, `tokens`, `steps`, `tool_errors`) once the
+   baseline was produced from traces carrying those metrics. The first run has no
+   baseline — seed one with `--write-baseline`. With `--junit=<path>` the same
+   comparison is also written as a JUnit XML testsuite (one testcase per
+   case×dimension) for CI ingestion.
+   pi-flows also asks for the free `--json` gate report and prints the numeric
+   score / pass-rate / efficiency deltas before the human gate report, so the
+   terminal lead is the change in quality rather than only PASS/FAIL glyphs.
+   Efficiency guardrails share the same noise band as quality; token counts can
+   move with model verbosity even when answer quality improves, so prefer an
+   explicit `--noise-band` and a rerun before rebaselining over a token-only
+   failure.
+7. `--write-baseline` promotes a passing run to `evals/thulr-baseline.json`.
 
 Inspect what the gate machinery holds at any time — all free: `thulr list runs`
 (stored EvalRuns and their store keys), `thulr inspect-trace --trace
@@ -89,18 +119,22 @@ evals/thulr-trace.jsonl` (judge-grade telemetry coverage per case), and
 
 thulr ingests a **self-contained** JSONL trace (`docs/trace-contract.md` in the
 thulr repo): it groups spans by `thulr.case_id` and grades the **latest span's
-`output.value`**, with the case's `thulr.criterion` and its objective
-`thulr.deterministic_label` (a boolean) carried **inline** in the span attributes
-(plus a numeric `end_time_unix_ms`). So the harness emits exactly **one span per
-case** carrying the canonical final answer (the same text the objective scorer
-graded) alongside its criterion and label — no separate cases or labels files.
-Each span also carries the contract's optional context/repro attributes: the task
-text as `input.value` (judge context), `thulr.cost_usd` and
-`llm.token_count.total` (per-case spend, summed into the EvalRun), and
-`thulr.prompt_version` stamped `pi-flows@<package version>` — the agent prompts
-ship with the package, so the package version *is* the prompt version (and
-`thulr query-traces --prompt-version` can slice traces by it). Sanity-check a
-trace for free with `thulr inspect-trace --trace evals/thulr-trace.jsonl`. This deliberately does **not** reuse a flow's internal multi-span
+`output.value`**, with the case's `thulr.criterion`, `thulr.expected_behavior`,
+`thulr.failure_modes`, and its objective `thulr.deterministic_label` (a boolean)
+carried **inline** in the span attributes (plus numeric timing fields). So the
+harness emits a compact **case root span plus final-answer span**: the final span
+carries the canonical answer (the same text the objective scorer graded) alongside
+its criterion and label, while the root span gives thulr enough trajectory shape
+for inspect/label workflows — no separate cases or labels files. The spans also
+carry the contract's optional context/repro attributes: the task text as
+`input.value` and `thulr.task.input` (judge context), `thulr.cost_usd` and
+`llm.token_count.total` on the final-answer span (per-case spend, summed into the
+EvalRun), `thulr.prompt_version` stamped
+`pi-flows@<package version>` because the agent prompts ship with the package, and
+`thulr.config_version` stamped with the eval subject configuration. `thulr
+query-traces --prompt-version` / `--config-version` can slice traces by either
+stamp. Sanity-check a trace for free with `thulr inspect-trace --trace
+evals/thulr-trace.jsonl`. This deliberately does **not** reuse a flow's internal multi-span
 trace, where the latest child is often a critic or voter rather than the synthesized
 answer. The `flow`-tool's richer OpenInference trace (`PI_FLOWS_TRACE_FILE` /
 `/flows report`) is a separate, diagnostics-only path.
@@ -130,12 +164,15 @@ workspace, store, judge binary) and reports thulr's own diagnosis on failure. If
 `thulr` is missing, install it and put it on PATH, or smoke-test the harness
 offline with `npm run eval -- --dry-run`.
 
-> **Judging on a local model** (e.g. pi-llama's `llama-cpp/...` provider, handy
-> when a cloud judge is out of quota): thulr's default judge invocation passes
-> `--no-extensions` to `pi`, which unloads extension-provided model providers, so
-> the judge fails with "Model not found". Point thulr at the committed wrapper
-> that re-enables extensions:
-> `THULR_JUDGE_BIN="$PWD/scripts/thulr-judge-pi.sh" thulr judge --trace … --model llama-cpp/…`
+The harness passes the committed `scripts/thulr-judge-pi.sh` wrapper to thulr
+when it is present (unless `--judge-bin` or `THULR_JUDGE_BIN` overrides it). The
+wrapper removes thulr's default `--no-extensions` from the `pi` judge invocation,
+which keeps extension-provided model providers available, and it tolerates a
+post-verdict `pi` teardown crash as long as stdout already contains `VERDICT:`.
+This matters for local providers such as `llama-cpp/...`, and for any provider
+that is installed through pi extensions. Override it with
+`npm run eval -- --judge-bin=/path/to/judge-wrapper` when you need a different
+judge command.
 
 > Reasoning / large-context models report a per-call cost (≈$0.09 for `gpt-5.5`)
 > that the `maxCostUsd` cap counts even when a subscription covers the actual
@@ -160,6 +197,20 @@ Plus: **every** case above is independently graded by thulr's cross-model judge
 checks gate *behaviour* and label the run; thulr's judge gates *answer quality*; a
 case passes only when both agree. Pointing the judge at a different vendor than
 `--model` is what keeps it from grading its own model family.
+
+The suite also appends three fixed calibration canaries to every thulr trace:
+
+| Canary | Purpose |
+| --- | --- |
+| `calibration-known-value-wrong` | exact-value true negative for a near-miss SAMPLE_IDENTIFIER answer |
+| `calibration-webhook-partial-review` | partial 2/4 code-review answer, giving the judge score headroom |
+| `calibration-consensus-wrong-answer` | wrong YES/NO true negative for the ReDoS consensus case |
+
+Canaries are judged and calibrated, but they are not live behavior cases and are
+filtered out of the release gate candidate. They exist so `thulr calibrate` has
+more than two negative labels and the terminal output can show known-fail and
+partial-answer rows without treating expected FAIL verdicts as product
+regressions.
 
 ## Flows vs plain pi (A/B)
 
@@ -285,3 +336,15 @@ the whole suite runs on one cheaper/faster model — `DEFAULT_EVAL_MODEL`
 model leaves real headroom on the harder cases *and* is where the flows-vs-plain A/B
 (`npm run eval:compare`) shows the extension's lift — plain pi on a frontier model
 already aces everything, which hides it.
+
+### Calibration canaries
+
+Add to `CALIBRATION_CASES` when the judge needs more calibration coverage rather
+than another live flow delegation. A canary must include `task`, `answer`,
+`criterion`, `expectedBehavior`, `failureModes`, and an `objective` with
+`pass:false`. Prefer a mix of fully wrong answers and partial answers with
+`0 < objective.score < 1`; the former improves TNR, and the latter keeps score
+deltas from degenerating into pure pass/fail. Canaries are included in thulr
+judge/calibration runs, then filtered out of `.thulr/runs/candidate.gate.json`
+before the release gate. The harness reports them separately from behavior cases
+and never counts them as behavior failures.

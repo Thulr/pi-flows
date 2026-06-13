@@ -68,8 +68,8 @@ test("single: appends return contracts, updates UI status, and writes a session 
 	const widgets: string[][] = [];
 	const entries: Array<{ customType: string; data: any }> = [];
 	const { calls } = await runFlow(
-		{ agent: "recon", task: "find MAGIC_TOKEN", returnContract: "Return one sentence with value and evidence path.", requireEvidence: true },
-		{ recon: "MAGIC_TOKEN=xyzzy-42 in settings.txt" },
+		{ agent: "recon", task: "find SAMPLE_IDENTIFIER", returnContract: "Return one sentence with value and evidence path.", requireEvidence: true },
+		{ recon: "SAMPLE_IDENTIFIER=xyzzy-42 in settings.txt" },
 		{
 			api: { appendEntry: (customType: string, data: any) => entries.push({ customType, data }) },
 			ui: {
@@ -227,6 +227,11 @@ test("vote: concurrency 1 serializes write-capable voters sharing cwd", async ()
 
 	assert.equal(result.details.error, undefined);
 	assert.equal(calls.length, 2);
+	assert.match(calls[0].task, /make two independent edits/);
+	assert.match(calls[1].task, /make two independent edits/);
+	assert.match(calls[0].task, /Voting role/);
+	assert.match(calls[1].task, /Voting role/);
+	assert.notEqual(calls[0].task, calls[1].task, "same-agent voters should get complementary roles, not identical prompts");
 	assert.match(text, /2\/2 voters succeeded/);
 });
 
@@ -238,6 +243,8 @@ test("orchestrate: commander decomposes, recon workers fan out, debrief merges",
 
 	assert.ok(byAgent(calls, "commander").length >= 1, "commander decomposes the goal");
 	const workerTasks = byAgent(calls, "recon").map((call) => call.task).join("\n");
+	assert.match(workerTasks, /Overall goal \/ contract/);
+	assert.match(workerTasks, /document how auth works/);
 	assert.match(workerTasks, /map the login flow/);
 	assert.match(workerTasks, /map token refresh/);
 	assert.ok(byAgent(calls, "debrief").length >= 1, "debrief merges the worker findings");
