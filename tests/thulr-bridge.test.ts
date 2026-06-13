@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traceSpansForCase, gateBlocks, gateArgs, judgeArgs, calibrateArgs, inspectTraceArgs, labelFailuresArgs, formatGateScoreSummary, gateCandidateForEvalRun } from "../evals/thulr.mjs";
+import { traceSpansForCase, gateBlocks, gateArgs, judgeArgs, calibrateArgs, inspectTraceArgs, labelFailuresArgs, formatGateScoreSummary, gateCandidateForEvalRun, duelArgs, paretoArgs, reviewArgs, formatDuelSummary } from "../evals/thulr.mjs";
 
 // thulr ingests a SELF-CONTAINED trace: each case's criterion and its
 // deterministic (objective) label travel INLINE in the span attributes — no more
@@ -111,7 +111,7 @@ test("gateArgs passes both the pass-rate and mean-score guardrails", () => {
 	]);
 });
 
-// `--format junit` (thulr 0.1.2) replaces the terminal report on stdout with a
+// `--format junit` (thulr 0.1.2+) replaces the terminal report on stdout with a
 // JUnit XML testsuite for CI test ingestion; exit codes are unchanged.
 test("gateArgs renders the CI-native JUnit format when asked", () => {
 	const args = gateArgs({ baseline: "b.json", candidate: "c.json", format: "junit" });
@@ -171,7 +171,7 @@ test("gateCandidateForEvalRun excludes calibration canaries and recomputes summa
 	assert.equal(gateRun.summary[0].score_mean, 0.75);
 });
 
-// Judge repeat-sampling (thulr 0.1.2): `--samples N` judges each case N times and
+// Judge repeat-sampling (thulr 0.1.2+): `--samples N` judges each case N times and
 // aggregates (majority verdict, mean score). N=1 is the default — no flag emitted,
 // byte-identical to single-sample judging.
 test("judgeArgs passes --samples only when repeat-sampling is on", () => {
@@ -185,8 +185,83 @@ test("judgeArgs passes --samples only when repeat-sampling is on", () => {
 	);
 });
 
-test("trace inspection, failure labels, and calibration args match thulr 0.1.2", () => {
+test("trace inspection, failure labels, and calibration args match thulr 0.1.3", () => {
 	assert.deepEqual(inspectTraceArgs({ trace: "t.jsonl" }), ["inspect-trace", "--trace", "t.jsonl", "--json"]);
 	assert.deepEqual(labelFailuresArgs({ trace: "t.jsonl", out: "labels.json" }), ["label-failures", "--trace", "t.jsonl", "--out", "labels.json"]);
 	assert.deepEqual(calibrateArgs({ evalRun: "run.json", labels: "labels.json", reviews: "reviews.json" }), ["calibrate", "--labels", "labels.json", "--reviews", "reviews.json", "run.json"]);
+});
+
+// `thulr duel` (0.1.3) is the relative, position-swapped head-to-head the A/B uses
+// instead of a hand-rolled pairwise judge. Traces are the trailing positionals;
+// --judge-bin rides the same wrapper as judge so extension providers stay available.
+test("duelArgs builds the pairwise duel argv; traces are the trailing positionals", () => {
+	assert.deepEqual(
+		duelArgs({ traceA: "a.jsonl", traceB: "b.jsonl", labelA: "flows", labelB: "plain", model: "anthropic/claude-haiku-4-5", out: "duel.json", concurrency: 4, judgeBin: "scripts/thulr-judge-pi.sh", json: true }),
+		["duel", "--json", "--label-a", "flows", "--label-b", "plain", "--model", "anthropic/claude-haiku-4-5", "--out", "duel.json", "--concurrency", "4", "--judge-bin", "scripts/thulr-judge-pi.sh", "a.jsonl", "b.jsonl"],
+	);
+	assert.deepEqual(duelArgs({ traceA: "a.jsonl", traceB: "b.jsonl" }), ["duel", "a.jsonl", "b.jsonl"]);
+});
+
+// `thulr pareto` (0.1.3) ranks failure modes across stored traces — free, no judge calls.
+test("paretoArgs builds the failure-mode ranking argv", () => {
+	assert.deepEqual(
+		paretoArgs({ traces: "evals/thulr-trace.jsonl", by: "config-version", limit: 10, json: true }),
+		["pareto", "--json", "--traces", "evals/thulr-trace.jsonl", "--by", "config-version", "--limit", "10"],
+	);
+	assert.deepEqual(paretoArgs(), ["pareto"]);
+});
+
+// `thulr review` (0.1.3) records one human SME verdict per invocation, or --lists state.
+test("reviewArgs records one verdict and lists state", () => {
+	assert.deepEqual(
+		reviewArgs({ trace: "t.jsonl", caseId: "route-x", verdict: "fail", failureMode: "tool.error", note: "missed it", reviewer: "justin" }),
+		["review", "--trace", "t.jsonl", "--case", "route-x", "--verdict", "fail", "--failure-mode", "tool.error", "--note", "missed it", "--reviewer", "justin"],
+	);
+	assert.deepEqual(reviewArgs({ trace: "t.jsonl", list: true, json: true }), ["review", "--json", "--trace", "t.jsonl", "--list"]);
+});
+
+// The duel report (thulr.duel_report.v1): arm A is flows, arm B is plain. Lead with
+// win counts, the win rate over swap-consistent cases, the A-margin, then flips
+// (position bias) and any skipped cases.
+test("formatDuelSummary leads with win counts, win rate, margin, flips, and skips", () => {
+	const lines = formatDuelSummary({
+		a: { label: "flows" },
+		b: { label: "plain" },
+		summary: { a_wins: 3, b_wins: 1, ties: 1, flips: 1, decided: 5, win_rate_a: 0.6, win_rate_b: 0.2, margin_a: 0.4 },
+		skipped: [["lonely-case", "only_in_a"]],
+	});
+	assert.deepEqual(lines, [
+		"flows wins 3 · plain wins 1 · ties 1 · flips 1  (decided 5)",
+		"win rate: flows 60.0% · plain 20.0%  ·  margin flows +0.400",
+		"skipped 1: lonely-case (only_in_a)",
+	]);
+});
+
+test("formatDuelSummary returns nothing without a summary", () => {
+	assert.deepEqual(formatDuelSummary(null), []);
+	assert.deepEqual(formatDuelSummary({}), []);
+});
+
+// thulr 0.1.3 multi-dimension judging: namedCriteria ride the graded span as
+// thulr.criteria.<dimension>, judged into their own dimensions alongside criterion.
+// Empty values are dropped; the root (context) span does not carry them.
+test("traceSpansForCase emits named criteria on the graded span only", () => {
+	const spans = traceSpansForCase({
+		name: "c",
+		answer: "a",
+		criterion: "primary",
+		endMs: 1,
+		namedCriteria: { evidence_quality: "cites the specific code", impact_explanation: "states the production impact", blank: "" },
+	});
+	const root = spans[0];
+	const graded = spans.find((s) => s.attributes["output.value"] !== undefined);
+	assert.equal(graded.attributes["thulr.criteria.evidence_quality"], "cites the specific code");
+	assert.equal(graded.attributes["thulr.criteria.impact_explanation"], "states the production impact");
+	assert.equal("thulr.criteria.blank" in graded.attributes, false, "empty dimension values are skipped");
+	assert.equal("thulr.criteria.evidence_quality" in root.attributes, false, "named criteria belong to the graded span");
+});
+
+test("traceSpansForCase omits the named-criteria attributes when none are given", () => {
+	const graded = traceSpansForCase({ name: "c", answer: "a", criterion: "x", endMs: 1 }).find((s) => s.attributes["output.value"] !== undefined);
+	assert.equal(Object.keys(graded.attributes).some((k) => k.startsWith("thulr.criteria.")), false);
 });

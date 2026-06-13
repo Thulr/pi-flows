@@ -29,6 +29,16 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   summary now prints thulr's numeric score, pass-rate, and efficiency deltas from
   `thulr gate --json` before the human gate report, and `--noise-band=<n>` makes
   guardrail tolerance explicit.
+- Evals: adopt thulr 0.1.3. `npm run eval:compare -- --pairwise` now runs thulr's
+  calibrated, position-swapped **`duel`** (relative win-rate judging, flips reported
+  as judge position bias) over one self-contained trace per arm, replacing the
+  harness's hand-rolled in-process pairwise judge. `npm run eval:review` records
+  human SME verdicts and `npm run eval` folds them into calibration as a second
+  ground-truth axis (`--reviews`; judge-vs-human TPR/TNR), auto-discovering
+  `.thulr/reviews/<trace>.reviews.json`. `npm run eval:pareto` ranks failure modes
+  across stored traces (which failure on which prompt/config version to fix first).
+  Calibration also surfaces thulr 0.1.3's judge-trust gate: a judge blind in either
+  direction downgrades a clean gate PASS to WARN.
 - Vote/orchestrate quality: same-agent/model voters now receive complementary
   stances so ballots are not identical prompt replays, and orchestrate workers
   now see the overall goal/contract alongside their assigned subtask before
