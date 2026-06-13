@@ -46,6 +46,7 @@ npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a 
 npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as JUnit XML (CI test ingestion)
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
+npm run eval:select                # tool-selection eval: should the parent model call flow at all?
 ```
 
 Exit code is `0` when every selected **behaviour** case passes (objective **and**
@@ -243,6 +244,14 @@ pi-flows-only by construction (route dispatch, the same-model vote warning); pla
 pi can't satisfy them, so read those as *capabilities flows adds*, not plain losses.
 Give a case a `baselinePrompt` when its flow params encode goal info outside `task`
 (e.g. a return contract) so the plain arm is graded on the same goal.
+
+## Tool selection
+
+`npm run eval:select` checks invocation discipline: it loads the extension into
+headless pi, gives the parent model small and explicit-flow prompts, and scores
+actual `flow` tool calls from the JSON stream. This is intentionally separate
+from `npm run eval`, because the main harness invokes `flow` directly and cannot
+catch overuse on tiny tasks.
 
 ## Experiments: champion/challenger (and the optimizer)
 
