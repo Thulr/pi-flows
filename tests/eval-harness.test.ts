@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { CALIBRATION_CASES } from "../evals/cases.mjs";
 import { injectModel } from "../evals/model-injection.mjs";
 import { infraError } from "../evals/lib.mjs";
+import { collectSelectionEvent, flowCallIdsFromMessage, scoreSelection } from "../evals/select.mjs";
 
 test("eval injectModel expands vote.agent/count into modeled explicit voters", () => {
 	const params = injectModel(
@@ -75,4 +76,32 @@ test("eval calibration canaries are fixed true-negative judge fixtures", () => {
 		assert.ok(testCase.answer, `${testCase.name} carries the answer thulr judges`);
 		assert.ok(testCase.criterion, `${testCase.name} carries an inline criterion`);
 	}
+});
+
+test("selection eval parser detects flow tool calls in pi JSON messages", () => {
+	const state = {
+		flowCallIds: new Set(),
+		answer: "",
+		parseErrors: 0,
+		stdoutSample: "",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+	};
+	const message = {
+		role: "assistant",
+		content: [
+			{ type: "thinking", thinking: "use flow" },
+			{ type: "toolCall", id: "call-1", name: "flow", arguments: { list: true } },
+		],
+	};
+
+	assert.deepEqual(flowCallIdsFromMessage(message), ["call-1"]);
+	collectSelectionEvent(JSON.stringify({ type: "agent_end", messages: [message] }), state);
+	assert.equal(state.flowCallIds.size, 1);
+});
+
+test("selection eval scores overuse and correct non-use", () => {
+	assert.equal(scoreSelection({ expectFlow: false, answerPattern: "4" }, { flowCalls: 0, answer: "4" }).pass, true);
+	const overused = scoreSelection({ expectFlow: false, answerPattern: "4" }, { flowCalls: 1, answer: "4" });
+	assert.equal(overused.pass, false);
+	assert.match(overused.notes, /expected flow=false/);
 });

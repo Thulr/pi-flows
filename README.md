@@ -16,6 +16,10 @@ Use pi-flows when the next step would otherwise make your main pi session noisy,
 | You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
 | You care what the delegation cost. | "Run this with a $0.25 cap and save a trace." | Cumulative cost/token ceilings plus OpenInference-shaped JSONL traces and `/flows report`. |
 
+Do not use pi-flows as the default path for small tasks. Simple answers, obvious
+shell commands, tiny edits, and quick single-file lookups are usually cheaper and
+clearer in the parent session.
+
 ## Why this instead of another sub-agent extension
 
 pi-flows is a small harness, not just a folder of specialist prompts. The distinction matters when you want delegation to be repeatable and auditable.
