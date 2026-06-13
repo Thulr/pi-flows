@@ -54,6 +54,11 @@ export function flowTool() {
 	return tools.get("flow");
 }
 
+const PROVIDER_CONTEXT = String.raw`(?:provider|model|judge|anthropic|openai|codex|claude|pi|api)`;
+const AUTH_PROBLEM = String.raw`(?:authentication[_ -]?error|authentication (?:failed|required)|auth (?:failed|required))`;
+const providerAuthError = new RegExp(String.raw`(?:${PROVIDER_CONTEXT}[^\n]{0,80}${AUTH_PROBLEM}|${AUTH_PROBLEM}[^\n]{0,80}${PROVIDER_CONTEXT}|^\s*(?:error:\s*)?${AUTH_PROBLEM}\.?\s*$)`, "i");
+const providerApiKeyError = new RegExp(String.raw`(?:${PROVIDER_CONTEXT}[^\n]{0,80}api[_ -]?key[^\n]{0,40}(?:missing|required|invalid|not found)|api[_ -]?key[^\n]{0,40}(?:missing|required|invalid|not found)[^\n]{0,80}${PROVIDER_CONTEXT})`, "i");
+
 // Distinguish "couldn't reach the model" (auth/credits/network/timeout) from "ran
 // but scored low". Returns a short reason string, or null. Works for both a flow
 // result and a plain-pi result (both carry details.results child records).
@@ -66,7 +71,7 @@ export function infraError(result) {
 		}
 	}
 	const text = result?.content?.[0]?.text ?? "";
-	if (/"type":\s*"error"|invalid_request_error|authentication[_ -]?error|authentication (failed|required)|auth (failed|required)|out of (extra )?usage|rate.?limit|\b40[13]\b|provider failed|(?:provider|model|judge|anthropic|openai|codex|claude|pi|api)[^\n]{0,80}api[_ -]?key[^\n]{0,40}(missing|required|invalid|not found)|api[_ -]?key[^\n]{0,40}(missing|required|invalid|not found)[^\n]{0,80}(?:provider|model|judge|anthropic|openai|codex|claude|pi|api)/i.test(text)) return "provider/API error";
+	if (/"type":\s*"error"|invalid_request_error|out of (extra )?usage|rate.?limit|\b40[13]\b|provider failed/i.test(text) || providerAuthError.test(text) || providerApiKeyError.test(text)) return "provider/API error";
 	return null;
 }
 

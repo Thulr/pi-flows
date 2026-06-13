@@ -46,6 +46,18 @@ test("eval infraError does not flag normal security-review API key wording", () 
 		null,
 	);
 	assert.equal(
+		infraError({ content: [{ type: "text", text: "No authentication required means anyone can invoke the webhook." }], details: { results: [] } }),
+		null,
+	);
+	assert.equal(
+		infraError({ content: [{ type: "text", text: "Authentication required is missing from this handler." }], details: { results: [] } }),
+		null,
+	);
+	assert.equal(
+		infraError({ content: [{ type: "text", text: "Error: authentication required" }], details: { results: [] } }),
+		"provider/API error",
+	);
+	assert.equal(
 		infraError({ content: [{ type: "text", text: "provider failed: API key missing" }], details: { results: [] } }),
 		"provider/API error",
 	);
