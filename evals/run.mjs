@@ -24,8 +24,10 @@
 //   npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate — the
 //                                         # command-template mode for `thulr run-experiment` / `thulr optimize`
 //   npm run eval -- --dry-run             # framework smoke (canned results, no model, no thulr calls)
+//   npm run eval:select                   # parent-model tool-selection discipline
 //
 // For the flows-vs-plain A/B ("does pi-flows beat plain pi?") see `npm run eval:compare`.
+// For "should the parent model call flow at all?" see `npm run eval:select`.
 //
 // Two axes, decomposed (not one god-metric):
 //   1. an objective, deterministic check per case (the chosen route, a known

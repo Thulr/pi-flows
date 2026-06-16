@@ -47,6 +47,7 @@ npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a 
 npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as JUnit XML (CI test ingestion)
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
+npm run eval:select                # tool-selection eval: should the parent model call flow at all?
 ```
 
 Exit code is `0` when every selected **behaviour** case passes (objective **and**
@@ -286,6 +287,14 @@ npm run eval:pareto                         # rank by prompt version over evals/
 npm run eval:pareto -- --by=config-version  # split by subject config instead
 npm run eval:pareto -- --limit=10           # top N rows
 ```
+
+## Tool selection
+
+`npm run eval:select` checks invocation discipline: it loads the extension into
+headless pi, gives the parent model small and explicit-flow prompts, and scores
+actual `flow` tool calls from the JSON stream. This is intentionally separate
+from `npm run eval`, because the main harness invokes `flow` directly and cannot
+catch overuse on tiny tasks.
 
 ## Experiments: champion/challenger (and the optimizer)
 

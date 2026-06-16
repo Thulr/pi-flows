@@ -117,6 +117,17 @@ test("showConfig is a no-run smoke path", async () => {
   assert.equal(result.details.mode, "config");
 });
 
+test("flow tool guidance discourages small-task overuse", () => {
+  const { tools } = registerForTest();
+  const flow = tools.get("flow");
+  assert.match(flow.description, /substantial delegated work/);
+  assert.match(flow.description, /simple answers, small lookups, tiny edits/);
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /Do not use flow for simple factual answers/.test(line)),
+    "model-facing guidelines should include explicit negative selection guidance",
+  );
+});
+
 test("invalid mode returns a structured error envelope", async () => {
   const repo = await makeTempRepo();
   const { tools } = registerForTest();
