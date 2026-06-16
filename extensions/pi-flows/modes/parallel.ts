@@ -1,11 +1,11 @@
-import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowRunResult, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, isFailed, makeEmptyRunResult, resultText, sanitizeText } from "../sanitize.ts";
+import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { toolErrorDetails } from "../agents.ts";
-import { mapWithConcurrency, runFlowAgent } from "../runner.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
+import { runAgentFanout } from "../runner.ts";
 
 export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
+	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
 	const tasks = params.tasks as FlowTaskInput[];
 
 	if (tasks.length > MAX_PARALLEL_TASKS) {
@@ -36,42 +36,18 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 			details: toolErrorDetails(discovery, "parallel", agentScope, sharedWriteError),
 		};
 	}
-	const liveResults: FlowRunResult[] = tasks.map((task) => makeEmptyRunResult(task.agent, task.task, policy));
-
-	const emitParallel = () => {
-		const done = liveResults.filter((result) => result.exitCode !== -1).length;
-		onUpdate?.({
-			content: [{ type: "text", text: `Flow parallel: ${done}/${liveResults.length} done` }],
-			details: makeDetails("parallel")([...liveResults]),
-		});
-	};
-
-	const results = await mapWithConcurrency(tasks, concurrency, async (task, index) => {
-		const result = await runFlowAgent({
-			defaultCwd,
-			agents: discovery.agents,
-			agentName: task.agent,
+	const results = await runAgentFanout(
+		deps,
+		"parallel",
+		tasks.map((task) => ({
+			ref: task,
 			task: appendReturnContract(task.task, task.returnContract ?? params.returnContract, task.requireEvidence ?? params.requireEvidence),
-			cwd: task.cwd,
-			model: task.model,
-			tools: task.tools,
-			timeoutMs: params.timeoutMs,
-			recordContent: params.recordContent,
-			redactSecrets: params.redactSecrets,
-			signal,
-			budget: deps.budget,
-			recordSpan: deps.recordSpan,
-			onUpdate: (partial) => {
-				const current = partial.details.results[0];
-				if (current) liveResults[index] = current;
-				emitParallel();
-			},
-			makeDetails: makeDetails("parallel"),
-		});
-		liveResults[index] = result;
-		emitParallel();
-		return result;
-	});
+			placeholderTask: task.task,
+		})),
+		concurrency,
+		[],
+		(done, total) => `Flow parallel: ${done}/${total} done`,
+	);
 
 	const success = results.filter((result) => !isFailed(result)).length;
 	const summaries = results.map((result) => {

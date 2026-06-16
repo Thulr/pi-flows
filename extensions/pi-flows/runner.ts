@@ -339,6 +339,58 @@ export async function mapWithConcurrency<TIn, TOut>(
 	return results;
 }
 
+export interface AgentFanoutItem {
+	ref: FlowAgentRefInput;
+	task: string;
+	placeholderTask?: string;
+}
+
+export async function runAgentFanout(
+	deps: ModeDeps,
+	mode: FlowMode,
+	items: AgentFanoutItem[],
+	concurrency: number,
+	priorResults: FlowRunResult[],
+	statusText: (done: number, total: number) => string,
+): Promise<FlowRunResult[]> {
+	const liveResults: FlowRunResult[] = items.map((item) => makeEmptyRunResult(item.ref.agent, item.placeholderTask ?? item.task, deps.policy));
+	const emit = () => {
+		const done = liveResults.filter((result) => result.exitCode !== -1).length;
+		deps.onUpdate?.({
+			content: [{ type: "text", text: statusText(done, liveResults.length) }],
+			details: deps.makeDetails(mode)([...priorResults, ...liveResults]),
+		});
+	};
+	const baseStep = priorResults.length;
+	return mapWithConcurrency(items, concurrency, async (item, index) => {
+		const result = await runFlowAgent({
+			defaultCwd: deps.defaultCwd,
+			agents: deps.discovery.agents,
+			agentName: item.ref.agent,
+			task: item.task,
+			cwd: item.ref.cwd,
+			model: item.ref.model,
+			tools: item.ref.tools,
+			timeoutMs: deps.params.timeoutMs,
+			recordContent: deps.params.recordContent,
+			redactSecrets: deps.params.redactSecrets,
+			step: baseStep + index + 1,
+			signal: deps.signal,
+			budget: deps.budget,
+			recordSpan: deps.recordSpan,
+			onUpdate: (partial) => {
+				const current = partial.details.results[0];
+				if (current) liveResults[index] = current;
+				emit();
+			},
+			makeDetails: deps.makeDetails(mode),
+		});
+		liveResults[index] = result;
+		emit();
+		return result;
+	});
+}
+
 /**
  * Run a deterministic acceptance gate (the evaluate `checkCommand`) and capture
  * its redacted, capped output. A shell command that must exit 0 is the wiki's

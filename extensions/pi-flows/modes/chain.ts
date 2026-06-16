@@ -1,5 +1,6 @@
 import type { FlowRunResult, ModeDeps, ModeOutput } from "../types.ts";
-import { capModelVisibleText, injectionNotice, isFailed, prepareHandoff, resultText, sanitizeText } from "../sanitize.ts";
+import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnContract } from "../validate.ts";
 import { renderTaskTemplate } from "../parse.ts";
 import { runFlowAgent } from "../runner.ts";
@@ -46,8 +47,8 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 		}
 		// {previous} is this step's output reused as the next step's prompt — a trust
 		// boundary. Strip invisible chars and flag injection markers before handoff.
-		const handoff = prepareHandoff(sanitizeText(capModelVisibleText(resultText(result)), policy));
-		previous = handoff.text + injectionNotice(`chain step ${index + 1} output`, handoff.warnings);
+		const handoff = prepareResultHandoff(result, policy);
+		previous = withInjectionNotice(handoff, `chain step ${index + 1} output`);
 	}
 
 	return {

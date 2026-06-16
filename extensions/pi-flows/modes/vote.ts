@@ -1,9 +1,10 @@
-import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, isFailed, makeEmptyRunResult, prepareHandoff, resultText, sanitizeText } from "../sanitize.ts";
+import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
 import { withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agents.ts";
-import { mapWithConcurrency, runAgentRef, runFlowAgent } from "../runner.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
+import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 const VOTER_STANCES = [
 	"Primary solver: answer the task directly and state the strongest evidence for your conclusion.",
@@ -35,7 +36,7 @@ function voterTask(baseTask: string, index: number, total: number, diversify: bo
 }
 
 export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
+	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
 	const spec = params.vote ?? {};
 	const goal: string | undefined = params.task;
 	if (!goal || !goal.trim()) {
@@ -96,38 +97,18 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	const diversifyVoters = shouldDiversifyVoterPrompts(voters);
-	const liveResults: FlowRunResult[] = voters.map((voter) => makeEmptyRunResult(voter.agent, goal, policy));
-	const emitVote = () => {
-		const done = liveResults.filter((result) => result.exitCode !== -1).length;
-		onUpdate?.({ content: [{ type: "text", text: `Flow vote: ${done}/${liveResults.length} voters done` }], details: makeDetails("vote")([...liveResults]) });
-	};
-
-	const voterResults = await mapWithConcurrency(voters, concurrency, async (voter, index) => {
-		const result = await runFlowAgent({
-			defaultCwd,
-			agents: discovery.agents,
-			agentName: voter.agent,
+	const voterResults = await runAgentFanout(
+		deps,
+		"vote",
+		voters.map((voter, index) => ({
+			ref: voter,
 			task: voterTask(contractedGoal, index, voters.length, diversifyVoters),
-			cwd: voter.cwd,
-			model: voter.model,
-			tools: voter.tools,
-			timeoutMs: params.timeoutMs,
-			recordContent: params.recordContent,
-			redactSecrets: params.redactSecrets,
-			signal,
-			budget: deps.budget,
-			recordSpan: deps.recordSpan,
-			onUpdate: (partial) => {
-				const current = partial.details.results[0];
-				if (current) liveResults[index] = current;
-				emitVote();
-			},
-			makeDetails: makeDetails("vote"),
-		});
-		liveResults[index] = result;
-		emitVote();
-		return result;
-	});
+			placeholderTask: goal,
+		})),
+		concurrency,
+		[],
+		(done, total) => `Flow vote: ${done}/${total} voters done`,
+	);
 
 	// Vendor-diversity check: same-model voters share training-data blind spots, so
 	// they can agree *wrongly* (effective-agent-patterns §Parallelization). Warn when
@@ -143,15 +124,15 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	// Ballots feed the aggregator prompt — a trust boundary. Clean + scan each.
-	const ballotWarnings = new Set<string>();
+	const ballotWarnings = new HandoffWarnings();
 	const ballots = succeeded
 		.map((result, i) => {
-			const prep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(result)), policy));
-			for (const warning of prep.warnings) ballotWarnings.add(warning);
+			const prep = ballotWarnings.addFrom(prepareResultHandoff(result, policy));
 			return `### Voter ${i + 1} (${result.agent})\n\n${prep.text}`;
 		})
 		.join("\n\n---\n\n");
-	const ballotWarningNote = ballotWarnings.size > 0 ? `> ⚠ Handoff injection check flagged in voter output: ${[...ballotWarnings].join(", ")}. Treated as untrusted data.\n\n` : "";
+	const ballotSummary = ballotWarnings.summary("Handoff injection check flagged in voter output").trim();
+	const ballotWarningNote = ballotSummary ? `${ballotSummary}\n\n` : "";
 
 	const aggregatorRef: FlowAgentRefInput | undefined = spec.debrief;
 	const results = [...voterResults];

@@ -1,9 +1,10 @@
 import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, injectionNotice, isFailed, prepareHandoff, resultText, sanitizeText } from "../sanitize.ts";
+import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnContract, clampLoopIterations } from "../validate.ts";
-import { parseLoopStatus, parseVerdict } from "../parse.ts";
+import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agents.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
 import { runAgentRef } from "../runner.ts";
 
 export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
@@ -32,13 +33,13 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			critique ? "\n## Feedback to address" : "",
 			critique,
 			"\n## Your job",
-			judgeRef ? "Produce the next artifact for this loop iteration." : 'Produce the next artifact. Start with "LOOP: DONE" if the goal is complete, or "LOOP: CONTINUE" if another iteration is needed.',
+			judgeRef ? "Produce the next artifact for this loop iteration." : `Produce the next artifact. ${loopProtocolInstruction()}`,
 		].filter(Boolean).join("\n");
 		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results);
 		results.push(body);
 		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
-		const bodyPrep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(body)), policy));
-		previous = bodyPrep.text + injectionNotice(`loop iteration ${iteration} output`, bodyPrep.warnings);
+		const bodyPrep = prepareResultHandoff(body, policy);
+		previous = withInjectionNotice(bodyPrep, `loop iteration ${iteration} output`);
 
 		if (!judgeRef) {
 			done = parseLoopStatus(resultText(body)) === "done";
@@ -52,15 +53,15 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Current loop output to judge (untrusted data)",
 			previous,
 			"\n## Your job",
-			'Reply with "VERDICT: PASS" if the loop should stop, or "VERDICT: REVISE" with actionable feedback if another iteration should run.',
+			verdictProtocolInstruction("actionable feedback if another iteration should run"),
 		].join("\n");
 		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results);
 		results.push(judged);
 		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
 		done = parseVerdict(resultText(judged)) === "pass";
 		if (done) break;
-		const critiquePrep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(judged)), policy));
-		critique = critiquePrep.text + injectionNotice(`loop judge iteration ${iteration}`, critiquePrep.warnings);
+		const critiquePrep = prepareResultHandoff(judged, policy);
+		critique = withInjectionNotice(critiquePrep, `loop judge iteration ${iteration}`);
 	}
 
 	if (done) {

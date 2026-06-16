@@ -1,4 +1,5 @@
 import { flowError, type FlowError, type ModeHandler, type RunMode } from "../types.ts";
+import { activeRunModes } from "./contract.ts";
 import { handleSingle } from "./single.ts";
 import { handleParallel } from "./parallel.ts";
 import { handleChain } from "./chain.ts";
@@ -17,32 +18,7 @@ import { handleSearch } from "./search.ts";
 
 
 export function detectRunMode(params: any): { mode: RunMode } | { error: FlowError } {
-	const hasChain = (params.chain?.length ?? 0) > 0;
-	const hasTasks = (params.tasks?.length ?? 0) > 0;
-	const hasEvaluate = Boolean(params.evaluate);
-	const hasVote = Boolean(params.vote);
-	const hasRoute = Boolean(params.route);
-	const hasOrchestrate = Boolean(params.orchestrate);
-	const hasGraph = Boolean(params.graph);
-	const hasLoop = Boolean(params.loop);
-	const hasSearch = Boolean(params.search);
-	const hasObjectMode = hasChain || hasTasks || hasEvaluate || hasVote || hasRoute || hasOrchestrate || hasGraph || hasLoop || hasSearch;
-	// Single is the fallback shape (agent + task) only when no richer mode object is present.
-	const hasSingle = Boolean(params.agent && params.task && !hasObjectMode);
-
-	const signals: Array<[boolean, RunMode]> = [
-		[hasSingle, "single"],
-		[hasTasks, "parallel"],
-		[hasChain, "chain"],
-		[hasEvaluate, "evaluate"],
-		[hasVote, "vote"],
-		[hasRoute, "route"],
-		[hasOrchestrate, "orchestrate"],
-		[hasGraph, "graph"],
-		[hasLoop, "loop"],
-		[hasSearch, "search"],
-	];
-	const active = signals.filter(([on]) => on).map(([, mode]) => mode);
+	const active = activeRunModes(params);
 	if (active.length !== 1) {
 		return {
 			error: flowError(

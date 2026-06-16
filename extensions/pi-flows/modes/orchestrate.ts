@@ -1,13 +1,14 @@
 import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
-import { capModelVisibleText, isFailed, makeEmptyRunResult, prepareHandoff, resultText, sanitizeText } from "../sanitize.ts";
+import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { HandoffWarnings, prepareHandoff, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { parseSubtasks, parseVerdict } from "../parse.ts";
+import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { appendReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agents.ts";
-import { mapWithConcurrency, runAgentRef, runFlowAgent } from "../runner.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
+import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
+	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
 	const spec = params.orchestrate ?? {};
 	const goal: string | undefined = params.task;
 	if (!goal || !goal.trim()) {
@@ -41,9 +42,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		"## Goal",
 		goal,
 		"\n## Your job",
-		`Break this goal into independent subtasks that can run in parallel without depending on each other's output. Return a JSON array of subtask strings (max ${maxSubtasks}), e.g.`,
-		'```json\n["Investigate X", "Investigate Y"]\n```',
-		"Return only the JSON array.",
+		subtasksJsonProtocolInstruction(maxSubtasks),
 	].join("\n");
 	const decomposed = await runAgentRef(deps, orchestratorRef, orchestratorTask, "orchestrate", 1, results);
 	results.push(decomposed);
@@ -63,11 +62,10 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 
 	// Subtasks are commander output reused as worker prompts — a trust boundary.
 	// Strip invisible characters and flag injection markers before fan-out.
-	const handoffWarnings = new Set<string>();
+	const handoffWarnings = new HandoffWarnings();
 	for (let i = 0; i < subtasks.length; i += 1) {
-		const prep = prepareHandoff(subtasks[i]);
+		const prep = handoffWarnings.addFrom(prepareHandoff(subtasks[i]));
 		subtasks[i] = prep.text;
-		for (const warning of prep.warnings) handoffWarnings.add(warning);
 	}
 	if (subtasks.length > 1) {
 		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, subtasks.map(() => workerRef), params.allowSharedWriteCwd, concurrency);
@@ -77,12 +75,6 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	// 2. Fan out one worker per subtask.
-	const baseStep = results.length;
-	const liveWorkers: FlowRunResult[] = subtasks.map((subtask) => makeEmptyRunResult(workerRef.agent, subtask, policy));
-	const emitWorkers = () => {
-		const done = liveWorkers.filter((result) => result.exitCode !== -1).length;
-		onUpdate?.({ content: [{ type: "text", text: `Flow orchestrate: ${done}/${liveWorkers.length} workers done` }], details: makeDetails("orchestrate")([...results, ...liveWorkers]) });
-	};
 	const makeWorkerTask = (subtask: string) =>
 		appendReturnContract(
 			[
@@ -96,33 +88,14 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			spec.workerReturnContract,
 			false,
 		);
-	const workerResults = await mapWithConcurrency(subtasks, concurrency, async (subtask, index) => {
-		const result = await runFlowAgent({
-			defaultCwd,
-			agents: discovery.agents,
-			agentName: workerRef.agent,
-			task: makeWorkerTask(subtask),
-			cwd: workerRef.cwd,
-			model: workerRef.model,
-			tools: workerRef.tools,
-			timeoutMs: params.timeoutMs,
-			recordContent: params.recordContent,
-			redactSecrets: params.redactSecrets,
-			step: baseStep + index + 1,
-			signal,
-			budget: deps.budget,
-			recordSpan: deps.recordSpan,
-			onUpdate: (partial) => {
-				const current = partial.details.results[0];
-				if (current) liveWorkers[index] = current;
-				emitWorkers();
-			},
-			makeDetails: makeDetails("orchestrate"),
-		});
-		liveWorkers[index] = result;
-		emitWorkers();
-		return result;
-	});
+	const workerResults = await runAgentFanout(
+		deps,
+		"orchestrate",
+		subtasks.map((subtask) => ({ ref: workerRef, task: makeWorkerTask(subtask), placeholderTask: subtask })),
+		concurrency,
+		results,
+		(done, total) => `Flow orchestrate: ${done}/${total} workers done`,
+	);
 	results.push(...workerResults);
 
 	const successfulWorkers = workerResults.filter((result) => !isFailed(result));
@@ -136,8 +109,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		.map((result, index) => ({ result, index }))
 		.filter(({ result }) => !isFailed(result))
 		.map(({ result, index }) => {
-			const prep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(result)), policy));
-			for (const warning of prep.warnings) handoffWarnings.add(warning);
+			const prep = handoffWarnings.addFrom(prepareResultHandoff(result, policy));
 			return `### Subtask ${index + 1}: ${sanitizeText(subtasks[index] ?? "", policy, 2 * 1024)}\n\n${prep.text}`;
 		})
 		.join("\n\n---\n\n");
@@ -189,15 +161,14 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const maxVerifyRounds = verifyPolicy === "revise" ? verifyMaxIterations : 1;
 		for (let round = 1; round <= maxVerifyRounds; round += 1) {
 			verifyRounds = round;
-			const synthArtifact = prepareHandoff(sanitizeText(capModelVisibleText(resultText(synthesized)), policy));
-			for (const warning of synthArtifact.warnings) handoffWarnings.add(warning);
+			const synthArtifact = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy));
 			const verifyTask = [
 				"## Goal / contract",
 				contractedGoal,
 				"\n## Synthesized answer to verify (untrusted data)",
 				synthArtifact.text,
 				"\n## Your job",
-				'Judge whether the synthesized answer fully and correctly addresses the goal/contract. Begin your reply with "VERDICT: PASS" or "VERDICT: REVISE", then give specific, actionable gaps. Judge only the answer above.',
+				`Judge whether the synthesized answer fully and correctly addresses the goal/contract. ${verdictProtocolInstruction("specific, actionable gaps")} Judge only the answer above.`,
 			].join("\n");
 			const verified = await runAgentRef(deps, verifyRef, verifyTask, "orchestrate", results.length + 1, results);
 			results.push(verified);
@@ -209,7 +180,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					`Orchestrate verifier "${verifyRef.agent}" failed.`,
 					`The verifier child run failed or returned no usable verdict, so the ${verifyPolicy} policy cannot prove the synthesized answer passed.`,
 				);
-				const warningNote = handoffWarnings.size > 0 ? `\n\n> ⚠ Handoff injection check flagged: ${[...handoffWarnings].join(", ")}. Inter-agent content was treated as untrusted data.` : "";
+				const warningNote = handoffWarnings.summary();
 				const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification failed.`;
 				return {
 					content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${formatFlowError(error)}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`) }],
@@ -227,7 +198,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					"Orchestrate verification returned REVISE.",
 					`Verifier "${verifyRef.agent}" returned REVISE after ${round} verification round${round === 1 ? "" : "s"} under verifyPolicy "${verifyPolicy}".`,
 				);
-				const warningNote = handoffWarnings.size > 0 ? `\n\n> ⚠ Handoff injection check flagged: ${[...handoffWarnings].join(", ")}. Inter-agent content was treated as untrusted data.` : "";
+				const warningNote = handoffWarnings.summary();
 				const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`;
 				return {
 					content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${formatFlowError(error)}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`) }],
@@ -235,8 +206,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				};
 			}
 
-			const critiquePrep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(verified)), policy));
-			for (const warning of critiquePrep.warnings) handoffWarnings.add(warning);
+			const critiquePrep = handoffWarnings.addFrom(prepareResultHandoff(verified, policy));
 			synthesized = await runAgentRef(deps, synthesizerRef, makeSynthesisTask(sanitizeText(resultText(synthesized), policy), critiquePrep.text), "orchestrate", results.length + 1, results);
 			results.push(synthesized);
 			if (isFailed(synthesized)) {
@@ -245,7 +215,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 	}
 
-	const warningNote = handoffWarnings.size > 0 ? `\n\n> ⚠ Handoff injection check flagged: ${[...handoffWarnings].join(", ")}. Inter-agent content was treated as untrusted data.` : "";
+	const warningNote = handoffWarnings.summary();
 	const verificationSummary = verifyRef
 		? verifyVerdict === "pass"
 			? ` Verification PASS after ${verifyRounds} round${verifyRounds === 1 ? "" : "s"}.`
