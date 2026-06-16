@@ -38,6 +38,7 @@ npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (d
 npm run eval -- --judge-bin=/path/to/judge-wrapper   # override thulr's judge command
 npm run eval -- --samples=3        # judge each case 3×: majority verdict, mean score, flake warnings (3× judge spend)
 npm run eval -- --eval-set=.thulr/eval-sets/release.json   # overlay promoted criteria / guardrail authority
+npm run eval -- --reviews=.thulr/reviews/thulr-trace.reviews.json   # fold human SME verdicts into calibration (judge-vs-human TPR/TNR)
 npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/token regressions
 npm run eval -- --noise-band=0.10  # regression tolerance for score/pass-rate/efficiency guardrails (default 0.05)
 npm run eval -- --cap=1.00         # per-case USD ceiling on flow delegations (default 0.50)
@@ -77,7 +78,7 @@ verifies the binary, workspace, store, and that thulr's judge binary `pi` resolv
 3. `thulr label-failures --trace <file>` applies thulr's failure-mode ontology
    and writes labels for calibration/triage.
 4. `thulr judge --trace <file>` grades each case's answer against its inline
-   `criterion` → an EvalRun. thulr (0.1.2) reads everything from the trace — no
+   `criterion` → an EvalRun. thulr (0.1.3) reads everything from the trace — no
    separate cases-manifest or labels files. With `--samples=N` each case is judged
    N times and aggregated (majority verdict, ties fail safe; mean score) — the
    EvalRun's `score_stddev` then reports **judge noise** instead of cross-case
@@ -87,6 +88,12 @@ verifies the binary, workspace, store, and that thulr's judge binary `pi` resolv
    — how well the judge's verdicts track the inline deterministic labels, with
    failure labels included in the report. (An uncalibrated judge can silently
    certify regressions; this is the calibration the old single-judge setup lacked.)
+   Record human SME verdicts with `npm run eval:review` and the harness folds them
+   in as a second ground-truth axis (`--reviews`; judge-vs-human TPR/TNR) — see
+   [Human review & failure triage](#human-review--failure-triage). thulr 0.1.3 also
+   queues every judge/ground-truth disagreement onto `thulr queue` and feeds this
+   calibration into the gate: a judge blind in either direction (TPR or TNR 0% over
+   labeled cases) downgrades a clean PASS to WARN with the dimension named.
 6. Before gating, pi-flows writes `.thulr/runs/candidate.gate.json`, which is the
    judged EvalRun with calibration canaries filtered out and summaries
    recomputed. `thulr gate` compares that gate candidate to
@@ -225,7 +232,7 @@ and the same cross-model judge:
 
 ```bash
 npm run eval:compare                    # all cases, both arms
-npm run eval:compare -- --pairwise      # add order-controlled pairwise judging (the sensitive metric)
+npm run eval:compare -- --pairwise      # add thulr's relative duel (the sensitive metric)
 npm run eval:compare -- --filter=vote   # scope to keep cost down (runs both arms per case)
 npm run eval:compare -- --write=evals/compare.json
 npm run eval:compare -- --dry-run       # wiring smoke, no model
@@ -236,14 +243,50 @@ PI_FLOWS_TRACE_FILE=/tmp/ab.jsonl npm run eval:compare -- --pairwise --write=eva
 npm run trace:report -- /tmp/ab.jsonl
 ```
 
-`eval:compare` keeps its own **order-controlled pairwise** judge (run twice with
-positions swapped, scored a win only when both orderings agree, told *not* to
-reward length) — the sensitive head-to-head metric for small gaps that thulr's
-absolute per-dimension scoring can't resolve. A few objective checks are
-pi-flows-only by construction (route dispatch, the same-model vote warning); plain
-pi can't satisfy them, so read those as *capabilities flows adds*, not plain losses.
-Give a case a `baselinePrompt` when its flow params encode goal info outside `task`
-(e.g. a return contract) so the plain arm is graded on the same goal.
+With `--pairwise` the harness emits one self-contained trace per arm and shells out
+to **`thulr duel`** (0.1.3) — thulr's calibrated relative judge. It pairs the arms
+by case id, judges each shared case **twice with the answers swapped**, and counts a
+win only when both orderings agree; opposite preferences are a **flip** (judge
+position bias), reported as judge noise and excluded from the win rate. This is the
+sensitive head-to-head metric for small gaps that thulr's absolute per-dimension
+scoring can't resolve — and it replaces the harness's old in-process pairwise judge.
+The duel spends two judge calls per eligible case (both arms must have reached the
+model) and persists a `thulr.duel_report.v1` at `.thulr/runs/compare-duel.json`. A
+few objective checks are pi-flows-only by construction (route dispatch, the
+same-model vote warning); plain pi can't satisfy them, so read those as *capabilities
+flows adds*, not plain losses. Give a case a `baselinePrompt` when its flow params
+encode goal info outside `task` (e.g. a return contract) so the plain arm is graded
+on the same goal.
+
+## Human review & failure triage
+
+Two free (no judge tokens) thulr 0.1.3 workflows close the loop on judged runs.
+
+**Record human verdicts** so calibration measures the judge against a person, not
+only the deterministic labels:
+
+```bash
+npm run eval:review -- --list                              # reviewed / unreviewed case ids for the last trace
+npm run eval:review -- --case single-answer-quality-judged --verdict pass
+npm run eval:review -- --case route-classifies-bug-to-recon --verdict fail \
+  --failure-mode routing.wrong_agent --note "should have gone to recon"
+```
+
+Verdicts land in `.thulr/reviews/thulr-trace.reviews.json` — the path the next
+`npm run eval` auto-discovers — so a recorded verdict needs no flag on the next run.
+`calibrate` then reports a **human** section (judge-vs-human TPR/TNR), and human
+verdicts take precedence over auto labels for the cases they cover. Point at an
+explicit set with `npm run eval -- --reviews=<path>`.
+
+**Rank failure modes across every stored trace** — which failure on which prompt or
+config version to fix first, joining deterministic labels, human reviews, and stored
+EvalRun scores:
+
+```bash
+npm run eval:pareto                         # rank by prompt version over evals/thulr-trace.jsonl
+npm run eval:pareto -- --by=config-version  # split by subject config instead
+npm run eval:pareto -- --limit=10           # top N rows
+```
 
 ## Tool selection
 
@@ -311,6 +354,9 @@ Append to `cases.mjs`:
   params: { agent: "recon", task: "…" },   // the flow tool input
   cwd: "/optional/working/dir",
   criterion: "One strict, literal statement a correct answer must satisfy.",  // graded by thulr's judge
+  namedCriteria: {                           // optional: extra judge dimensions (0.1.3)
+    evidence_quality: "Each claim cites the specific code it refers to.",
+  },
   score(result, ctx) {                       // objective, deterministic check
     const ok = /expected/.test(result.content[0].text);
     return { pass: ok, score: ok ? 1 : 0, notes: "…" };
@@ -325,6 +371,15 @@ single literal statement of what a correct answer must say; thulr grades the ans
 text against it on a different vendor than the subject. Always provide a `mock` so
 `--dry-run` can exercise the runner — and the artifact emission — offline.
 
+**Named criteria (`namedCriteria`)** add thulr 0.1.3 multi-dimension judging: each
+`{ dimension: "criterion text" }` entry is emitted as `thulr.criteria.<dimension>`
+on the graded span and judged into **its own dimension** alongside the required
+`criterion` — with its own pass-rate, score delta, and calibration. Use them for
+*orthogonal* quality axes (e.g. `evidence_quality`, `impact_explanation`) so a
+near-saturated case still produces a gradient. Dimension names must be non-empty,
+whitespace-free, and not `criterion`. They are observed by default; gate one with
+`--score-guardrail=<dimension>` once it looks stable.
+
 ### Hard cases (`hard: true`)
 
 For **score-tracked** cases — ones that intentionally land mid-scale so a better
@@ -336,7 +391,10 @@ the run to be green — only a regression in their mean score blocks. Keep the `
 a *complete* answer so `--dry-run` stays green. See `review-finds-all-webhook-defects`
 (4 defects) and `review-finds-session-cache-defects` (3 defects) — multi-defect code
 reviews where a typical pass misses the subtler ones (signature verification, TTL
-validation), so a sharper prompt has room to climb.
+validation), so a sharper prompt has room to climb. Both also carry `namedCriteria`
+(`evidence_quality`, `impact_explanation`) so the judge grades *how well* each defect
+is explained, not just whether all were found — extra headroom on cases that would
+otherwise saturate at "found them all."
 
 A *frontier* subject model exhausts these small fixtures (it finds every defect), so
 the score pins at 1.0 with no headroom. Rather than pin a different model per case,

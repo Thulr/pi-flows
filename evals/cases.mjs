@@ -148,6 +148,13 @@ export const CASES = [
 		cwd: fixturesRepo,
 		baselinePrompt: "Review billing-webhook.js for ALL production-correctness defects, not just the most obvious one. Name each distinct defect and why it matters.",
 		criterion: "The review identifies ALL FOUR distinct defects: (1) recordPayment references `ledger`, which is never declared/initialized, so every call throws a ReferenceError (500); (2) no idempotency/deduplication, so a duplicate or retried delivery double-counts the payment; (3) no verification of the webhook's signature/authenticity, so a forged request is accepted as a real payment; (4) no input validation or error handling, so a malformed `req.body.data.object` throws unhandled and 500s. Fewer than four is incomplete.",
+		// Orthogonal quality dimensions (0.1.3 multi-dimension judging) — graded
+		// alongside the completeness `criterion` above so a review that names defects
+		// but explains them shallowly scores lower here, giving the suite headroom.
+		namedCriteria: {
+			evidence_quality: "Every defect named is pinned to the specific code that causes it (e.g. `recordPayment`/the undeclared `ledger`, `req.body.data.object`, the missing signature check) rather than described in vague or generic terms.",
+			impact_explanation: "Every defect states its concrete production impact (e.g. a ReferenceError 500 on every call, double-counted payments on a retried webhook delivery, a forged request accepted as a real payment, an unhandled 500 on a malformed body), not merely that something is wrong.",
+		},
 		score(r) {
 			const body = text(r);
 			const ledger = /ledger/i.test(body) && /(never (declared|defined|initiali)|undeclared|undefined|referenceerror|not (declared|defined|initiali))/i.test(body);
@@ -166,9 +173,20 @@ export const CASES = [
 		cwd: fixturesRepo,
 		baselinePrompt: "Review session-cache.js for ALL correctness and reliability defects, not just the most obvious one. Name each distinct defect and why it matters.",
 		criterion: "The review identifies ALL THREE distinct defects: (1) getSession reads `entry.expiresAt` without checking the id exists, so an unknown/missing id dereferences `undefined` and throws a TypeError; (2) expired entries are never evicted (getSession returns null but leaves them), so the store grows unbounded — a memory leak; (3) ttlSeconds is never validated, so a missing, NaN, or negative TTL produces a broken/garbage expiry. Fewer than three is incomplete.",
+		// Orthogonal quality dimensions (0.1.3 multi-dimension judging) — graded
+		// alongside the completeness `criterion` above so a shallow-but-complete
+		// review scores lower here, giving the suite headroom.
+		namedCriteria: {
+			evidence_quality: "Every defect named is pinned to the specific code that causes it (e.g. `getSession` dereferencing `entry.expiresAt`, the never-evicted `sessions` entries, the unvalidated `ttlSeconds`) rather than described in vague or generic terms.",
+			impact_explanation: "Every defect states its concrete impact (e.g. a TypeError when the id is unknown, unbounded memory growth from expired entries never being evicted, a broken expiry from a missing/NaN/negative TTL), not merely that something is wrong.",
+		},
 		score(r) {
 			const body = text(r);
-			const existence = /(entry|session|id)[^.]{0,40}(undefined|missing|absent|does(n'?t| not) exist|not (found|present|exist)|no[^.]{0,10}(existence|null|presence) check)|throws?[^.]{0,30}(unknown|missing|absent|undefined|no .{0,8}(id|session|entry))|typeerror|crash[^.]{0,20}(missing|unknown|absent|undefined)/i.test(body);
+			// Broadened after a real false negative: the model wrote "without a miss
+			// guard / unknown id throws / cache miss can crash", none of which the old
+			// pattern matched. Match the concept (a missing/unknown id or cache miss
+			// dereferences/throws, or a missing existence guard), not one phrasing.
+			const existence = /\btypeerror\b|(unknown|missing|absent|non-?existent|invalid|unrecogni[sz]ed)[^.]{0,30}\b(id|key|entry|session|lookup)\b|\bcache[- ]?miss\b|(entry|session|getsession)[^.]{0,40}(undefined|null|throw|crash|deref|not[^.]{0,8}(exist|found|present))|(no|missing|without|lacks?|add|needs?)[^.]{0,25}(existence|presence|null|miss|nil)?[- ]?(guard|check)|\bmiss[- ]?guard\b/i.test(body);
 			const leak = /memory leak|never (evict|delet|remov|clean|free|purg)|unbounded|grow[^.]{0,16}(forever|unbounded|indefinit|without bound)|not[^.]{0,8}(evict|delet|remov|clean|purg)|\bleak/i.test(body);
 			const ttl = /ttlseconds|\bttl\b/i.test(body) && /validat|negativ|\bnan\b|invalid|unchecked|non-numeric|immortal|never expir/i.test(body);
 			const found = [existence && "no-existence-check", leak && "memory-leak", ttl && "no-ttl-validation"].filter(Boolean);

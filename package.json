@@ -68,6 +68,8 @@
     "validate:agents": "node scripts/validate-agents.mjs",
     "eval": "node --import tsx evals/run.mjs",
     "eval:compare": "node --import tsx evals/compare.mjs",
+    "eval:review": "node evals/review.mjs",
+    "eval:pareto": "node evals/pareto.mjs",
     "eval:select": "node evals/select.mjs",
     "trace:report": "node scripts/trace-report.mjs"
   }

@@ -14,7 +14,9 @@
 //   npm run eval -- --judge-bin=/path/to/judge-wrapper   # override thulr's judge command
 //   npm run eval -- --samples=3           # judge each case 3x: majority verdict, mean score, judge-noise stddev + flake warnings
 //   npm run eval -- --eval-set=.thulr/eval-sets/smoke.json   # overlay promoted criteria/authority metadata
+//   npm run eval -- --reviews=.thulr/reviews/thulr-trace.reviews.json   # fold human SME verdicts into calibration (judge-vs-human TPR/TNR)
 //   npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/size regressions
+//   npm run eval -- --score-guardrail=evidence_quality   # also gate a named-criteria dimension's score (criterion is always gated)
 //   npm run eval -- --noise-band=0.10    # judge/efficiency regression tolerance (default 0.05)
 //   npm run eval -- --write-baseline      # promote this run to evals/thulr-baseline.json (the gate baseline)
 //   npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
@@ -42,7 +44,7 @@
 // The harness emits ONE self-contained trace (evals/thulr-trace.jsonl) — each case's
 // answer, criterion, objective label, task text, expected behavior, failure labels,
 // config/prompt version, and cost/token telemetry inline —
-// and shells out to the `thulr` CLI (0.1.2) for judge -> calibrate -> gate ->
+// and shells out to the `thulr` CLI (0.1.3) for judge -> calibrate -> gate ->
 // baseline. thulr reads everything from the trace, so there are no separate
 // cases-manifest or labels files.
 //
@@ -52,7 +54,7 @@
 // (thulr run-experiment / optimize) owns judging and selection.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { CALIBRATION_CASES, CASES } from "./cases.mjs";
 import { caseCwd, flowTool, scoreObjective, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
@@ -98,6 +100,11 @@ const evalSet = flag("eval-set", null);
 const redaction = flag("redaction", null);
 const rate = Number(flag("rate", "0"));
 const efficiencyGuardrails = flags("efficiency-guardrail");
+// Opt-in per-dimension SCORE guardrails beyond the always-on `criterion`: name a
+// thulr.criteria.<dimension> (e.g. --score-guardrail=evidence_quality) to fail the
+// gate when that named dimension's mean score regresses. Off by default so a new
+// dimension is observed for a few runs before it can block.
+const extraScoreGuardrails = flags("score-guardrail");
 const noiseBand = Number(flag("noise-band", "0.05"));
 // Emit-the-trace-and-stop: the command-template mode `thulr run-experiment` and
 // `thulr optimize` drive ("the template MUST emit a structured JSONL trace to {out}").
@@ -128,6 +135,14 @@ const compareFlag = flag("compare-baseline", null);
 const gateBaseline = compareFlag ? p(compareFlag) : existsSync(BASELINE_DEFAULT) ? BASELINE_DEFAULT : null;
 const writeBaseline = has("write-baseline") ? p(flag("write-baseline", "") || BASELINE_DEFAULT) : null;
 const LABELS = p(".thulr/runs/candidate.labels.json");
+// Human-review calibration (thulr review): an SME verdict set folded into
+// `thulr calibrate` as judge-vs-human ground truth (TPR/TNR) on top of the
+// deterministic-label axis. Defaults to the path `thulr review` writes for this
+// trace, so recording a verdict (`npm run eval:review -- --case <id> --verdict
+// <pass|fail>`) is enough — the next `npm run eval` picks it up with no flag.
+const reviewsFlag = flag("reviews", null);
+const reviewsDefault = p(`.thulr/reviews/${basename(TRACE).replace(/\.jsonl$/, "")}.reviews.json`);
+const reviews = reviewsFlag ? p(reviewsFlag) : existsSync(reviewsDefault) ? reviewsDefault : null;
 
 function preflight() {
 	if (dryRun) return true;
@@ -210,6 +225,7 @@ async function main() {
 				name: testCase.name,
 				answer,
 				criterion: testCase.criterion,
+				namedCriteria: testCase.namedCriteria,
 				label: !!objective.pass,
 				endMs: endedAt,
 				model: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),
@@ -314,15 +330,20 @@ async function main() {
 			if (crit) console.log(`  judge noise across ${samples} samples: score stddev ±${(crit.score_stddev ?? 0).toFixed(3)}`);
 		}
 
-		// Calibration: how well the judge's verdicts track the deterministic labels.
+		// Calibration: how well the judge's verdicts track the deterministic labels
+		// (and human SME verdicts too, when a review set is present — judge-vs-human
+		// TPR/TNR). thulr 0.1.3 also queues every judge/ground-truth disagreement onto
+		// the triage queue (`thulr queue`) and feeds this calibration into the gate:
+		// a judge blind in either direction downgrades a clean PASS to WARN.
 		console.log("");
-		process.stdout.write(thulr.calibrate(CANDIDATE, { labels: LABELS }));
+		process.stdout.write(thulr.calibrate(CANDIDATE, { labels: LABELS, reviews }));
+		if (reviews) console.log(`folded human review verdicts from ${rel(reviews)} into calibration (judge-vs-human TPR/TNR above).`);
 		if (calibrationSummaries.length) {
 			console.log(`release gate excludes ${calibrationSummaries.length} calibration canar${calibrationSummaries.length === 1 ? "y" : "ies"} from pass-rate comparison; full judged run remains ${rel(CANDIDATE)}.`);
 		}
 
 		if (gateBaseline) {
-			const gateOptions = { baseline: gateBaseline, candidate: gateCandidate, guardrails: ["criterion"], scoreGuardrails: ["criterion"], efficiencyGuardrails, noiseBand, redaction };
+			const gateOptions = { baseline: gateBaseline, candidate: gateCandidate, guardrails: ["criterion"], scoreGuardrails: [...new Set(["criterion", ...extraScoreGuardrails])], efficiencyGuardrails, noiseBand, redaction };
 			try {
 				const gateJson = thulr.gate({ ...gateOptions, json: true });
 				const deltaLines = thulr.formatGateScoreSummary(gateJson.report);
