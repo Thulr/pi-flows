@@ -80,11 +80,19 @@ function preflight() {
 	if (dryRun) return true;
 	try {
 		execFileSync("pi", ["--version"], { stdio: "ignore" });
-		return true;
 	} catch {
 		console.error("✗ `pi` was not found on PATH.\n  Install: npm i -g @earendil-works/pi-coding-agent  ·  or smoke-test offline with --dry-run");
 		return false;
 	}
+	// --pairwise's duel shells out to `thulr`. Check it HERE, before the paid
+	// case loop, so a missing thulr fails fast — otherwise every flows/plain arm
+	// (and the absolute judges) would spend tokens and wall-clock only to print
+	// that the requested duel could not run.
+	if (pairwise && !thulr.available()) {
+		console.error("✗ --pairwise needs the `thulr` CLI for the duel (relative judging); it was not found on PATH.\n  Install it (e.g. `cargo install thulr`) or drop --pairwise (the absolute A/B still runs without it).");
+		return false;
+	}
+	return true;
 }
 
 const pct = (n, d) => (d > 0 ? `${((n / d) * 100).toFixed(0)}%` : "n/a");
@@ -193,10 +201,10 @@ async function main() {
 	// once (paired by case id), replacing the harness's old in-process pairwise judge.
 	let duelReport = null;
 	if (pairwise && !dryRun) {
+		// thulr availability is guaranteed by preflight(); the only remaining
+		// reason not to duel is that no case had both arms reach the model.
 		const eligible = rows.filter((r) => r.duelEligible);
-		if (!thulr.available()) {
-			console.log("⚠ --pairwise needs the `thulr` CLI for the duel (relative judging); it was not found on PATH.\n  Install it (e.g. `cargo install thulr`) or drop --pairwise. The absolute deltas above still stand.\n");
-		} else if (eligible.length === 0) {
+		if (eligible.length === 0) {
 			console.log("⚠ --pairwise: no case had both arms reach the model, so there is nothing to duel.\n");
 		} else {
 			mkdirSync(RUNS_DIR, { recursive: true });
