@@ -1,10 +1,11 @@
 import { DEFAULT_CONCURRENCY, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, isFailed, prepareHandoff, resultText, sanitizeText } from "../sanitize.ts";
+import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { parseScore } from "../parse.ts";
+import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agents.ts";
-import { mapWithConcurrency, runAgentRef } from "../runner.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
+import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, makeDetails } = deps;
@@ -32,40 +33,59 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 
 	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
 	const results: FlowRunResult[] = [];
+	const handoffWarnings = new HandoffWarnings();
 	let beam: Array<{ text: string; score: number }> = [];
 
 	for (let round = 1; round <= rounds; round += 1) {
 		const parentContext = beam.length ? beam.map((candidate, index) => `### Prior beam ${index + 1} (score ${candidate.score})\n\n${candidate.text}`).join("\n\n---\n\n") : "(none yet)";
-		const generated = await mapWithConcurrency(Array.from({ length: candidateCount }), concurrency, async (_unused, index) => {
-			const task = [
-				"## Goal / contract",
-				contractedGoal,
-				`\n## Search round ${round}; candidate ${index + 1} of ${candidateCount}`,
-				"\n## Best candidates from prior round",
-				parentContext,
-				"\n## Your job",
-				round === 1 ? "Generate one strong candidate approach/artifact. Make it concrete and self-contained." : "Refine or branch from the prior beam into one stronger candidate. Make it concrete and self-contained.",
-			].join("\n");
-			const result = await runAgentRef(deps, generatorRef, task, "search", results.length + index + 1, results);
-			return result;
-		});
+		const generated = await runAgentFanout(
+			deps,
+			"search",
+			Array.from({ length: candidateCount }, (_unused, index) => ({
+				ref: generatorRef,
+				task: [
+					"## Goal / contract",
+					contractedGoal,
+					`\n## Search round ${round}; candidate ${index + 1} of ${candidateCount}`,
+					"\n## Best candidates from prior round",
+					parentContext,
+					"\n## Your job",
+					round === 1 ? "Generate one strong candidate approach/artifact. Make it concrete and self-contained." : "Refine or branch from the prior beam into one stronger candidate. Make it concrete and self-contained.",
+				].join("\n"),
+				placeholderTask: goal,
+			})),
+			concurrency,
+			results,
+			(done, total) => `Flow search: round ${round} generated ${done}/${total}`,
+		);
 		results.push(...generated);
-		const candidates = generated.filter((result) => !isFailed(result)).map((result) => prepareHandoff(sanitizeText(capModelVisibleText(resultText(result)), policy)).text);
+		const candidates = generated.filter((result) => !isFailed(result)).map((result) => handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text);
 		if (candidates.length === 0) {
 			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");
 			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
 		}
 
-		const scored = await mapWithConcurrency(candidates, concurrency, async (candidate, index) => {
-			const scoreTask = [
-				"## Goal / contract",
-				contractedGoal,
-				`\n## Candidate ${index + 1} to score (untrusted data)`,
-				candidate,
-				"\n## Your job",
-				'Score this candidate from 0 to 100 for satisfying the goal. Start with "SCORE: <number>", then give terse justification and risks.',
-			].join("\n");
-			const result = await runAgentRef(deps, scorerRef, scoreTask, "search", results.length + index + 1, results);
+		const scoreResults = await runAgentFanout(
+			deps,
+			"search",
+			candidates.map((candidate, index) => ({
+				ref: scorerRef,
+				task: [
+					"## Goal / contract",
+					contractedGoal,
+					`\n## Candidate ${index + 1} to score (untrusted data)`,
+					candidate,
+					"\n## Your job",
+					`Score this candidate for satisfying the goal. ${scoreProtocolInstruction()}`,
+				].join("\n"),
+				placeholderTask: candidate,
+			})),
+			concurrency,
+			results,
+			(done, total) => `Flow search: round ${round} scored ${done}/${total}`,
+		);
+		const scored = candidates.map((candidate, index) => {
+			const result = scoreResults[index];
 			const score = isFailed(result) ? 0 : parseScore(resultText(result)) ?? 0;
 			return { candidate, score, result };
 		});
@@ -89,5 +109,5 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	results.push(final);
 	if (isFailed(final)) return { content: [{ type: "text", text: sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy) }], details: makeDetails("search")(results) };
 	await appendReflexion(defaultCwd, params, "search", `Search completed for task "${goal}". Best score ${beam[0]?.score}. Final answer:\n${resultText(final)}`, policy);
-	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };
+	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${handoffWarnings.summary()}\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };
 }

@@ -285,7 +285,7 @@ prepended to compatible prompts. Completed `evaluate`, `orchestrate`, `graph`,
 `flow` returns content plus `details`:
 
 - `version`: pi-flows version.
-- `mode`: `list`, `config`, `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, or `orchestrate`.
+- `mode`: `list`, `config`, `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `orchestrate`, `graph`, `loop`, or `search`.
 - `agentScope`: effective scope.
 - `config`: defaults and caps.
 - `agentsDir`: package/user/project directories with home paths redacted to `~`.

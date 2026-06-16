@@ -1,9 +1,10 @@
 import { DEFAULT_CONCURRENCY, MAX_GRAPH_NODES, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, escapeRegExp, injectionNotice, isFailed, makeEmptyRunResult, prepareHandoff, resultText, sanitizeText } from "../sanitize.ts";
+import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
 import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agents.ts";
-import { mapWithConcurrency, runAgentRef, runFlowAgent } from "../runner.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
+import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 export function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
 	let rendered = template.replace(/\{task\}/g, task ?? "");
@@ -12,7 +13,7 @@ export function renderGraphTask(template: string, task: string | undefined, outp
 }
 
 export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
+	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
 	const spec = params.graph ?? {};
 	const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
 	if (nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) {
@@ -62,49 +63,28 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, ready, params.allowSharedWriteCwd, concurrency);
 		if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "graph", agentScope, sharedWriteError) };
 
-		const live = ready.map((node) => makeEmptyRunResult(node.agent, node.task, policy));
-		const emit = () => {
-			const done = completed.size + live.filter((result) => result.exitCode !== -1).length;
-			onUpdate?.({ content: [{ type: "text", text: `Flow graph: ${done}/${nodes.length} nodes done` }], details: makeDetails("graph")([...results, ...live]) });
-		};
-		const baseStep = results.length;
-		const waveResults = await mapWithConcurrency(ready, concurrency, async (node, index) => {
+		const waveItems = ready.map((node) => {
 			const depOutputs = new Map(outputs);
 			const task = appendReturnContract(renderGraphTask(node.task, contractedTask, depOutputs), node.returnContract ?? params.returnContract, node.requireEvidence ?? params.requireEvidence);
-			const result = await runFlowAgent({
-				defaultCwd,
-				agents: discovery.agents,
-				agentName: node.agent,
-				task,
-				cwd: node.cwd,
-				model: node.model,
-				tools: node.tools,
-				timeoutMs: params.timeoutMs,
-				recordContent: params.recordContent,
-				redactSecrets: params.redactSecrets,
-				step: baseStep + index + 1,
-				signal,
-				budget: deps.budget,
-				recordSpan: deps.recordSpan,
-				onUpdate: (partial) => {
-					const current = partial.details.results[0];
-					if (current) live[index] = current;
-					emit();
-				},
-				makeDetails: makeDetails("graph"),
-			});
-			live[index] = result;
-			emit();
-			return { node, result };
+			return { ref: node, task, placeholderTask: node.task };
 		});
+		const waveRunResults = await runAgentFanout(
+			deps,
+			"graph",
+			waveItems,
+			concurrency,
+			results,
+			(done) => `Flow graph: ${completed.size + done}/${nodes.length} nodes done`,
+		);
+		const waveResults = waveRunResults.map((result, index) => ({ node: ready[index], result }));
 		for (const { node, result } of waveResults) {
 			results.push(result);
 			remaining.delete(node.id);
 			if (isFailed(result)) {
 				return { content: [{ type: "text", text: sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy) }], details: makeDetails("graph")(results) };
 			}
-			const prep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(result)), policy));
-			outputs.set(node.id, prep.text + injectionNotice(`graph node ${node.id} output`, prep.warnings));
+			const prep = prepareResultHandoff(result, policy);
+			outputs.set(node.id, withInjectionNotice(prep, `graph node ${node.id} output`));
 			completed.add(node.id);
 		}
 	}

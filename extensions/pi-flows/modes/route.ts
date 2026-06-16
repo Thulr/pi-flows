@@ -1,8 +1,8 @@
 import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnContract } from "../validate.ts";
-import { parseRoute } from "../parse.ts";
-import { toolErrorDetails } from "../agents.ts";
+import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
 import { runAgentRef } from "../runner.ts";
 
 export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
@@ -43,7 +43,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 			})
 			.join("\n"),
 		"\n## Your job",
-		'Pick the single best-fit agent for this task. Reply with a line "ROUTE: <agent>" using one of the candidate names exactly.',
+		`Pick the single best-fit agent for this task. ${routeProtocolInstruction()}`,
 	].join("\n");
 	const routed = await runAgentRef(deps, routerRef, routerTask, "route", 1, results);
 	results.push(routed);

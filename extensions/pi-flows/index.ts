@@ -3,12 +3,7 @@ import * as path from "node:path";
 import { getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import {
-	DEFAULT_CONCURRENCY,
-	DEFAULT_SEARCH_CANDIDATES,
-	DEFAULT_TIMEOUT_MS,
 	MAX_FLOW_DEPTH,
-	MAX_PARALLEL_TASKS,
-	MODEL_VISIBLE_OUTPUT_CAP,
 	PI_FLOWS_VERSION,
 	budgetExceeded,
 	chargeBudget,
@@ -20,26 +15,21 @@ import {
 	type FlowBudget,
 	type FlowDetails,
 	type FlowMode,
-	type FlowRunResult,
 	type RunMode,
 	type Update,
 } from "./types.ts";
 import { capModelVisibleText, isFailed, redactText, resultText, safePath, sanitizeText, scanForInjection, stripControlChars } from "./sanitize.ts";
 import { appendReturnContract, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd } from "./validate.ts";
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
-import {
-	configSummary,
-	discoverFlowAgents,
-	projectAgentsForRequest,
-	requestedAgentNames,
-	safeAgentForDetails,
-	summarizeAgents,
-	toolErrorDetails,
-} from "./agents.ts";
+import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
+import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
+import { discoverFlowAgents } from "./agents.ts";
+import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
 import { configuredFastModel, resolveAgentModel } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
+import { RUN_MODE_NAMES, activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
 
 // Public API surface: re-export the names the package exposed when the
@@ -73,7 +63,19 @@ export const __test = {
 	parseRoute,
 	parseSubtasks,
 	extractLastJsonBlock,
+	HandoffWarnings,
+	prepareHandoff,
+	prepareTextHandoff,
+	verdictProtocolInstruction,
+	loopProtocolInstruction,
+	routeProtocolInstruction,
+	scoreProtocolInstruction,
+	subtasksJsonProtocolInstruction,
+	RUN_MODE_NAMES,
+	activeRunModes,
+	renderRunModeLabel,
 	discoverFlowAgents,
+	createAgentCatalog,
 	projectAgentsForRequest,
 	requestedAgentNames,
 	flowsHelpText,
@@ -122,11 +124,12 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const discovery = discoverFlowAgents(ctx.cwd, parsed.scope);
+			const catalog = createAgentCatalog(discovery, parsed.scope);
 			if (parsed.kind === "status") {
-				ctx.ui.notify(configSummary(discovery, parsed.scope), discovery.issues.some((issue) => issue.severity === "error") ? "error" : "info");
+				ctx.ui.notify(catalog.configSummary(), discovery.issues.some((issue) => issue.severity === "error") ? "error" : "info");
 				return;
 			}
-			ctx.ui.notify(`Flow agents (${parsed.scope}):\n${summarizeAgents(discovery.agents, discovery.issues)}`, "info");
+			ctx.ui.notify(`Flow agents (${parsed.scope}):\n${catalog.summary()}`, "info");
 		},
 	});
 
@@ -157,41 +160,20 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const discovery = discoverFlowAgents(ctx.cwd, agentScope);
+			const catalog = createAgentCatalog(discovery, agentScope);
 			const policy: CapturePolicy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
-			const makeDetails =
-				(mode: FlowMode, agents = discovery.agents) =>
-				(results: FlowRunResult[]): FlowDetails => ({
-					mode,
-					version: PI_FLOWS_VERSION,
-					agentScope,
-					config: {
-						defaultConcurrency: DEFAULT_CONCURRENCY,
-						maxParallelTasks: MAX_PARALLEL_TASKS,
-						modelVisibleOutputCapBytes: MODEL_VISIBLE_OUTPUT_CAP,
-						defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
-						recordContentDefault: true,
-						redactSecretsDefault: true,
-					},
-					agentsDir: {
-						package: safePath(discovery.packageAgentsDir) ?? discovery.packageAgentsDir,
-						user: safePath(discovery.userAgentsDir) ?? discovery.userAgentsDir,
-						project: safePath(discovery.projectAgentsDir),
-					},
-					results,
-					agents: agents.map(safeAgentForDetails),
-					discoveryIssues: discovery.issues,
-				});
+			const makeDetails = catalog.makeDetails;
 
 			if (params.list) {
 				return {
-					content: [{ type: "text", text: summarizeAgents(discovery.agents, discovery.issues) }],
+					content: [{ type: "text", text: catalog.summary() }],
 					details: makeDetails("list")([]),
 				};
 			}
 
 			if (params.showConfig) {
 				return {
-					content: [{ type: "text", text: configSummary(discovery, agentScope) }],
+					content: [{ type: "text", text: catalog.configSummary() }],
 					details: makeDetails("config")([]),
 				};
 			}
@@ -199,8 +181,8 @@ export default function (pi: ExtensionAPI) {
 			const detected = detectRunMode(params);
 			if ("error" in detected) {
 				return {
-					content: [{ type: "text", text: `${formatFlowError(detected.error)}\n\nAvailable agents:\n${summarizeAgents(discovery.agents, discovery.issues)}` }],
-					details: toolErrorDetails(discovery, "list", agentScope, detected.error),
+					content: [{ type: "text", text: `${formatFlowError(detected.error)}\n\nAvailable agents:\n${catalog.summary()}` }],
+					details: catalog.errorDetails("list", detected.error),
 				};
 			}
 
@@ -216,11 +198,11 @@ export default function (pi: ExtensionAPI) {
 				);
 				return {
 					content: [{ type: "text", text: formatFlowError(error) }],
-					details: toolErrorDetails(discovery, mode, agentScope, error),
+					details: catalog.errorDetails(mode, error),
 				};
 			}
 
-			const projectAgents = projectAgentsForRequest(discovery, params);
+			const projectAgents = catalog.projectAgentsFor(params);
 			if ((agentScope === "project" || agentScope === "all") && (params.confirmProjectAgents ?? true) && projectAgents.length > 0) {
 				if (!ctx.hasUI) {
 					const error = flowError(
@@ -231,7 +213,7 @@ export default function (pi: ExtensionAPI) {
 					);
 					return {
 						content: [{ type: "text", text: formatFlowError(error) }],
-						details: toolErrorDetails(discovery, mode, agentScope, error),
+						details: catalog.errorDetails(mode, error),
 					};
 				}
 
@@ -248,7 +230,7 @@ export default function (pi: ExtensionAPI) {
 					);
 					return {
 						content: [{ type: "text", text: formatFlowError(error) }],
-						details: toolErrorDetails(discovery, mode, agentScope, error),
+						details: catalog.errorDetails(mode, error),
 					};
 				}
 			}
@@ -257,7 +239,7 @@ export default function (pi: ExtensionAPI) {
 			if (spawnCheckpointError) {
 				return {
 					content: [{ type: "text", text: formatFlowError(spawnCheckpointError) }],
-					details: toolErrorDetails(discovery, mode, agentScope, spawnCheckpointError),
+					details: catalog.errorDetails(mode, spawnCheckpointError),
 				};
 			}
 
@@ -266,7 +248,7 @@ export default function (pi: ExtensionAPI) {
 				const error = flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state.");
 				return {
 					content: [{ type: "text", text: formatFlowError(error) }],
-					details: toolErrorDetails(discovery, "list", agentScope, error),
+					details: catalog.errorDetails("list", error),
 				};
 			}
 
@@ -302,90 +284,8 @@ export default function (pi: ExtensionAPI) {
 			const scope = args.agentScope ?? "user";
 			if (args.showConfig) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `config [${scope}]`), 0, 0);
 			if (args.list) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `list [${scope}]`), 0, 0);
-			if (args.chain?.length) {
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) +
-						theme.fg("accent", `chain ${args.chain.length} step${args.chain.length === 1 ? "" : "s"}`) +
-						theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.tasks?.length) {
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) +
-						theme.fg("accent", `parallel ${args.tasks.length} task${args.tasks.length === 1 ? "" : "s"}`) +
-						theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.evaluate) {
-				const generator = args.evaluate.operator?.agent ?? "operator";
-				const redteam = args.evaluate.redteam;
-				const evaluator = Array.isArray(redteam) ? `${redteam.length} critics` : redteam?.agent ?? "redteam";
-				const gate = args.evaluate.checkCommand ? " +check" : "";
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) +
-						theme.fg("accent", `evaluate ${generator}→${evaluator}${gate}`) +
-						theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.vote) {
-				const count = args.vote.voters?.length ?? args.vote.count ?? 3;
-				const suffix = args.vote.debrief?.agent ? `→${args.vote.debrief.agent}` : "";
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `vote ${count}${suffix}`) + theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.route) {
-				const router = args.route.controller?.agent ?? "controller";
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `route via ${router}`) + theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.orchestrate) {
-				const worker = args.orchestrate.recon?.agent ?? "recon";
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `orchestrate →${worker}`) + theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.graph) {
-				const count = args.graph.nodes?.length ?? 0;
-				const suffix = args.graph.debrief?.agent ? `→${args.graph.debrief.agent}` : "";
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `graph ${count}${suffix}`) + theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.loop) {
-				const body = args.loop.body?.agent ?? "agent";
-				const judge = args.loop.judge?.agent ? `→${args.loop.judge.agent}` : "";
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `loop ${body}${judge}`) + theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
-			if (args.search) {
-				const count = args.search.candidates ?? DEFAULT_SEARCH_CANDIDATES;
-				return new Text(
-					theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `search ${count}`) + theme.fg("muted", ` [${scope}]`),
-					0,
-					0,
-				);
-			}
 			return new Text(
-				theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", args.agent ?? "agent") + theme.fg("muted", ` [${scope}]`),
+				theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", renderRunModeLabel(args)) + theme.fg("muted", ` [${scope}]`),
 				0,
 				0,
 			);

@@ -1,10 +1,11 @@
 import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowDetails, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, isFailed, prepareHandoff, resultText, sanitizeText } from "../sanitize.ts";
+import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { HandoffWarnings, prepareResultHandoff, prepareTextHandoff } from "../handoff.ts";
 import { appendReturnContract, clampIterations, normalizeTimeout, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { parseVerdict } from "../parse.ts";
+import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agents.ts";
-import { mapWithConcurrency, runCheckCommand, runFlowAgent } from "../runner.ts";
+import { toolErrorDetails } from "../agent-catalog.ts";
+import { runAgentFanout, runCheckCommand, runFlowAgent } from "../runner.ts";
 
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
@@ -44,7 +45,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const checkTimeoutMs = Math.min(normalizeTimeout(params.timeoutMs), DEFAULT_CHECK_COMMAND_TIMEOUT_MS);
 
 	const results: FlowRunResult[] = [];
-	const handoffWarnings = new Set<string>();
+	const handoffWarnings = new HandoffWarnings();
 	const emitLive = (inFlight?: FlowRunResult) => {
 		onUpdate?.({
 			content: [{ type: "text", text: `Flow evaluate: ${results.length} step(s) done` }],
@@ -109,8 +110,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 
 		// The artifact crosses a trust boundary into the critic prompt: strip
 		// invisible characters and flag injection markers before reuse.
-		const artifactPrep = prepareHandoff(sanitizeText(capModelVisibleText(resultText(generated)), policy));
-		for (const warning of artifactPrep.warnings) handoffWarnings.add(warning);
+		const artifactPrep = handoffWarnings.addFrom(prepareResultHandoff(generated, policy));
 		const artifact = artifactPrep.text;
 		priorArtifact = artifact;
 
@@ -147,31 +147,18 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Artifact to evaluate (the generator's output)",
 			artifact,
 			"\n## Your job",
-			'Judge whether the artifact satisfies the goal and acceptance criteria. Begin your reply with a line "VERDICT: PASS" or "VERDICT: REVISE". If REVISE, follow with specific, actionable critique the generator can act on. Judge only the artifact above, not how it was produced.',
+			`Judge whether the artifact satisfies the goal and acceptance criteria. ${verdictProtocolInstruction("specific, actionable critique the generator can act on")} Judge only the artifact above, not how it was produced.`,
 		]
 			.filter(Boolean)
 			.join("\n");
 
-		const baseStep = results.length;
-		const critics = await mapWithConcurrency(evaluatorRefs, concurrency, (ref, index) =>
-			runFlowAgent({
-				defaultCwd,
-				agents: discovery.agents,
-				agentName: ref.agent,
-				task: evaluatorTask,
-				cwd: ref.cwd,
-				model: ref.model,
-				tools: ref.tools,
-				timeoutMs: params.timeoutMs,
-				recordContent: params.recordContent,
-				redactSecrets: params.redactSecrets,
-				step: baseStep + 1 + index,
-				signal,
-				budget: deps.budget,
-				recordSpan: deps.recordSpan,
-				onUpdate: stepUpdate,
-				makeDetails: makeDetails("evaluate"),
-			}),
+		const critics = await runAgentFanout(
+			deps,
+			"evaluate",
+			evaluatorRefs.map((ref) => ({ ref, task: evaluatorTask })),
+			concurrency,
+			results,
+			(done) => `Flow evaluate: ${results.length + done} step(s) done`,
 		);
 		results.push(...critics);
 		emitLive();
@@ -193,8 +180,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// Critique fed back = the REVISE critics' output (a handoff: clean + scan).
 		const revising = verdicts.filter((verdict) => !verdict.pass);
 		const critiqueRaw = revising.map((verdict, index) => `### Critic ${index + 1} (${verdict.agent})\n\n${verdict.text}`).join("\n\n---\n\n");
-		const critiquePrep = prepareHandoff(sanitizeText(capModelVisibleText(critiqueRaw), policy));
-		for (const warning of critiquePrep.warnings) handoffWarnings.add(warning);
+		const critiquePrep = handoffWarnings.addFrom(prepareTextHandoff(critiqueRaw, policy));
 		critique = critiquePrep.text;
 	}
 
@@ -204,7 +190,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const header = passed
 		? `Flow evaluate: PASS after ${rounds} iteration${rounds === 1 ? "" : "s"} via ${criticLabel}${gate}.`
 		: `Flow evaluate: did not pass within ${maxIterations} iteration${maxIterations === 1 ? "" : "s"}${gate} — returning the last attempt with the final critique.`;
-	const warningNote = handoffWarnings.size > 0 ? `\n\n> ⚠ Handoff injection check flagged: ${[...handoffWarnings].join(", ")}. Inter-agent content was treated as untrusted data.` : "";
+	const warningNote = handoffWarnings.summary();
 	const body = passed ? finalArtifact : `## Last attempt\n\n${finalArtifact}\n\n## Final critique\n\n${critique}`;
 	await appendReflexion(defaultCwd, params, "evaluate", passed ? `Evaluate passed for task "${goal}". Final artifact:\n${finalArtifact}` : `Evaluate did not pass for task "${goal}". Final critique:\n${critique}`, policy);
 	return {
