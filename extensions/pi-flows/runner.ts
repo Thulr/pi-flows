@@ -39,6 +39,10 @@ export function configuredFastModel(): string | undefined {
 	return process.env.PI_FLOWS_FAST_MODEL?.trim() || undefined;
 }
 
+function childExtensionsDisabled(): boolean {
+	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_CHILD_NO_EXTENSIONS?.trim() ?? "");
+}
+
 /** Concrete model for a child run: flow override > agent pin > fast-tier override > pi default (undefined = omit --model, child uses the user's default). */
 export function resolveAgentModel(agent: { model?: string; tier?: string }, optionsModel: string | undefined, fastModel: string | undefined): string | undefined {
 	if (optionsModel) return optionsModel;
@@ -117,6 +121,7 @@ export async function runFlowAgent(options: {
 	};
 
 	const args = ["--mode", "json", "-p", "--no-session"];
+	if (childExtensionsDisabled()) args.push("--no-extensions");
 	const model = resolveAgentModel(agent, options.model, configuredFastModel());
 	if (model) args.push("--model", model);
 

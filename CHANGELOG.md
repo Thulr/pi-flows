@@ -15,11 +15,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   zero-valued cost/token metrics), inspect traces before paid judging, feed
   `thulr label-failures` into calibration, and support `--eval-set`,
   `--redaction`, `--rate`, and repeatable `--efficiency-guardrail=<metric>` in
-  the thulr-backed eval harness. The harness now passes the committed
-  `scripts/thulr-judge-pi.sh` judge wrapper to thulr by default, and the
-  provider-error detector no longer treats ordinary security-review mentions of
-  API keys, authentication gaps, or missing signature checks as provider auth
-  failures. The `recon-retrieves-known-value` fixture now asks for
+  the thulr-backed eval harness. The harness now lets thulr use its embedded
+  judge runtime by default and only passes a judge wrapper when `--judge-bin` or
+  `THULR_JUDGE_BIN` is explicit. The provider-error detector no longer treats
+  ordinary security-review mentions of API keys, authentication gaps, or missing
+  signature checks as provider auth failures. The `recon-retrieves-known-value`
+  fixture now asks for
   `SAMPLE_IDENTIFIER=xyzzy-42` instead of token-shaped wording, and its judge
   criterion accepts the exact terse answer `xyzzy-42`, matching the task's
   "report exactly that value" instruction. The suite now appends fixed
@@ -37,6 +38,21 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   stop at the first plausible issue and to check common production-correctness
   classes such as initialization/null guards, validation, auth/signature,
   idempotency/retry behavior, cleanup, error handling, and boundary cases.
+- Runtime isolation: `PI_FLOWS_CHILD_NO_EXTENSIONS=1` makes spawned child agents
+  pass `--no-extensions`, useful for eval runs or local setups where an installed
+  user pi extension breaks child startup.
+- Evals: `eval:compare` now prints per-arm child progress, and both eval CLIs
+  support `--arm-timeout=<ms>` for smoke/debug loops. Runs that use a shorter
+  clock than a case's declared budget are tagged as debug-budget/inconclusive
+  and excluded from quality verdicts; real A/B measurement keeps both arms on
+  the same subject model and lets per-case `timeoutMs` apply.
+- Evals: A/B quality summaries now exclude timeout/infra arms and their paired
+  counterpart from thulr traces instead of scoring timeout envelopes as failed
+  answers. Artifacts retain the exclusion reason, spend, and wall-clock so
+  infra can be debugged without polluting quality-lift reads.
+- Evals: simple answer-only quality cases are now marked as controls and excluded
+  from default `eval` / `eval:compare` runs unless explicitly filtered or
+  `--include-controls` is set.
 
 ## 0.1.1 - 2026-06-10
 

@@ -3,12 +3,15 @@
 // shells out to thulr for the judge -> calibrate -> gate -> baseline pipeline,
 // replacing the harness's old in-process LLM judge + hand-rolled baseline compare.
 //
-// thulr (0.1.2 contract, docs/trace-contract.md in the thulr repo) ingests a
+// thulr (0.3.0 contract, docs/trace-contract.md in the thulr repo) ingests a
 // SELF-CONTAINED trace. Each case's criterion and its deterministic objective
 // label travel INLINE in the span attributes, established from thulr's
 // openinference_trace adapter:
 //   thulr.case_id            – the case identifier (thulr groups spans by this)
 //   thulr.criterion          – the one literal criterion the judge grades against
+//   thulr.criteria.<dim>     – extra named dimensions, each judged separately
+//   thulr.label.<dim>        – optional per-dimension deterministic labels
+//   thulr.judge_only.<dim>   – opt a dimension out of deterministic calibration
 //   thulr.deterministic_label – the objective pass/fail (boolean) for calibration
 //   input.value              – the task text (judge context; falls back to the case id)
 //   output.value             – the answer text the judge grades (latest span wins)
@@ -36,10 +39,10 @@ const spanId = () => randomUUID().replace(/-/g, "");
  * inspect/label workflows while preserving the "latest output.value wins" rule.
  * Returned (not written) so the caller controls the file.
  *
- * @param {{name: string, answer: string, criterion: string, label?: boolean, endMs: number, model?: string, task?: string, expectedBehavior?: string, failureModes?: string[], costUsd?: number, tokensTotal?: number, promptVersion?: string, configVersion?: string}} input
+ * @param {{name: string, answer: string, criterion: string, criteria?: Record<string, string>, label?: boolean, labels?: Record<string, boolean>, judgeOnlyDimensions?: string[], journeyStage?: string, endMs: number, model?: string, task?: string, expectedBehavior?: string, failureModes?: string[], costUsd?: number, tokensTotal?: number, promptVersion?: string, configVersion?: string}} input
  * @returns {object[]}
  */
-export function traceSpansForCase({ name, answer, criterion, label, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion }) {
+export function traceSpansForCase({ name, answer, criterion, criteria, label, labels, judgeOnlyDimensions, journeyStage, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion }) {
 	const traceId = spanId();
 	const rootSpanId = spanId();
 	const answerSpanId = spanId();
@@ -51,7 +54,17 @@ export function traceSpansForCase({ name, answer, criterion, label, endMs, model
 		"input.value": task || name,
 		"thulr.task.input": task || name,
 	};
+	for (const [dimension, text] of Object.entries(criteria ?? {})) {
+		commonAttributes[`thulr.criteria.${dimension}`] = text;
+	}
 	if (label !== undefined) commonAttributes["thulr.deterministic_label"] = label;
+	for (const [dimension, value] of Object.entries(labels ?? {})) {
+		if (value !== undefined) commonAttributes[`thulr.label.${dimension}`] = value;
+	}
+	for (const dimension of judgeOnlyDimensions ?? []) {
+		commonAttributes[`thulr.judge_only.${dimension}`] = true;
+	}
+	if (journeyStage) commonAttributes["thulr.journey_stage"] = journeyStage;
 	if (model) commonAttributes["llm.model_name"] = model;
 	if (expectedBehavior) commonAttributes["thulr.expected_behavior"] = expectedBehavior;
 	if (failureModes) commonAttributes["thulr.failure_modes"] = failureModes;
@@ -96,7 +109,7 @@ export function gateBlocks(exitCode) {
 }
 
 /**
- * Build the `thulr judge` argv. `samples > 1` turns on thulr 0.1.2's repeat
+ * Build the `thulr judge` argv. `samples > 1` turns on thulr 0.3.0's repeat
  * sampling: each case is judged N times and aggregated per dimension (majority
  * verdict, ties fail safe; mean score), the EvalRun's `score_stddev` becomes the
  * pooled within-case sample variance (i.e. judge noise), and thulr warns on
@@ -141,6 +154,47 @@ export function gateArgs({ baseline, candidate, guardrails = [], scoreGuardrails
 	if (noiseBand !== undefined) args.push("--noise-band", String(noiseBand));
 	if (redaction) args.push("--redaction", redaction);
 	args.push(baseline, candidate);
+	return args;
+}
+
+/**
+ * Build the `thulr compare` argv. Compare is the non-blocking A/B report: it
+ * prints the same deltas as gate, but never fails the process.
+ *
+ * @param {{baseline: string, candidate: string, guardrails?: string[], scoreGuardrails?: string[], efficiencyGuardrails?: string[], noiseBand?: number, json?: boolean, redaction?: "off" | "auxiliary"}} input
+ * @returns {string[]}
+ */
+export function compareArgs({ baseline, candidate, guardrails = [], scoreGuardrails = [], efficiencyGuardrails = [], noiseBand, json, redaction }) {
+	const args = ["compare"];
+	if (json) args.push("--json");
+	for (const dim of guardrails) args.push("--guardrail", dim);
+	for (const dim of scoreGuardrails) args.push("--score-guardrail", dim);
+	for (const metric of efficiencyGuardrails) args.push("--efficiency-guardrail", metric);
+	if (noiseBand !== undefined) args.push("--noise-band", String(noiseBand));
+	if (redaction) args.push("--redaction", redaction);
+	args.push(baseline, candidate);
+	return args;
+}
+
+/**
+ * Build the `thulr duel` argv. Duel is the native pairwise quality comparison:
+ * every shared case is judged twice with answer positions swapped, and a win
+ * counts only when both orderings agree.
+ *
+ * @param {{traceA: string, traceB: string, labelA?: string, labelB?: string, out?: string, model?: string, concurrency?: number, evalSet?: string, json?: boolean, judgeBin?: string}} input
+ * @returns {string[]}
+ */
+export function duelArgs({ traceA, traceB, labelA, labelB, out, model, concurrency, evalSet, json, judgeBin }) {
+	const args = ["duel"];
+	if (json) args.push("--json");
+	args.push(traceA, traceB);
+	if (labelA) args.push("--label-a", labelA);
+	if (labelB) args.push("--label-b", labelB);
+	if (out) args.push("--out", out);
+	if (model) args.push("--model", model);
+	if (concurrency) args.push("--concurrency", String(concurrency));
+	if (evalSet) args.push("--eval-set", evalSet);
+	if (judgeBin) args.push("--judge-bin", judgeBin);
 	return args;
 }
 
@@ -211,6 +265,19 @@ export function formatGateScoreSummary(report) {
 	}
 
 	return lines;
+}
+
+export function evalRunDimensions(evalRun) {
+	return (evalRun?.summary ?? [])
+		.map((d) => d.dimension)
+		.filter((d) => typeof d === "string" && d.length > 0);
+}
+
+export function sharedGateDimensions(baselineEvalRun, candidateEvalRun, desired = null) {
+	const baseline = new Set(evalRunDimensions(baselineEvalRun));
+	const candidate = new Set(evalRunDimensions(candidateEvalRun));
+	const requested = desired?.length ? desired : [...candidate];
+	return requested.filter((dimension) => baseline.has(dimension) && candidate.has(dimension));
 }
 
 function summarizeCases(cases) {
@@ -353,6 +420,16 @@ export function calibrate(evalRun, options = {}) {
 export function gate({ baseline, candidate, guardrails = [], scoreGuardrails = [], efficiencyGuardrails = [], noiseBand, format, json, redaction }) {
 	const { code, stdout } = run(gateArgs({ baseline, candidate, guardrails, scoreGuardrails, efficiencyGuardrails, noiseBand, format, json, redaction }), { allowExit: [0, 10] });
 	return { exitCode: code, blocks: gateBlocks(code), report: stdout };
+}
+
+export function compare({ baseline, candidate, guardrails = [], scoreGuardrails = [], efficiencyGuardrails = [], noiseBand, json, redaction }) {
+	const { code, stdout } = run(compareArgs({ baseline, candidate, guardrails, scoreGuardrails, efficiencyGuardrails, noiseBand, json, redaction }));
+	return { exitCode: code, report: stdout };
+}
+
+export function duel({ traceA, traceB, labelA, labelB, out, model, concurrency, evalSet, json, judgeBin }) {
+	const { code, stdout } = run(duelArgs({ traceA, traceB, labelA, labelB, out, model, concurrency, evalSet, json, judgeBin }));
+	return { exitCode: code, report: stdout };
 }
 
 /** Promote a candidate EvalRun to be the baseline thulr gates against. Free. */

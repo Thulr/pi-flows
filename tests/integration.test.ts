@@ -88,6 +88,18 @@ test("single: appends return contracts, updates UI status, and writes a session 
 	assert.equal(entries[0]?.data.mode, "single");
 });
 
+test("single: PI_FLOWS_CHILD_NO_EXTENSIONS isolates spawned child pi", async () => {
+	const previous = process.env.PI_FLOWS_CHILD_NO_EXTENSIONS;
+	try {
+		process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
+		const { calls } = await runFlow({ agent: "recon", task: "find the billing routes" }, { recon: "ROUTES" });
+		assert.ok(calls[0].args.includes("--no-extensions"));
+	} finally {
+		if (previous === undefined) delete process.env.PI_FLOWS_CHILD_NO_EXTENSIONS;
+		else process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = previous;
+	}
+});
+
 test("parallel: fans out every task to its own child", async () => {
 	const { calls } = await runFlow(
 		{ tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }], concurrency: 2 },
@@ -149,6 +161,17 @@ test("evaluate: REVISE re-runs the operator with the critique, then PASS ends th
 	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam", "operator", "redteam"], "two generator/critic rounds");
 	assert.match(byAgent(calls, "redteam")[0].task, /DRAFT_ONE/, "critic judges the operator's artifact");
 	assert.match(byAgent(calls, "operator")[1].task, /needs a test/, "operator is re-shown the critique on REVISE");
+});
+
+test("evaluate: operator.task is accepted as the generator goal alias", async () => {
+	const { calls } = await runFlow(
+		{ evaluate: { operator: { agent: "operator", task: "add a /ready endpoint" }, redteam: { agent: "redteam" }, maxIterations: 1 } },
+		{ operator: "DRAFT_READY", redteam: "VERDICT: PASS\nlooks good" },
+	);
+
+	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam"]);
+	assert.match(calls[0].task, /add a \/ready endpoint/, "operator.task becomes the evaluate goal when top-level task is omitted");
+	assert.match(calls[1].task, /add a \/ready endpoint/, "critic judges against the same fallback goal");
 });
 
 test("evaluate: a failing checkCommand gate forces REVISE and skips the LLM critic", async () => {
@@ -249,6 +272,16 @@ test("orchestrate: commander decomposes, recon workers fan out, debrief merges",
 	assert.match(workerTasks, /map token refresh/);
 	assert.ok(byAgent(calls, "debrief").length >= 1, "debrief merges the worker findings");
 	assert.match(text, /MERGED_DOC/);
+});
+
+test("orchestrate: nested returnContract is accepted as a goal alias", async () => {
+	const { calls } = await runFlow(
+		{ orchestrate: { recon: { agent: "recon" }, maxSubtasks: 1, returnContract: "map agent discovery, schema validation, and runner handoff" } },
+		{ commander: '["map the extension flow"]', recon: "WORKER_FINDING", debrief: "MERGED_DOC" },
+	);
+
+	assert.match(byAgent(calls, "commander")[0].task, /agent discovery, schema validation, and runner handoff/);
+	assert.match(byAgent(calls, "recon")[0].task, /agent discovery, schema validation, and runner handoff/);
 });
 
 test("orchestrate: verifyPolicy fail returns a structured gate error on REVISE", async () => {

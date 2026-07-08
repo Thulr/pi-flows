@@ -3,8 +3,8 @@ import { Type } from "typebox";
 import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS } from "./types.ts";
 
 export const FlowTask = Type.Object({
-	agent: Type.String({ description: "Name of the flow agent to run" }),
-	task: Type.String({ description: "Task for that agent. Chain tasks may use {task} and {previous}." }),
+	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
+	task: Type.String({ minLength: 1, description: "Complete task for that agent, including the target and expected output. Do not use vague one-word tasks. Chain tasks may use {task} and {previous}." }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this agent process" })),
 	model: Type.Optional(Type.String({ description: "Optional model override for this agent process" })),
 	tools: Type.Optional(
@@ -15,14 +15,22 @@ export const FlowTask = Type.Object({
 });
 
 export const FlowAgentRef = Type.Object({
-	agent: Type.String({ description: "Name of the flow agent to run for this role" }),
+	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run for this role. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
 	model: Type.Optional(Type.String({ description: "Optional model override for this role" })),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this role's process" })),
 });
 
+export const FlowEvaluateOperatorRef = Type.Object({
+	agent: Type.String({ minLength: 1, description: "Generator agent for evaluate mode. Usually operator." }),
+	task: Type.Optional(Type.String({ minLength: 1, description: "Optional alias for the evaluate goal when top-level task is omitted. Prefer top-level task when possible." })),
+	model: Type.Optional(Type.String({ description: "Optional model override for the generator" })),
+	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
+	cwd: Type.Optional(Type.String({ description: "Working directory for the generator process" })),
+});
+
 export const FlowEvaluate = Type.Object({
-	operator: Type.Optional(FlowAgentRef),
+	operator: Type.Optional(FlowEvaluateOperatorRef),
 	redteam: Type.Optional(
 		Type.Union([FlowAgentRef, Type.Array(FlowAgentRef, { minItems: 1, maxItems: MAX_PARALLEL_TASKS })], {
 			description: "The critic. A single agent, or an array of critics (a decomposed panel — e.g. one per dimension: correctness, security, tests). With a panel, PASS requires every critic to pass; their REVISE critiques are merged for the next round.",
@@ -64,6 +72,7 @@ export const FlowRoute = Type.Object({
 });
 
 export const FlowOrchestrate = Type.Object({
+	task: Type.Optional(Type.String({ minLength: 1, description: "Optional alias for the orchestrate goal when top-level task is omitted. Prefer top-level task when possible." })),
 	commander: Type.Optional(FlowAgentRef),
 	recon: Type.Optional(FlowAgentRef),
 	debrief: Type.Optional(FlowAgentRef),
@@ -76,15 +85,16 @@ export const FlowOrchestrate = Type.Object({
 	),
 	verifyMaxIterations: Type.Optional(Type.Number({ description: "Max synthesize->verify rounds when verifyPolicy is revise. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
 	workerReturnContract: Type.Optional(Type.String({ description: "Return contract appended to every worker subtask before fan-out." })),
+	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
 	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on decomposed subtasks (also bounded by maxParallelTasks). Integer 1..${MAX_PARALLEL_TASKS}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS })),
 }, {
 	description: "Orchestrator-workers mode: the `commander` decomposes `task` into subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results. An optional `verify` critic checks the merged answer.",
 });
 
 export const FlowGraphNode = Type.Object({
-	id: Type.String({ description: "Unique node id. Later nodes can reference this output as {node.<id>}." }),
-	agent: Type.String({ description: "Agent to run for this graph node." }),
-	task: Type.String({ description: "Task for this graph node. May use {task} and {node.<id>} placeholders for dependency outputs." }),
+	id: Type.String({ minLength: 1, description: "Unique node id. Later nodes can reference this output as {node.<id>}." }),
+	agent: Type.String({ minLength: 1, description: "Agent to run for this graph node." }),
+	task: Type.String({ minLength: 1, description: "Task for this graph node. May use {task} and {node.<id>} placeholders for dependency outputs." }),
 	dependsOn: Type.Optional(Type.Array(Type.String(), { description: "Node ids that must complete before this node can run." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this node process" })),
 	model: Type.Optional(Type.String({ description: "Optional model override for this node" })),
@@ -138,8 +148,8 @@ export const FlowReflexion = Type.Object({
 export const FlowParams = Type.Object({
 	list: Type.Optional(Type.Boolean({ description: "List available flow agents instead of running one" })),
 	showConfig: Type.Optional(Type.Boolean({ description: "Show effective flow config, agent dirs, discovery issues, and defaults without running an agent" })),
-	agent: Type.Optional(Type.String({ description: "Single-agent mode: agent name" })),
-	task: Type.Optional(Type.String({ description: "Single-agent task, shared {task} value for chain steps, or the goal/contract for evaluate mode" })),
+	agent: Type.Optional(Type.String({ minLength: 1, description: "Single-agent mode: agent name, e.g. recon for a read-only scout or analyst for deeper investigation. Use with task; never pass an empty agent." })),
+	task: Type.Optional(Type.String({ minLength: 1, description: "Single-agent task, shared {task} value for chain steps, or the goal/contract for evaluate mode. For a named-agent request like 'ask recon to inspect package.json', set agent:'recon' and put the complete requested work here; never use a vague one-word task." })),
 	tasks: Type.Optional(Type.Array(FlowTask, { description: "Parallel mode: tasks to run concurrently" })),
 	chain: Type.Optional(Type.Array(FlowTask, { description: "Chain mode: tasks to run sequentially" })),
 	evaluate: Type.Optional(FlowEvaluate),
@@ -176,4 +186,6 @@ export const FlowParams = Type.Object({
 	tools: Type.Optional(
 		Type.String({ description: 'Comma-separated tool override for single-agent mode. Use "none" or "default".' }),
 	),
+}, {
+	description: "Exactly one flow mode per call. For a named agent request, fill both agent and task, e.g. {\"agent\":\"recon\",\"task\":\"inspect package.json\"}. For parallel inspection, use tasks with concrete agent names. For implementation plus critique, use {\"task\":\"...\",\"evaluate\":{}}.",
 });

@@ -122,9 +122,26 @@ test("flow tool guidance discourages small-task overuse", () => {
   const flow = tools.get("flow");
   assert.match(flow.description, /substantial delegated work/);
   assert.match(flow.description, /simple answers, small lookups, tiny edits/);
+  assert.match(flow.description, /Bundled agents: recon, analyst, strategist/);
   assert.ok(
     flow.promptGuidelines.some((line: string) => /Do not use flow for simple factual answers/.test(line)),
     "model-facing guidelines should include explicit negative selection guidance",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /separate agent, read-only scout, delegated investigation/.test(line)),
+    "model-facing guidelines should include implicit positive selection triggers",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /read-only repo scouting -> single recon\/analyst/.test(line)),
+    "model-facing guidelines should map plain-English requests to flow modes",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /call that agent directly; do not call list\/showConfig first/.test(line)),
+    "model-facing guidelines should dispatch named agents directly",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /copy the complete work request into task/.test(line)),
+    "model-facing guidelines should prevent vague child-agent tasks",
   );
 });
 

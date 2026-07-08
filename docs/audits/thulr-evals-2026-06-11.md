@@ -148,8 +148,10 @@ kneecapping hard real-world tasks.
   eliminating thulr's prior trajectory coverage warning.
 - The trace now carries `thulr.expected_behavior`, `thulr.failure_modes`,
   `thulr.config_version`, `thulr.task.input`, and zero-valued cost/token metrics.
-- The harness now passes `scripts/thulr-judge-pi.sh` to thulr by default when
-  present, while still allowing `--judge-bin` / `THULR_JUDGE_BIN` override.
+- The harness originally passed `scripts/thulr-judge-pi.sh` to thulr by default
+  when present. With thulr 0.3.x, current runs use thulr's embedded judge runtime
+  by default and only pass a wrapper when `--judge-bin` / `THULR_JUDGE_BIN` is
+  explicit.
 - The eval infra-error detector no longer classifies normal security-review text
   mentioning API keys as a provider/auth failure.
 - The eval infra-error detector now also avoids classifying ordinary

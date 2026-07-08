@@ -9,7 +9,10 @@ import { mapWithConcurrency, runAgentRef, runFlowAgent } from "../runner.ts";
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
 	const spec = params.orchestrate ?? {};
-	const goal: string | undefined = params.task;
+	const orchestrateAliases = spec as typeof spec & { task?: unknown; returnContract?: unknown };
+	const nestedTask = typeof orchestrateAliases.task === "string" ? orchestrateAliases.task : undefined;
+	const nestedReturnContract = typeof orchestrateAliases.returnContract === "string" ? orchestrateAliases.returnContract : undefined;
+	const goal: string | undefined = params.task ?? nestedTask ?? nestedReturnContract;
 	if (!goal || !goal.trim()) {
 		const error = flowError(
 			"INVALID_MODE",
@@ -19,7 +22,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		);
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "orchestrate", agentScope, error) };
 	}
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const returnContract = params.returnContract ?? (params.task || nestedTask ? nestedReturnContract : undefined);
+	const contractedGoal = appendReturnContract(goal, returnContract, params.requireEvidence);
 
 	const concurrencyError = validateConcurrency(params.concurrency);
 	if (concurrencyError) {

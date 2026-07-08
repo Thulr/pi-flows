@@ -9,7 +9,9 @@ import { mapWithConcurrency, runCheckCommand, runFlowAgent } from "../runner.ts"
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
 	const spec = params.evaluate ?? {};
-	const goal: string | undefined = params.task;
+	const operatorWithTask = spec.operator as (FlowAgentRefInput & { task?: unknown }) | undefined;
+	const operatorTask = typeof operatorWithTask?.task === "string" ? operatorWithTask.task : undefined;
+	const goal: string | undefined = params.task ?? operatorTask;
 
 	if (!goal || !goal.trim()) {
 		const error = flowError(
