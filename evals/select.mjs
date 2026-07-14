@@ -174,6 +174,17 @@ function taskText(args) {
 	for (const node of args?.graph?.nodes ?? []) {
 		if (typeof node?.task === "string") pieces.push(node.task);
 	}
+	// vote/route carry the goal at top-level `task`, but the model often inlines it
+	// into per-voter or per-candidate tasks instead — read those too so taskPattern
+	// checks on vote/route discrimination cases match real model output.
+	if (typeof args?.vote?.task === "string") pieces.push(args.vote.task);
+	for (const voter of args?.vote?.voters ?? []) {
+		if (typeof voter?.task === "string") pieces.push(voter.task);
+	}
+	if (typeof args?.route?.task === "string") pieces.push(args.route.task);
+	for (const candidate of args?.route?.candidates ?? []) {
+		if (typeof candidate?.task === "string") pieces.push(candidate.task);
+	}
 	return pieces.join("\n");
 }
 
@@ -240,6 +251,18 @@ export function scoreSelection(testCase, result) {
 					: "selection matched; answer did not"
 				: `expected flow=${testCase.expectFlow}, saw flow=${flowUsed}`,
 	};
+}
+
+// The two scored axes. Explicit `category` wins; otherwise derive from expectFlow
+// so older cases without a category still bucket correctly.
+export function categoryOf(testCase) {
+	return testCase.category ?? (testCase.expectFlow ? "best-flow" : "no-flow");
+}
+
+function categoryLabel(category) {
+	if (category === "no-flow") return "no-flow (don't over-delegate)";
+	if (category === "best-flow") return "best-flow (pick the right mode)";
+	return category;
 }
 
 function emptyState() {
@@ -346,19 +369,31 @@ async function main() {
 	}
 
 	const signal = new AbortController().signal;
-	console.log(`pi-flows selection evals - subject ${useDefaultModel ? "(pi default)" : model} - timeout ${Math.round(timeoutMs / 1000)}s/case${dryRun ? " - DRY RUN" : ""}\n`);
+	console.log(`pi-flows selection evals - subject ${useDefaultModel ? "(pi default)" : model} - timeout ${Math.round(timeoutMs / 1000)}s/case${dryRun ? " - DRY RUN" : ""}`);
+	console.log("axes: no-flow (don't over-delegate) + best-flow (pick the right mode)\n");
 	let passed = 0;
 	let totalCost = 0;
+	const byCategory = new Map();
 	for (const testCase of selected) {
+		const category = categoryOf(testCase);
 		const startedAt = Date.now();
 		const result = await runSelectionCase(testCase, signal);
 		const scored = scoreSelection(testCase, result);
 		totalCost += result.usage?.cost ?? 0;
 		if (scored.pass) passed += 1;
+		const tally = byCategory.get(category) ?? { total: 0, passed: 0 };
+		tally.total += 1;
+		if (scored.pass) tally.passed += 1;
+		byCategory.set(category, tally);
 		const status = scored.pass ? "PASS" : "FAIL";
 		const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-		console.log(`${status} ${testCase.name.padEnd(30)} expected flow=${testCase.expectFlow} saw flow=${scored.flowUsed}  $${(result.usage?.cost ?? 0).toFixed(4)}  ${seconds}s`);
+		console.log(`${status} ${testCase.name.padEnd(38)} expected flow=${testCase.expectFlow} saw flow=${scored.flowUsed}  $${(result.usage?.cost ?? 0).toFixed(4)}  ${seconds}s`);
 		console.log(`    -> ${scored.notes}`);
+		if (!scored.pass && testCase.why) console.log(`       expected: ${testCase.why}`);
+	}
+	console.log("\nBy axis:");
+	for (const [category, t] of byCategory) {
+		console.log(`  ${categoryLabel(category).padEnd(32)} ${t.passed}/${t.total}`);
 	}
 	console.log(`\n${passed}/${selected.length} selection cases passed - total $${totalCost.toFixed(4)}`);
 	process.exit(passed === selected.length ? 0 : 1);

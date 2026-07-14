@@ -10,6 +10,15 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Flow-selection eval (`npm run eval:select`): score the parent model's
+  delegation decision on two reported axes — no-flow (don't over-delegate on
+  trivial/lookup/conceptual tasks) and best-flow (pick the right mode) — with
+  discrimination cases that pit the right mode against a tempting neighbor
+  (vote vs evaluate, evaluate vs single, route vs parallel, chain vs parallel,
+  parallel vs orchestrate, single vs orchestrate). `taskText()` now also reads
+  `vote.voters[].task` and `route.candidates[].task` so task-pattern checks
+  match how the model inlines the goal. Verified 20/20 on codex
+  (`openai-codex/gpt-5.4-mini`).
 - Evals: emit thulr's richer trace metadata (`thulr.expected_behavior`,
   `thulr.failure_modes`, `thulr.config_version`, `thulr.task.input`, and
   zero-valued cost/token metrics), inspect traces before paid judging, feed

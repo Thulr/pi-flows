@@ -49,7 +49,8 @@ npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a 
 npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as JUnit XML (CI test ingestion)
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
-npm run eval:select                # tool-selection eval: should the parent model call flow at all?
+npm run eval:select                # selection eval: no-flow (don't over-delegate) vs best-flow (right mode)
+npm run eval:select -- --filter=vote    # one axis/case; --model=openai-codex/gpt-5.5 to try the frontier model
 ```
 
 Exit code is `0` when every selected **behaviour** case passes (objective **and**
@@ -273,20 +274,34 @@ Give a case a `baselinePrompt` when its flow params encode goal info outside `ta
 ## Tool selection
 
 `npm run eval:select` checks invocation discipline: it loads the extension into
-headless pi, gives the parent model small no-flow prompts plus explicit and
-implicit flow-positive controls, and scores actual `flow` tool calls from the JSON
-stream. This is intentionally separate from `npm run eval`, because the main
-harness invokes `flow` directly and cannot catch overuse on tiny tasks. Simple
-prompts such as arithmetic, package metadata lookup, and tiny text transforms
-must complete with zero `flow` calls; otherwise sub-agents were invoked when they
-should not have been. Positive controls also assert the selected `flow` argument
-shape — for example read-only scouting should become single-agent `recon` or
-`analyst`, parallel document inspection should become `tasks`, critic loops should
-become `evaluate`, and broad split/synthesize mapping should become `orchestrate`
-or an equivalent parallel fan-out. For positive cases the harness stops after the
-real `flow` execution starts and the final streamed arguments are captured; child
-agent output quality belongs to the main flow evals, while this suite gates parent
-tool-selection discipline.
+headless pi, feeds the parent model a prompt over stdin, and scores the actual
+`flow` tool calls from the JSON stream. This is intentionally separate from
+`npm run eval`, because the main harness invokes `flow` directly and so cannot
+catch a bad *decision* — over-delegating a trivial task, or picking the wrong
+mode. Cases in [`selection-cases.mjs`](selection-cases.mjs) are scored on two
+axes (the `category` field), reported separately:
+
+- **no-flow (don't over-delegate)** — the job does not warrant a flow, so the
+  parent must answer with **zero** `flow` calls. Arithmetic, single-file metadata
+  lookups, tiny text transforms, and conceptual one-liners live here. These guard
+  the "not every job calls for a flow" line and catch overuse on small tasks.
+- **best-flow (pick the right mode)** — the job warrants a flow *and* one mode is
+  the best fit. The parent must both call `flow` and pick that mode: read-only
+  scouting → single `recon`/`analyst`; independent known targets → `tasks`
+  (parallel); ordered dependent steps → `chain`; produce-then-adversarially-verify
+  → `evaluate`; several independent judgments of one high-stakes question →
+  `vote`; classify-then-dispatch-to-one → `route`; open-ended split/synthesize
+  mapping → `orchestrate`. Discrimination cases carry a `discriminates` field
+  naming the tempting-but-wrong neighbor (e.g. `chain` vs `parallel`, `vote` vs
+  `evaluate`, `single` vs `orchestrate`), so a right-shaped call under the wrong
+  mode fails.
+
+For best-flow cases the harness stops as soon as the real `flow` execution
+starts and captures the final streamed arguments — child-agent output quality
+belongs to the main flow evals, while this suite gates the parent's selection
+decision. Subject model defaults to codex (`openai-codex/gpt-5.4-mini`); override
+with `--model=` (e.g. `--model=openai-codex/gpt-5.5`) and filter with
+`--filter=<substring>`.
 
 ## Experiments: champion/challenger (and the optimizer)
 

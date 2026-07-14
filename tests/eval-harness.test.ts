@@ -5,7 +5,7 @@ import { CALIBRATION_CASES, CASES } from "../evals/cases.mjs";
 import { injectModel } from "../evals/model-injection.mjs";
 import { exclusionForRun, infraError, scoreObjective, timeoutPlanForCase } from "../evals/lib.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
-import { collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection } from "../evals/select.mjs";
+import { categoryOf, collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection } from "../evals/select.mjs";
 
 test("eval injectModel expands vote.agent/count into modeled explicit voters", () => {
 	const params = injectModel(
@@ -286,6 +286,22 @@ test("selection eval flow argument matcher recognizes implicit delegation modes"
 	assert.equal(flowCallMatchesExpectation({ arguments: { evaluate: { operator: { agent: "operator", task: "Draft the release checklist for install, safety, and evals." } } } }, { mode: "evaluate", agent: "operator", taskPattern: "release checklist|install|safety|eval" }).pass, true);
 	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Map modules", orchestrate: {} } }, { modes: ["orchestrate", "parallel"], agents: ["recon"] }).pass, true);
 	assert.equal(flowCallMatchesExpectation({ arguments: { orchestrate: { returnContract: "Map agent discovery, schema validation, and child process running." } } }, { modes: ["orchestrate", "parallel"], agents: ["recon"], taskPattern: "agent discovery|schema|child process" }).pass, true);
+	// vote/route often inline the goal into nested voter/candidate tasks — the matcher reads those.
+	assert.equal(flowCallMatchesExpectation({ arguments: { vote: { voters: [{ agent: "analyst", task: "Assess the production migration go/no-go." }, { agent: "redteam", task: "Attack the migration plan." }] } } }, { mode: "vote", taskPattern: "migration|go/no-go" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { route: { candidates: [{ agent: "recon", task: "Triage the login bug." }] } } }, { mode: "route", taskPattern: "login|triage" }).pass, true);
+	// Discrimination: the right task under the wrong mode label still fails.
+	assert.equal(flowCallMatchesExpectation({ arguments: { tasks: [{ agent: "recon", task: "Assess migration" }, { agent: "redteam", task: "Assess migration" }] } }, { mode: "vote", taskPattern: "migration" }).pass, false);
+});
+
+test("selection suite exercises both axes with a batch of discrimination cases", () => {
+	const axes = new Set(SELECTION_CASES.map((c) => categoryOf(c)));
+	assert.ok(axes.has("no-flow") && axes.has("best-flow"), "suite must exercise both selection axes");
+	const discrimination = SELECTION_CASES.filter((c) => c.discriminates);
+	assert.ok(discrimination.length >= 5, "need a batch of best-vs-adjacent discrimination cases");
+	for (const c of discrimination) {
+		assert.equal(c.expectFlow, true, `${c.name} discrimination case must expect a flow`);
+		assert.ok(c.expectedFlowCall?.mode || c.expectedFlowCall?.modes, `${c.name} must pin the expected mode`);
+	}
 });
 
 test("selection eval keeps simple use-cases as no-flow negatives", () => {
