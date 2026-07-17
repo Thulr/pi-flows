@@ -159,11 +159,25 @@ export async function runFlowAgent(options: {
 			let sawJsonEvent = false;
 			let closed = false;
 			let timer: NodeJS.Timeout | null = null;
+			let forceKillTimer: NodeJS.Timeout | null = null;
+			let abortListener: (() => void) | null = null;
+			const terminate = () => {
+				if (closed) return;
+				try { proc.kill("SIGTERM"); } catch {}
+				if (forceKillTimer) return;
+				forceKillTimer = setTimeout(() => {
+					forceKillTimer = null;
+					try { if (!closed) proc.kill("SIGKILL"); } catch {}
+				}, 5000);
+				forceKillTimer.unref?.();
+			};
 
 			const finish = (code: number) => {
 				if (closed) return;
 				closed = true;
 				if (timer) clearTimeout(timer);
+				if (forceKillTimer) clearTimeout(forceKillTimer);
+				if (abortListener) options.signal?.removeEventListener("abort", abortListener);
 				resolve(code);
 			};
 
@@ -179,10 +193,7 @@ export async function runFlowAgent(options: {
 						true,
 					);
 					result.errorMessage = result.error.message;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000).unref?.();
+					terminate();
 				}, timeoutMs);
 				timer.unref?.();
 			}
@@ -267,16 +278,13 @@ export async function runFlowAgent(options: {
 				finish(1);
 			});
 
-			const abort = () => {
+			abortListener = () => {
 				wasAborted = true;
 				result.stopReason = "aborted";
-				proc.kill("SIGTERM");
-				setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGKILL");
-				}, 5000).unref?.();
+				terminate();
 			};
-			if (options.signal?.aborted) abort();
-			else options.signal?.addEventListener("abort", abort, { once: true });
+			if (options.signal?.aborted) abortListener();
+			else options.signal?.addEventListener("abort", abortListener, { once: true });
 		});
 
 		result.exitCode = exitCode;

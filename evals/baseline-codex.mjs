@@ -6,6 +6,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:f
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
+import { createProcessTerminator } from "./process-control.mjs";
 
 export function codexModelFromPi(model) {
 	if (!model) throw new Error("Codex baseline requires an explicit subject model");
@@ -59,16 +60,13 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 				let closed = false;
 				let timedOut = false;
 				let aborted = false;
-				let forceKillTimer;
+				const terminator = createProcessTerminator(proc, { isClosed: () => closed, graceMs: killGraceMs });
 				const terminate = (reason) => {
 					if (closed || timedOut || aborted) return;
 					timedOut = reason === "timeout";
 					aborted = reason === "aborted";
 					stopReason = reason;
-					try { proc.kill("SIGTERM"); } catch {}
-					const graceMs = Number.isFinite(killGraceMs) ? Math.max(0, Math.floor(killGraceMs)) : 5_000;
-					forceKillTimer = setTimeout(() => { try { if (!closed) proc.kill("SIGKILL"); } catch {} }, graceMs);
-					forceKillTimer.unref?.();
+					terminator.stop();
 				};
 				const timer = timeoutMs > 0
 					? setTimeout(() => terminate("timeout"), timeoutMs)
@@ -82,7 +80,7 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 				if (closed) return;
 					closed = true;
 					if (timer) clearTimeout(timer);
-					if (forceKillTimer) clearTimeout(forceKillTimer);
+					terminator.dispose();
 				signal?.removeEventListener?.("abort", onAbort);
 				if (timedOut) errorMessage = `direct Codex timed out after ${timeoutMs}ms`;
 				else if (aborted) errorMessage = "direct Codex was aborted";

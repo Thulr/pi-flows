@@ -10,6 +10,7 @@ import { formatTokenComparison, pickArm } from "../evals/compare-report.mjs";
 import { injectModel } from "../evals/model-injection.mjs";
 import { PATTERN_CASES } from "../evals/pattern-cases.mjs";
 import { answerWithArtifacts, armBudgetSignal, exclusionForRun, infraError, scoreObjective, shouldJudgeProductSpans, sumTokenUsage, timeoutPlanForCase } from "../evals/lib.mjs";
+import { createProcessTerminator } from "../evals/process-control.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection, selectionExitCode } from "../evals/select.mjs";
 
@@ -52,6 +53,23 @@ setInterval(() => {}, 1000);
 	assert.ok(Date.now() - startedAt < 900, "SIGKILL escalation should beat the stub's delayed exit");
 	assert.equal(result.details.results[0].stopReason, "timeout");
 	assert.match(result.details.results[0].errorMessage, /timed out after 500ms/);
+});
+
+test("eval process termination escalates after SIGTERM even when proc.killed is already true", async () => {
+	const signals = [];
+	const proc = {
+		killed: false,
+		kill(signal) {
+			this.killed = true;
+			signals.push(signal);
+			return true;
+		},
+	};
+	const terminator = createProcessTerminator(proc, { isClosed: () => false, graceMs: 10 });
+	terminator.stop();
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+	terminator.dispose();
 });
 
 test("A/B artifacts preserve token breakdowns and report the candidate multiplier", () => {

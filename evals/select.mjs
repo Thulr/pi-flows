@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_EVAL_MODEL } from "./lib.mjs";
+import { createProcessTerminator } from "./process-control.mjs";
 import { SELECTION_CASES } from "./selection-cases.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
@@ -326,16 +327,27 @@ async function runSelectionCase(testCase, signal) {
 		const proc = spawn("pi", piArgs, { cwd: process.cwd(), shell: false, stdio: ["pipe", "pipe", "pipe"] });
 		let buffer = "";
 		let stderr = "";
+		let closed = false;
+		const terminator = createProcessTerminator(proc, { isClosed: () => closed });
 		const timer = caseTimeoutMs > 0
 			? setTimeout(() => {
 					timedOut = true;
 					stderr = `${stderr}\nselection eval timed out after ${caseTimeoutMs}ms`;
-					try { proc.kill("SIGTERM"); } catch {}
-					setTimeout(() => { try { if (!proc.killed) proc.kill("SIGKILL"); } catch {} }, 5000).unref?.();
+					terminator.stop();
 				}, caseTimeoutMs)
 			: null;
 		timer?.unref?.();
-		signal?.addEventListener?.("abort", () => { try { proc.kill("SIGTERM"); } catch {} }, { once: true });
+		const onAbort = () => terminator.stop();
+		if (signal?.aborted) onAbort();
+		else signal?.addEventListener?.("abort", onAbort, { once: true });
+		const finish = (code) => {
+			if (closed) return;
+			closed = true;
+			if (timer) clearTimeout(timer);
+			terminator.dispose();
+			signal?.removeEventListener?.("abort", onAbort);
+			resolveExit(code);
+		};
 
 		const processLine = (line) => collectSelectionEvent(line, state);
 		proc.stdin.end(`${testCase.task}\n`);
@@ -347,20 +359,19 @@ async function runSelectionCase(testCase, signal) {
 				processLine(line);
 				if (testCase.expectFlow && state.flowExecutionStarted && !state.stoppedAfterFlowCall) {
 					state.stoppedAfterFlowCall = true;
-					try { proc.kill("SIGTERM"); } catch {}
+					terminator.stop();
 				}
 			}
 		});
 		proc.stderr.on("data", (data) => { stderr = `${stderr}${data}`.slice(-4096); });
 		proc.on("error", (error) => {
 			state.error = error.message;
-			resolveExit(1);
+			finish(1);
 		});
 		proc.on("close", (code) => {
-			if (timer) clearTimeout(timer);
 			if (buffer.trim()) processLine(buffer);
 			if (stderr.trim()) state.stderr = stderr.trim();
-			resolveExit(code ?? 0);
+			finish(code ?? 0);
 		});
 	});
 
