@@ -127,6 +127,78 @@ Expected: the `commander` returns ~3 subtasks, three `recon` workers run in para
 
 Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: PASS/REVISE` check on the merged answer; `details.results` then ends `[..., debrief, verify]`.
 
+## Workflow example
+
+```json
+{
+  "task": "Ship the cache migration",
+  "workflow": {
+    "phases": [
+      { "id": "plan", "agent": "strategist", "task": "Plan {task}" },
+      { "id": "approve", "approval": { "message": "Approve the migration plan?" } },
+      { "id": "apply", "agent": "operator", "task": "Apply {phase.plan}", "checkCommand": "npm test" }
+    ]
+  }
+}
+```
+
+## Worktree example
+
+```json
+{
+  "task": "Fix frontend and backend auth, then integrate",
+  "worktree": {
+    "tasks": [
+      { "id": "frontend", "agent": "operator", "task": "Fix frontend auth" },
+      { "id": "backend", "agent": "operator", "task": "Fix backend auth" }
+    ],
+    "checkCommand": "npm test"
+  }
+}
+```
+
+## Debate example
+
+```json
+{
+  "task": "Choose queue A or B against the migration constraints",
+  "debate": {
+    "participants": [{ "agent": "strategist" }, { "agent": "analyst" }],
+    "adjudicator": { "agent": "overwatch" },
+    "rounds": 2
+  }
+}
+```
+
+## Dossier example
+
+```json
+{
+  "task": "Reconcile the deployment incident evidence",
+  "dossier": {
+    "sections": [
+      { "agent": "recon", "task": "Extract evidence from runbook.md" },
+      { "agent": "analyst", "task": "Extract evidence from incident.md" }
+    ]
+  }
+}
+```
+
+## Monitor example
+
+```json
+{
+  "task": "Diagnose the first degraded health check",
+  "monitor": {
+    "command": "./health-check",
+    "trigger": "match",
+    "pattern": "DEGRADED",
+    "intervalMs": 5000,
+    "maxChecks": 6
+  }
+}
+```
+
 ## Cost budget and tracing example
 
 ```json

@@ -44,7 +44,7 @@
 // The harness emits ONE self-contained trace (evals/thulr-trace.jsonl) — each case's
 // answer, criterion, objective label, task text, expected behavior, failure labels,
 // config/prompt version, and cost/token telemetry inline —
-// and shells out to the `thulr` CLI (0.1.3) for judge -> calibrate -> gate ->
+// and shells out to the `thulr` CLI for judge -> calibrate -> gate ->
 // baseline. thulr reads everything from the trace, so there are no separate
 // cases-manifest or labels files.
 //
@@ -56,9 +56,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { CALIBRATION_CASES, CASES } from "./cases.mjs";
-import { caseCwd, flowTool, scoreObjective, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL } from "./lib.mjs";
+import { caseCwd, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import * as thulr from "./thulr.mjs";
+
+process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 
 // Load a local .env (provider keys) if present, before any child pi inherits env.
 const dotenvPath = join(process.cwd(), ".env");
@@ -72,6 +74,15 @@ const flag = (name, fallback) => {
 	return hit ? hit.slice(name.length + 3) : fallback;
 };
 const has = (name) => args.includes(`--${name}`) || args.some((a) => a.startsWith(`--${name}=`));
+const positiveNumberFlag = (name) => {
+	if (!has(name)) return null;
+	const value = Number(flag(name, "0"));
+	if (!Number.isFinite(value) || value <= 0) {
+		console.error(`--${name} must be a positive number of milliseconds`);
+		process.exit(2);
+	}
+	return value;
+};
 const flags = (name) => args
 	.filter((a) => a.startsWith(`--${name}=`))
 	.flatMap((a) => a.slice(name.length + 3).split(",").map((x) => x.trim()).filter(Boolean));
@@ -86,14 +97,16 @@ const capUsd = Number(flag("cap", "0.50"));
 // models (llama.cpp etc.) that legitimately take minutes per turn — they're free,
 // so a long ceiling beats spurious timeouts. Override: --timeout=600000 (ms) or PI_FLOWS_TIMEOUT_MS.
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "120000"));
+const armTimeoutMs = positiveNumberFlag("arm-timeout");
 const dryRun = args.includes("--dry-run");
 const filter = flag("filter", "");
+const includeControls = has("include-controls") || filter.length > 0;
 // Cross-model judge: a different vendor than the subject under test breaks
 // self-grading. Default is the cheap anthropic tier — the suite standardizes on
 // cheap models for both axes; escalate per-run (--judge-model=anthropic/claude-
 // sonnet-4-6) when a verdict needs a stronger second opinion.
 const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-haiku-4-5";
-// Judge repeat-sampling (thulr 0.1.2): each case judged N times, majority verdict +
+// Judge repeat-sampling: each case judged N times, majority verdict +
 // mean score; the EvalRun's score_stddev becomes judge noise. Costs N× judge spend.
 const samples = Math.min(10, Math.max(1, Number(flag("samples", "1")) || 1));
 const evalSet = flag("eval-set", null);
@@ -113,9 +126,9 @@ const traceOnly = has("trace-only");
 const p = (relPath) => resolve(process.cwd(), relPath);
 const rel = (path) => (path.startsWith(`${process.cwd()}/`) ? path.slice(process.cwd().length + 1) : path);
 const stableRepoPath = (path) => path ? rel(path) : path;
-const defaultJudgeBin = "scripts/thulr-judge-pi.sh";
 const configuredJudgeBin = flag("judge-bin", null) ?? process.env.THULR_JUDGE_BIN ?? null;
-const judgeBin = stableRepoPath(configuredJudgeBin ?? (existsSync(p(defaultJudgeBin)) ? defaultJudgeBin : null));
+const judgeBin = configuredJudgeBin ? stableRepoPath(configuredJudgeBin) : null;
+process.env.PI_FLOWS_JUDGE_MODEL = judgeModel;
 // Dry-run gets its own trace path: mock spans must never clobber the last real
 // trace (which re-judging with a different judge model depends on).
 const TRACE = p(flag("trace-out", dryRun ? "evals/thulr-trace.dry-run.jsonl" : "evals/thulr-trace.jsonl"));
@@ -143,6 +156,7 @@ const LABELS = p(".thulr/runs/candidate.labels.json");
 const reviewsFlag = flag("reviews", null);
 const reviewsDefault = p(`.thulr/reviews/${basename(TRACE).replace(/\.jsonl$/, "")}.reviews.json`);
 const reviews = reviewsFlag ? p(reviewsFlag) : existsSync(reviewsDefault) ? reviewsDefault : null;
+const formatDuration = (ms) => ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
 
 function preflight() {
 	if (dryRun) return true;
@@ -173,7 +187,7 @@ function preflight() {
 async function main() {
 	if (!preflight()) process.exit(2);
 
-	const selected = CASES.filter((c) => !filter || c.name.includes(filter));
+	const selected = CASES.filter((c) => (includeControls || !c.control) && (!filter || c.name.includes(filter)));
 	const selectedCalibration = CALIBRATION_CASES.filter((c) => !filter || c.name.includes(filter));
 	if (selected.length + selectedCalibration.length === 0) {
 		console.error(`No eval cases match --filter=${filter}. Available: ${[...CASES, ...CALIBRATION_CASES].map((c) => c.name).join(", ")}`);
@@ -184,26 +198,29 @@ async function main() {
 	const judgeLabel = dryRun || traceOnly ? "(skipped)" : samples > 1 ? `${judgeModel} ×${samples} samples` : judgeModel;
 	const judgeBinLabel = !dryRun && !traceOnly && judgeBin ? ` via ${rel(judgeBin)}` : "";
 	const efficiencyLabel = efficiencyGuardrails.length ? `  ·  efficiency ${efficiencyGuardrails.join(",")}` : "";
-	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${judgeLabel}${judgeBinLabel}  ·  cap $${capUsd.toFixed(2)}/case  ·  timeout ${Math.round(timeoutMs / 1000)}s/agent${efficiencyLabel}${dryRun ? "  ·  DRY RUN" : traceOnly ? "  ·  TRACE ONLY" : ""}\n`);
+	const timeoutLabel = armTimeoutMs !== null ? `arm-timeout ${formatDuration(armTimeoutMs)} DEBUG/SMOKE` : `timeout ${formatDuration(timeoutMs)}/agent default; per-case budgets honored`;
+	console.log(`pi-flows evals  ·  subject ${useAgentModels ? "(agent frontmatter)" : model} (${modelSource})  ·  judge ${judgeLabel}${judgeBinLabel}  ·  cap $${capUsd.toFixed(2)}/case  ·  ${timeoutLabel}${efficiencyLabel}${dryRun ? "  ·  DRY RUN" : traceOnly ? "  ·  TRACE ONLY" : ""}\n`);
 
 	// --- Phase 1: run every flow, score the objective axis, emit the self-contained thulr trace ---
 	thulr.startTrace(TRACE);
 	let judgedCount = 0;
+	let productJudgedCount = 0;
 	const summaries = [];
 	const calibrationSummaries = [];
 	let totalCost = 0;
 	let sawInfraError = false;
 	for (const testCase of selected) {
-		const flowCtx = { cwd: caseCwd(testCase, { dryRun }), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
+		const flowCtx = { cwd: caseCwd(testCase, { dryRun, arm: "flows" }), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 		const ctx = { flow, model: useAgentModels ? undefined : model, dryRun, flowCtx };
 		const startedAt = Date.now();
+		const timeoutPlan = timeoutPlanForCase(testCase, { defaultTimeoutMs: timeoutMs, armTimeoutMs });
 
 		let result;
 		let thrown;
 		if (dryRun) {
 			result = testCase.mock;
 		} else {
-			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: testCase.params.timeoutMs ?? timeoutMs };
+			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: timeoutPlan.effectiveTimeoutMs };
 			try {
 				result = await flow.execute(`eval:${testCase.name}`, params, new AbortController().signal, undefined, flowCtx);
 			} catch (error) {
@@ -213,6 +230,8 @@ async function main() {
 
 		const { objective, reachedModel, cost, answer } = await scoreObjective({ result, thrown, testCase, ctx });
 		const endedAt = Date.now();
+		const exclusion = exclusionForRun({ reachedModel, timeoutPlan });
+		const excludedReason = exclusion?.reason ?? null;
 		totalCost += cost;
 		if (reachedModel) sawInfraError = true;
 
@@ -220,13 +239,16 @@ async function main() {
 		// trustworthy label to calibrate against; infra failures are reported as ⚠.
 		// Task text, cost, tokens, and the prompt version ride along per thulr's
 		// trace contract — judge context plus repro metadata in the EvalRun.
-		if (!reachedModel) {
+		if (!excludedReason) {
 			thulr.appendCaseSpans(TRACE, {
 				name: testCase.name,
 				answer,
 				criterion: testCase.criterion,
-				namedCriteria: testCase.namedCriteria,
+				criteria: testCase.criteria,
 				label: !!objective.pass,
+				labels: testCase.labels,
+				judgeOnlyDimensions: testCase.judgeOnlyDimensions,
+				journeyStage: testCase.journeyStage,
 				endMs: endedAt,
 				model: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),
 				task: testCase.params.task,
@@ -238,14 +260,16 @@ async function main() {
 				configVersion: CONFIG_VERSION,
 			});
 			judgedCount += 1;
+			productJudgedCount += 1;
 		}
 
 		// Hard cases are score-tracked (◐), not pass/fail — a partial objective score is expected.
-		const status = reachedModel ? "⚠" : testCase.hard ? "◐" : objective.pass ? "✓" : "✗";
+		const status = reachedModel ? "⚠" : timeoutPlan.debugBudget ? "⚑" : testCase.hard ? "◐" : objective.pass ? "✓" : "✗";
 		const seconds = ((endedAt - startedAt) / 1000).toFixed(1);
-		console.log(`${status} ${testCase.name.padEnd(34)} obj ${(objective.score ?? 0).toFixed(2)}  $${cost.toFixed(4)}  ${seconds}s`);
-		console.log(`    ↳ ${reachedModel ?? objective.notes ?? ""}`);
-		summaries.push({ name: testCase.name, hard: !!testCase.hard, objective, reachedModel, cost, durationMs: endedAt - startedAt });
+		console.log(`${status} ${testCase.name.padEnd(34)} obj ${excludedReason ? "n/a" : (objective.score ?? 0).toFixed(2)}  $${cost.toFixed(4)}  ${seconds}s`);
+		const debugNote = timeoutPlan.debugBudget ? `debug budget: arm-timeout ${formatDuration(timeoutPlan.effectiveTimeoutMs)} overrides case budget ${formatDuration(timeoutPlan.caseTimeoutMs)}; excluded from quality verdict` : null;
+		console.log(`    ↳ ${reachedModel ?? debugNote ?? objective.notes ?? ""}`);
+		summaries.push({ name: testCase.name, hard: !!testCase.hard, objective, reachedModel, exclusion, excludedReason, cost, durationMs: endedAt - startedAt });
 	}
 	for (const testCase of selectedCalibration) {
 		const endedAt = Date.now();
@@ -254,7 +278,11 @@ async function main() {
 			name: testCase.name,
 			answer: testCase.answer,
 			criterion: testCase.criterion,
+			criteria: testCase.criteria,
 			label: !!objective.pass,
+			labels: testCase.labels,
+			judgeOnlyDimensions: testCase.judgeOnlyDimensions,
+			journeyStage: testCase.journeyStage ?? "calibration",
 			endMs: endedAt,
 			model: useAgentModels ? "agent-frontmatter" : model,
 			task: testCase.task,
@@ -271,10 +299,12 @@ async function main() {
 		console.log(`    ↳ ${objective.notes ?? ""}`);
 	}
 	const behaviourCases = summaries.filter((s) => !s.hard);
+	const measuredBehaviourCases = behaviourCases.filter((s) => !s.excludedReason);
 	const hardCount = summaries.length - behaviourCases.length;
 	const calibrationCount = calibrationSummaries.length;
-	const objPassed = behaviourCases.filter((s) => !s.reachedModel && s.objective.pass).length;
-	console.log(`\n${objPassed}/${behaviourCases.length} behaviour checks passed${hardCount ? `  ·  ${hardCount} hard case${hardCount === 1 ? "" : "s"} score-tracked` : ""}${calibrationCount ? `  ·  ${calibrationCount} calibration canar${calibrationCount === 1 ? "y" : "ies"}` : ""}  ·  total $${totalCost.toFixed(4)}${dryRun ? "  (dry-run, no model)" : ""}`);
+	const objPassed = measuredBehaviourCases.filter((s) => s.objective.pass).length;
+	const excludedBehaviour = behaviourCases.length - measuredBehaviourCases.length;
+	console.log(`\n${objPassed}/${measuredBehaviourCases.length} behaviour checks passed${excludedBehaviour ? `  ·  ${excludedBehaviour} inconclusive/excluded` : ""}${hardCount ? `  ·  ${hardCount} hard case${hardCount === 1 ? "" : "s"} score-tracked` : ""}${calibrationCount ? `  ·  ${calibrationCount} calibration canar${calibrationCount === 1 ? "y" : "ies"}` : ""}  ·  total $${totalCost.toFixed(4)}${dryRun ? "  (dry-run, no model)" : ""}`);
 
 	// --- Phase 2: thulr judge -> calibrate -> gate -> baseline (skipped in dry-run) ---
 	const verdicts = new Map();
@@ -285,13 +315,13 @@ async function main() {
 		// ranks, and selects. Exit 0 iff a judgeable trace was emitted — objective
 		// misses are labels in the trace, not a candidate failure.
 		console.log(`\n(trace-only) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; judge/gate left to the driver.`);
-		process.exit(judgedCount > 0 ? 0 : 1);
+		process.exit(productJudgedCount > 0 ? 0 : 1);
 	}
 
 	if (dryRun) {
 		console.log(`\n(dry-run) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; thulr judge/gate skipped (no tokens).`);
-	} else if (judgedCount === 0) {
-		console.log("\nNo case reached the model — skipping thulr judge (nothing to grade).");
+	} else if (!shouldJudgeProductSpans({ dryRun, traceOnly, productSpans: productJudgedCount })) {
+		console.log("\nNo product case is eligible for judging — skipping thulr judge/gate/baseline (calibration canaries alone are not a candidate).");
 	} else {
 		mkdirSync(dirname(CANDIDATE), { recursive: true });
 		const traceReport = thulr.inspectTrace(TRACE);
@@ -307,21 +337,26 @@ async function main() {
 		console.log(`\nthulr judge (${judgeModel}${samples > 1 ? ` ×${samples} samples` : ""})  ·  ${judgedCount} case${judgedCount === 1 ? "" : "s"}`);
 		thulr.judge({ trace: TRACE, model: judgeModel, out: CANDIDATE, samples, evalSet, rate, redaction, judgeBin });
 		const evalRun = JSON.parse(readFileSync(CANDIDATE, "utf8"));
+		let gateEvalRun = evalRun;
 		let gateCandidate = CANDIDATE;
 		if (calibrationSummaries.length) {
-			const gateEvalRun = thulr.gateCandidateForEvalRun(evalRun, {
+			gateEvalRun = thulr.gateCandidateForEvalRun(evalRun, {
 				excludeCaseIds: calibrationSummaries.map((s) => s.name),
 			});
 			writeFileSync(GATE_CANDIDATE, `${JSON.stringify(gateEvalRun, null, 2)}\n`, "utf8");
 			gateCandidate = GATE_CANDIDATE;
 		}
-		for (const c of evalRun.cases ?? []) verdicts.set(c.case_id, c.dims?.criterion ?? {});
+		for (const c of evalRun.cases ?? []) verdicts.set(c.case_id, c.dims ?? {});
 		for (const s of [...summaries, ...calibrationSummaries]) {
-			if (s.reachedModel) continue;
-			const v = verdicts.get(s.name) ?? {};
+			if (s.excludedReason) continue;
+			const dims = verdicts.get(s.name) ?? {};
+			const v = dims.criterion ?? {};
 			const role = s.calibration ? "canary" : s.hard ? "hard" : "behaviour";
 			const verdict = v.verdict === false ? "fail" : v.verdict === true ? "pass" : "unknown";
-			console.log(`${s.name.padEnd(34)} criterion ${(v.score ?? 0).toFixed(2)}  ${role} ${verdict}`);
+			const dimScores = Object.entries(dims)
+				.map(([dimension, result]) => `${dimension} ${(result.score ?? 0).toFixed(2)}${result.verdict === false ? "!" : ""}`)
+				.join("  ");
+			console.log(`${s.name.padEnd(34)} ${dimScores || "criterion n/a"}  ${role} ${verdict}`);
 		}
 		// With repeat sampling, the EvalRun's score_stddev is the pooled within-case
 		// sample variance — i.e. how noisy the judge itself is on this suite.
@@ -332,7 +367,7 @@ async function main() {
 
 		// Calibration: how well the judge's verdicts track the deterministic labels
 		// (and human SME verdicts too, when a review set is present — judge-vs-human
-		// TPR/TNR). thulr 0.1.3 also queues every judge/ground-truth disagreement onto
+		// TPR/TNR). thulr also queues every judge/ground-truth disagreement onto
 		// the triage queue (`thulr queue`) and feeds this calibration into the gate:
 		// a judge blind in either direction downgrades a clean PASS to WARN.
 		console.log("");
@@ -343,7 +378,17 @@ async function main() {
 		}
 
 		if (gateBaseline) {
-			const gateOptions = { baseline: gateBaseline, candidate: gateCandidate, guardrails: ["criterion"], scoreGuardrails: [...new Set(["criterion", ...extraScoreGuardrails])], efficiencyGuardrails, noiseBand, redaction };
+			const baselineRun = JSON.parse(readFileSync(gateBaseline, "utf8"));
+			const candidateDimensions = thulr.evalRunDimensions(gateEvalRun);
+			const gateDimensions = thulr.sharedGateDimensions(baselineRun, gateEvalRun, candidateDimensions);
+			const waitingForBaseline = candidateDimensions.filter((dimension) => !gateDimensions.includes(dimension));
+			const requestedScoreGuardrails = [...new Set(["criterion", ...extraScoreGuardrails])];
+			const guardrails = gateDimensions.filter((dimension) => dimension === "criterion");
+			const scoreGuardrails = gateDimensions.filter((dimension) => requestedScoreGuardrails.includes(dimension));
+			const gateOptions = { baseline: gateBaseline, candidate: gateCandidate, guardrails, scoreGuardrails, efficiencyGuardrails, noiseBand, redaction };
+			if (waitingForBaseline.length) {
+				console.log(`\nnamed dimensions awaiting refreshed baseline: ${waitingForBaseline.join(", ")}`);
+			}
 			try {
 				const gateJson = thulr.gate({ ...gateOptions, json: true });
 				const deltaLines = thulr.formatGateScoreSummary(gateJson.report);
@@ -382,13 +427,19 @@ async function main() {
 	// A behaviour case passes only when its objective check AND thulr's criterion
 	// agree (the two-axis contract). Hard cases are score-tracked, not pass-gated —
 	// only a regression in their score (caught by --score-guardrail) blocks the run.
-	const passed = behaviourCases.filter((s) => !s.reachedModel && s.objective.pass && (dryRun || verdicts.get(s.name)?.verdict !== false)).length;
-	console.log(`\n${passed}/${behaviourCases.length} behaviour cases passed${hardCount ? `  ·  ${hardCount} hard score-tracked` : ""}${calibrationCount ? `  ·  ${calibrationCount} calibration canar${calibrationCount === 1 ? "y" : "ies"}` : ""}${gateResult ? `  ·  gate ${gateResult.blocks ? "FAIL" : "ok"}` : ""}`);
+	const passed = measuredBehaviourCases.filter((s) => s.objective.pass && (dryRun || verdicts.get(s.name)?.criterion?.verdict !== false)).length;
+	const excludedByReason = (reason) => summaries.filter((s) => s.excludedReason === reason).length;
+	console.log(`\n${passed}/${measuredBehaviourCases.length} behaviour cases passed${excludedBehaviour ? `  ·  ${excludedBehaviour} inconclusive/excluded` : ""}${hardCount ? `  ·  ${hardCount} hard score-tracked` : ""}${calibrationCount ? `  ·  ${calibrationCount} calibration canar${calibrationCount === 1 ? "y" : "ies"}` : ""}${gateResult ? `  ·  gate ${gateResult.blocks ? "FAIL" : "ok"}` : ""}`);
 
 	if (sawInfraError) {
-		console.log("\n⚠ Some cases could not reach the model (auth, credits, network, or timeout) — that's an environment issue, not an eval failure.\n  Fixes: add credits / `pi` /login, set a provider key in .env (see .env.example), or pass --model=<provider/id> for a provider you have quota on.");
+		console.log("\n⚠ Some cases could not complete (auth, credits, network, or timeout) — inconclusive infra, not an answer-quality failure.");
 	}
-	process.exit(passed === behaviourCases.length && !gateResult?.blocks ? 0 : 1);
+	if (excludedByReason("debug_budget")) {
+		console.log(`\n⚑ ${excludedByReason("debug_budget")} case${excludedByReason("debug_budget") === 1 ? " used" : "s used"} an --arm-timeout smoke/debug override and ${excludedByReason("debug_budget") === 1 ? "was" : "were"} excluded from quality verdicts.`);
+	}
+	const infraBlocked = excludedByReason("infra") > 0;
+	const measuredPass = measuredBehaviourCases.length === 0 ? !infraBlocked : passed === measuredBehaviourCases.length;
+	process.exit(measuredPass && !gateResult?.blocks && !infraBlocked ? 0 : 1);
 }
 
 main().catch((error) => {

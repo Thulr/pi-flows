@@ -1,0 +1,3 @@
+architecture,overall_point_pct,overall_upper_pct,new_supplier_point_pct,new_supplier_upper_pct,base_review_share_pct
+A,0.42,0.48,0.72,0.86,24
+B,0.58,0.70,0.90,1.05,22

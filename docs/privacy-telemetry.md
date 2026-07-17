@@ -34,6 +34,8 @@ Consult pi documentation for provider/session behavior. Useful environment contr
 
 - `PI_TELEMETRY=0` to disable pi install telemetry where supported.
 - `PI_OFFLINE=1` to disable startup network operations where supported.
+- `PI_FLOWS_CHILD_NO_EXTENSIONS=1` to make pi-flows spawn child agents with
+  `--no-extensions` when you need to isolate installed user extensions.
 
 ## Retention
 

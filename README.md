@@ -14,11 +14,24 @@ Use pi-flows when the next step would otherwise make your main pi session noisy,
 | You have several independent areas to inspect. | "Check frontend auth and backend auth in parallel." | Separate child runs with capped fan-out instead of one context stuffed with every file. |
 | You want an implementation checked before you accept it. | "Add `/health` with a test, and don't call it done until `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
 | You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
+| A release or migration has named gates and an approval point. | "Analyze, plan, verify, then pause for approval before rollout." | Persisted phase state, deterministic gates, and a resumable human approval node. |
+| Several independent writers need to land one verified result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
+| A consequential decision has credible opposing options. | "Have advocates test both queue designs against the constraints, then adjudicate." | Bounded rebuttal rounds and an independent decision record. |
+| Several sources disagree or leave evidence gaps. | "Reconcile the runbook, deployed config, incident report, and ticket." | Source-specific extraction followed by cited synthesis that preserves conflicts and unknowns. |
+| A transient condition must be captured before diagnosis. | "Poll health up to six times; on `DEGRADED`, hand the event to an analyst." | A bounded deterministic probe, typed trigger, and one reactor agent. |
 | You care what the delegation cost. | "Run this with a $0.25 cap and save a trace." | Cumulative cost/token ceilings plus OpenInference-shaped JSONL traces and `/flows report`. |
 
 Do not use pi-flows as the default path for small tasks. Simple answers, obvious
 shell commands, tiny edits, and quick single-file lookups are usually cheaper and
 clearer in the parent session.
+
+Treat each mode as an activation threshold, not a feature to match by keyword.
+Do not auto-use flows for simple or **saturated** work: if the parent can already
+meet the acceptance criteria reliably, extra agents add cost and latency without
+quality headroom. Escalate only when isolation, independent evidence, adversarial
+reasoning, deterministic gates, or bounded multi-step control materially changes
+correctness. The [flow reference](./docs/flow-reference.md#activation-thresholds)
+spells out the threshold for each advanced mode.
 
 ## Why this instead of another sub-agent extension
 
@@ -26,7 +39,7 @@ pi-flows is a small harness, not just a folder of specialist prompts. The distin
 
 - **Native isolation over prompt promises.** `recon` and `analyst` run with read-only tools and no shell, so exploration cannot accidentally edit files. Concurrent write-capable agents cannot share one checkout unless you explicitly opt in.
 - **Verification is a first-class mode.** `evaluate` runs builder and critic in separate child contexts, can require `npm test` or another `checkCommand`, and revises under a hard iteration cap. This is stronger than asking one agent to "double-check itself."
-- **Multiple proven patterns share one contract.** `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, and `orchestrate` are all exposed through the same `flow` tool, so you can start with a scout and only add coordination when the task needs it. See [Patterns](./docs/patterns.md).
+- **Multiple proven patterns share one contract.** From `single`, `parallel`, and `evaluate` through explicit `workflow`, isolated `worktree`, adjudicated `debate`, evidence `dossier`, and bounded `monitor`, every mode uses the same `flow` tool. Start with the least coordination the task needs. See [Patterns](./docs/patterns.md).
 - **Delegation is bounded.** Count, concurrency, timeout, nesting depth, total tokens, and total USD spend are capped by the harness. A runaway fan-out returns `BUDGET_EXCEEDED` instead of quietly burning through the rest of the task.
 - **Handoffs are treated as an attack surface.** Content passed from one child to another is capped, redacted, stripped of invisible/bidi characters, and scanned for instruction-override markers before reuse.
 - **You can inspect what happened.** Structured errors include cause and fix fields, traces are plain JSONL, and `/flows report` summarizes success rate, cost, token use, budget hits, route choices, and voting warnings.
@@ -118,7 +131,7 @@ Or install your working copy as a package with `pi install -l ./`. See [Developm
 
 ## What it adds
 
-- `flow` tool: runs isolated pi subprocesses for single, parallel, chain, evaluate (generator-evaluator), vote, route, orchestrate, graph, loop, and search delegation.
+- `flow` tool: runs isolated pi subprocesses for single, parallel, chain, evaluate (generator-evaluator), vote, route, orchestrate, graph, loop, search, workflow, worktree, debate, dossier, and monitor delegation.
 - `/flows` command: lists available flow agents and shows help/status/version output.
 - Bundled agents in [`agents/`](./agents/): `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`.
 - Your own agents, no code required — one markdown file (frontmatter + system prompt) per agent. User agents live in `~/.pi/agent/flow-agents/*.md`; project agents in `.pi/flow-agents/*.md` (loaded with `agentScope: "project"` or `"all"`, and trust-gated). Project shadows user shadows bundled, with a visible diagnostic. See [Custom agents](./docs/custom-agents.md).
@@ -275,6 +288,109 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
 ```
 
 `search` generates candidate paths, scores each with `SCORE: 0..100`, keeps the best beam, and debriefs the winner. The default scorer is `redteam` with tools disabled so parallel scoring stays read-only.
+
+### Workflow (gated, resumable phases)
+
+```json
+{
+  "task": "Ship the cache migration",
+  "workflow": {
+    "stateFile": ".pi/flow-workflows/cache-migration.json",
+    "phases": [
+      { "id": "plan", "agent": "strategist", "task": "Produce an evidence-backed rollout plan for {task}" },
+      { "id": "approve", "approval": { "message": "Approve the rollout plan?" } },
+      { "id": "apply", "agent": "operator", "task": "Implement the approved plan:\n{phase.plan}", "checkCommand": "npm test" }
+    ],
+    "debrief": { "agent": "debrief" }
+  }
+}
+```
+
+Each work phase persists its redacted output before the next phase. Approval nodes
+prompt in the interactive UI and pause safely in headless runs; repeat the same
+call with `workflow.resume:true` to continue from the persisted state.
+
+### Worktree (isolated writers and integration)
+
+```json
+{
+  "task": "Fix frontend and backend auth, then verify the integrated result",
+  "worktree": {
+    "tasks": [
+      { "id": "frontend", "agent": "operator", "task": "Fix frontend auth only" },
+      { "id": "backend", "agent": "operator", "task": "Fix backend auth only" }
+    ],
+    "integrator": { "agent": "operator" },
+    "checkCommand": "npm test"
+  }
+}
+```
+
+`worktree` requires a git repo and at least two write tasks where isolation or
+integration reconciliation is part of correctness. Two ordinary small file edits
+should stay in the parent session. The mode leaves the source checkout untouched,
+removes temporary worktrees, and returns a durable `pi-flow/<run>/integration`
+branch for explicit review or merge.
+
+### Debate (advocates and adjudicator)
+
+```json
+{
+  "task": "Choose queue migration A or B against the constraints in decision.md",
+  "debate": {
+    "participants": [{ "agent": "strategist" }, { "agent": "analyst" }],
+    "adjudicator": { "agent": "overwatch" },
+    "rounds": 2
+  }
+}
+```
+
+Use `debate` when independent advocates, rebuttal, and adjudication are explicitly
+requested. It is not an automatic route today: paired Codex baselines found no
+stable quality lift over direct execution, while latency and token use were much
+higher. Advocates open independently, rebut the prior round, and a separate
+adjudicator chooses against the original constraints.
+
+### Dossier (evidence map/reduce)
+
+```json
+{
+  "task": "Explain the deployment incident and preserve source conflicts",
+  "dossier": {
+    "sections": [
+      { "agent": "recon", "task": "Extract evidence from runbook.md only" },
+      { "agent": "recon", "task": "Extract evidence from config.yaml only" },
+      { "agent": "analyst", "task": "Extract evidence from incident.md only" }
+    ],
+    "debrief": { "agent": "debrief" }
+  }
+}
+```
+
+At least two source- or claim-specific sections must succeed. The synthesizer
+returns claims, citations, conflicts, confidence, unresolved gaps, and the next
+evidence needed instead of smoothing disagreement into false consensus.
+
+### Monitor (bounded trigger and react)
+
+```json
+{
+  "task": "Diagnose the first degraded health event",
+  "monitor": {
+    "command": "./health-check",
+    "trigger": "match",
+    "pattern": "DEGRADED",
+    "intervalMs": 5000,
+    "maxChecks": 6,
+    "reactor": { "agent": "analyst" }
+  }
+}
+```
+
+`monitor` polls only within one bounded flow call; it is not a daemon, scheduler,
+or background automation system. When the trigger fires, one reactor receives the
+captured observation as untrusted evidence. If the bound is reached first, the
+call returns `MONITOR_NOT_TRIGGERED` with the last observations.
 
 ### Cost budget and tracing
 
