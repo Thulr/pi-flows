@@ -288,6 +288,10 @@ export function scoreSelection(testCase, result) {
 	};
 }
 
+export function selectionExitCode({ failed, comparable }) {
+	return failed === 0 && comparable > 0 ? 0 : 1;
+}
+
 function emptyState() {
 	return {
 		flowCallIds: new Set(),
@@ -418,7 +422,7 @@ async function main() {
 	}
 	const comparable = selected.length - inconclusive;
 	console.log(`\n${passed}/${comparable} comparable selection cases passed - ${inconclusive} infra exclusion(s) - total $${totalCost.toFixed(4)}`);
-	process.exit(failed === 0 ? 0 : 1);
+	process.exit(selectionExitCode({ failed, comparable }));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

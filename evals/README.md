@@ -383,7 +383,9 @@ execution starts and captures the final streamed arguments. Child-agent output
 quality belongs to the main flow evals; this suite gates whether and how the parent
 delegates. A case-level `timeoutMs` takes precedence over the CLI fallback clock;
 when that clock expires, the case is reported as `INCONCLUSIVE` and removed from
-the pass-rate denominator instead of being scored as a wrong selection.
+the pass-rate denominator instead of being scored as a wrong selection. A run
+with zero comparable cases exits non-zero because it produced no selection
+evidence, even though none of the excluded cases is counted as a wrong answer.
 
 ## Experiments: champion/challenger (and the optimizer)
 

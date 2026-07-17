@@ -151,8 +151,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		integrationCwd = path.join(tempRoot, "integration");
 		const integrationAdded = git(repoRoot, ["worktree", "add", "-b", integrationBranch, integrationCwd, baseSha]);
 		if (!integrationAdded.ok) {
+			retainFailureState = true;
 			const error = flowError("WORKTREE_SETUP_FAILED", "Could not create the integration worktree.", integrationAdded.stderr, "Inspect git worktree/branch state and retry.");
-			return modeError(deps, results, error);
+			const recovery = workers.map((worker) => `- \`${worker.branch}\` at \`${worker.cwd}\``).join("\n");
+			return modeError(deps, results, error, `\n\nCommitted worker state retained for recovery:\n${recovery}`);
 		}
 		integrationCreated = true;
 

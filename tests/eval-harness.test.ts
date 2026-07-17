@@ -10,7 +10,7 @@ import { injectModel } from "../evals/model-injection.mjs";
 import { PATTERN_CASES } from "../evals/pattern-cases.mjs";
 import { answerWithArtifacts, armBudgetSignal, exclusionForRun, infraError, scoreObjective, shouldJudgeProductSpans, timeoutPlanForCase } from "../evals/lib.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
-import { collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection } from "../evals/select.mjs";
+import { collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection, selectionExitCode } from "../evals/select.mjs";
 
 test("Codex baseline maps the Pi model id and parses JSONL without putting the task in argv", async () => {
 	assert.equal(codexModelFromPi("openai-codex/gpt-5.4-mini"), "gpt-5.4-mini");
@@ -456,6 +456,12 @@ test("selection eval scores overuse, correct non-use, and wrong flow arguments",
 	assert.equal(timedOut.inconclusive, true);
 	assert.equal(timedOut.selectionOk, null);
 	assert.match(timedOut.notes, /timed out/);
+});
+
+test("selection eval requires at least one comparable case for a green exit", () => {
+	assert.equal(selectionExitCode({ failed: 0, comparable: 1 }), 0);
+	assert.equal(selectionExitCode({ failed: 1, comparable: 1 }), 1);
+	assert.equal(selectionExitCode({ failed: 0, comparable: 0 }), 1);
 });
 
 test("selection eval flow argument matcher recognizes implicit delegation modes", () => {
