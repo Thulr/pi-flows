@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
-import { CHECK_OUTPUT_CAP, type CapturePolicy } from "./types.ts";
+import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, type CapturePolicy } from "./types.ts";
 import { capBytes, sanitizeText } from "./sanitize.ts";
+
+export function resolveFlowCommandTimeoutMs(commandTimeoutMs?: number, flowTimeoutMs?: number): number {
+	const value = commandTimeoutMs ?? flowTimeoutMs;
+	if (!Number.isFinite(value)) return DEFAULT_TIMEOUT_MS;
+	return Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value as number)));
+}
 
 function boundedCommand<T>(options: {
 	command: string;

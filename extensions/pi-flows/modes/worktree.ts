@@ -3,11 +3,11 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, DEFAULT_CONCURRENCY, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_CONCURRENCY, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { runCheckCommand } from "../commands.ts";
+import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { appendReturnContract, validateConcurrency } from "../validate.ts";
 import { toolErrorDetails } from "../agent-catalog.ts";
 
@@ -221,7 +221,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		let checkSummary = "No deterministic integration check requested.";
 		if (spec.checkCommand) {
-			const checked = await runCheckCommand(spec.checkCommand, integrationCwd, spec.checkTimeoutMs ?? params.timeoutMs ?? DEFAULT_CHECK_COMMAND_TIMEOUT_MS, policy, deps.signal);
+			const checked = await runCheckCommand(spec.checkCommand, integrationCwd, resolveFlowCommandTimeoutMs(spec.checkTimeoutMs, params.timeoutMs), policy, deps.signal);
 			if (!checked.ok) {
 				const error = flowError("WORKTREE_VERIFY_FAILED", "Integration branch failed its deterministic check.", checked.output || "The worktree checkCommand exited non-zero.", "Inspect the retained integration branch, fix the check failure, and rerun verification before merging.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);

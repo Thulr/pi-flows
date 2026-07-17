@@ -1,9 +1,9 @@
 import * as path from "node:path";
-import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareTextHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
-import { runProbeCommand } from "../commands.ts";
+import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../commands.ts";
 import { toolErrorDetails } from "../agent-catalog.ts";
 
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
@@ -40,7 +40,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 
 	const maxChecks = boundedInteger(spec.maxChecks, DEFAULT_MONITOR_CHECKS, MAX_MONITOR_CHECKS);
 	const intervalMs = Math.max(10, Math.min(MAX_MONITOR_INTERVAL_MS, boundedInteger(spec.intervalMs, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_INTERVAL_MS)));
-	const checkTimeoutMs = boundedInteger(spec.checkTimeoutMs ?? params.timeoutMs, DEFAULT_CHECK_COMMAND_TIMEOUT_MS, Number.MAX_SAFE_INTEGER);
+	const checkTimeoutMs = resolveFlowCommandTimeoutMs(spec.checkTimeoutMs, params.timeoutMs);
 	const observations: string[] = [];
 	let triggered: { check: number; output: string; exitCode: number | null } | null = null;
 	for (let check = 1; check <= maxChecks; check += 1) {

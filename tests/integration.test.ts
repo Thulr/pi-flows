@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
-import { runProbeCommand } from "../extensions/pi-flows/commands.ts";
+import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../extensions/pi-flows/commands.ts";
 
 const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
@@ -608,6 +608,12 @@ test("monitor: polls deterministically until the trigger then hands the event to
 	assert.deepEqual(calls.map((call) => call.agent), ["analyst"]);
 	assert.match(calls[0].task, /replica_lag=91s/);
 	assert.match(text, /REPLICA_DIAGNOSIS/);
+});
+
+test("flow-scoped command timeouts prefer the mode override, then the flow timeout, then the flow default", () => {
+	assert.equal(resolveFlowCommandTimeoutMs(30_000, 120_000), 30_000);
+	assert.equal(resolveFlowCommandTimeoutMs(undefined, 120_000), 120_000);
+	assert.equal(resolveFlowCommandTimeoutMs(undefined, undefined), 600_000);
 });
 
 test("monitor interval keeps a standalone Node process alive while awaited", () => {
