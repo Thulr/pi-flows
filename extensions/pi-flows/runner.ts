@@ -148,7 +148,7 @@ export async function runFlowAgent(options: {
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
-				cwd: options.cwd ?? options.defaultCwd,
+				cwd: path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd),
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 				env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1) },

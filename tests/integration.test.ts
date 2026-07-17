@@ -549,6 +549,28 @@ test("workflow: relative phase cwd is shared by the agent and deterministic gate
 	assert.match(text, /ARTIFACT_READY/);
 });
 
+test("workflow: debrief failure is persisted without a stale next phase", async () => {
+	const cwd = await freshDir();
+	const stateFile = ".pi/debrief-failure.json";
+	const { text } = await runFlow(
+		{
+			task: "prepare release evidence",
+			workflow: {
+				stateFile,
+				phases: [{ id: "collect", agent: "recon", task: "Collect evidence" }],
+				debrief: { agent: "debrief" },
+			},
+		},
+		{ recon: "EVIDENCE_READY", debrief: { reply: "DEBRIEF_FAILED", exitCode: 1 } },
+		{ cwd },
+	);
+	assert.match(text, /debrief failed/i);
+	const state = JSON.parse(await readFile(path.join(cwd, stateFile), "utf8"));
+	assert.equal(state.status, "failed");
+	assert.deepEqual(state.completedPhaseIds, ["collect"]);
+	assert.equal(state.nextPhaseId, undefined);
+});
+
 test("debate: participants rebut independently before a separate adjudicator decides", async () => {
 	const { calls, text } = await runFlow(
 		{
@@ -574,20 +596,28 @@ test("debate: participants rebut independently before a separate adjudicator dec
 });
 
 test("dossier: evidence collectors fan out and a synthesizer preserves conflicts and gaps", async () => {
+	const cwd = await freshDir();
+	await mkdir(path.join(cwd, "sources/runbook"), { recursive: true });
+	await mkdir(path.join(cwd, "sources/config"), { recursive: true });
 	const { calls, text } = await runFlow(
 		{
 			task: "Build a deployment dossier",
-			dossier: {
-				sections: [
-					{ agent: "recon", task: "Inspect runbook.md" },
-					{ agent: "analyst", task: "Inspect config.md" },
+				dossier: {
+					sections: [
+						{ agent: "recon", cwd: "sources/runbook", task: "Inspect runbook.md" },
+						{ agent: "analyst", cwd: "sources/config", task: "Inspect config.md" },
 				],
 				debrief: { agent: "debrief" },
 			},
 		},
 		{ recon: "RUNBOOK_EVIDENCE", analyst: "CONFIG_CONTRADICTION", debrief: "DOSSIER_WITH_GAPS" },
+		{ cwd },
 	);
 	assert.deepEqual(new Set(calls.slice(0, 2).map((call) => call.agent)), new Set(["recon", "analyst"]));
+	assert.deepEqual(
+		new Set(await Promise.all(calls.slice(0, 2).map((call) => realpath(call.cwd)))),
+		new Set(await Promise.all(["sources/runbook", "sources/config"].map((relative) => realpath(path.join(cwd, relative))))),
+	);
 	assert.equal(calls[2].agent, "debrief");
 	assert.match(calls[2].task, /RUNBOOK_EVIDENCE/);
 	assert.match(calls[2].task, /CONFIG_CONTRADICTION/);

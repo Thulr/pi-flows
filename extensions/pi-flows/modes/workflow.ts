@@ -172,7 +172,13 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		].join("\n");
 		const debriefed = await runAgentRef(deps, debriefRef, debriefTask, "workflow", results.length + 1, results);
 		results.push(debriefed);
-		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow workflow debrief failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("workflow")(results) };
+		if (isFailed(debriefed)) {
+			state.status = "failed";
+			delete state.nextPhaseId;
+			state.updatedAt = new Date().toISOString();
+			await persistState(stateFile, state);
+			return { content: [{ type: "text", text: sanitizeText(`Flow workflow debrief failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("workflow")(results) };
+		}
 		finalText = resultText(debriefed);
 	}
 
