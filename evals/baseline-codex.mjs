@@ -26,7 +26,7 @@ function isolatedCodexEnvironment(baseEnv) {
 	};
 }
 
-export async function runCodex({ task, cwd, model, reportedModel = model, timeoutMs = 120_000, signal, codexBin = "codex", env = process.env }) {
+export async function runCodex({ task, cwd, model, reportedModel = model, timeoutMs = 120_000, signal, codexBin = "codex", env = process.env, killGraceMs = 5_000 }) {
 	const isolated = isolatedCodexEnvironment(env);
 	const args = [
 		"exec",
@@ -53,31 +53,36 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 
 	let exitCode;
 	try {
-		exitCode = await new Promise((resolveExit) => {
-			const proc = spawn(codexBin, args, { cwd: cwd ?? process.cwd(), env: isolated.env, shell: false, stdio: ["pipe", "pipe", "pipe"] });
-			let buffer = "";
-			let closed = false;
-			let timedOut = false;
-			let aborted = false;
-			const timer = timeoutMs > 0
-				? setTimeout(() => {
-					timedOut = true;
-					stopReason = "timeout";
+			exitCode = await new Promise((resolveExit) => {
+				const proc = spawn(codexBin, args, { cwd: cwd ?? process.cwd(), env: isolated.env, shell: false, stdio: ["pipe", "pipe", "pipe"] });
+				let buffer = "";
+				let closed = false;
+				let timedOut = false;
+				let aborted = false;
+				let forceKillTimer;
+				const terminate = (reason) => {
+					if (closed || timedOut || aborted) return;
+					timedOut = reason === "timeout";
+					aborted = reason === "aborted";
+					stopReason = reason;
 					try { proc.kill("SIGTERM"); } catch {}
-					setTimeout(() => { try { if (!proc.killed) proc.kill("SIGKILL"); } catch {} }, 5_000).unref?.();
-				}, timeoutMs)
-				: null;
+					const graceMs = Number.isFinite(killGraceMs) ? Math.max(0, Math.floor(killGraceMs)) : 5_000;
+					forceKillTimer = setTimeout(() => { try { if (!closed) proc.kill("SIGKILL"); } catch {} }, graceMs);
+					forceKillTimer.unref?.();
+				};
+				const timer = timeoutMs > 0
+					? setTimeout(() => terminate("timeout"), timeoutMs)
+					: null;
 			timer?.unref?.();
 
-			const onAbort = () => {
-				aborted = true;
-				stopReason = "aborted";
-				try { proc.kill("SIGTERM"); } catch {}
-			};
+				const onAbort = () => {
+					terminate("aborted");
+				};
 			const finish = (code) => {
 				if (closed) return;
-				closed = true;
-				if (timer) clearTimeout(timer);
+					closed = true;
+					if (timer) clearTimeout(timer);
+					if (forceKillTimer) clearTimeout(forceKillTimer);
 				signal?.removeEventListener?.("abort", onAbort);
 				if (timedOut) errorMessage = `direct Codex timed out after ${timeoutMs}ms`;
 				else if (aborted) errorMessage = "direct Codex was aborted";

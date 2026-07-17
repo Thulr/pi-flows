@@ -722,6 +722,14 @@ test("worktree: refuses to integrate when any required writer fails", async () =
 	assert.equal(result.details.error.code, "WORKTREE_INTEGRATION_FAILED");
 	assert.match(text, /Partial implementation was not integrated/);
 	assert.equal(execFileSync("git", ["branch", "--list", "pi-flow/*/integration"], { cwd, encoding: "utf8" }).trim(), "");
+	const retained = [...text.matchAll(/ at `([^`]+)`/g)].map((match) => match[1]);
+	assert.equal(retained.length, 2, text);
+	assert.equal(await readFile(path.join(retained[0], "a.txt"), "utf8"), "new a\n");
+	for (const worktree of retained) execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd });
+	for (const workerBranch of execFileSync("git", ["branch", "--list", "pi-flow/*"], { cwd, encoding: "utf8" }).split("\n").map((line) => line.trim()).filter(Boolean)) {
+		execFileSync("git", ["branch", "-D", workerBranch], { cwd });
+	}
+	await rm(path.dirname(retained[0]), { recursive: true, force: true });
 });
 
 test("worktree: retains worker state when committing generated changes fails", async () => {

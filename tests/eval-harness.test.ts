@@ -39,6 +39,21 @@ process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1
 	assert.equal(result.details.results[0].stopReason, "endTurn");
 });
 
+test("Codex baseline escalates a timed-out process that traps SIGTERM", async () => {
+	const cwd = await mkdtemp(path.join(tmpdir(), "pi-codex-timeout-test-"));
+	const stub = path.join(cwd, "codex-timeout-stub.mjs");
+	await writeFile(stub, `#!/usr/bin/env node
+process.on("SIGTERM", () => setTimeout(() => process.exit(0), 1000));
+setInterval(() => {}, 1000);
+`);
+	await chmod(stub, 0o755);
+	const startedAt = Date.now();
+	const result = await runCodex({ task: "wait", cwd, model: "gpt-5.4-mini", codexBin: stub, timeoutMs: 500, killGraceMs: 20 });
+	assert.ok(Date.now() - startedAt < 900, "SIGKILL escalation should beat the stub's delayed exit");
+	assert.equal(result.details.results[0].stopReason, "timeout");
+	assert.match(result.details.results[0].errorMessage, /timed out after 500ms/);
+});
+
 test("A/B artifacts preserve token breakdowns and report the candidate multiplier", () => {
 	const result = {
 		details: {

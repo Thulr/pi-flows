@@ -142,8 +142,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			results.push(...workerResults);
 			const failedWorkerIds = workers.filter((_, index) => isFailed(workerResults[index])).map((worker) => worker.id);
 			if (failedWorkerIds.length > 0) {
-				const error = flowError("WORKTREE_INTEGRATION_FAILED", "One or more required worktree writers failed.", `Failed worker ids: ${failedWorkerIds.join(", ")}. Partial implementation was not integrated.`, "Fix the failed writer tasks or provider/tool errors, then rerun all required worktree tasks.");
-				return modeError(deps, results, error);
+				retainFailureState = true;
+				const error = flowError("WORKTREE_INTEGRATION_FAILED", "One or more required worktree writers failed.", `Failed worker ids: ${failedWorkerIds.join(", ")}. Partial implementation was not integrated.`, "Inspect the retained worker state, fix the failed tasks or provider/tool errors, then rerun all required worktree tasks.");
+				const recovery = workers.map((worker) => `- \`${worker.branch}\` at \`${worker.cwd}\``).join("\n");
+				return modeError(deps, results, error, `\n\nWorker state retained for recovery:\n${recovery}`);
 			}
 			for (let index = 0; index < workers.length; index += 1) {
 				const committed = commitChanges(workers[index].cwd, `pi-flow(${workers[index].id}): isolated worker changes`);

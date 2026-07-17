@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_WORKFLOW_PHASES, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_WORKFLOW_PHASES, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
-import { runCheckCommand } from "../commands.ts";
+import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { appendReturnContract } from "../validate.ts";
 
 interface WorkflowState {
@@ -139,7 +139,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 
 		const output = prepareResultHandoff(run, policy).text;
 		if (phase.checkCommand) {
-			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, params.timeoutMs ?? DEFAULT_CHECK_COMMAND_TIMEOUT_MS, policy, deps.signal);
+			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, resolveFlowCommandTimeoutMs(undefined, params.timeoutMs), policy, deps.signal);
 			if (!gate.ok) {
 				state.status = "failed";
 				state.updatedAt = new Date().toISOString();
