@@ -3,12 +3,15 @@
 // shells out to thulr for the judge -> calibrate -> gate -> baseline pipeline,
 // replacing the harness's old in-process LLM judge + hand-rolled baseline compare.
 //
-// thulr (0.1.3 contract — additive over 0.1.2, docs/trace-contract.md in the
-// thulr repo) ingests a SELF-CONTAINED trace. Each case's criterion and its
-// deterministic objective label travel INLINE in the span attributes,
-// established from thulr's openinference_trace adapter:
+// thulr's trace contract (docs/trace-contract.md in the thulr repo) ingests a
+// SELF-CONTAINED trace. Each case's criterion and its deterministic objective
+// label travel INLINE in the span attributes, established from thulr's
+// openinference_trace adapter:
 //   thulr.case_id            – the case identifier (thulr groups spans by this)
 //   thulr.criterion          – the one literal criterion the judge grades against
+//   thulr.criteria.<dim>     – extra named dimensions, each judged separately
+//   thulr.label.<dim>        – optional per-dimension deterministic labels
+//   thulr.judge_only.<dim>   – opt a dimension out of deterministic calibration
 //   thulr.deterministic_label – the objective pass/fail (boolean) for calibration
 //   input.value              – the task text (judge context; falls back to the case id)
 //   output.value             – the answer text the judge grades (latest span wins)
@@ -21,6 +24,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, writeFileSync } from "node:fs";
+import { compareArgs, duelArgs, gateArgs } from "./thulr-compare.mjs";
+export { compareArgs, duelArgs, gateArgs } from "./thulr-compare.mjs";
 
 const BIN = "thulr";
 const spanId = () => randomUUID().replace(/-/g, "");
@@ -36,17 +41,10 @@ const spanId = () => randomUUID().replace(/-/g, "");
  * inspect/label workflows while preserving the "latest output.value wins" rule.
  * Returned (not written) so the caller controls the file.
  *
- * `namedCriteria` adds thulr 0.1.3 multi-dimension judging: each `{ dimension:
- * "criterion text" }` entry is emitted as a `thulr.criteria.<dimension>` attribute
- * on the graded span and judged into its own dimension alongside the required
- * `thulr.criterion` — per-dimension pass-rate, score delta, and calibration. The
- * dimension name must be non-empty, whitespace-free, and not `criterion`, or thulr
- * fails ingestion naming the offending key.
- *
- * @param {{name: string, answer: string, criterion: string, label?: boolean, endMs: number, model?: string, task?: string, expectedBehavior?: string, failureModes?: string[], costUsd?: number, tokensTotal?: number, promptVersion?: string, configVersion?: string, namedCriteria?: Record<string, string>}} input
+ * @param {{name: string, answer: string, criterion: string, criteria?: Record<string, string>, label?: boolean, labels?: Record<string, boolean>, judgeOnlyDimensions?: string[], journeyStage?: string, endMs: number, model?: string, task?: string, expectedBehavior?: string, failureModes?: string[], costUsd?: number, tokensTotal?: number, promptVersion?: string, configVersion?: string}} input
  * @returns {object[]}
  */
-export function traceSpansForCase({ name, answer, criterion, label, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion, namedCriteria }) {
+export function traceSpansForCase({ name, answer, criterion, criteria, label, labels, judgeOnlyDimensions, journeyStage, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion }) {
 	const traceId = spanId();
 	const rootSpanId = spanId();
 	const answerSpanId = spanId();
@@ -58,7 +56,17 @@ export function traceSpansForCase({ name, answer, criterion, label, endMs, model
 		"input.value": task || name,
 		"thulr.task.input": task || name,
 	};
+	for (const [dimension, text] of Object.entries(criteria ?? {})) {
+		if (text) commonAttributes[`thulr.criteria.${dimension}`] = text;
+	}
 	if (label !== undefined) commonAttributes["thulr.deterministic_label"] = label;
+	for (const [dimension, value] of Object.entries(labels ?? {})) {
+		if (value !== undefined) commonAttributes[`thulr.label.${dimension}`] = value;
+	}
+	for (const dimension of judgeOnlyDimensions ?? []) {
+		commonAttributes[`thulr.judge_only.${dimension}`] = true;
+	}
+	if (journeyStage) commonAttributes["thulr.journey_stage"] = journeyStage;
 	if (model) commonAttributes["llm.model_name"] = model;
 	if (expectedBehavior) commonAttributes["thulr.expected_behavior"] = expectedBehavior;
 	if (failureModes) commonAttributes["thulr.failure_modes"] = failureModes;
@@ -67,11 +75,6 @@ export function traceSpansForCase({ name, answer, criterion, label, endMs, model
 	const finalAttributes = { ...commonAttributes, "output.value": answer };
 	if (costUsd !== undefined) finalAttributes["thulr.cost_usd"] = costUsd;
 	if (tokensTotal !== undefined) finalAttributes["llm.token_count.total"] = tokensTotal;
-	// Multi-dimension judging: each non-empty named criterion rides the graded span
-	// as thulr.criteria.<dimension>; thulr grades each into its own dimension.
-	for (const [dimension, value] of Object.entries(namedCriteria ?? {})) {
-		if (value) finalAttributes[`thulr.criteria.${dimension}`] = value;
-	}
 	return [
 		{
 			trace_id: traceId,
@@ -108,7 +111,7 @@ export function gateBlocks(exitCode) {
 }
 
 /**
- * Build the `thulr judge` argv. `samples > 1` turns on thulr 0.1.2's repeat
+ * Build the `thulr judge` argv. `samples > 1` turns on thulr 0.3.0's repeat
  * sampling: each case is judged N times and aggregated per dimension (majority
  * verdict, ties fail safe; mean score), the EvalRun's `score_stddev` becomes the
  * pooled within-case sample variance (i.e. judge noise), and thulr warns on
@@ -126,33 +129,6 @@ export function judgeArgs({ trace, out, model, concurrency, samples, evalSet, ra
 	if (rate !== undefined) args.push("--rate", String(rate));
 	if (redaction) args.push("--redaction", redaction);
 	if (judgeBin) args.push("--judge-bin", judgeBin);
-	return args;
-}
-
-/**
- * Build the `thulr gate` argv. Two guard axes:
- *   - guardrails (`--guardrail`): a dimension's PASS-RATE regressing fails the gate.
- *   - scoreGuardrails (`--score-guardrail`): a dimension's mean SCORE regressing
- *     fails the gate even if pass-rate holds (thulr's "Gap 1") — catches quality
- *     drift (1.00 -> 0.85) that every verdict still passing would otherwise hide.
- * `json: true` returns thulr's machine-readable gate report. `format: "junit"`
- * replaces the terminal report on stdout with a JUnit XML
- * testsuite (one testcase per case×dimension) for CI test ingestion; the exit
- * code is unchanged either way.
- *
- * @param {{baseline: string, candidate: string, guardrails?: string[], scoreGuardrails?: string[], efficiencyGuardrails?: string[], noiseBand?: number, format?: "junit", json?: boolean, redaction?: "off" | "auxiliary"}} input
- * @returns {string[]}
- */
-export function gateArgs({ baseline, candidate, guardrails = [], scoreGuardrails = [], efficiencyGuardrails = [], noiseBand, format, json, redaction }) {
-	const args = ["gate"];
-	if (json) args.push("--json");
-	if (format) args.push("--format", format);
-	for (const dim of guardrails) args.push("--guardrail", dim);
-	for (const dim of scoreGuardrails) args.push("--score-guardrail", dim);
-	for (const metric of efficiencyGuardrails) args.push("--efficiency-guardrail", metric);
-	if (noiseBand !== undefined) args.push("--noise-band", String(noiseBand));
-	if (redaction) args.push("--redaction", redaction);
-	args.push(baseline, candidate);
 	return args;
 }
 
@@ -174,32 +150,6 @@ export function calibrateArgs({ evalRun, labels, reviews }) {
 	if (labels) args.push("--labels", labels);
 	if (reviews) args.push("--reviews", reviews);
 	args.push(evalRun);
-	return args;
-}
-
-/**
- * Build the `thulr duel` argv. Pairwise, position-swapped RELATIVE judging — the
- * sensitive head-to-head metric that absolute per-dimension scoring can't resolve
- * when both arms pass at ~1.0. thulr pairs the two arm traces by `thulr.case_id`,
- * judges each shared case twice with the arms swapped, and counts a win only when
- * both orderings agree; opposite preferences are a `flip` (judge position bias)
- * and are excluded from the win rate. This replaces the harness's old hand-rolled
- * pairwise judge. Spends two judge-model calls per shared case.
- *
- * @param {{traceA: string, traceB: string, labelA?: string, labelB?: string, model?: string, out?: string, evalSet?: string, concurrency?: number, judgeBin?: string, json?: boolean}} input
- * @returns {string[]}
- */
-export function duelArgs({ traceA, traceB, labelA, labelB, model, out, evalSet, concurrency, judgeBin, json }) {
-	const args = ["duel"];
-	if (json) args.push("--json");
-	if (labelA) args.push("--label-a", labelA);
-	if (labelB) args.push("--label-b", labelB);
-	if (model) args.push("--model", model);
-	if (out) args.push("--out", out);
-	if (evalSet) args.push("--eval-set", evalSet);
-	if (concurrency) args.push("--concurrency", String(concurrency));
-	if (judgeBin) args.push("--judge-bin", judgeBin);
-	args.push(traceA, traceB);
 	return args;
 }
 
@@ -316,6 +266,19 @@ export function formatDuelSummary(report) {
 		lines.push(`skipped ${skipped.length}: ${skipped.map((x) => (Array.isArray(x) ? `${x[0]} (${x[1]})` : String(x))).join(", ")}`);
 	}
 	return lines;
+}
+
+export function evalRunDimensions(evalRun) {
+	return (evalRun?.summary ?? [])
+		.map((d) => d.dimension)
+		.filter((d) => typeof d === "string" && d.length > 0);
+}
+
+export function sharedGateDimensions(baselineEvalRun, candidateEvalRun, desired = null) {
+	const baseline = new Set(evalRunDimensions(baselineEvalRun));
+	const candidate = new Set(evalRunDimensions(candidateEvalRun));
+	const requested = desired?.length ? desired : [...candidate];
+	return requested.filter((dimension) => baseline.has(dimension) && candidate.has(dimension));
 }
 
 function summarizeCases(cases) {
@@ -450,17 +413,6 @@ export function calibrate(evalRun, options = {}) {
 	return run(calibrateArgs({ evalRun, ...options })).stdout;
 }
 
-/**
- * Pairwise-duel two arm traces head-to-head (`thulr duel`). Spends judge tokens
- * (two calls per shared case). With `json: true` returns the parsed
- * `thulr.duel_report.v1`; otherwise the human-readable report text. The `--out`
- * artifact is also persisted when `out` is given.
- */
-export function duel(options) {
-	const { stdout } = run(duelArgs(options));
-	return options.json ? JSON.parse(stdout) : stdout;
-}
-
 /** Rank failure modes across stored traces (`thulr pareto`). Free — no judge calls. */
 export function pareto(options = {}) {
 	const { stdout } = run(paretoArgs(options));
@@ -485,6 +437,16 @@ export function review(options) {
 export function gate({ baseline, candidate, guardrails = [], scoreGuardrails = [], efficiencyGuardrails = [], noiseBand, format, json, redaction }) {
 	const { code, stdout } = run(gateArgs({ baseline, candidate, guardrails, scoreGuardrails, efficiencyGuardrails, noiseBand, format, json, redaction }), { allowExit: [0, 10] });
 	return { exitCode: code, blocks: gateBlocks(code), report: stdout };
+}
+
+export function compare({ baseline, candidate, guardrails = [], scoreGuardrails = [], efficiencyGuardrails = [], noiseBand, json, redaction }) {
+	const { code, stdout } = run(compareArgs({ baseline, candidate, guardrails, scoreGuardrails, efficiencyGuardrails, noiseBand, json, redaction }));
+	return { exitCode: code, report: stdout };
+}
+
+export function duel({ traceA, traceB, labelA, labelB, out, model, concurrency, evalSet, json, judgeBin }) {
+	const { code, stdout } = run(duelArgs({ traceA, traceB, labelA, labelB, out, model, concurrency, evalSet, json, judgeBin }));
+	return { exitCode: code, report: stdout };
 }
 
 /** Promote a candidate EvalRun to be the baseline thulr gates against. Free. */

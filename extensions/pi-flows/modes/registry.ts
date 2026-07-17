@@ -10,6 +10,11 @@ import { handleOrchestrate } from "./orchestrate.ts";
 import { handleGraph } from "./graph.ts";
 import { handleLoop } from "./loop.ts";
 import { handleSearch } from "./search.ts";
+import { handleWorkflow } from "./workflow.ts";
+import { handleWorktree } from "./worktree.ts";
+import { handleDebate } from "./debate.ts";
+import { handleDossier } from "./dossier.ts";
+import { handleMonitor } from "./monitor.ts";
 
 // --- Mode handlers ------------------------------------------------------------
 // Each run-mode is a self-contained handler registered in RUN_MODE_HANDLERS.
@@ -24,7 +29,7 @@ export function detectRunMode(params: any): { mode: RunMode } | { error: FlowErr
 			error: flowError(
 				"INVALID_MODE",
 				"Invalid flow parameters.",
-				"Exactly one mode is required: list:true, showConfig:true, agent+task, tasks[], chain[], evaluate{}, vote{}, route{}, orchestrate{}, graph{}, loop{}, or search{}.",
+				"Exactly one mode is required: list:true, showConfig:true, agent+task, tasks[], chain[], evaluate{}, vote{}, route{}, orchestrate{}, graph{}, loop{}, search{}, workflow{}, worktree{}, debate{}, dossier{}, or monitor{}.",
 				"Choose one mode and remove conflicting keys. Run showConfig:true to inspect defaults before execution.",
 			),
 		};
@@ -43,4 +48,9 @@ export const RUN_MODE_HANDLERS: Record<RunMode, ModeHandler> = {
 	graph: handleGraph,
 	loop: handleLoop,
 	search: handleSearch,
+	workflow: handleWorkflow,
+	worktree: handleWorktree,
+	debate: handleDebate,
+	dossier: handleDossier,
+	monitor: handleMonitor,
 };

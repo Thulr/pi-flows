@@ -22,7 +22,7 @@ export function redactText(text: string): string {
 		[/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED_EMAIL]"],
 		[/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED_SECRET]"],
 		[/\b(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*['\"]?[^'\"\s,;]+/gi, "$1=[REDACTED_SECRET]"],
-		[/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED_SECRET]"],
+		[/Bearer\s+[A-Za-z0-9._~+\/-]{12,}=*/gi, "Bearer [REDACTED_SECRET]"],
 		[/-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]"],
 	];
 

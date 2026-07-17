@@ -18,6 +18,26 @@ Exactly one mode is valid per call.
 | Graph | `{ "task": "...", "graph": { "nodes": [{ "id": "a", "agent": "recon", "task": "..." }] } }` | Yes |
 | Loop | `{ "task": "...", "loop": { "body": { "agent": "operator" } } }` | Yes |
 | Search | `{ "task": "...", "search": { "candidates": 3 } }` | Yes |
+| Workflow | `{ "task": "...", "workflow": { "phases": [{ "id": "a", "agent": "recon", "task": "..." }] } }` | For work phases |
+| Worktree | `{ "task": "...", "worktree": { "tasks": [{ "id": "a", "agent": "operator", "task": "..." }, { "id": "b", "agent": "operator", "task": "..." }] } }` | Yes |
+| Debate | `{ "task": "...", "debate": { "participants": [{ "agent": "analyst" }, { "agent": "strategist" }] } }` | Yes |
+| Dossier | `{ "task": "...", "dossier": { "sections": [{ "agent": "recon", "task": "source A" }, { "agent": "analyst", "task": "source B" }] } }` | Yes |
+| Monitor | `{ "task": "...", "monitor": { "command": "./probe" } }` | On trigger |
+
+## Activation thresholds
+
+Use the least coordination that materially improves correctness. Do not auto-use
+any flow for a simple task or a **saturated** task, where direct parent execution
+already meets the acceptance criteria reliably and leaves no useful quality
+headroom. In that case, extra subprocesses are only cost and latency.
+
+| Mode | Activate when | Stay direct or use a simpler mode when |
+|---|---|---|
+| `workflow` | Named phases, persisted artifacts, deterministic gates, or a resumable human approval are part of correctness. | The work is one small edit or an ordinary linear handoff; use the parent, `single`, `chain`, or `evaluate`. |
+| `worktree` | Isolation, ownership boundaries, or shared integration conflicts are part of correctness for multiple write-capable tasks, and a verified integration branch is required. | The parent can safely make the edits in one checkout, even when two files are involved; use direct execution, `single`/`evaluate`, or read-only `parallel`. |
+| `debate` | The user explicitly requests independent advocates/rebuttal/adjudication for a consequential decision. | Debate is not an automatic route today: direct Codex matched its decision quality with lower latency/tokens in the paired baseline. Answer directly unless independent opposition is itself requested. |
+| `dossier` | At least two sources or claim families must be cited and reconciled, including contradictions and gaps. | One source or lookup is enough; use `single` with `recon`/`analyst`. |
+| `monitor` | A deterministic probe must be repeated under a hard bound, and a typed event should trigger one diagnosis/response. | One status check is enough, or the need is durable/background scheduling; run the command directly or use an external automation system. |
 
 ## Parameters
 
@@ -25,7 +45,7 @@ Exactly one mode is valid per call.
 |---|---|---|
 | `agentScope` | `user` | `user` = package + user agents; `project` = package + project; `all` = package + user + project. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project agents unless this is explicitly `false`. |
-| `concurrency` | `4` | Parallel only. Integer `1..8`. |
+| `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`. |
 | `timeoutMs` | `600000` | Per child process timeout. |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
@@ -38,11 +58,14 @@ Exactly one mode is valid per call.
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human approval gate. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
-| `model` | agent/default | Optional model override. |
+| `model` | agent/default | Flow-wide model fallback. A task, phase, participant, or role-level `model` overrides it. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
 | `cwd` | parent cwd | Child process working directory. |
 
-The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`, voters, and subtasks — not a per-call input. It is enforced by the runtime and surfaced read-only in `details.config`.
+The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
+voters, subtasks, worktree writers, debate participants, and dossier sections --
+not a per-call input. It is enforced by the runtime and surfaced read-only in
+`details.config`.
 
 `maxCostUsd` / `maxTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. The ceiling is best-effort — children already in flight finish — but once it trips, queued and subsequent children are refused, so an evaluate loop or large fan-out cannot run away on cost.
 
@@ -70,10 +93,11 @@ choices.
 
 `returnContract` and `requireEvidence` exist to prevent summary loss at handoff
 boundaries. They are appended to child prompts in `single`, `parallel`, `chain`,
-`evaluate`, `vote`, `route`, and to `orchestrate` workers/synthesis. Task-level
-contracts override the top-level contract where a mode accepts per-task entries;
-`orchestrate.workerReturnContract` can set a worker-specific contract while the
-top-level `returnContract` still applies to synthesis.
+`evaluate`, `vote`, `route`, and to `orchestrate` workers/synthesis. Workflow
+phases, worktree tasks, and dossier sections accept task-level contracts; those
+override the top-level contract. Dossier sections and worktree tasks require
+evidence by default. `orchestrate.workerReturnContract` can set a worker-specific
+contract while the top-level `returnContract` still applies to synthesis.
 
 Parallel fan-out is read-optimized by default. If two write-capable agents would
 run concurrently in the same `cwd`, pi-flows returns `SHARED_WRITE_CWD` before
@@ -84,7 +108,7 @@ checkout is intentional.
 
 ## Evaluate mode (generator-evaluator loop)
 
-The `operator` builds an artifact against the top-level `task`; a separate `redteam` judges that artifact against the goal and returns a verdict. On `REVISE` the operator is re-shown **its previous artifact plus the critique** and revises it in place (rather than rebuilding from scratch); the loop stops on `PASS` or when `maxIterations` is reached, returning the last attempt either way.
+The `operator` builds an artifact against the top-level `task`; a separate `redteam` judges that artifact against the goal and returns a verdict. Top-level `task` is preferred, but `evaluate.operator.task` is accepted as the goal when the top-level field is omitted. On `REVISE` the operator is re-shown **its previous artifact plus the critique** and revises it in place (rather than rebuilding from scratch); the loop stops on `PASS` or when `maxIterations` is reached, returning the last attempt either way.
 
 The two roles run in separate child processes with separate contexts, and the `redteam` is shown only the `operator`'s **output**, never its reasoning trace — so its judgment is independent (see the wiki's generator-evaluator-harness design rules).
 
@@ -111,7 +135,7 @@ Two reliability levers beyond the single LLM critic:
 
 | Field | Default | Notes |
 |---|---|---|
-| `evaluate.operator` | `{ agent: "operator" }` | Builds the artifact. Accepts `agent`, `model`, `tools`, `cwd`. |
+| `evaluate.operator` | `{ agent: "operator" }` | Builds the artifact. Accepts `agent`, `model`, `tools`, `cwd`, and optional `task` as the goal fallback when top-level `task` is omitted. |
 | `evaluate.redteam` | `{ agent: "redteam" }` | The critic: a single agent **or an array** of critics (a decomposed panel). With a panel, `PASS` needs every critic to pass. |
 | `evaluate.checkCommand` | (none) | Deterministic gate: a shell command that must exit `0` each round. Non-zero → forced `REVISE`; non-runnable → `CHECK_COMMAND_FAILED`. |
 | `evaluate.maxIterations` | `3` | Integer `1..8`. Hard cap on generate→evaluate rounds. |
@@ -162,7 +186,7 @@ The `controller` signals its choice with a `ROUTE: <agent>` line (JSON `{ "route
 
 ## Orchestrate mode (decompose → fan out → synthesize)
 
-The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results — the deep-research / orchestrator-workers shape. Each worker sees both the overall goal/contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
+The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results — the deep-research / orchestrator-workers shape. Top-level `task` is preferred; `orchestrate.task` is accepted as its fallback. Each worker sees both the overall goal/contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
 
 ```json
 {
@@ -178,6 +202,7 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 
 | Field | Default | Notes |
 |---|---|---|
+| `orchestrate.task` | (none) | Goal fallback when top-level `task` is omitted. Prefer top-level `task` for new calls. |
 | `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON array of subtask strings. |
 | `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel, with the overall goal/contract included for context. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
@@ -185,6 +210,7 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict; `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`; `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
 | `orchestrate.workerReturnContract` | (none) | Contract appended to every worker subtask before fan-out. |
+| `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`; when top-level `task` is also omitted, this text may serve as the goal fallback for model-generated calls. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Cap on subtasks (also bounded by `maxParallelTasks`). |
 
 If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
@@ -258,6 +284,191 @@ width, rounds, concurrency, timeout, and cost/token ceilings.
 If `scorer` is omitted, it defaults to `redteam` with `tools:"none"` so
 parallel scoring cannot mutate the workspace.
 
+## Workflow mode (gated, resumable phases)
+
+`workflow` runs an ordered state machine of work phases and approval nodes. It
+persists redacted outputs after every phase, so a headless approval pause or a
+later retry does not discard completed work.
+
+```json
+{
+  "task": "Ship the cache migration",
+  "workflow": {
+    "stateFile": ".pi/flow-workflows/cache-migration.json",
+    "phases": [
+      {
+        "id": "plan",
+        "agent": "strategist",
+        "task": "Produce an evidence-backed rollout plan for {task}",
+        "requireEvidence": true
+      },
+      {
+        "id": "approve",
+        "approval": { "message": "Approve the rollout plan?" }
+      },
+      {
+        "id": "apply",
+        "agent": "operator",
+        "task": "Implement the approved plan:\n{phase.plan}",
+        "checkCommand": "npm test"
+      }
+    ],
+    "debrief": { "agent": "debrief" }
+  }
+}
+```
+
+| Field | Default | Notes |
+|---|---|---|
+| `workflow.phases` | required | Ordered `1..12` phases with unique `id` values. Each phase is exactly one kind: `agent` + `task`, or `approval.message`. |
+| `workflow.stateFile` | `.pi/flow-workflows/<digest>.json` | Audit/resume state. The digest covers the top-level task, phases, and debrief configuration. The file is written atomically with owner-only permissions. |
+| `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match. |
+| `workflow.debrief` | (none) | Optional final synthesizer over all persisted phase artifacts. |
+| `phase.task` | required for work | Supports `{task}`, `{previous}`, and `{phase.<id>}` output placeholders. |
+| `phase.checkCommand` | (none) | Deterministic gate run in the phase `cwd`; non-zero stops with `WORKFLOW_GATE_FAILED`. |
+| `phase.cwd` / `model` / `tools` | inherited | Per-phase process and gate overrides. |
+| `phase.returnContract` / `requireEvidence` | top-level values | Per-phase handoff requirements. |
+
+Interactive approval nodes call the Pi confirmation UI. In headless contexts they
+fail closed with `WORKFLOW_APPROVAL_REQUIRED` after persisting completed artifacts
+and the next phase. Resume the same task/phases/state file in an interactive UI
+with `workflow.resume:true`. A denied approval returns
+`WORKFLOW_APPROVAL_DENIED`; it never silently advances.
+
+## Worktree mode (isolated writers and integration)
+
+`worktree` provisions one branch and temporary git worktree per writer, runs the
+writers concurrently, commits each result, merges them into a separate integration
+branch, asks an integrator to review/fix the combined result, and optionally runs
+a deterministic integration check.
+
+```json
+{
+  "task": "Fix frontend and backend auth, then verify the integrated result",
+  "worktree": {
+    "baseRef": "HEAD",
+    "tasks": [
+      { "id": "frontend", "agent": "operator", "task": "Fix frontend auth only" },
+      { "id": "backend", "agent": "operator", "task": "Fix backend auth only" }
+    ],
+    "integrator": { "agent": "operator" },
+    "checkCommand": "npm test",
+    "checkTimeoutMs": 120000
+  }
+}
+```
+
+| Field | Default | Notes |
+|---|---|---|
+| `worktree.tasks` | required | `2..8` independent write tasks. Each needs a unique `id`, `agent`, and concrete `task`. Evidence is required by default. |
+| `worktree.baseRef` | `HEAD` | Existing commit, branch, or tag from which every worker and the integration branch starts. |
+| `worktree.integrator` | `{ agent: "operator" }` | Resolves merge conflicts, reviews the integrated diff, and may make integration fixes. |
+| `worktree.checkCommand` | (none) | Deterministic command run on the integration branch after integration review. |
+| `worktree.checkTimeoutMs` | flow timeout | Timeout for the integration command; minimum 1000 ms. |
+| `worktree.requireClean` | `true` | Refuses a dirty source checkout. `false` still branches from committed `baseRef`; uncommitted source changes are intentionally omitted. |
+
+The source checkout is never switched or merged by the mode. On success,
+temporary worktrees and worker branches are removed, while the durable
+`pi-flow/<run>/integration` branch remains for explicit review/merge. Verification
+failure returns the integration branch name instead of merging an unverified
+result. Use this mode only when the tasks are genuinely independent; one writer
+belongs in `single` or `evaluate`.
+
+## Debate mode (advocates and adjudicator)
+
+`debate` runs independent advocates on the same decision question, exposes the
+prior round for rebuttal, then asks a separate adjudicator to choose against the
+original constraints rather than majority or rhetoric.
+
+```json
+{
+  "task": "Choose queue migration A or B against every constraint in decision.md",
+  "debate": {
+    "participants": [
+      { "agent": "strategist" },
+      { "agent": "analyst" }
+    ],
+    "adjudicator": { "agent": "overwatch" },
+    "rounds": 2
+  }
+}
+```
+
+| Field | Default | Notes |
+|---|---|---|
+| `debate.participants` | required | `2..8` advocates. Different agents/models reduce correlated reasoning. |
+| `debate.adjudicator` | `{ agent: "analyst" }` | Independently checks source material and returns one decision, constraint matrix, tradeoffs, mitigations, and reversal conditions. |
+| `debate.rounds` | `2` | Integer `1..3`. Round 1 opens independently; later rounds rebut and repair positions. |
+
+At least two advocates must produce usable arguments in every round. Debate is
+deliberately expensive; use it for high-consequence choices with real opposing
+cases, not quick preferences or questions one fact already settles.
+
+## Dossier mode (evidence map/reduce)
+
+`dossier` assigns each source or claim family to an extractor, then synthesizes
+the successful sections into a source-grounded answer without smoothing conflicts.
+
+```json
+{
+  "task": "Explain the deployment incident and preserve source conflicts",
+  "dossier": {
+    "sections": [
+      { "agent": "recon", "task": "Extract evidence from runbook.md only" },
+      { "agent": "recon", "task": "Extract evidence from config.yaml only" },
+      { "agent": "analyst", "task": "Extract evidence from incident.md only" }
+    ],
+    "debrief": { "agent": "debrief" }
+  }
+}
+```
+
+| Field | Default | Notes |
+|---|---|---|
+| `dossier.sections` | required | `2..8` `FlowTask` entries, normally one per source or claim family. `requireEvidence` defaults to `true` for extraction. |
+| `dossier.debrief` | `{ agent: "debrief" }` | Produces findings, cited claims, a conflict table, confidence by claim, unresolved gaps, and next evidence. |
+
+At least two extractors must succeed or the mode returns
+`DOSSIER_TOO_FEW_SECTIONS`; one surviving source cannot support cross-source
+reconciliation. Prefer read-only `recon`/`analyst` extractors unless source
+preparation genuinely requires writes.
+
+## Monitor mode (bounded trigger and react)
+
+`monitor` runs a deterministic shell probe under a hard check/time bound. It does
+not spawn an agent until a typed trigger fires; the captured observation then
+becomes untrusted evidence for one reactor agent.
+
+```json
+{
+  "task": "Diagnose the first degraded health event",
+  "monitor": {
+    "command": "./health-check",
+    "trigger": "match",
+    "pattern": "DEGRADED",
+    "intervalMs": 5000,
+    "maxChecks": 6,
+    "checkTimeoutMs": 30000,
+    "reactor": { "agent": "analyst" }
+  }
+}
+```
+
+| Field | Default | Notes |
+|---|---|---|
+| `monitor.command` | required | Shell probe run in the flow `cwd`. This is an observation source, not an agent task. |
+| `monitor.trigger` | `success` | `success` for exit 0, `failure` for non-zero, or `match` for a case-insensitive JavaScript regex over capped output. |
+| `monitor.pattern` | (none) | Required when `trigger:"match"`; invalid regexes return `MONITOR_INVALID`. |
+| `monitor.intervalMs` | `5000` | Delay between probes, `10..60000` ms. |
+| `monitor.maxChecks` | `6` | Hard attempt bound, `1..20`. |
+| `monitor.checkTimeoutMs` | flow timeout | Per-probe command timeout; minimum 1000 ms. |
+| `monitor.reactor` | `{ agent: "analyst" }` | Diagnoses impact/cause, recommends bounded actions, and names missing evidence after a trigger. |
+
+If no trigger fires, the mode returns retryable `MONITOR_NOT_TRIGGERED` plus the
+bounded observations. `monitor` is not durable scheduling: it stops when the flow
+call ends and should not replace a daemon, cron job, alerting system, or Codex
+automation.
+
 ## Human checkpoints and Reflexion
 
 `checkpoint` adds an explicit human approval gate:
@@ -269,6 +480,9 @@ parallel scoring cannot mutate the workspace.
 `before:"spawn"` asks before any child agent runs. `before:"finalize"` asks after
 child work finishes but before the final answer is returned. In headless
 contexts, checkpoints fail closed with `CHECKPOINT_APPROVAL_REQUIRED`.
+
+This top-level checkpoint wraps any mode. `workflow` approval phases are different:
+they can appear between persisted work phases and resume from `workflow.stateFile`.
 
 `reflexion` is opt-in local cross-run learning:
 
@@ -285,7 +499,7 @@ prepended to compatible prompts. Completed `evaluate`, `orchestrate`, `graph`,
 `flow` returns content plus `details`:
 
 - `version`: pi-flows version.
-- `mode`: `list`, `config`, `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `orchestrate`, `graph`, `loop`, or `search`.
+- `mode`: `list`, `config`, `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `orchestrate`, `graph`, `loop`, `search`, `workflow`, `worktree`, `debate`, `dossier`, or `monitor`.
 - `agentScope`: effective scope.
 - `config`: defaults and caps.
 - `agentsDir`: package/user/project directories with home paths redacted to `~`.

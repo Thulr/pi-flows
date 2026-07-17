@@ -1,0 +1,4 @@
+worker:
+  concurrency: 8
+  changed_at: 2026-06-12T09:42:00Z
+  changed_by: deploy-bot

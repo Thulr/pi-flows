@@ -138,19 +138,32 @@ export default function (pi: ExtensionAPI) {
 		label: "Flow",
 		description: [
 			"Run first-party flow agents in isolated pi subprocesses for substantial delegated work.",
+			"When the user explicitly asks to delegate substantial work, use a separate agent, or split investigation across agents/modules, call flow without asking; choose parallel or orchestrate for a broad map.",
 			"Do not use this as the default path for simple answers, small lookups, tiny edits, or shell commands the parent can do directly.",
-			"Modes: list, showConfig, single (agent + task), parallel (tasks array), chain (sequential chain array with {task}/{previous}), evaluate (generator→evaluator loop that revises until PASS or maxIterations), vote (same task across N voters, optionally aggregated), route (classify task and dispatch to one candidate), orchestrate (decompose task → fan out workers → synthesize), graph (static DAG), loop (generic bounded loop), search (bounded beam search).",
+			"Modes: list, showConfig, single, parallel, chain, evaluate, vote, route, orchestrate, graph, loop, search, workflow (phase gates + resumable approvals), worktree (isolated writers + integration branch), debate (advocates + adjudicator), dossier (evidence map/reduce), monitor (bounded probe + reactor).",
 			"Default scope includes bundled agents and ~/.pi/agent/flow-agents; project-local .pi/flow-agents requires agentScope project/all and explicit trust in headless runs.",
+			"Bundled agents: recon, analyst, strategist, operator, overwatch, redteam, controller, commander, debrief.",
+			"Exact argument examples: ask recon to inspect X => {\"agent\":\"recon\",\"task\":\"inspect X\"}; inspect A and B in parallel => {\"tasks\":[{\"agent\":\"recon\",\"task\":\"inspect A\"},{\"agent\":\"recon\",\"task\":\"inspect B\"}]}; build with separate critique => {\"task\":\"...\",\"evaluate\":{}}; split and synthesize a broad map => {\"task\":\"map X\",\"orchestrate\":{}}.",
 		].join(" "),
-		promptSnippet: "Delegate substantial work to first-party flow agents with isolated context windows",
+		promptSnippet: "Use flow for explicit agent delegation and substantial work that benefits from isolated context windows",
 		promptGuidelines: [
 			"Use flow only when the added child-process cost is justified by isolation, parallelism, a separate reviewer, or a bounded multi-step workflow.",
+			"Treat 'delegate', 'have agents', 'use a separate agent', and 'split investigation across modules' as explicit flow requests when the work is substantial; use orchestrate or parallel for broad maps, unless the user says not to delegate.",
 			"Do not use flow for simple factual answers, small code lookups, minor single-file edits, obvious shell commands, or tasks you can complete cheaply in the parent context.",
 			"When the task is small or already clear, answer or edit directly and reserve flow for later if exploration, verification, or fan-out becomes necessary.",
+			"When the user asks for a separate agent, read-only scout, delegated investigation, parallel inspection, independent reviewer, or critic loop, call flow directly without asking them to invoke it by name.",
+			"When calling a named agent, copy the complete work request into task; do not send vague one-word tasks like \"Inspect\".",
+			"Map plain English to flow modes: read-only repo scouting -> single recon/analyst; independent areas in parallel -> parallel; implementation plus separate review or command gate -> evaluate; broad codebase mapping -> orchestrate; explicit gated phases or resumable approvals -> workflow; concurrent writers needing isolation and integration -> worktree; explicitly requested opposing advocates/rebuttal/adjudication -> debate; multi-source evidence reconciliation -> dossier; bounded poll-until-event response -> monitor; uncertain specialist choice -> route.",
+			"If the user names a bundled agent such as recon, analyst, strategist, operator, redteam, or debrief, call that agent directly; do not call list/showConfig first unless the user asks to inspect available agents.",
+			"Argument examples: ask recon to inspect X -> {\"agent\":\"recon\",\"task\":\"inspect X\"}; inspect A and B in parallel -> {\"tasks\":[{\"agent\":\"recon\",\"task\":\"inspect A\"},{\"agent\":\"recon\",\"task\":\"inspect B\"}]}; build with separate critique -> {\"task\":\"...\",\"evaluate\":{}}; split and synthesize a broad map -> {\"task\":\"map X\",\"orchestrate\":{}}.",
 			"Use flow evaluate when output quality must be checked by a separate critic (generate → evaluate → revise) instead of trusting a single pass.",
 			"Use flow vote (especially with different models) to suppress non-deterministic errors on a high-stakes question; add an aggregator to get one synthesized answer.",
 			"Use flow route to classify a heterogeneous request and dispatch it to the right specialist; use orchestrate to split a big task into parallel subtasks and synthesize the results.",
 			"Use flow graph for explicit dependency DAGs, loop for bounded repeat-until-done work, and search for generate-score-refine candidate exploration.",
+			"Use workflow when named phases, deterministic gates, persisted artifacts, or a resumable human approval node are part of correctness.",
+			"Use worktree only for multiple write-capable agents whose independent edits should land on a separate verified integration branch; use ordinary parallel for read-only fan-out.",
+			"Use debate only when the user explicitly requests opposing advocates, rebuttal, or adjudication; direct execution has matched its quality with lower cost. Use dossier when several sources must be cited, reconciled, and left with explicit conflicts/gaps.",
+			"Use monitor only for bounded polling inside one flow call. It is not durable scheduling or background automation.",
 			"Use checkpoint for human approval before spawning children or before finalizing a result; it fails closed in headless contexts.",
 			"Use flow list:true before delegation if you do not know which flow agents are available.",
 			"Use flow showConfig:true to inspect effective dirs, defaults, and discovery issues before debugging.",
@@ -266,7 +279,22 @@ export default function (pi: ExtensionAPI) {
 				onUpdate?.(partial);
 			};
 
-			const output = await handler({ params, discovery, policy, agentScope, defaultCwd: ctx.cwd, signal, onUpdate: statusOnUpdate, budget, recordSpan: traceSink?.record, makeDetails });
+			const output = await handler({
+				params,
+				discovery,
+				policy,
+				agentScope,
+				defaultCwd: ctx.cwd,
+				signal,
+				onUpdate: statusOnUpdate,
+				budget,
+				recordSpan: traceSink?.record,
+				requestApproval: async (title, message) => {
+					if (!ctx.hasUI) return "required";
+					return await ctx.ui.confirm(title, message) ? "approved" : "denied";
+				},
+				makeDetails,
+			});
 			const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text);
 			if (finalCheckpointError) {
 				output.details.error = finalCheckpointError;

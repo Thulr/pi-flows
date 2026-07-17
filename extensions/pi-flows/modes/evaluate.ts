@@ -5,12 +5,15 @@ import { appendReturnContract, clampIterations, normalizeTimeout, validateConcur
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { appendReflexion, withReflexion } from "../reflexion.ts";
 import { toolErrorDetails } from "../agent-catalog.ts";
-import { runAgentFanout, runCheckCommand, runFlowAgent } from "../runner.ts";
+import { runAgentFanout, runFlowAgent } from "../runner.ts";
+import { runCheckCommand } from "../commands.ts";
 
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
 	const spec = params.evaluate ?? {};
-	const goal: string | undefined = params.task;
+	const operatorWithTask = spec.operator as (FlowAgentRefInput & { task?: unknown }) | undefined;
+	const operatorTask = typeof operatorWithTask?.task === "string" ? operatorWithTask.task : undefined;
+	const goal: string | undefined = params.task ?? operatorTask;
 
 	if (!goal || !goal.trim()) {
 		const error = flowError(
@@ -86,7 +89,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			agentName: generatorRef.agent,
 			task: generatorTask,
 			cwd: generatorRef.cwd,
-			model: generatorRef.model,
+			model: generatorRef.model ?? params.model,
 			tools: generatorRef.tools,
 			timeoutMs: params.timeoutMs,
 			recordContent: params.recordContent,

@@ -16,6 +16,7 @@
 //     (a JSON map of agent name -> reply, or -> [replies] to vary the reply
 //     across repeated calls, e.g. an evaluate revise-loop).
 
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -41,12 +42,31 @@ if (stubDir) {
 	const counterFile = path.join(stubDir, `count-${agent}.txt`);
 	callIndex = existsSync(counterFile) ? Number(readFileSync(counterFile, "utf8")) || 0 : 0;
 	writeFileSync(counterFile, String(callIndex + 1));
-	appendFileSync(path.join(stubDir, "calls.jsonl"), `${JSON.stringify({ agent, callIndex, task, systemPrompt, args: argv })}\n`);
+	appendFileSync(path.join(stubDir, "calls.jsonl"), `${JSON.stringify({ agent, callIndex, task, systemPrompt, args: argv, cwd: process.cwd() })}\n`);
 }
 
 const plan = process.env.PI_STUB_PLAN ? JSON.parse(process.env.PI_STUB_PLAN) : {};
 let reply = plan[agent];
-if (Array.isArray(reply)) reply = reply[Math.min(callIndex, reply.length - 1)];
+if (Array.isArray(reply)) {
+	const matched = reply.find((candidate) => candidate && typeof candidate === "object" && typeof candidate.whenTaskIncludes === "string" && task.includes(candidate.whenTaskIncludes));
+	reply = matched ?? reply[Math.min(callIndex, reply.length - 1)];
+}
+let exitCode = 0;
+if (reply && typeof reply === "object") {
+	for (const [relativePath, content] of Object.entries(reply.writes ?? {})) {
+		const target = path.resolve(process.cwd(), relativePath);
+		if (!target.startsWith(`${process.cwd()}${path.sep}`)) throw new Error(`stub write escapes cwd: ${relativePath}`);
+		mkdirSync(path.dirname(target), { recursive: true });
+		writeFileSync(target, String(content));
+	}
+	if (reply.commitMessage) {
+		execFileSync("git", ["add", "-A"], { cwd: process.cwd() });
+		execFileSync("git", ["-c", "user.name=Stub Agent", "-c", "user.email=stub-agent@example.com", "commit", "-qm", String(reply.commitMessage)], { cwd: process.cwd() });
+	}
+	if (Array.isArray(reply.gitArgs)) execFileSync("git", reply.gitArgs.map(String), { cwd: process.cwd() });
+	exitCode = Number.isInteger(reply.exitCode) ? reply.exitCode : 0;
+	reply = reply.reply;
+}
 if (reply === undefined) reply = `stub reply for ${agent}`;
 
 const event = {
@@ -60,4 +80,4 @@ const event = {
 	},
 };
 process.stdout.write(`${JSON.stringify(event)}\n`);
-process.exit(0);
+process.exit(exitCode);

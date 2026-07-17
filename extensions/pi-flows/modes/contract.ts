@@ -134,6 +134,48 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 			: [],
 		renderLabel: (params) => `search ${params.search?.candidates ?? DEFAULT_SEARCH_CANDIDATES}`,
 	},
+	{
+		mode: "workflow",
+		isActive: (params) => Boolean(params.workflow),
+		requestedAgents: (params) => [
+			...(params.workflow?.phases ?? []).flatMap((phase: any) => phase.agent ? [phase.agent] : []),
+			...refAgent(params.workflow?.debrief),
+		],
+		renderLabel: (params) => `workflow ${params.workflow?.phases?.length ?? 0} phases`,
+	},
+	{
+		mode: "worktree",
+		isActive: (params) => Boolean(params.worktree),
+		requestedAgents: (params) => [
+			...(params.worktree?.tasks ?? []).flatMap((task: any) => refAgent(task)),
+			...refAgent(params.worktree?.integrator, "operator"),
+		],
+		renderLabel: (params) => `worktree ${params.worktree?.tasks?.length ?? 0} writers`,
+	},
+	{
+		mode: "debate",
+		isActive: (params) => Boolean(params.debate),
+		requestedAgents: (params) => [
+			...(params.debate?.participants ?? []).flatMap((participant: any) => refAgent(participant)),
+			...refAgent(params.debate?.adjudicator, "analyst"),
+		],
+		renderLabel: (params) => `debate ${params.debate?.participants?.length ?? 0} advocates`,
+	},
+	{
+		mode: "dossier",
+		isActive: (params) => Boolean(params.dossier),
+		requestedAgents: (params) => [
+			...(params.dossier?.sections ?? []).flatMap((section: any) => refAgent(section)),
+			...refAgent(params.dossier?.debrief, "debrief"),
+		],
+		renderLabel: (params) => `dossier ${params.dossier?.sections?.length ?? 0} sources`,
+	},
+	{
+		mode: "monitor",
+		isActive: (params) => Boolean(params.monitor),
+		requestedAgents: (params) => refAgent(params.monitor?.reactor, "analyst"),
+		renderLabel: (params) => `monitor ${params.monitor?.maxChecks ?? 6} checks`,
+	},
 ];
 
 export const RUN_MODE_CONTRACTS: RunModeContract[] = [SINGLE_RUN_MODE_CONTRACT, ...OBJECT_RUN_MODE_CONTRACTS];

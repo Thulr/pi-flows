@@ -19,7 +19,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			agentName: step.agent,
 			task,
 			cwd: step.cwd,
-			model: step.model,
+			model: step.model ?? params.model,
 			tools: step.tools,
 			timeoutMs: params.timeoutMs,
 			recordContent: params.recordContent,

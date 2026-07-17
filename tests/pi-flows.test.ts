@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import registerPiFlows, { __test, PI_FLOWS_VERSION, MAX_FLOW_DEPTH, FLOW_ERROR_CODES } from "../extensions/pi-flows/index.ts";
+import { FlowMonitor } from "../extensions/pi-flows/schema.ts";
 
 async function makeTempRepo() {
   const dir = path.join(tmpdir(), `pi-flows-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -26,12 +27,17 @@ function registerForTest() {
 }
 
 test("redacts secret-shaped content and home paths", () => {
-  const raw = `${process.env.HOME}/repo token=super-secret alice@example.com sk-abcdefghijklmnopqrstuvwxyz`;
-  const redacted = __test.redactText(raw);
+	const raw = `${process.env.HOME}/repo token=super-secret alice@example.com sk-abcdefghijklmnopqrstuvwxyz Bearer abcdefghijklmnop`;
+	const redacted = __test.redactText(raw);
   assert(!redacted.includes(process.env.HOME ?? "__missing_home__"));
   assert(!redacted.includes("alice@example.com"));
-  assert(!redacted.includes("sk-abcdefghijklmnopqrstuvwxyz"));
-  assert.match(redacted, /\[REDACTED_SECRET\]/);
+	assert(!redacted.includes("sk-abcdefghijklmnopqrstuvwxyz"));
+	assert(!redacted.includes("abcdefghijklmnop"));
+	assert.match(redacted, /\[REDACTED_SECRET\]/);
+});
+
+test("does not redact generic bearer-token terminology", () => {
+	assert.equal(__test.redactText("Bearer tokens are forbidden in logs"), "Bearer tokens are forbidden in logs");
 });
 
 test("/flows argument parsing rejects typos instead of silently falling back", () => {
@@ -46,6 +52,10 @@ test("concurrency validation rejects fractional and out-of-range values", () => 
   assert.equal(__test.validateConcurrency(4), null);
   assert.equal(__test.validateConcurrency(1.5)?.code, "INVALID_CONCURRENCY");
   assert.equal(__test.validateConcurrency(99)?.code, "INVALID_CONCURRENCY");
+});
+
+test("monitor schema requires only command and allows the runtime trigger default", () => {
+	assert.deepEqual((FlowMonitor as any).required, ["command"]);
 });
 
 test("discovers invalid project agent frontmatter as a diagnostic", async () => {
@@ -122,9 +132,30 @@ test("flow tool guidance discourages small-task overuse", () => {
   const flow = tools.get("flow");
   assert.match(flow.description, /substantial delegated work/);
   assert.match(flow.description, /simple answers, small lookups, tiny edits/);
+  assert.match(flow.description, /Bundled agents: recon, analyst, strategist/);
   assert.ok(
     flow.promptGuidelines.some((line: string) => /Do not use flow for simple factual answers/.test(line)),
     "model-facing guidelines should include explicit negative selection guidance",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /separate agent, read-only scout, delegated investigation/.test(line)),
+    "model-facing guidelines should include implicit positive selection triggers",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /read-only repo scouting -> single recon\/analyst/.test(line)),
+    "model-facing guidelines should map plain-English requests to flow modes",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /Use debate only when the user explicitly requests/.test(line)),
+    "model-facing guidelines should keep debate explicit-only until it shows stable lift",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /call that agent directly; do not call list\/showConfig first/.test(line)),
+    "model-facing guidelines should dispatch named agents directly",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /copy the complete work request into task/.test(line)),
+    "model-facing guidelines should prevent vague child-agent tasks",
   );
 });
 
@@ -508,7 +539,7 @@ test("detectRunMode treats evaluate with checkCommand and a critic panel as eval
 });
 
 test("run mode contract metadata centralizes detection, render labels, and defaults", () => {
-  assert.deepEqual(__test.RUN_MODE_NAMES, ["single", "parallel", "chain", "evaluate", "vote", "route", "orchestrate", "graph", "loop", "search"]);
+  assert.deepEqual(__test.RUN_MODE_NAMES, ["single", "parallel", "chain", "evaluate", "vote", "route", "orchestrate", "graph", "loop", "search", "workflow", "worktree", "debate", "dossier", "monitor"]);
   assert.deepEqual(__test.activeRunModes({ task: "x", vote: {}, route: {} }).sort(), ["route", "vote"]);
   assert.equal(__test.requestedAgentNames({ agent: "recon", task: "x" }).has("strategist"), false, "inactive search defaults must not trigger project-agent approval");
   assert.equal(__test.renderRunModeLabel({ task: "x", search: { candidates: 2 } }), "search 2");
@@ -533,6 +564,21 @@ test("requestedAgentNames covers panel critics and orchestrate.verify (so projec
 
   const searchNames = __test.requestedAgentNames({ search: { generator: { agent: "gen" }, scorer: { agent: "score" }, debrief: { agent: "final" } } });
   for (const name of ["gen", "score", "final"]) assert.ok(searchNames.has(name), `${name} should be a requested agent`);
+
+  const workflowNames = __test.requestedAgentNames({ workflow: { phases: [{ id: "scan", agent: "scout", task: "scan" }, { id: "approval", approval: { message: "approve" } }], debrief: { agent: "workflow-final" } } });
+  for (const name of ["scout", "workflow-final"]) assert.ok(workflowNames.has(name), `${name} should be a requested agent`);
+
+  const worktreeNames = __test.requestedAgentNames({ worktree: { tasks: [{ id: "a", agent: "writer-a", task: "a" }, { id: "b", agent: "writer-b", task: "b" }] } });
+  for (const name of ["writer-a", "writer-b", "operator"]) assert.ok(worktreeNames.has(name), `${name} should be a requested agent`);
+
+  const debateNames = __test.requestedAgentNames({ debate: { participants: [{ agent: "advocate-a" }, { agent: "advocate-b" }] } });
+  for (const name of ["advocate-a", "advocate-b", "analyst"]) assert.ok(debateNames.has(name), `${name} should be a requested agent`);
+
+  const dossierNames = __test.requestedAgentNames({ dossier: { sections: [{ agent: "source-a", task: "a" }, { agent: "source-b", task: "b" }] } });
+  for (const name of ["source-a", "source-b", "debrief"]) assert.ok(dossierNames.has(name), `${name} should be a requested agent`);
+
+  const monitorNames = __test.requestedAgentNames({ monitor: { command: "probe" } });
+  assert.ok(monitorNames.has("analyst"), "monitor default reactor should be a requested agent");
 });
 
 test("agent catalog owns presentation, details, and project-agent trust queries", async () => {

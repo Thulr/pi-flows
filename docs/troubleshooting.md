@@ -79,7 +79,8 @@ top-level `task`) was missing.
 
 Fix: choose exactly one of `list:true`, `showConfig:true`, `agent`+`task`,
 `tasks[]`, `chain[]`, `evaluate{}`, `vote{}`, `route{}`, `orchestrate{}`,
-`graph{}`, `loop{}`, or `search{}`, and supply that mode's required fields. Run
+`graph{}`, `loop{}`, `search{}`, `workflow{}`, `worktree{}`, `debate{}`,
+`dossier{}`, or `monitor{}`, and supply that mode's required fields. Run
 `showConfig:true` to inspect defaults before execution.
 
 ### `INVALID_SCOPE`
@@ -204,6 +205,112 @@ candidates before final synthesis.
 
 Fix: narrow the task, reduce `search.candidates`, choose a generator better
 suited to the work, or inspect scorer output for overly strict scoring.
+
+### `WORKFLOW_INVALID`
+
+Cause: `workflow.phases` is empty, exceeds the phase cap, repeats an id, or a
+phase does not select exactly one of `agent`+`task` and `approval`.
+
+Fix: provide 1-12 uniquely named phases. Work phases need both `agent` and
+`task`; approval phases need only `approval.message`.
+
+### `WORKFLOW_STATE_INVALID`
+
+Cause: a resumed workflow state file is unreadable, malformed, or belongs to a
+different workflow definition.
+
+Fix: resume with the same task and phase definition, or remove the stale state
+file and restart without `resume:true`.
+
+### `WORKFLOW_GATE_FAILED`
+
+Cause: a phase's deterministic `checkCommand` ran and exited non-zero.
+
+Fix: inspect the captured command output, correct the phase artifact or gate,
+then resume the workflow after the failure is addressed.
+
+### `WORKFLOW_APPROVAL_REQUIRED`
+
+Cause: a headless workflow reached an approval phase. Progress was persisted,
+but no interactive UI was available to collect a decision.
+
+Fix: resume the same workflow in interactive pi, or replace the human approval
+with a deterministic `checkCommand` for unattended runs.
+
+### `WORKFLOW_APPROVAL_DENIED`
+
+Cause: the interactive approval phase was declined.
+
+Fix: review the persisted phase outputs, revise the workflow inputs if needed,
+then resume when the approval can be granted.
+
+### `WORKTREE_NOT_GIT`
+
+Cause: `worktree` mode was invoked outside a Git repository or with an invalid
+`baseRef`.
+
+Fix: run from a Git checkout and choose a base ref that resolves to a commit.
+
+### `WORKTREE_DIRTY_SOURCE`
+
+Cause: the source checkout has uncommitted changes while `requireClean` is true,
+so worker branches would silently omit local work.
+
+Fix: commit or stash the local changes, or set `requireClean:false` only when
+omitting them is intentional.
+
+### `WORKTREE_SETUP_FAILED`
+
+Cause: pi-flows could not create a worker branch/worktree or commit a worker's
+changes.
+
+Fix: inspect Git's captured error, remove stale conflicting refs/worktrees, and
+confirm the writer actually produces tracked changes before retrying.
+
+### `WORKTREE_INTEGRATION_FAILED`
+
+Cause: worker commits could not be merged cleanly into the integration branch,
+or the integrator could not resolve the combined result.
+
+Fix: inspect the retained integration branch and worker refs, resolve the
+conflict there, or repartition overlapping writer tasks.
+
+### `WORKTREE_VERIFY_FAILED`
+
+Cause: the integration `checkCommand` ran on the merged branch and exited
+non-zero.
+
+Fix: inspect the retained integration branch and captured test output, correct
+the integrated result, and rerun verification.
+
+### `DEBATE_TOO_FEW_PARTICIPANTS`
+
+Cause: `debate` mode received fewer than two independent advocates.
+
+Fix: provide at least two participant agent refs. For one perspective, use
+`single`; for independent same-task answers without rebuttal, use `vote`.
+
+### `DOSSIER_TOO_FEW_SECTIONS`
+
+Cause: `dossier` mode received fewer than two evidence-extraction sections.
+
+Fix: assign at least two independent sources or claim families. A single-source
+lookup should use `single` instead.
+
+### `MONITOR_INVALID`
+
+Cause: the monitor configuration is invalid, such as `trigger:"match"` without
+a valid regular-expression `pattern`.
+
+Fix: choose `success`, `failure`, or `match`; for `match`, supply a valid regex
+pattern and keep the interval/check counts inside their documented bounds.
+
+### `MONITOR_NOT_TRIGGERED`
+
+Cause: the bounded monitor exhausted `maxChecks` without observing its trigger.
+
+Fix: treat this as a conclusive bounded no-trigger result; widen the check
+budget or adjust the probe/trigger only when the original bound was too narrow.
 
 ### `CHECKPOINT_APPROVAL_REQUIRED`
 

@@ -12,11 +12,13 @@
 // and what task text each received (i.e. that handoffs actually propagated).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
+import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../extensions/pi-flows/commands.ts";
 
 const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
@@ -27,14 +29,18 @@ function flowTool(api: Record<string, any> = {}) {
 	return tools.get("flow");
 }
 
-type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[] };
+type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[]; cwd: string };
+
+async function freshDir() {
+	return mkdtemp(path.join(tmpdir(), "stub-pi-"));
+}
 
 async function runFlow(
 	params: any,
-	plan: Record<string, string | string[]>,
-	options: { api?: Record<string, any>; ui?: Record<string, any> } = {},
+	plan: Record<string, unknown>,
+	options: { api?: Record<string, any>; ui?: Record<string, any>; cwd?: string; hasUI?: boolean } = {},
 ) {
-	const stubDir = await mkdtemp(path.join(tmpdir(), "stub-pi-"));
+	const stubDir = options.cwd ?? await freshDir();
 	process.env.PI_STUB_DIR = stubDir;
 	process.env.PI_STUB_PLAN = JSON.stringify(plan);
 	const result = await flowTool(options.api).execute(
@@ -42,7 +48,7 @@ async function runFlow(
 		params,
 		new AbortController().signal,
 		undefined,
-		{ cwd: stubDir, hasUI: false, ui: { confirm: async () => true, notify: () => undefined, ...(options.ui ?? {}) } },
+		{ cwd: stubDir, hasUI: options.hasUI ?? false, ui: { confirm: async () => true, notify: () => undefined, ...(options.ui ?? {}) } },
 	);
 	const log = await readFile(path.join(stubDir, "calls.jsonl"), "utf8").catch(() => "");
 	const calls: Call[] = log.split("\n").filter(Boolean).map((line) => JSON.parse(line));
@@ -87,6 +93,18 @@ test("single: appends return contracts, updates UI status, and writes a session 
 	assert.ok(widgets.some((widget) => widget.some((line) => /recon/.test(line))), "widget should show child agent status");
 	assert.equal(entries[0]?.customType, "pi-flows.run");
 	assert.equal(entries[0]?.data.mode, "single");
+});
+
+test("single: PI_FLOWS_CHILD_NO_EXTENSIONS isolates spawned child pi", async () => {
+	const previous = process.env.PI_FLOWS_CHILD_NO_EXTENSIONS;
+	try {
+		process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
+		const { calls } = await runFlow({ agent: "recon", task: "find the billing routes" }, { recon: "ROUTES" });
+		assert.ok(calls[0].args.includes("--no-extensions"));
+	} finally {
+		if (previous === undefined) delete process.env.PI_FLOWS_CHILD_NO_EXTENSIONS;
+		else process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = previous;
+	}
 });
 
 test("parallel: fans out every task to its own child", async () => {
@@ -150,6 +168,17 @@ test("evaluate: REVISE re-runs the operator with the critique, then PASS ends th
 	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam", "operator", "redteam"], "two generator/critic rounds");
 	assert.match(byAgent(calls, "redteam")[0].task, /DRAFT_ONE/, "critic judges the operator's artifact");
 	assert.match(byAgent(calls, "operator")[1].task, /needs a test/, "operator is re-shown the critique on REVISE");
+});
+
+test("evaluate: operator.task is accepted as the generator goal alias", async () => {
+	const { calls } = await runFlow(
+		{ evaluate: { operator: { agent: "operator", task: "add a /ready endpoint" }, redteam: { agent: "redteam" }, maxIterations: 1 } },
+		{ operator: "DRAFT_READY", redteam: "VERDICT: PASS\nlooks good" },
+	);
+
+	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam"]);
+	assert.match(calls[0].task, /add a \/ready endpoint/, "operator.task becomes the evaluate goal when top-level task is omitted");
+	assert.match(calls[1].task, /add a \/ready endpoint/, "critic judges against the same fallback goal");
 });
 
 test("evaluate: a failing checkCommand gate forces REVISE and skips the LLM critic", async () => {
@@ -252,6 +281,16 @@ test("orchestrate: commander decomposes, recon workers fan out, debrief merges",
 	assert.match(text, /MERGED_DOC/);
 });
 
+test("orchestrate: nested returnContract is accepted as a goal alias", async () => {
+	const { calls } = await runFlow(
+		{ orchestrate: { recon: { agent: "recon" }, maxSubtasks: 1, returnContract: "map agent discovery, schema validation, and runner handoff" } },
+		{ commander: '["map the extension flow"]', recon: "WORKER_FINDING", debrief: "MERGED_DOC" },
+	);
+
+	assert.match(byAgent(calls, "commander")[0].task, /agent discovery, schema validation, and runner handoff/);
+	assert.match(byAgent(calls, "recon")[0].task, /agent discovery, schema validation, and runner handoff/);
+});
+
 test("orchestrate: verifyPolicy fail returns a structured gate error on REVISE", async () => {
 	const { result, calls, text } = await runFlow(
 		{ task: "document how auth works", orchestrate: { recon: { agent: "recon" }, verify: { agent: "overwatch" }, verifyPolicy: "fail" } },
@@ -310,7 +349,14 @@ test("graph: runs dependency waves and debriefs terminal outputs", async () => {
 				debrief: { agent: "debrief" },
 			},
 		},
-		{ recon: ["FRONTEND_AUTH", "BACKEND_AUTH"], strategist: "GRAPH_PLAN", debrief: "GRAPH_FINAL" },
+		{
+			recon: [
+				{ whenTaskIncludes: "find frontend auth", reply: "FRONTEND_AUTH" },
+				{ whenTaskIncludes: "find backend auth", reply: "BACKEND_AUTH" },
+			],
+			strategist: "GRAPH_PLAN",
+			debrief: "GRAPH_FINAL",
+		},
 	);
 
 	assert.equal(byAgent(calls, "recon").length, 2);
@@ -430,4 +476,324 @@ test("traceFile records child/root spans with trace labels and reportable totals
 	assert.ok(spans.some((span) => span.parent_span_id === null && span.attributes["flow.trace_label"] === "smoke-release"));
 	assert.ok(spans.some((span) => span.attributes["flow.agent"] === "recon" && span.attributes["flow.trace_label"] === "smoke-release"));
 	assert.ok(spans.some((span) => span.attributes["flow.cost_usd_total"] > 0));
+});
+
+test("workflow: persists completed phases, pauses at approval, and resumes without rerunning work", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "prepare the release",
+		workflow: {
+			stateFile: ".pi/release-workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze {task}" },
+				{ id: "approve", approval: { message: "Approve the analysis" } },
+				{ id: "plan", agent: "strategist", task: "Plan from {phase.analyze}" },
+			],
+		},
+	};
+
+	const paused = await runFlow(params, { recon: "ANALYSIS" }, { cwd });
+	assert.deepEqual(paused.calls.map((call) => call.agent), ["recon"]);
+	assert.equal(paused.result.details.error.code, "WORKFLOW_APPROVAL_REQUIRED");
+	assert.match(paused.text, /resume/i);
+	const state = JSON.parse(await readFile(path.join(cwd, ".pi/release-workflow.json"), "utf8"));
+	assert.deepEqual(state.completedPhaseIds, ["analyze"]);
+
+	const resumed = await runFlow(
+		{ ...params, workflow: { ...params.workflow, resume: true } },
+		{ recon: "MUST_NOT_RERUN", strategist: "RELEASE_PLAN" },
+		{ cwd, hasUI: true },
+	);
+	assert.deepEqual(resumed.calls.map((call) => call.agent), ["recon", "strategist"]);
+	assert.equal(resumed.calls.filter((call) => call.agent === "recon").length, 1);
+	assert.match(resumed.calls.at(-1)?.task ?? "", /ANALYSIS/);
+	assert.match(resumed.text, /RELEASE_PLAN/);
+});
+
+test("workflow: a deterministic phase gate stops progression", async () => {
+	const { result, calls, text } = await runFlow(
+		{
+			task: "ship",
+			workflow: {
+				phases: [
+					{ id: "build", agent: "operator", task: "Build {task}", checkCommand: "exit 1" },
+					{ id: "review", agent: "redteam", task: "Review {previous}" },
+				],
+			},
+		},
+		{ operator: "DRAFT", redteam: "MUST_NOT_RUN" },
+	);
+	assert.deepEqual(calls.map((call) => call.agent), ["operator"]);
+	assert.equal(result.details.error.code, "WORKFLOW_GATE_FAILED");
+	assert.match(text, /WORKFLOW_GATE_FAILED/);
+});
+
+test("workflow: relative phase cwd is shared by the agent and deterministic gate", async () => {
+	const cwd = await freshDir();
+	await mkdir(path.join(cwd, "phase-work"));
+	const { result, calls, text } = await runFlow(
+		{
+			task: "build the artifact",
+			workflow: {
+				phases: [
+					{ id: "build", agent: "operator", cwd: "phase-work", task: "Build {task}", checkCommand: "test \"$(cat artifact.txt)\" = ready" },
+				],
+			},
+		},
+		{ operator: { reply: "ARTIFACT_READY", writes: { "artifact.txt": "ready\n" } } },
+		{ cwd },
+	);
+	assert.equal(result.details.error, undefined, text);
+	assert.equal(await realpath(calls[0].cwd), await realpath(path.join(cwd, "phase-work")));
+	assert.equal(await readFile(path.join(cwd, "phase-work/artifact.txt"), "utf8"), "ready\n");
+	assert.match(text, /ARTIFACT_READY/);
+});
+
+test("workflow: debrief failure is persisted without a stale next phase", async () => {
+	const cwd = await freshDir();
+	const stateFile = ".pi/debrief-failure.json";
+	const { text } = await runFlow(
+		{
+			task: "prepare release evidence",
+			workflow: {
+				stateFile,
+				phases: [{ id: "collect", agent: "recon", task: "Collect evidence" }],
+				debrief: { agent: "debrief" },
+			},
+		},
+		{ recon: "EVIDENCE_READY", debrief: { reply: "DEBRIEF_FAILED", exitCode: 1 } },
+		{ cwd },
+	);
+	assert.match(text, /debrief failed/i);
+	const state = JSON.parse(await readFile(path.join(cwd, stateFile), "utf8"));
+	assert.equal(state.status, "failed");
+	assert.deepEqual(state.completedPhaseIds, ["collect"]);
+	assert.equal(state.nextPhaseId, undefined);
+});
+
+test("debate: participants rebut independently before a separate adjudicator decides", async () => {
+	const { calls, text } = await runFlow(
+		{
+			task: "Choose queue A or queue B",
+			debate: {
+				participants: [{ agent: "recon" }, { agent: "strategist" }],
+				rounds: 2,
+			},
+		},
+		{ recon: ["A_OPENING", "A_REBUTTAL"], strategist: ["B_OPENING", "B_REBUTTAL"], analyst: "DECISION_A" },
+	);
+	assert.deepEqual(new Set(calls.slice(0, 2).map((call) => call.agent)), new Set(["recon", "strategist"]));
+	assert.deepEqual(new Set(calls.slice(2, 4).map((call) => call.agent)), new Set(["recon", "strategist"]));
+	assert.equal(calls[4].agent, "analyst");
+	assert.match(calls.find((call) => call.agent === "recon" && call.callIndex === 1)?.task ?? "", /B_OPENING/);
+	assert.match(calls.find((call) => call.agent === "strategist" && call.callIndex === 1)?.task ?? "", /A_OPENING/);
+	assert.match(calls[4].task, /A_REBUTTAL/);
+	assert.match(calls[4].task, /B_REBUTTAL/);
+	assert.match(calls[4].task, /constraint matrix/i);
+	assert.match(calls[4].task, /upper\/lower bounds/i);
+	assert.match(calls[4].task, /output-format instruction/i);
+	assert.match(text, /DECISION_A/);
+});
+
+test("dossier: evidence collectors fan out and a synthesizer preserves conflicts and gaps", async () => {
+	const cwd = await freshDir();
+	await mkdir(path.join(cwd, "sources/runbook"), { recursive: true });
+	await mkdir(path.join(cwd, "sources/config"), { recursive: true });
+	const { calls, text } = await runFlow(
+		{
+			task: "Build a deployment dossier",
+				dossier: {
+					sections: [
+						{ agent: "recon", cwd: "sources/runbook", task: "Inspect runbook.md" },
+						{ agent: "analyst", cwd: "sources/config", task: "Inspect config.md" },
+				],
+				debrief: { agent: "debrief" },
+			},
+		},
+		{ recon: "RUNBOOK_EVIDENCE", analyst: "CONFIG_CONTRADICTION", debrief: "DOSSIER_WITH_GAPS" },
+		{ cwd },
+	);
+	assert.deepEqual(new Set(calls.slice(0, 2).map((call) => call.agent)), new Set(["recon", "analyst"]));
+	assert.deepEqual(
+		new Set(await Promise.all(calls.slice(0, 2).map((call) => realpath(call.cwd)))),
+		new Set(await Promise.all(["sources/runbook", "sources/config"].map((relative) => realpath(path.join(cwd, relative))))),
+	);
+	assert.equal(calls[2].agent, "debrief");
+	assert.match(calls[2].task, /RUNBOOK_EVIDENCE/);
+	assert.match(calls[2].task, /CONFIG_CONTRADICTION/);
+	assert.match(calls[2].task, /conflict/i);
+	assert.match(calls[2].task, /gap/i);
+	assert.match(text, /DOSSIER_WITH_GAPS/);
+});
+
+test("dossier: refuses to synthesize a misleading single-source partial result", async () => {
+	const { result, calls } = await runFlow(
+		{ task: "Reconcile two sources", dossier: { sections: [{ agent: "recon", task: "source a" }, { agent: "analyst", task: "source b" }] } },
+		{ recon: "SOURCE_A", analyst: { reply: "SOURCE_B_FAILED", exitCode: 1 }, debrief: "MUST_NOT_RUN" },
+	);
+	assert.equal(result.details.error.code, "DOSSIER_TOO_FEW_SECTIONS");
+	assert.equal(calls.some((call) => call.agent === "debrief"), false);
+});
+
+test("monitor: polls deterministically until the trigger then hands the event to a reactor", async () => {
+	const cwd = await freshDir();
+	const probe = path.join(cwd, "probe.sh");
+	await writeFile(probe, "#!/bin/sh\nn=$(cat count 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > count\nif [ $n -lt 3 ]; then echo WAITING; else echo 'ALERT replica_lag=91s primary=west'; fi\n");
+	await chmod(probe, 0o755);
+	const { calls, text } = await runFlow(
+		{
+			task: "Diagnose the triggered event",
+			monitor: {
+				command: "./probe.sh",
+				trigger: "match",
+				pattern: "ALERT",
+				intervalMs: 10,
+				maxChecks: 5,
+				reactor: { agent: "analyst" },
+			},
+		},
+		{ analyst: "REPLICA_DIAGNOSIS" },
+		{ cwd },
+	);
+	assert.equal((await readFile(path.join(cwd, "count"), "utf8")).trim(), "3");
+	assert.deepEqual(calls.map((call) => call.agent), ["analyst"]);
+	assert.match(calls[0].task, /replica_lag=91s/);
+	assert.match(text, /REPLICA_DIAGNOSIS/);
+});
+
+test("flow-scoped command timeouts prefer the mode override, then the flow timeout, then the flow default", () => {
+	assert.equal(resolveFlowCommandTimeoutMs(30_000, 120_000), 30_000);
+	assert.equal(resolveFlowCommandTimeoutMs(undefined, 120_000), 120_000);
+	assert.equal(resolveFlowCommandTimeoutMs(undefined, undefined), 600_000);
+});
+
+test("monitor interval keeps a standalone Node process alive while awaited", () => {
+	const modulePath = fileURLToPath(new URL("../extensions/pi-flows/modes/monitor.ts", import.meta.url));
+	const script = `import { waitForMonitorInterval } from ${JSON.stringify(modulePath)}; await waitForMonitorInterval(20); process.stdout.write("done");`;
+	const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { encoding: "utf8", timeout: 5_000 });
+	assert.equal(child.status, 0, child.stderr);
+	assert.equal(child.stdout, "done");
+});
+
+test("timed-out probes terminate descendant processes before resolving", { skip: process.platform === "win32" }, async () => {
+	const cwd = await freshDir();
+	await writeFile(path.join(cwd, "parent.mjs"), `import { spawn } from "node:child_process";
+spawn(process.execPath, ["-e", "setTimeout(() => require('node:fs').writeFileSync('descendant.txt', 'alive'), 200)"], { cwd: process.cwd(), stdio: "ignore" });
+setInterval(() => {}, 1000);
+`);
+	const result = await runProbeCommand("node parent.mjs", cwd, 40, { recordContent: true, redactSecrets: true });
+	assert.equal(result.timedOut, true);
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	await assert.rejects(readFile(path.join(cwd, "descendant.txt")), /ENOENT/);
+});
+
+test("worktree: isolated writers are committed and merged into a durable integration branch", async () => {
+	const cwd = await freshDir();
+	await mkdir(path.join(cwd, "src"));
+	await writeFile(path.join(cwd, "src/a.txt"), "old a\n");
+	await writeFile(path.join(cwd, "src/b.txt"), "old b\n");
+	execFileSync("git", ["init", "-q"], { cwd });
+	execFileSync("git", ["add", "."], { cwd });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "seed"], { cwd });
+	execFileSync("git", ["config", "user.name", ""], { cwd });
+	execFileSync("git", ["config", "user.email", ""], { cwd });
+
+	const { calls, text } = await runFlow(
+		{
+			task: "Fix both files independently and integrate them",
+			worktree: {
+				tasks: [
+					{ id: "fix-a", agent: "operator", task: "Fix src/a.txt" },
+					{ id: "fix-b", agent: "operator", task: "Fix src/b.txt" },
+				],
+				integrator: { agent: "debrief" },
+				checkCommand: "test \"$(cat src/a.txt)\" = \"new a\" && test \"$(cat src/b.txt)\" = \"new b\"",
+			},
+		},
+		{
+			operator: [
+				{ whenTaskIncludes: "Fix src/a.txt", reply: "FIXED_A", writes: { "src/a.txt": "new a\n" }, commitMessage: "agent commits a" },
+				{ whenTaskIncludes: "Fix src/b.txt", reply: "FIXED_B", writes: { "src/b.txt": "new b\n" } },
+			],
+			debrief: "INTEGRATION_REVIEWED",
+		},
+		{ cwd },
+	);
+	assert.equal(new Set(calls.filter((call) => call.agent === "operator").map((call) => call.cwd)).size, 2);
+	assert.equal(await readFile(path.join(cwd, "src/a.txt"), "utf8"), "old a\n", "source checkout stays untouched");
+	const branch = text.match(/integration branch `([^`]+)`/)?.[1];
+	assert.ok(branch, text);
+	assert.equal(execFileSync("git", ["show", `${branch}:src/a.txt`], { cwd, encoding: "utf8" }), "new a\n");
+	assert.equal(execFileSync("git", ["show", `${branch}:src/b.txt`], { cwd, encoding: "utf8" }), "new b\n");
+	assert.match(text, /Integrated changed files:.*`src\/a\.txt`.*`src\/b\.txt`/);
+	assert.match(calls.find((call) => call.agent === "debrief")?.task ?? "", /entire integrated worker diff/);
+	assert.match(text, /INTEGRATION_REVIEWED/);
+});
+
+test("worktree: refuses to integrate when any required writer fails", async () => {
+	const cwd = await freshDir();
+	await writeFile(path.join(cwd, "a.txt"), "old a\n");
+	await writeFile(path.join(cwd, "b.txt"), "old b\n");
+	execFileSync("git", ["init", "-q"], { cwd });
+	execFileSync("git", ["add", "."], { cwd });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "seed"], { cwd });
+
+	const { result, text } = await runFlow(
+		{ task: "Fix both files", worktree: { tasks: [{ id: "a", agent: "operator", task: "Fix a" }, { id: "b", agent: "operator", task: "Fix b" }], integrator: { agent: "debrief" } } },
+		{
+			operator: [
+				{ whenTaskIncludes: "assignment (a)", reply: "A_DONE", writes: { "a.txt": "new a\n" } },
+				{ whenTaskIncludes: "assignment (b)", reply: "B_FAILED", exitCode: 1 },
+			],
+			debrief: "MUST_NOT_RUN",
+		},
+		{ cwd },
+	);
+	assert.equal(result.details.error.code, "WORKTREE_INTEGRATION_FAILED");
+	assert.match(text, /Partial implementation was not integrated/);
+	assert.equal(execFileSync("git", ["branch", "--list", "pi-flow/*/integration"], { cwd, encoding: "utf8" }).trim(), "");
+	const retained = [...text.matchAll(/ at `([^`]+)`/g)].map((match) => match[1]);
+	assert.equal(retained.length, 2, text);
+	assert.equal(await readFile(path.join(retained[0], "a.txt"), "utf8"), "new a\n");
+	for (const worktree of retained) execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd });
+	for (const workerBranch of execFileSync("git", ["branch", "--list", "pi-flow/*"], { cwd, encoding: "utf8" }).split("\n").map((line) => line.trim()).filter(Boolean)) {
+		execFileSync("git", ["branch", "-D", workerBranch], { cwd });
+	}
+	await rm(path.dirname(retained[0]), { recursive: true, force: true });
+});
+
+test("worktree: retains worker state when committing generated changes fails", async () => {
+	const cwd = await freshDir();
+	await writeFile(path.join(cwd, "a.txt"), "old a\n");
+	await writeFile(path.join(cwd, "b.txt"), "old b\n");
+	execFileSync("git", ["init", "-q"], { cwd });
+	execFileSync("git", ["add", "."], { cwd });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "seed"], { cwd });
+	const hook = path.join(cwd, ".git/hooks/pre-commit");
+	await writeFile(hook, "#!/bin/sh\nexit 1\n");
+	await chmod(hook, 0o755);
+
+	const { result, text } = await runFlow(
+		{ task: "Fix both files", worktree: { tasks: [{ id: "a", agent: "operator", task: "Fix a" }, { id: "b", agent: "operator", task: "Fix b" }] } },
+		{ operator: [{ whenTaskIncludes: "assignment (a)", reply: "A_DONE", writes: { "a.txt": "new a\n" } }, { whenTaskIncludes: "assignment (b)", reply: "B_DONE", writes: { "b.txt": "new b\n" } }] },
+		{ cwd },
+	);
+	assert.equal(result.details.error.code, "WORKTREE_SETUP_FAILED");
+	const retained = text.match(/Worker worktree: `([^`]+)`/)?.[1];
+	const branch = text.match(/Worker branch: `([^`]+)`/)?.[1];
+	assert.ok(retained, text);
+	assert.ok(branch, text);
+	assert.equal(await readFile(path.join(retained, "a.txt"), "utf8"), "new a\n");
+	assert.match(execFileSync("git", ["branch", "--list", branch], { cwd, encoding: "utf8" }), new RegExp(branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+	const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd, encoding: "utf8" })
+		.split("\n")
+		.filter((line) => line.startsWith("worktree "))
+		.map((line) => line.slice("worktree ".length))
+		.slice(1);
+	for (const worktree of worktrees) execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd });
+	for (const workerBranch of execFileSync("git", ["branch", "--list", "pi-flow/*"], { cwd, encoding: "utf8" }).split("\n").map((line) => line.trim()).filter(Boolean)) {
+		execFileSync("git", ["branch", "-D", workerBranch], { cwd });
+	}
+	await rm(path.dirname(retained), { recursive: true, force: true });
 });

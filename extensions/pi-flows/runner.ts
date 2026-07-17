@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { CHECK_OUTPUT_CAP, STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgent, type FlowAgentRefInput, type FlowBudget, type FlowDetails, type FlowMode, type FlowRunResult, type ModeDeps, type RecordSpan, type Update } from "./types.ts";
+import { STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgent, type FlowAgentRefInput, type FlowBudget, type FlowDetails, type FlowMode, type FlowRunResult, type ModeDeps, type RecordSpan, type Update } from "./types.ts";
 import { appendCapped, capBytes, getFinalAssistantText, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
 
@@ -37,6 +37,10 @@ export function getPiInvocation(args: string[]): { command: string; args: string
 // PI_FLOWS_FAST_MODEL=openai-codex/gpt-5.4-mini) rather than a list we maintain.
 export function configuredFastModel(): string | undefined {
 	return process.env.PI_FLOWS_FAST_MODEL?.trim() || undefined;
+}
+
+function childExtensionsDisabled(): boolean {
+	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_CHILD_NO_EXTENSIONS?.trim() ?? "");
 }
 
 /** Concrete model for a child run: flow override > agent pin > fast-tier override > pi default (undefined = omit --model, child uses the user's default). */
@@ -117,6 +121,7 @@ export async function runFlowAgent(options: {
 	};
 
 	const args = ["--mode", "json", "-p", "--no-session"];
+	if (childExtensionsDisabled()) args.push("--no-extensions");
 	const model = resolveAgentModel(agent, options.model, configuredFastModel());
 	if (model) args.push("--model", model);
 
@@ -143,7 +148,7 @@ export async function runFlowAgent(options: {
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
-				cwd: options.cwd ?? options.defaultCwd,
+				cwd: path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd),
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 				env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1) },
@@ -154,11 +159,25 @@ export async function runFlowAgent(options: {
 			let sawJsonEvent = false;
 			let closed = false;
 			let timer: NodeJS.Timeout | null = null;
+			let forceKillTimer: NodeJS.Timeout | null = null;
+			let abortListener: (() => void) | null = null;
+			const terminate = () => {
+				if (closed) return;
+				try { proc.kill("SIGTERM"); } catch {}
+				if (forceKillTimer) return;
+				forceKillTimer = setTimeout(() => {
+					forceKillTimer = null;
+					try { if (!closed) proc.kill("SIGKILL"); } catch {}
+				}, 5000);
+				forceKillTimer.unref?.();
+			};
 
 			const finish = (code: number) => {
 				if (closed) return;
 				closed = true;
 				if (timer) clearTimeout(timer);
+				if (forceKillTimer) clearTimeout(forceKillTimer);
+				if (abortListener) options.signal?.removeEventListener("abort", abortListener);
 				resolve(code);
 			};
 
@@ -174,10 +193,7 @@ export async function runFlowAgent(options: {
 						true,
 					);
 					result.errorMessage = result.error.message;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000).unref?.();
+					terminate();
 				}, timeoutMs);
 				timer.unref?.();
 			}
@@ -262,16 +278,13 @@ export async function runFlowAgent(options: {
 				finish(1);
 			});
 
-			const abort = () => {
+			abortListener = () => {
 				wasAborted = true;
 				result.stopReason = "aborted";
-				proc.kill("SIGTERM");
-				setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGKILL");
-				}, 5000).unref?.();
+				terminate();
 			};
-			if (options.signal?.aborted) abort();
-			else options.signal?.addEventListener("abort", abort, { once: true });
+			if (options.signal?.aborted) abortListener();
+			else options.signal?.addEventListener("abort", abortListener, { once: true });
 		});
 
 		result.exitCode = exitCode;
@@ -354,10 +367,10 @@ export async function runAgentFanout(
 	statusText: (done: number, total: number) => string,
 ): Promise<FlowRunResult[]> {
 	const liveResults: FlowRunResult[] = items.map((item) => makeEmptyRunResult(item.ref.agent, item.placeholderTask ?? item.task, deps.policy));
+	const completed = new Set<number>();
 	const emit = () => {
-		const done = liveResults.filter((result) => result.exitCode !== -1).length;
 		deps.onUpdate?.({
-			content: [{ type: "text", text: statusText(done, liveResults.length) }],
+			content: [{ type: "text", text: statusText(completed.size, liveResults.length) }],
 			details: deps.makeDetails(mode)([...priorResults, ...liveResults]),
 		});
 	};
@@ -369,7 +382,7 @@ export async function runAgentFanout(
 			agentName: item.ref.agent,
 			task: item.task,
 			cwd: item.ref.cwd,
-			model: item.ref.model,
+			model: item.ref.model ?? deps.params.model,
 			tools: item.ref.tools,
 			timeoutMs: deps.params.timeoutMs,
 			recordContent: deps.params.recordContent,
@@ -386,60 +399,9 @@ export async function runAgentFanout(
 			makeDetails: deps.makeDetails(mode),
 		});
 		liveResults[index] = result;
+		completed.add(index);
 		emit();
 		return result;
-	});
-}
-
-/**
- * Run a deterministic acceptance gate (the evaluate `checkCommand`) and capture
- * its redacted, capped output. A shell command that must exit 0 is the wiki's
- * "level 1 / code assertions" scorer (Husain, Voss) — and the Stripe-minions
- * lesson that verification should be *guaranteed by the harness, not requested
- * in the prompt*. `spawnFailed` distinguishes "command could not start" (a config
- * error) from "command ran and failed" (a normal REVISE signal).
- */
-export function runCheckCommand(
-	command: string,
-	cwd: string,
-	timeoutMs: number,
-	policy: CapturePolicy,
-	signal?: AbortSignal,
-): Promise<{ ok: boolean; output: string; spawnFailed: boolean }> {
-	return new Promise((resolve) => {
-		let output = "";
-		let done = false;
-		const append = (chunk: string) => {
-			output = capBytes(`${output}${sanitizeText(chunk, policy, CHECK_OUTPUT_CAP)}`, CHECK_OUTPUT_CAP, "Check output");
-		};
-		const proc = spawn(command, {
-			cwd,
-			shell: true,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: process.env,
-		});
-		const finish = (value: { ok: boolean; output: string; spawnFailed: boolean }) => {
-			if (done) return;
-			done = true;
-			if (timer) clearTimeout(timer);
-			resolve(value);
-		};
-		const timer: NodeJS.Timeout | null = setTimeout(() => {
-			proc.kill("SIGTERM");
-			append("\n[check command timed out]");
-			finish({ ok: false, output, spawnFailed: false });
-		}, timeoutMs);
-		timer.unref?.();
-		proc.stdout.on("data", (data) => append(data.toString()));
-		proc.stderr.on("data", (data) => append(data.toString()));
-		proc.on("error", (error) => finish({ ok: false, output: sanitizeText(error.message, policy, CHECK_OUTPUT_CAP), spawnFailed: true }));
-		proc.on("close", (code) => finish({ ok: code === 0, output, spawnFailed: false }));
-		const abort = () => {
-			proc.kill("SIGTERM");
-			finish({ ok: false, output, spawnFailed: false });
-		};
-		if (signal?.aborted) abort();
-		else signal?.addEventListener("abort", abort, { once: true });
 	});
 }
 
@@ -451,7 +413,7 @@ export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string
 		agentName: ref.agent,
 		task,
 		cwd: ref.cwd,
-		model: ref.model,
+		model: ref.model ?? deps.params.model,
 		tools: ref.tools,
 		timeoutMs: deps.params.timeoutMs,
 		recordContent: deps.params.recordContent,

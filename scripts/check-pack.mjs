@@ -19,5 +19,7 @@ for (const required of ["extensions/pi-flows/index.ts", "README.md", "LICENSE", 
   assert.ok(files.includes(required), `pack missing required file: ${required}`);
 }
 
-assert.ok(pack.unpackedSize < 300_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// 0.2 adds five runtime modes and their public contracts; keep explicit headroom
+// without excluding the documentation users need to invoke them correctly.
+assert.ok(pack.unpackedSize < 400_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

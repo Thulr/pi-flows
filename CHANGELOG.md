@@ -8,18 +8,39 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+## 0.2.0 - 2026-07-17
+
+### Added
+
+- Five bounded flow modes: `workflow` for persisted phase gates and resumable
+  approvals; `worktree` for isolated writers plus a durable verified integration
+  branch; `debate` for bounded advocates and independent adjudication; `dossier`
+  for source-specific evidence extraction and conflict-preserving synthesis; and
+  `monitor` for bounded deterministic polling followed by one reactor agent.
+- New-mode eval coverage: source-grounded train/holdout cases for all five modes,
+  plus selection controls that keep tiny edits, one-shot commands, quick
+  comparisons, and single-source lookups on the no-flow side of the activation
+  threshold.
+
 ### Changed
 
+- Evals: `eval:compare` now defaults to a direct Codex baseline, with
+  `--baseline=pi` available for plain headless Pi. Pattern A/B cases use the same
+  user task, subject model, timeout, and equivalent isolated workspace in both
+  arms; model mismatches and one-sided infra/debug-budget runs are inconclusive,
+  and only comparable pairs contribute to quality lift. `--duel` supplies an
+  order-controlled signal when absolute rubric scores are saturated.
 - Evals: emit thulr's richer trace metadata (`thulr.expected_behavior`,
   `thulr.failure_modes`, `thulr.config_version`, `thulr.task.input`, and
   zero-valued cost/token metrics), inspect traces before paid judging, feed
   `thulr label-failures` into calibration, and support `--eval-set`,
   `--redaction`, `--rate`, and repeatable `--efficiency-guardrail=<metric>` in
-  the thulr-backed eval harness. The harness now passes the committed
-  `scripts/thulr-judge-pi.sh` judge wrapper to thulr by default, and the
-  provider-error detector no longer treats ordinary security-review mentions of
-  API keys, authentication gaps, or missing signature checks as provider auth
-  failures. The `recon-retrieves-known-value` fixture now asks for
+  the thulr-backed eval harness. The harness now lets thulr use its embedded
+  judge runtime by default and only passes a judge wrapper when `--judge-bin` or
+  `THULR_JUDGE_BIN` is explicit. The provider-error detector no longer treats
+  ordinary security-review mentions of API keys, authentication gaps, or missing
+  signature checks as provider auth failures. The `recon-retrieves-known-value`
+  fixture now asks for
   `SAMPLE_IDENTIFIER=xyzzy-42` instead of token-shaped wording, and its judge
   criterion accepts the exact terse answer `xyzzy-42`, matching the task's
   "report exactly that value" instruction. The suite now appends fixed
@@ -47,6 +68,24 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   stop at the first plausible issue and to check common production-correctness
   classes such as initialization/null guards, validation, auth/signature,
   idempotency/retry behavior, cleanup, error handling, and boundary cases.
+- Runtime isolation: `PI_FLOWS_CHILD_NO_EXTENSIONS=1` makes spawned child agents
+  pass `--no-extensions`, useful for eval runs or local setups where an installed
+  user pi extension breaks child startup.
+- Evals: `eval:compare` now prints per-arm child progress, and both eval CLIs
+  support `--arm-timeout=<ms>` for smoke/debug loops. Runs that use a shorter
+  clock than a case's declared budget are tagged as debug-budget/inconclusive
+  and excluded from quality verdicts; real A/B measurement keeps both arms on
+  the same subject model and lets per-case `timeoutMs` apply.
+- Evals: A/B quality summaries now exclude timeout/infra arms and their paired
+  counterpart from thulr traces instead of scoring timeout envelopes as failed
+  answers. Artifacts retain the exclusion reason, spend, input/output/cache/total
+  token usage, and wall-clock so infra can be debugged without polluting
+  quality-lift reads. The direct Codex adapter normalizes cached input to Pi's
+  usage contract and estimates cost from the same model-price table as the flows
+  arm, making token and estimated-cost ratios comparable.
+- Evals: simple answer-only quality cases are now marked as controls and excluded
+  from default `eval` / `eval:compare` runs unless explicitly filtered or
+  `--include-controls` is set.
 
 ## 0.1.1 - 2026-06-10
 

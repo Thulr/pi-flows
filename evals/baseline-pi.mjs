@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createProcessTerminator } from "./process-control.mjs";
 
 function finalAssistantText(messages) {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -26,7 +27,7 @@ function finalAssistantText(messages) {
  * undefined → omit --model so the child uses pi's default (matches the flows arm's
  * "agent frontmatter" mode).
  */
-export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal }) {
+export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal, killGraceMs = 5_000 }) {
 	const dir = mkdtempSync(join(tmpdir(), "pi-baseline-"));
 	const taskFile = join(dir, "task.md");
 	writeFileSync(taskFile, `Task: ${task}\n`, { encoding: "utf8", mode: 0o600 });
@@ -51,11 +52,11 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal 
 		const proc = spawn("pi", args, { cwd: cwd ?? process.cwd(), shell: false, stdio: ["ignore", "pipe", "pipe"] });
 		let buffer = "";
 		let closed = false;
+		const terminator = createProcessTerminator(proc, { isClosed: () => closed, graceMs: killGraceMs });
 		const timer = timeoutMs > 0
 			? setTimeout(() => {
 					stopReason = "timeout";
-					try { proc.kill("SIGTERM"); } catch {}
-					setTimeout(() => { try { if (!proc.killed) proc.kill("SIGKILL"); } catch {} }, 5000).unref?.();
+					terminator.stop();
 				}, timeoutMs)
 			: null;
 		timer?.unref?.();
@@ -63,10 +64,16 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal 
 			if (closed) return;
 			closed = true;
 			if (timer) clearTimeout(timer);
+			terminator.dispose();
+			signal?.removeEventListener?.("abort", onAbort);
 			resolveExit(code);
 		};
-		const onAbort = () => { try { proc.kill("SIGTERM"); } catch {} };
-		signal?.addEventListener?.("abort", onAbort, { once: true });
+		const onAbort = () => {
+			stopReason = "aborted";
+			terminator.stop();
+		};
+		if (signal?.aborted) onAbort();
+		else signal?.addEventListener?.("abort", onAbort, { once: true });
 
 		const processLine = (line) => {
 			if (!line.trim()) return;

@@ -1,6 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 
-export const PI_FLOWS_VERSION = "0.1.1";
+export const PI_FLOWS_VERSION = "0.2.0";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const DEFAULT_CONCURRENCY = 4;
@@ -13,6 +13,13 @@ export const MAX_LOOP_ITERATIONS = 8;
 export const DEFAULT_SEARCH_CANDIDATES = 3;
 export const DEFAULT_SEARCH_BEAM_WIDTH = 1;
 export const DEFAULT_SEARCH_ROUNDS = 2;
+export const MAX_WORKFLOW_PHASES = 12;
+export const DEFAULT_DEBATE_ROUNDS = 2;
+export const MAX_DEBATE_ROUNDS = 3;
+export const DEFAULT_MONITOR_CHECKS = 6;
+export const MAX_MONITOR_CHECKS = 20;
+export const DEFAULT_MONITOR_INTERVAL_MS = 5_000;
+export const MAX_MONITOR_INTERVAL_MS = 60_000;
 /** Max nesting of flow-within-flow delegation. A flow call at or beyond this depth is refused. */
 export const MAX_FLOW_DEPTH = 2;
 export const MODEL_VISIBLE_OUTPUT_CAP = 50 * 1024;
@@ -24,7 +31,7 @@ export const CHECK_OUTPUT_CAP = 16 * 1024;
 
 export type AgentSource = "package" | "user" | "project";
 export type AgentScope = "user" | "project" | "all";
-export type FlowMode = "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search" | "list" | "config";
+export type FlowMode = "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search" | "workflow" | "worktree" | "debate" | "dossier" | "monitor" | "list" | "config";
 export type DiscoveryIssueSeverity = "warning" | "error";
 export type VerifyPolicy = "note" | "fail" | "revise";
 
@@ -53,6 +60,20 @@ export const FLOW_ERROR_CODES = [
 	"GRAPH_CYCLE",
 	"LOOP_DID_NOT_CONVERGE",
 	"SEARCH_NO_CANDIDATES",
+	"WORKFLOW_INVALID",
+	"WORKFLOW_STATE_INVALID",
+	"WORKFLOW_GATE_FAILED",
+	"WORKFLOW_APPROVAL_REQUIRED",
+	"WORKFLOW_APPROVAL_DENIED",
+	"WORKTREE_NOT_GIT",
+	"WORKTREE_DIRTY_SOURCE",
+	"WORKTREE_SETUP_FAILED",
+	"WORKTREE_INTEGRATION_FAILED",
+	"WORKTREE_VERIFY_FAILED",
+	"DEBATE_TOO_FEW_PARTICIPANTS",
+	"DOSSIER_TOO_FEW_SECTIONS",
+	"MONITOR_INVALID",
+	"MONITOR_NOT_TRIGGERED",
 	"CHECKPOINT_APPROVAL_REQUIRED",
 	"CHECKPOINT_APPROVAL_DENIED",
 	"SHARED_WRITE_CWD",
@@ -230,7 +251,7 @@ export function emptyUsage(): UsageStats {
 
 export type Update = (partial: { content: Array<{ type: "text"; text: string }>; details: FlowDetails }) => void;
 
-export type RunMode = Extract<FlowMode, "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search">;
+export type RunMode = Extract<FlowMode, "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search" | "workflow" | "worktree" | "debate" | "dossier" | "monitor">;
 
 export interface ModeDeps {
 	params: any;
@@ -242,6 +263,7 @@ export interface ModeDeps {
 	onUpdate?: Update;
 	budget?: FlowBudget;
 	recordSpan?: RecordSpan;
+	requestApproval?: (title: string, message: string) => Promise<"approved" | "required" | "denied">;
 	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[]) => FlowDetails;
 }
 
