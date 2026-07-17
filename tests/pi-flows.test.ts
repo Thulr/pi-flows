@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import registerPiFlows, { __test, PI_FLOWS_VERSION, MAX_FLOW_DEPTH, FLOW_ERROR_CODES } from "../extensions/pi-flows/index.ts";
+import { FlowMonitor } from "../extensions/pi-flows/schema.ts";
 
 async function makeTempRepo() {
   const dir = path.join(tmpdir(), `pi-flows-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -51,6 +52,10 @@ test("concurrency validation rejects fractional and out-of-range values", () => 
   assert.equal(__test.validateConcurrency(4), null);
   assert.equal(__test.validateConcurrency(1.5)?.code, "INVALID_CONCURRENCY");
   assert.equal(__test.validateConcurrency(99)?.code, "INVALID_CONCURRENCY");
+});
+
+test("monitor schema requires only command and allows the runtime trigger default", () => {
+	assert.deepEqual((FlowMonitor as any).required, ["command"]);
 });
 
 test("discovers invalid project agent frontmatter as a diagnostic", async () => {

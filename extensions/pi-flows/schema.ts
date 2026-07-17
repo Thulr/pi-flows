@@ -191,7 +191,7 @@ export const FlowDossier = Type.Object({
 
 export const FlowMonitor = Type.Object({
 	command: Type.String({ minLength: 1, description: "Deterministic probe command polled in cwd. This is bounded monitoring inside one flow call, not a durable daemon." }),
-	trigger: StringEnum(["success", "failure", "match"] as const, { description: 'Trigger on exit 0, non-zero exit, or a regex "pattern" match.', default: "success" }),
+	trigger: Type.Optional(StringEnum(["success", "failure", "match"] as const, { description: 'Trigger on exit 0, non-zero exit, or a regex "pattern" match.', default: "success" })),
 	pattern: Type.Optional(Type.String({ description: 'Required when trigger is "match". JavaScript regular expression matched against capped probe output.' })),
 	intervalMs: Type.Optional(Type.Number({ minimum: 10, maximum: MAX_MONITOR_INTERVAL_MS, default: DEFAULT_MONITOR_INTERVAL_MS, description: "Delay between probes, 10..60000ms." })),
 	maxChecks: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_MONITOR_CHECKS, default: DEFAULT_MONITOR_CHECKS, description: "Hard bound on probe attempts, 1..20." })),
