@@ -45,7 +45,8 @@ function slug(value: string): string {
 function commitChanges(cwd: string, message: string): { ok: boolean; changed: boolean; error?: string } {
 	const status = git(cwd, ["status", "--porcelain"]);
 	if (!status.ok) return { ok: false, changed: false, error: status.stderr };
-	if (!status.stdout) return { ok: true, changed: false };
+	const mergeInProgress = git(cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).ok;
+	if (!status.stdout && !mergeInProgress) return { ok: true, changed: false };
 	const added = git(cwd, ["add", "-A"]);
 	if (!added.ok) return { ok: false, changed: false, error: added.stderr };
 	const committed = git(cwd, ["-c", "user.name=pi-flow", "-c", "user.email=pi-flow@local", "commit", "-m", message]);
@@ -176,6 +177,8 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		const integrator: FlowAgentRefInput = { ...(spec.integrator?.agent ? spec.integrator : { agent: "operator" }), cwd: integrationCwd };
 		for (const worker of usableWorkers.filter((candidate) => candidate.changed)) {
+			const preMergeHead = git(integrationCwd, ["rev-parse", "HEAD"]);
+			if (!preMergeHead.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not inspect the integration branch before merging.", preMergeHead.stderr, "Inspect the retained integration and worker branches, then retry."), `\n\nIntegration branch: \`${integrationBranch}\``);
 			const merged = git(integrationCwd, ["-c", "user.name=pi-flow", "-c", "user.email=pi-flow@local", "merge", "--no-ff", "--no-edit", worker.branch]);
 			if (merged.ok) continue;
 			const unmerged = git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]);
@@ -192,6 +195,13 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			}
 			const committed = commitChanges(integrationCwd, `pi-flow: resolve ${worker.id} integration conflicts`);
 			if (!committed.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not commit resolved integration conflicts.", committed.error ?? "git commit failed", "Inspect the retained integration branch and commit the resolved merge."));
+			const previousPreserved = git(integrationCwd, ["merge-base", "--is-ancestor", preMergeHead.stdout, "HEAD"]).ok;
+			const workerPreserved = git(integrationCwd, ["merge-base", "--is-ancestor", worker.branch, "HEAD"]).ok;
+			if (!previousPreserved || !workerPreserved) {
+				const dropped = [!previousPreserved ? "the previous integration head" : null, !workerPreserved ? "the incoming worker branch" : null].filter(Boolean).join(" and ");
+				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Conflict resolution did not preserve ${dropped}.`, "The resolver cleared or rewrote merge state without retaining both sides as ancestors, so the incoming worker branch was not preserved.", "Inspect the retained integration and worker branches, redo the merge, and verify both parents before continuing.");
+				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
+			}
 			for (const file of unmerged.stdout.split("\n").filter(Boolean)) resolvedConflictFiles.add(file);
 		}
 

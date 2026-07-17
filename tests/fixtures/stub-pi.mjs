@@ -63,6 +63,7 @@ if (reply && typeof reply === "object") {
 		execFileSync("git", ["add", "-A"], { cwd: process.cwd() });
 		execFileSync("git", ["-c", "user.name=Stub Agent", "-c", "user.email=stub-agent@example.com", "commit", "-qm", String(reply.commitMessage)], { cwd: process.cwd() });
 	}
+	if (Array.isArray(reply.gitArgs)) execFileSync("git", reply.gitArgs.map(String), { cwd: process.cwd() });
 	exitCode = Number.isInteger(reply.exitCode) ? reply.exitCode : 0;
 	reply = reply.reply;
 }
