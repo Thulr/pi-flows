@@ -126,7 +126,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			phase.returnContract ?? params.returnContract,
 			phase.requireEvidence ?? params.requireEvidence,
 		);
-		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phase.cwd, model: phase.model, tools: phase.tools };
+		const phaseCwd = phase.cwd ? path.resolve(defaultCwd, phase.cwd) : defaultCwd;
+		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tools: phase.tools };
 		const run = await runAgentRef(deps, ref, phaseTask, "workflow", results.length + 1, results);
 		results.push(run);
 		if (isFailed(run)) {
@@ -138,7 +139,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 
 		const output = prepareResultHandoff(run, policy).text;
 		if (phase.checkCommand) {
-			const gate = await runCheckCommand(phase.checkCommand, path.resolve(defaultCwd, phase.cwd ?? defaultCwd), params.timeoutMs ?? DEFAULT_CHECK_COMMAND_TIMEOUT_MS, policy, deps.signal);
+			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, params.timeoutMs ?? DEFAULT_CHECK_COMMAND_TIMEOUT_MS, policy, deps.signal);
 			if (!gate.ok) {
 				state.status = "failed";
 				state.updatedAt = new Date().toISOString();

@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -526,6 +526,27 @@ test("workflow: a deterministic phase gate stops progression", async () => {
 	assert.deepEqual(calls.map((call) => call.agent), ["operator"]);
 	assert.equal(result.details.error.code, "WORKFLOW_GATE_FAILED");
 	assert.match(text, /WORKFLOW_GATE_FAILED/);
+});
+
+test("workflow: relative phase cwd is shared by the agent and deterministic gate", async () => {
+	const cwd = await freshDir();
+	await mkdir(path.join(cwd, "phase-work"));
+	const { result, calls, text } = await runFlow(
+		{
+			task: "build the artifact",
+			workflow: {
+				phases: [
+					{ id: "build", agent: "operator", cwd: "phase-work", task: "Build {task}", checkCommand: "test \"$(cat artifact.txt)\" = ready" },
+				],
+			},
+		},
+		{ operator: { reply: "ARTIFACT_READY", writes: { "artifact.txt": "ready\n" } } },
+		{ cwd },
+	);
+	assert.equal(result.details.error, undefined, text);
+	assert.equal(await realpath(calls[0].cwd), await realpath(path.join(cwd, "phase-work")));
+	assert.equal(await readFile(path.join(cwd, "phase-work/artifact.txt"), "utf8"), "ready\n");
+	assert.match(text, /ARTIFACT_READY/);
 });
 
 test("debate: participants rebut independently before a separate adjudicator decides", async () => {
