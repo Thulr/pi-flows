@@ -56,7 +56,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { CALIBRATION_CASES, CASES } from "./cases.mjs";
-import { caseCwd, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
+import { armBudgetSignal, caseCwd, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import * as thulr from "./thulr.mjs";
 
@@ -217,23 +217,33 @@ async function main() {
 
 		let result;
 		let thrown;
-		if (dryRun) {
-			result = testCase.mock;
-		} else {
-			const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: timeoutPlan.effectiveTimeoutMs };
-			try {
-				result = await flow.execute(`eval:${testCase.name}`, params, new AbortController().signal, undefined, flowCtx);
-			} catch (error) {
-				thrown = error;
+		const armBudget = armBudgetSignal(new AbortController().signal, dryRun ? 0 : timeoutPlan.effectiveTimeoutMs);
+		try {
+			if (dryRun) {
+				result = testCase.mock;
+			} else {
+				const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: timeoutPlan.effectiveTimeoutMs };
+				try {
+					result = await flow.execute(`eval:${testCase.name}`, params, armBudget.signal, undefined, flowCtx);
+				} catch (error) {
+					thrown = error;
+				}
 			}
+		} finally {
+			armBudget.dispose();
 		}
 
 		const { objective, reachedModel, cost, answer } = await scoreObjective({ result, thrown, testCase, ctx });
 		const endedAt = Date.now();
-		const exclusion = exclusionForRun({ reachedModel, timeoutPlan });
+		const exclusion = armBudget.timedOut
+			? {
+				reason: timeoutPlan.debugBudget ? "debug_budget" : "infra",
+				detail: `${timeoutPlan.debugBudget ? "debug " : ""}arm timed out after ${timeoutPlan.effectiveTimeoutMs}ms (case budget ${timeoutPlan.caseTimeoutMs}ms)`,
+			}
+			: exclusionForRun({ reachedModel, timeoutPlan });
 		const excludedReason = exclusion?.reason ?? null;
 		totalCost += cost;
-		if (reachedModel) sawInfraError = true;
+		if (excludedReason === "infra") sawInfraError = true;
 
 		// Only cases that reached the model carry a real answer to judge and a
 		// trustworthy label to calibrate against; infra failures are reported as ⚠.
@@ -264,7 +274,7 @@ async function main() {
 		}
 
 		// Hard cases are score-tracked (◐), not pass/fail — a partial objective score is expected.
-		const status = reachedModel ? "⚠" : timeoutPlan.debugBudget ? "⚑" : testCase.hard ? "◐" : objective.pass ? "✓" : "✗";
+		const status = excludedReason === "infra" ? "⚠" : timeoutPlan.debugBudget ? "⚑" : testCase.hard ? "◐" : objective.pass ? "✓" : "✗";
 		const seconds = ((endedAt - startedAt) / 1000).toFixed(1);
 		console.log(`${status} ${testCase.name.padEnd(34)} obj ${excludedReason ? "n/a" : (objective.score ?? 0).toFixed(2)}  $${cost.toFixed(4)}  ${seconds}s`);
 		const debugNote = timeoutPlan.debugBudget ? `debug budget: arm-timeout ${formatDuration(timeoutPlan.effectiveTimeoutMs)} overrides case budget ${formatDuration(timeoutPlan.caseTimeoutMs)}; excluded from quality verdict` : null;

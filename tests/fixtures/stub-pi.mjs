@@ -16,6 +16,7 @@
 //     (a JSON map of agent name -> reply, or -> [replies] to vary the reply
 //     across repeated calls, e.g. an evaluate revise-loop).
 
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -57,6 +58,10 @@ if (reply && typeof reply === "object") {
 		if (!target.startsWith(`${process.cwd()}${path.sep}`)) throw new Error(`stub write escapes cwd: ${relativePath}`);
 		mkdirSync(path.dirname(target), { recursive: true });
 		writeFileSync(target, String(content));
+	}
+	if (reply.commitMessage) {
+		execFileSync("git", ["add", "-A"], { cwd: process.cwd() });
+		execFileSync("git", ["-c", "user.name=Stub Agent", "-c", "user.email=stub-agent@example.com", "commit", "-qm", String(reply.commitMessage)], { cwd: process.cwd() });
 	}
 	exitCode = Number.isInteger(reply.exitCode) ? reply.exitCode : 0;
 	reply = reply.reply;

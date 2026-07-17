@@ -655,7 +655,7 @@ test("worktree: isolated writers are committed and merged into a durable integra
 		},
 		{
 			operator: [
-				{ whenTaskIncludes: "Fix src/a.txt", reply: "FIXED_A", writes: { "src/a.txt": "new a\n" } },
+				{ whenTaskIncludes: "Fix src/a.txt", reply: "FIXED_A", writes: { "src/a.txt": "new a\n" }, commitMessage: "agent commits a" },
 				{ whenTaskIncludes: "Fix src/b.txt", reply: "FIXED_B", writes: { "src/b.txt": "new b\n" } },
 			],
 			debrief: "INTEGRATION_REVIEWED",

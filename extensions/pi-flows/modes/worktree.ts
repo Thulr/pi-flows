@@ -52,6 +52,14 @@ function commitChanges(cwd: string, message: string): { ok: boolean; changed: bo
 	return committed.ok ? { ok: true, changed: true } : { ok: false, changed: false, error: committed.stderr };
 }
 
+function branchHasCommitsSince(cwd: string, baseSha: string): { ok: boolean; changed: boolean; error?: string } {
+	const count = git(cwd, ["rev-list", "--count", `${baseSha}..HEAD`]);
+	if (!count.ok) return { ok: false, changed: false, error: count.stderr };
+	const parsed = Number.parseInt(count.stdout, 10);
+	if (!Number.isSafeInteger(parsed) || parsed < 0) return { ok: false, changed: false, error: `Unexpected git rev-list count: ${count.stdout}` };
+	return { ok: true, changed: parsed > 0 };
+}
+
 function modeError(deps: ModeDeps, results: FlowRunResult[], error: FlowError, extra = ""): ModeOutput {
 	const details = deps.makeDetails("worktree")(results);
 	details.error = error;
@@ -139,13 +147,19 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			}
 			for (let index = 0; index < workers.length; index += 1) {
 				const committed = commitChanges(workers[index].cwd, `pi-flow(${workers[index].id}): isolated worker changes`);
-			if (!committed.ok) {
-				retainFailureState = true;
-				const error = flowError("WORKTREE_SETUP_FAILED", `Could not commit worker "${workers[index].id}" changes.`, committed.error ?? "git commit failed", "Inspect the worker branch and git hooks/config, then retry.");
-				return modeError(deps, results, error, `\n\nWorker branch: \`${workers[index].branch}\`\nWorker worktree: \`${workers[index].cwd}\``);
+				if (!committed.ok) {
+					retainFailureState = true;
+					const error = flowError("WORKTREE_SETUP_FAILED", `Could not commit worker "${workers[index].id}" changes.`, committed.error ?? "git commit failed", "Inspect the worker branch and git hooks/config, then retry.");
+					return modeError(deps, results, error, `\n\nWorker branch: \`${workers[index].branch}\`\nWorker worktree: \`${workers[index].cwd}\``);
+				}
+				const branchState = branchHasCommitsSince(workers[index].cwd, baseSha);
+				if (!branchState.ok) {
+					retainFailureState = true;
+					const error = flowError("WORKTREE_SETUP_FAILED", `Could not inspect worker "${workers[index].id}" branch.`, branchState.error ?? "git rev-list failed", "Inspect the retained worker branch and git repository state, then retry.");
+					return modeError(deps, results, error, `\n\nWorker branch: \`${workers[index].branch}\`\nWorker worktree: \`${workers[index].cwd}\``);
+				}
+				workers[index].changed = branchState.changed;
 			}
-			workers[index].changed = committed.changed;
-		}
 			const usableWorkers = workers;
 
 		integrationCwd = path.join(tempRoot, "integration");
