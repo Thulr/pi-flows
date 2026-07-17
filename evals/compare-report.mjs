@@ -32,7 +32,26 @@ export const pct = (n, d) => (d > 0 ? `${((n / d) * 100).toFixed(0)}%` : "n/a");
 export const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 export const fixed = (n) => (n >= 0 ? "+" : "") + n.toFixed(2);
 export const formatDuration = (ms) => ms < 1000 ? `${ms}ms` : `${Math.round(ms / 1000)}s`;
+export const formatTokenCount = (n) => Math.round(n).toLocaleString("en-US");
 export { scoreText };
+
+export function formatTokenComparison(candidateLabel, candidate, baselineLabel, baseline) {
+	const candidateText = candidate?.known ? formatTokenCount(candidate.total) : "n/a";
+	const baselineText = baseline?.known ? formatTokenCount(baseline.total) : "n/a";
+	const ratio = candidate?.known && baseline?.known && baseline.total > 0
+		? `    (${(candidate.total / baseline.total).toFixed(1)}x baseline)`
+		: "";
+	return `tokens         ${candidateLabel} ${candidateText}    ${baselineLabel} ${baselineText}${ratio}`;
+}
+
+export const aggregateTokenUsage = (rows, kind) => ({
+	input: rows.reduce((total, row) => total + (row[kind].tokenUsage?.input ?? 0), 0),
+	output: rows.reduce((total, row) => total + (row[kind].tokenUsage?.output ?? 0), 0),
+	cacheRead: rows.reduce((total, row) => total + (row[kind].tokenUsage?.cacheRead ?? 0), 0),
+	cacheWrite: rows.reduce((total, row) => total + (row[kind].tokenUsage?.cacheWrite ?? 0), 0),
+	total: rows.reduce((total, row) => total + (row[kind].tokenUsage?.total ?? 0), 0),
+	known: rows.every((row) => row[kind].tokenUsage?.known === true),
+});
 
 export function applyJudgedRows(rows, flowsRun, plainRun) {
 	const flows = dimsByCase(flowsRun);
@@ -68,7 +87,8 @@ export function armLine(label, arm) {
 	const judgeScore = arm.exclusion ? "n/a" : Number.isFinite(arm.judged?.score) ? arm.judged.score.toFixed(2) : "n/a";
 	const objScore = arm.exclusion ? "n/a" : scoreText(arm.objective.score ?? 0);
 	const cost = arm.costKnown === false ? "cost n/a" : `$${arm.cost.toFixed(4)}`;
-	return `   ${label}  judge ${judgeScore}${arm.judged?.verdict === false ? "!" : ""}  obj ${objScore}${!arm.exclusion && arm.objective.pass ? "" : arm.exclusion ? "" : "!"}  ${cost}  ${(arm.durationMs / 1000).toFixed(1)}s${excluded}`;
+	const tokens = arm.tokenUsage?.known ? `${formatTokenCount(arm.tokenUsage.total)} tok` : "tokens n/a";
+	return `   ${label}  judge ${judgeScore}${arm.judged?.verdict === false ? "!" : ""}  obj ${objScore}${!arm.exclusion && arm.objective.pass ? "" : arm.exclusion ? "" : "!"}  ${cost}  ${tokens}  ${(arm.durationMs / 1000).toFixed(1)}s${excluded}`;
 }
 
 export const pickArm = (a) => ({
@@ -79,6 +99,7 @@ export const pickArm = (a) => ({
 	objScore: a.exclusion ? null : a.objective.score,
 	cost: a.cost,
 	costKnown: a.costKnown ?? true,
+	tokens: a.tokenUsage,
 	durationMs: a.durationMs,
 	infra: a.reachedModel ?? null,
 	excluded: a.exclusion ?? null,

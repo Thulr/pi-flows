@@ -307,8 +307,10 @@ evidence for automatic delegation. They are excluded from default `eval` /
 `--include-controls`. A few older objective checks are Pi-Flows-only by construction
 (for example route dispatch or same-model vote warnings); read those as capability
 checks, not baseline losses. Direct Codex does not report USD cost, so its cost is
-shown as unavailable rather than estimated; quality, model parity, and wall-clock
-remain comparable.
+estimated from its normalized token breakdown using the same model-price table as
+Pi Flows. Both arms retain non-cached input, output, cache read/write, total tokens,
+and estimated USD cost in the terminal summary and written A/B artifact. These are
+model-price estimates for comparison, not provider invoices.
 
 ### Current pattern baseline
 
@@ -332,6 +334,30 @@ broadening an activation threshold. The selection suite is the complementary
 guardrail: after targeted reruns, all 22 current cases selected the expected path,
 including direct handling for simple controls. Runtime timeouts are counted as
 infra exclusions, never as failed answers or evidence for/against a threshold.
+
+### Current token-cost baseline
+
+Token reruns on 2026-07-17 used the same `openai-codex/gpt-5.4-mini` subject in
+both arms and full per-case budgets. Totals include non-cached input, output, and
+cache reads/writes; estimated cost applies the same model price table to both arms.
+The fallback same-model judge used to emit these artifacts is not quality evidence,
+so routing decisions still use the cross-vendor quality baseline above.
+
+| Pattern run | Direct tokens | Flows tokens | Token ratio | Direct est. | Flows est. | Cost ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Workflow holdout | 65,316 | 372,836 | 5.71x | $0.0270 | $0.1066 | 3.95x |
+| Worktree train | 143,203 | 920,405 | 6.43x | $0.0527 | $0.2238 | 4.25x |
+| Worktree holdout | 77,978 | 473,894 | 6.08x | $0.0242 | $0.1038 | 4.30x |
+| Dossier holdout | 49,750 | 291,640 | 5.86x | $0.0227 | $0.1150 | 5.07x |
+| Monitor holdout | 100,531 | 54,271 | 0.54x | $0.0280 | $0.0255 | 0.91x |
+| Debate train | 30,787 | 509,967 | 16.56x | $0.0430 | $0.2829 | 6.58x |
+| **Auto-routed holdouts** | **293,575** | **1,192,641** | **4.06x** | **$0.1019** | **$0.3510** | **3.45x** |
+
+The aggregate hides substantial mode variance. Monitor was cheaper than direct in
+this run; workflow, worktree, and dossier paid roughly 4-5x estimated cost for their
+quality headroom; debate paid the largest premium without stable lift and remains
+explicit-only. Treat these one-run ratios as threshold evidence, then repeat before
+using them as budget forecasts.
 
 ## Human review & failure triage
 

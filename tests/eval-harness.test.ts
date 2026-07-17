@@ -6,9 +6,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { CALIBRATION_CASES, CASES } from "../evals/cases.mjs";
 import { codexModelFromPi, runCodex } from "../evals/baseline-codex.mjs";
+import { formatTokenComparison, pickArm } from "../evals/compare-report.mjs";
 import { injectModel } from "../evals/model-injection.mjs";
 import { PATTERN_CASES } from "../evals/pattern-cases.mjs";
-import { answerWithArtifacts, armBudgetSignal, exclusionForRun, infraError, scoreObjective, shouldJudgeProductSpans, timeoutPlanForCase } from "../evals/lib.mjs";
+import { answerWithArtifacts, armBudgetSignal, exclusionForRun, infraError, scoreObjective, shouldJudgeProductSpans, sumTokenUsage, timeoutPlanForCase } from "../evals/lib.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection, selectionExitCode } from "../evals/select.mjs";
 
@@ -27,10 +28,40 @@ process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1
 	await chmod(stub, 0o755);
 	const result = await runCodex({ task: "SECRET_TASK_TEXT", cwd, model: "gpt-5.4-mini", reportedModel: "openai-codex/gpt-5.4-mini", codexBin: stub, timeoutMs: 5_000 });
 	assert.equal(result.content[0].text, "ANSWER:SECRET_TASK_TEXT");
-	assert.equal(result.details.results[0].usage.input, 12);
-	assert.equal(result.details.results[0].usage.costKnown, false);
+	assert.equal(result.details.results[0].usage.input, 9);
+	assert.equal(result.details.results[0].usage.output, 4);
+	assert.equal(result.details.results[0].usage.cacheRead, 3);
+	assert.equal(result.details.results[0].usage.totalTokens, 16);
+	assert.equal(result.details.results[0].usage.costKnown, true);
+	assert.equal(result.details.results[0].usage.costEstimated, true);
+	assert.equal(result.details.results[0].usage.cost, 0.000024975);
 	assert.equal(result.details.results[0].model, "openai-codex/gpt-5.4-mini");
 	assert.equal(result.details.results[0].stopReason, "endTurn");
+});
+
+test("A/B artifacts preserve token breakdowns and report the candidate multiplier", () => {
+	const result = {
+		details: {
+			results: [
+				{ usage: { input: 1_000, output: 200, cacheRead: 400, cacheWrite: 10 } },
+				{ usage: { input: 500, output: 100, cacheRead: 0, cacheWrite: 5 } },
+			],
+		},
+	};
+	const tokens = sumTokenUsage(result);
+	assert.deepEqual(tokens, { input: 1_500, output: 300, cacheRead: 400, cacheWrite: 15, total: 2_215, known: true });
+
+	const artifact = pickArm({
+		dims: {},
+		judged: { verdict: true, score: 1 },
+		objective: { pass: true, score: 1 },
+		cost: 0.1,
+		costKnown: true,
+		durationMs: 1,
+		tokenUsage: tokens,
+	});
+	assert.deepEqual(artifact.tokens, tokens);
+	assert.equal(formatTokenComparison("flows", tokens, "codex", { ...tokens, total: 600 }), "tokens         flows 2,215    codex 600    (3.7x baseline)");
 });
 
 test("pattern A/B cases give both arms the same user task", () => {

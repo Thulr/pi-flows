@@ -347,9 +347,10 @@ branch for explicit review or merge.
 
 Use `debate` when independent advocates, rebuttal, and adjudication are explicitly
 requested. It is not an automatic route today: paired Codex baselines found no
-stable quality lift over direct execution, while latency and token use were much
-higher. Advocates open independently, rebut the prior round, and a separate
-adjudicator chooses against the original constraints.
+stable quality lift over direct execution; the hard-case token rerun used 16.56x
+the tokens and 6.58x the estimated subject spend. Advocates open independently,
+rebut the prior round, and a separate adjudicator chooses against the original
+constraints.
 
 ### Dossier (evidence map/reduce)
 

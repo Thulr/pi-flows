@@ -78,8 +78,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   the same subject model and lets per-case `timeoutMs` apply.
 - Evals: A/B quality summaries now exclude timeout/infra arms and their paired
   counterpart from thulr traces instead of scoring timeout envelopes as failed
-  answers. Artifacts retain the exclusion reason, spend, and wall-clock so
-  infra can be debugged without polluting quality-lift reads.
+  answers. Artifacts retain the exclusion reason, spend, input/output/cache/total
+  token usage, and wall-clock so infra can be debugged without polluting
+  quality-lift reads. The direct Codex adapter normalizes cached input to Pi's
+  usage contract and estimates cost from the same model-price table as the flows
+  arm, making token and estimated-cost ratios comparable.
 - Evals: simple answer-only quality cases are now marked as controls and excluded
   from default `eval` / `eval:compare` runs unless explicitly filtered or
   `--include-controls` is set.

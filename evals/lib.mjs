@@ -25,7 +25,22 @@ export function answerWithArtifacts(answer, cwd, artifactPaths = [], maxChars = 
 	return combined.slice(0, maxChars);
 }
 export const sumCost = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.cost ?? 0), 0);
-export const sumTokens = (r) => (r?.details?.results ?? []).reduce((acc, x) => acc + (x?.usage?.input ?? 0) + (x?.usage?.output ?? 0), 0);
+export function sumTokenUsage(r) {
+	const results = r?.details?.results ?? [];
+	const usage = results.reduce((acc, item) => {
+		acc.input += item?.usage?.input ?? 0;
+		acc.output += item?.usage?.output ?? 0;
+		acc.cacheRead += item?.usage?.cacheRead ?? 0;
+		acc.cacheWrite += item?.usage?.cacheWrite ?? 0;
+		return acc;
+	}, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+	return {
+		...usage,
+		total: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+		known: results.length > 0 && results.every((item) => Number.isFinite(item?.usage?.input) && Number.isFinite(item?.usage?.output)),
+	};
+}
+export const sumTokens = (r) => sumTokenUsage(r).total;
 export const subjectModelName = (r, fallback) => {
 	const models = new Set((r?.details?.results ?? []).map((x) => x?.model).filter(Boolean));
 	if (models.size === 1) return [...models][0];

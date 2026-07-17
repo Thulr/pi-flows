@@ -25,8 +25,8 @@ import { dirname, join, resolve } from "node:path";
 import { codexModelFromPi, runCodex } from "./baseline-codex.mjs";
 import { runPlainPi } from "./baseline-pi.mjs";
 import { CALIBRATION_CASES, CASES } from "./cases.mjs";
-import { applyDuelRows, applyJudgedRows, armLine, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatDuration, markUnjudgedRows, mean, pct, pickArm, scoreText } from "./compare-report.mjs";
-import { answerText, answerWithArtifacts, armBudgetSignal, caseCwd, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokens, timeoutPlanForCase } from "./lib.mjs";
+import { aggregateTokenUsage, applyDuelRows, applyJudgedRows, armLine, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatDuration, formatTokenComparison, markUnjudgedRows, mean, pct, pickArm, scoreText } from "./compare-report.mjs";
+import { answerText, answerWithArtifacts, armBudgetSignal, caseCwd, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import * as thulr from "./thulr.mjs";
 
@@ -195,6 +195,7 @@ async function runArm(kind, testCase, flow, signal) {
 			detail: `${timeoutPlan.debugBudget ? "debug " : ""}arm timed out after ${effectiveTimeoutMs}ms (case budget ${timeoutPlan.caseTimeoutMs}ms)`,
 		}
 		: exclusionForRun({ reachedModel: objective.reachedModel, timeoutPlan });
+	const tokenUsage = sumTokenUsage(result);
 	return {
 		...objective,
 		exclusion,
@@ -205,7 +206,8 @@ async function runArm(kind, testCase, flow, signal) {
 		task,
 		modelName: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),
 		reportedModels: [...new Set((result?.details?.results ?? []).map((child) => child?.model).filter(Boolean))],
-		tokensTotal: sumTokens(result),
+		tokensTotal: tokenUsage.total,
+		tokenUsage,
 		costKnown: (result?.details?.results ?? []).every((child) => child?.usage?.costKnown !== false),
 	};
 }
@@ -448,6 +450,8 @@ async function main() {
 	const pCrit = qualityRows.filter((r) => r.plain.judged.verdict === true).length;
 	const fCost = rows.reduce((a, r) => a + r.flows.cost, 0);
 	const pCost = rows.reduce((a, r) => a + r.plain.cost, 0);
+	const fTokens = aggregateTokenUsage(rows, "flows");
+	const pTokens = aggregateTokenUsage(rows, "plain");
 	const fSec = rows.reduce((a, r) => a + r.flows.durationMs, 0) / 1000;
 	const pSec = rows.reduce((a, r) => a + r.plain.durationMs, 0) / 1000;
 	const wins = qualityRows.filter((r) => (r.flows.judged.score ?? 0) - (r.plain.judged.score ?? 0) > 0.001).length;
@@ -468,13 +472,14 @@ async function main() {
 		console.log(`  exclusions     flows infra ${exclusions.flows.infra}, debug ${exclusions.flows.debug_budget}  ·  ${baselineSlug} infra ${exclusions.plain.infra}, debug ${exclusions.plain.debug_budget}`);
 	}
 	const baselineCostKnown = rows.every((row) => row.plain.costKnown !== false);
-	console.log(`  cost           flows $${fCost.toFixed(4)}    ${baselineSlug} ${baselineCostKnown ? `$${pCost.toFixed(4)}` : "n/a (CLI does not report cost)"}${baselineCostKnown && pCost > 0 ? `    (${(fCost / pCost).toFixed(1)}x more)` : ""}`);
+	console.log(`  est. cost      flows $${fCost.toFixed(4)}    ${baselineSlug} ${baselineCostKnown ? `$${pCost.toFixed(4)}` : "n/a (model price unavailable)"}${baselineCostKnown && pCost > 0 ? `    (${(fCost / pCost).toFixed(1)}x baseline)` : ""}`);
+	console.log(`  ${formatTokenComparison("flows", fTokens, baselineSlug, pTokens)}`);
 	console.log(`  wall-clock     flows ${fSec.toFixed(0)}s    ${baselineSlug} ${pSec.toFixed(0)}s`);
 	console.log(`\nNote: ${baselineLabel} is the baseline and Pi Flows is the candidate in thulr compare. Both arms must report the same underlying model or the pair is excluded. Native thulr duel is the head-to-head quality signal.`);
 
 	if (writeArtifact && !dryRun) {
 		const out = resolve(process.cwd(), writeArtifact);
-		writeFileSync(out, `${JSON.stringify({ model: useAgentModels ? "agent" : model, baseline: { kind: baselineKind, label: baselineLabel }, judgeModel, capUsd, duel: duelEnabled, qualityRows: qualityRows.length, exclusions, debugBudgetRun: armTimeoutMs !== null, thulr: { flows: flowsRun ? rel(flowsRun.comparePath) : null, baseline: plainRun ? rel(plainRun.comparePath) : null, duel: duelEnabled && flowsRun && plainRun ? rel(DUEL_REPORT) : null }, rows: rows.map((r) => ({ name: r.name, duel: r.duel, comparable: r.flowsTraceOk && r.plainTraceOk, flows: pickArm(r.flows), baseline: pickArm(r.plain) })) }, null, 2)}\n`, "utf8");
+		writeFileSync(out, `${JSON.stringify({ model: useAgentModels ? "agent" : model, baseline: { kind: baselineKind, label: baselineLabel }, judgeModel, capUsd, costBasis: "model-price-estimate", duel: duelEnabled, qualityRows: qualityRows.length, exclusions, debugBudgetRun: armTimeoutMs !== null, thulr: { flows: flowsRun ? rel(flowsRun.comparePath) : null, baseline: plainRun ? rel(plainRun.comparePath) : null, duel: duelEnabled && flowsRun && plainRun ? rel(DUEL_REPORT) : null }, rows: rows.map((r) => ({ name: r.name, duel: r.duel, comparable: r.flowsTraceOk && r.plainTraceOk, flows: pickArm(r.flows), baseline: pickArm(r.plain) })) }, null, 2)}\n`, "utf8");
 		console.log(`\nWrote comparison: ${out}`);
 	}
 

@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { getModel } from "@earendil-works/pi-ai";
 
 export function codexModelFromPi(model) {
 	if (!model) throw new Error("Codex baseline requires an explicit subject model");
@@ -41,7 +42,7 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 		"-",
 	];
 
-	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, costKnown: false, contextTokens: 0, turns: 0 };
+	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, costKnown: false, costEstimated: false, totalTokens: 0, contextTokens: 0, turns: 0 };
 	let finalText = "";
 	let stderr = "";
 	let stdoutSample = "";
@@ -98,10 +99,13 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 					finalText = event.item.text ?? finalText;
 				}
 				if (event.type === "turn.completed" && event.usage) {
-					usage.input += event.usage.input_tokens ?? 0;
+					const input = event.usage.input_tokens ?? 0;
+					const cached = event.usage.cached_input_tokens ?? 0;
+					usage.input += Math.max(0, input - cached);
 					usage.output += event.usage.output_tokens ?? 0;
-					usage.cacheRead += event.usage.cached_input_tokens ?? 0;
-					usage.contextTokens = usage.input + usage.output;
+					usage.cacheRead += cached;
+					usage.totalTokens += input + (event.usage.output_tokens ?? 0);
+					usage.contextTokens = usage.totalTokens;
 					usage.turns += 1;
 					stopReason = "endTurn";
 				}
@@ -145,6 +149,12 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 		errorMessage = stderr || `direct Codex exited ${exitCode}`;
 	}
 	const text = finalText || errorMessage || stderr || "(no output)";
+	const pricing = getModel("openai-codex", model)?.cost;
+	if (pricing) {
+		usage.cost = ((pricing.input * usage.input) + (pricing.output * usage.output) + (pricing.cacheRead * usage.cacheRead) + (pricing.cacheWrite * usage.cacheWrite)) / 1_000_000;
+		usage.costKnown = true;
+		usage.costEstimated = true;
+	}
 	return {
 		content: [{ type: "text", text }],
 		details: {
