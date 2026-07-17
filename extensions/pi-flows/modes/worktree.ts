@@ -158,7 +158,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		const integrator: FlowAgentRefInput = { ...(spec.integrator?.agent ? spec.integrator : { agent: "operator" }), cwd: integrationCwd };
 		for (const worker of usableWorkers.filter((candidate) => candidate.changed)) {
-			const merged = git(integrationCwd, ["merge", "--no-ff", "--no-edit", worker.branch]);
+			const merged = git(integrationCwd, ["-c", "user.name=pi-flow", "-c", "user.email=pi-flow@local", "merge", "--no-ff", "--no-edit", worker.branch]);
 			if (merged.ok) continue;
 			const unmerged = git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]);
 			if (!unmerged.stdout) {

@@ -638,6 +638,8 @@ test("worktree: isolated writers are committed and merged into a durable integra
 	execFileSync("git", ["init", "-q"], { cwd });
 	execFileSync("git", ["add", "."], { cwd });
 	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "seed"], { cwd });
+	execFileSync("git", ["config", "user.name", ""], { cwd });
+	execFileSync("git", ["config", "user.email", ""], { cwd });
 
 	const { calls, text } = await runFlow(
 		{
