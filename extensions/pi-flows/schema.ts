@@ -248,7 +248,7 @@ export const FlowParams = Type.Object({
 		Type.Boolean({ description: "Prompt before running project-local agents. Default true. In non-UI contexts, true refuses project agents; set false only for trusted repos.", default: true }),
 	),
 	concurrency: Type.Optional(Type.Number({ description: "Parallel mode concurrency. Must be an integer from 1 to 8.", minimum: 1, maximum: 8, default: DEFAULT_CONCURRENCY })),
-	timeoutMs: Type.Optional(Type.Number({ description: "Per-agent child process timeout in milliseconds. Default 600000 (10 minutes).", minimum: 1000, default: DEFAULT_TIMEOUT_MS })),
+	timeoutMs: Type.Optional(Type.Number({ description: "Per-agent child process timeout in milliseconds. Default 36000000 (10 hours).", minimum: 1000, default: DEFAULT_TIMEOUT_MS })),
 	maxCostUsd: Type.Optional(Type.Number({ description: "Cumulative USD cost ceiling across every child in this flow tree. Once reached, no further child is spawned (BUDGET_EXCEEDED). Bounds the cost dimension of runaway delegation that iteration/time caps do not cover. Omit to run uncapped.", minimum: 0 })),
 	maxTokens: Type.Optional(Type.Number({ description: "Cumulative input+output token ceiling across every child in this flow tree. Once reached, no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
 	traceFile: Type.Optional(Type.String({ description: "Append an OpenInference-shaped JSON span per child run to this file (JSONL any OpenTelemetry pipeline can ingest). One span per delegated agent plus a root span for the flow call, with redacted token/cost/model/status attributes. Also settable via PI_FLOWS_TRACE_FILE. Relative paths resolve against cwd." })),

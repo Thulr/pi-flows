@@ -46,7 +46,7 @@ headroom. In that case, extra subprocesses are only cost and latency.
 | `agentScope` | `user` | `user` = package + user agents; `project` = package + project; `all` = package + user + project. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project agents unless this is explicitly `false`. |
 | `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`. |
-| `timeoutMs` | `600000` | Per child process timeout. |
+| `timeoutMs` | `36000000` | Per child process timeout (10 hours). |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
 | `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached, no further child spawns (`BUDGET_EXCEEDED`). Omit to run uncapped. |

@@ -4,7 +4,7 @@ export const PI_FLOWS_VERSION = "0.2.0";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const DEFAULT_CONCURRENCY = 4;
-export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_TIMEOUT_MS = 10 * 60 * 60 * 1000;
 export const DEFAULT_EVALUATE_ITERATIONS = 3;
 export const MAX_EVALUATE_ITERATIONS = 8;
 export const MAX_GRAPH_NODES = 16;

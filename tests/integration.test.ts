@@ -664,7 +664,7 @@ test("monitor: polls deterministically until the trigger then hands the event to
 test("flow-scoped command timeouts prefer the mode override, then the flow timeout, then the flow default", () => {
 	assert.equal(resolveFlowCommandTimeoutMs(30_000, 120_000), 30_000);
 	assert.equal(resolveFlowCommandTimeoutMs(undefined, 120_000), 120_000);
-	assert.equal(resolveFlowCommandTimeoutMs(undefined, undefined), 600_000);
+	assert.equal(resolveFlowCommandTimeoutMs(undefined, undefined), 36_000_000);
 });
 
 test("monitor interval keeps a standalone Node process alive while awaited", () => {

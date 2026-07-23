@@ -124,7 +124,9 @@ test("showConfig is a no-run smoke path", async () => {
   );
   assert.match(result.content[0].text, new RegExp(`pi-flows ${PI_FLOWS_VERSION}`));
   assert.match(result.content[0].text, /defaultConcurrency/);
+  assert.match(result.content[0].text, /defaultTimeoutMs: 36000000/);
   assert.equal(result.details.mode, "config");
+  assert.equal(result.details.config.defaultTimeoutMs, 10 * 60 * 60 * 1000);
 });
 
 test("flow tool guidance discourages small-task overuse", () => {

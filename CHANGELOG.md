@@ -8,6 +8,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Changed
+
+- Increased the default per-child `timeoutMs` from 10 minutes to 10 hours.
+  Explicit per-flow timeout values still override the default.
+
 ## 0.2.0 - 2026-07-17
 
 ### Added
