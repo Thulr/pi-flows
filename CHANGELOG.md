@@ -6,7 +6,7 @@ All notable changes to pi-flows are documented here, following
 that must agree are `package.json`, `PI_FLOWS_VERSION` in
 `extensions/pi-flows/types.ts`, this file, and the release tag.
 
-## Unreleased
+## 0.3.0 - 2026-07-25
 
 ### Added
 
