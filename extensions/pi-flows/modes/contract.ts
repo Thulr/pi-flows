@@ -1,10 +1,28 @@
-import { DEFAULT_SEARCH_CANDIDATES, type FlowAgentRefInput, type RunMode } from "../types.ts";
+import { DEFAULT_SEARCH_CANDIDATES, RUN_MODE_NAMES, type FlowAgentRefInput, type ModeHandler, type RunMode } from "../types.ts";
+import { handleSingle } from "./single.ts";
+import { handleParallel } from "./parallel.ts";
+import { handleChain } from "./chain.ts";
+import { handleEvaluate } from "./evaluate.ts";
+import { handleVote } from "./vote.ts";
+import { handleRoute } from "./route.ts";
+import { handleOrchestrate } from "./orchestrate.ts";
+import { handleGraph } from "./graph.ts";
+import { handleLoop } from "./loop.ts";
+import { handleSearch } from "./search.ts";
+import { handleWorkflow } from "./workflow.ts";
+import { handleWorktree } from "./worktree.ts";
+import { handleDebate } from "./debate.ts";
+import { handleDossier } from "./dossier.ts";
+import { handleMonitor } from "./monitor.ts";
 
 export interface RunModeContract {
 	mode: RunMode;
+	/** The params key(s) that activate this mode, as shown in the INVALID_MODE fix text. */
+	paramHint: string;
 	isActive: (params: any, hasObjectMode: boolean) => boolean;
 	requestedAgents: (params: any) => string[];
 	renderLabel: (params: any) => string;
+	handler: ModeHandler;
 }
 
 function refAgent(ref: FlowAgentRefInput | undefined, fallback?: string): string[] {
@@ -12,32 +30,37 @@ function refAgent(ref: FlowAgentRefInput | undefined, fallback?: string): string
 	return agent ? [agent] : [];
 }
 
-function objectModeActive(params: any): boolean {
-	return OBJECT_RUN_MODE_CONTRACTS.some((contract) => contract.isActive(params, false));
-}
-
-export const SINGLE_RUN_MODE_CONTRACT: RunModeContract = {
-	mode: "single",
-	isActive: (params, hasObjectMode) => Boolean(params.agent && params.task && !hasObjectMode),
-	requestedAgents: (params) => (params.agent ? [params.agent] : []),
-	renderLabel: (params) => params.agent ?? "agent",
-};
-
-export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
-	{
-		mode: "parallel",
+/**
+ * The single mode table. Adding a mode = one handler file + one entry here +
+ * the name in RUN_MODE_NAMES (types.ts) + a params field (schema.ts). The
+ * Record key makes a missing or extra entry a compile error; the handler
+ * table, mode detection, render labels, requested-agent scans, and the
+ * INVALID_MODE hint list all derive from this table.
+ */
+const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
+	single: {
+		paramHint: "agent+task",
+		isActive: (params, hasObjectMode) => Boolean(params.agent && params.task && !hasObjectMode),
+		requestedAgents: (params) => (params.agent ? [params.agent] : []),
+		renderLabel: (params) => params.agent ?? "agent",
+		handler: handleSingle,
+	},
+	parallel: {
+		paramHint: "tasks[]",
 		isActive: (params) => (params.tasks?.length ?? 0) > 0,
 		requestedAgents: (params) => (params.tasks ?? []).map((task: any) => task.agent).filter(Boolean),
 		renderLabel: (params) => `parallel ${params.tasks?.length ?? 0} task${(params.tasks?.length ?? 0) === 1 ? "" : "s"}`,
+		handler: handleParallel,
 	},
-	{
-		mode: "chain",
+	chain: {
+		paramHint: "chain[]",
 		isActive: (params) => (params.chain?.length ?? 0) > 0,
 		requestedAgents: (params) => (params.chain ?? []).map((step: any) => step.agent).filter(Boolean),
 		renderLabel: (params) => `chain ${params.chain?.length ?? 0} step${(params.chain?.length ?? 0) === 1 ? "" : "s"}`,
+		handler: handleChain,
 	},
-	{
-		mode: "evaluate",
+	evaluate: {
+		paramHint: "evaluate{}",
 		isActive: (params) => Boolean(params.evaluate),
 		requestedAgents: (params) => {
 			if (!params.evaluate) return [];
@@ -54,9 +77,10 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 			const gate = params.evaluate?.checkCommand ? " +check" : "";
 			return `evaluate ${generator}->${evaluator}${gate}`;
 		},
+		handler: handleEvaluate,
 	},
-	{
-		mode: "vote",
+	vote: {
+		paramHint: "vote{}",
 		isActive: (params) => Boolean(params.vote),
 		requestedAgents: (params) => {
 			if (!params.vote) return [];
@@ -71,9 +95,10 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 			const suffix = params.vote?.debrief?.agent ? `->${params.vote.debrief.agent}` : "";
 			return `vote ${count}${suffix}`;
 		},
+		handler: handleVote,
 	},
-	{
-		mode: "route",
+	route: {
+		paramHint: "route{}",
 		isActive: (params) => Boolean(params.route),
 		requestedAgents: (params) => {
 			if (!params.route) return [];
@@ -84,9 +109,10 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 			];
 		},
 		renderLabel: (params) => `route via ${params.route?.controller?.agent ?? "controller"}`,
+		handler: handleRoute,
 	},
-	{
-		mode: "orchestrate",
+	orchestrate: {
+		paramHint: "orchestrate{}",
 		isActive: (params) => Boolean(params.orchestrate),
 		requestedAgents: (params) => {
 			if (!params.orchestrate) return [];
@@ -98,9 +124,10 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 			];
 		},
 		renderLabel: (params) => `orchestrate ->${params.orchestrate?.recon?.agent ?? "recon"}`,
+		handler: handleOrchestrate,
 	},
-	{
-		mode: "graph",
+	graph: {
+		paramHint: "graph{}",
 		isActive: (params) => Boolean(params.graph),
 		requestedAgents: (params) => [
 			...(params.graph?.nodes ?? []).flatMap((node: any) => refAgent(node)),
@@ -111,9 +138,10 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 			const suffix = params.graph?.debrief?.agent ? `->${params.graph.debrief.agent}` : "";
 			return `graph ${count}${suffix}`;
 		},
+		handler: handleGraph,
 	},
-	{
-		mode: "loop",
+	loop: {
+		paramHint: "loop{}",
 		isActive: (params) => Boolean(params.loop),
 		requestedAgents: (params) => [...refAgent(params.loop?.body), ...refAgent(params.loop?.judge)],
 		renderLabel: (params) => {
@@ -121,9 +149,10 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 			const judge = params.loop?.judge?.agent ? `->${params.loop.judge.agent}` : "";
 			return `loop ${body}${judge}`;
 		},
+		handler: handleLoop,
 	},
-	{
-		mode: "search",
+	search: {
+		paramHint: "search{}",
 		isActive: (params) => Boolean(params.search),
 		requestedAgents: (params) => params.search
 			? [
@@ -133,53 +162,62 @@ export const OBJECT_RUN_MODE_CONTRACTS: RunModeContract[] = [
 				]
 			: [],
 		renderLabel: (params) => `search ${params.search?.candidates ?? DEFAULT_SEARCH_CANDIDATES}`,
+		handler: handleSearch,
 	},
-	{
-		mode: "workflow",
+	workflow: {
+		paramHint: "workflow{}",
 		isActive: (params) => Boolean(params.workflow),
 		requestedAgents: (params) => [
 			...(params.workflow?.phases ?? []).flatMap((phase: any) => phase.agent ? [phase.agent] : []),
 			...refAgent(params.workflow?.debrief),
 		],
 		renderLabel: (params) => `workflow ${params.workflow?.phases?.length ?? 0} phases`,
+		handler: handleWorkflow,
 	},
-	{
-		mode: "worktree",
+	worktree: {
+		paramHint: "worktree{}",
 		isActive: (params) => Boolean(params.worktree),
 		requestedAgents: (params) => [
 			...(params.worktree?.tasks ?? []).flatMap((task: any) => refAgent(task)),
 			...refAgent(params.worktree?.integrator, "operator"),
 		],
 		renderLabel: (params) => `worktree ${params.worktree?.tasks?.length ?? 0} writers`,
+		handler: handleWorktree,
 	},
-	{
-		mode: "debate",
+	debate: {
+		paramHint: "debate{}",
 		isActive: (params) => Boolean(params.debate),
 		requestedAgents: (params) => [
 			...(params.debate?.participants ?? []).flatMap((participant: any) => refAgent(participant)),
 			...refAgent(params.debate?.adjudicator, "analyst"),
 		],
 		renderLabel: (params) => `debate ${params.debate?.participants?.length ?? 0} advocates`,
+		handler: handleDebate,
 	},
-	{
-		mode: "dossier",
+	dossier: {
+		paramHint: "dossier{}",
 		isActive: (params) => Boolean(params.dossier),
 		requestedAgents: (params) => [
 			...(params.dossier?.sections ?? []).flatMap((section: any) => refAgent(section)),
 			...refAgent(params.dossier?.debrief, "debrief"),
 		],
 		renderLabel: (params) => `dossier ${params.dossier?.sections?.length ?? 0} sources`,
+		handler: handleDossier,
 	},
-	{
-		mode: "monitor",
+	monitor: {
+		paramHint: "monitor{}",
 		isActive: (params) => Boolean(params.monitor),
 		requestedAgents: (params) => refAgent(params.monitor?.reactor, "analyst"),
 		renderLabel: (params) => `monitor ${params.monitor?.maxChecks ?? 6} checks`,
+		handler: handleMonitor,
 	},
-];
+};
 
-export const RUN_MODE_CONTRACTS: RunModeContract[] = [SINGLE_RUN_MODE_CONTRACT, ...OBJECT_RUN_MODE_CONTRACTS];
-export const RUN_MODE_NAMES = RUN_MODE_CONTRACTS.map((contract) => contract.mode);
+export const RUN_MODE_CONTRACTS: RunModeContract[] = RUN_MODE_NAMES.map((mode) => ({ mode, ...CONTRACTS[mode] }));
+
+function objectModeActive(params: any): boolean {
+	return RUN_MODE_CONTRACTS.some((contract) => contract.mode !== "single" && contract.isActive(params, false));
+}
 
 export function activeRunModes(params: any): RunMode[] {
 	const hasObjectMode = objectModeActive(params);

@@ -1,9 +1,8 @@
-import { DEFAULT_CONCURRENCY, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
+import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 
 export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -11,13 +10,11 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const sections = Array.isArray(spec.sections) ? spec.sections : [];
 	if (sections.length < 2) {
 		const error = flowError("DOSSIER_TOO_FEW_SECTIONS", "Dossier mode needs at least two evidence sections.", "A dossier is a map/reduce pattern; one assignment has no cross-source evidence or conflict surface.", "Provide two or more source- or claim-specific sections, or use single recon/analyst for one source.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "dossier", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("dossier")([], error) };
 	}
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "dossier", agentScope, concurrencyError) };
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, sections, params.allowSharedWriteCwd, concurrency);
-	if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "dossier", agentScope, sharedWriteError) };
+	if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: deps.makeDetails("dossier")([], sharedWriteError) };
 
 	const sectionItems = sections.map((section: any, index: number) => ({
 		ref: section,
@@ -39,9 +36,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const successful = results.filter((result) => !isFailed(result));
 	if (successful.length < 2) {
 		const error = flowError("DOSSIER_TOO_FEW_SECTIONS", "Fewer than two evidence extractors produced usable results.", `Only ${successful.length}/${sections.length} sections succeeded, so cross-source reconciliation would be misleading.`, "Fix the failed evidence assignments and rerun; use single mode if only one source is required.");
-		const details = deps.makeDetails("dossier")(results);
-		details.error = error;
-		return { content: [{ type: "text", text: formatFlowError(error) }], details };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("dossier")(results, error) };
 	}
 
 	const warnings = new HandoffWarnings();

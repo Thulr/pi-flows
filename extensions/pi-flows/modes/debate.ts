@@ -1,9 +1,8 @@
-import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, MAX_DEBATE_ROUNDS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_DEBATE_ROUNDS, MAX_DEBATE_ROUNDS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
+import { validateSharedWriteCwd } from "../validate.ts";
 
 function boundedRounds(value: number | undefined): number {
 	if (!Number.isFinite(value)) return DEFAULT_DEBATE_ROUNDS;
@@ -16,17 +15,15 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const participants: FlowAgentRefInput[] = Array.isArray(spec.participants) ? spec.participants : [];
 	if (participants.length < 2) {
 		const error = flowError("DEBATE_TOO_FEW_PARTICIPANTS", "Debate mode needs at least two advocates.", "A single answer has no independent opposition or rebuttal surface.", "Provide two or more participants, or use single/evaluate for one proposal plus critique.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "debate", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("debate")([], error) };
 	}
 	if (!params.task?.trim()) {
 		const error = flowError("INVALID_MODE", "Debate mode requires a task.", "The advocates and adjudicator need the same decision question and constraints.", 'Add a top-level task, e.g. {"task":"choose A or B under ...","debate":{...}}.');
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "debate", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("debate")([], error) };
 	}
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "debate", agentScope, concurrencyError) };
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, participants, params.allowSharedWriteCwd, concurrency);
-	if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "debate", agentScope, sharedWriteError) };
+	if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: deps.makeDetails("debate")([], sharedWriteError) };
 
 	const rounds = boundedRounds(spec.rounds);
 	const allResults: FlowRunResult[] = [];

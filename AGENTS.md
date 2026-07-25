@@ -5,8 +5,8 @@ Read this before editing the repo.
 ## Project shape
 
 - Extension entrypoint: `extensions/pi-flows/index.ts` (registers the `flow` tool and `/flows` command; re-exports the public API)
-- Extension modules: `extensions/pi-flows/*.ts` — `types.ts` (constants, types, error codes), `sanitize.ts` (redaction, caps, injection scan), `validate.ts`, `parse.ts`, `agents.ts` (discovery), `runner.ts` (child-process core), `trace.ts`, `reflexion.ts`, `ui.ts`, `schema.ts` (TypeBox params)
-- Mode handlers: `extensions/pi-flows/modes/*.ts`, one file per mode, registered in `modes/registry.ts` (`RUN_MODE_HANDLERS`). Add a new mode by writing a handler file, registering it, and extending `detectRunMode` + `schema.ts` — the dispatch core in `index.ts` does not change.
+- Extension modules: `extensions/pi-flows/*.ts` — `types.ts` (constants, types, error codes, `ModeDeps` incl. the `runChild` seam), `sanitize.ts` (redaction, caps, injection scan), `validate.ts`, `parse.ts`, `agents.ts` (discovery), `runner.ts` (child-run adapter), `jsonl-child.mjs` (child-process JSONL protocol, shared with evals), `trace.ts`, `reflexion.ts`, `ui.ts`, `schema.ts` (TypeBox params)
+- Mode handlers: `extensions/pi-flows/modes/*.ts`, one file per mode. `modes/contract.ts` is the single mode table (activation, requested agents, label, handler, param hint). Add a new mode by writing a handler file, adding its entry to `CONTRACTS` in `modes/contract.ts`, its name to `RUN_MODE_NAMES` in `types.ts`, and its params field in `schema.ts` — `modes/registry.ts` and the dispatch core in `index.ts` derive from the table and do not change. A missing or extra contract entry is a compile error.
 - Bundled agent prompts: `agents/*.md`
 - Tests: `tests/pi-flows.test.ts` (offline contract) + `tests/integration.test.ts` (execution path against a stub `pi`)
 - User docs: `README.md`, `docs/*.md`, `examples/README.md`

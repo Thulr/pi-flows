@@ -26,6 +26,7 @@
   "files": [
     "agents/*.md",
     "extensions/pi-flows/**/*.ts",
+    "extensions/pi-flows/**/*.mjs",
     "docs/*.md",
     "examples/**",
     "README.md",

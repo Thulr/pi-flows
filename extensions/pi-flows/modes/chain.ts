@@ -3,41 +3,24 @@ import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnContract } from "../validate.ts";
 import { renderTaskTemplate } from "../parse.ts";
-import { runFlowAgent } from "../runner.ts";
+import { runAgentRef } from "../runner.ts";
 
 export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, policy, defaultCwd, signal, onUpdate, makeDetails } = deps;
+	const { params, policy, makeDetails } = deps;
 	const results: FlowRunResult[] = [];
 	let previous = "";
 
 	for (let index = 0; index < params.chain.length; index += 1) {
 		const step = params.chain[index];
 		const task = appendReturnContract(renderTaskTemplate(step.task, params.task, previous), step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence);
-		const result = await runFlowAgent({
-			defaultCwd,
-			agents: deps.discovery.agents,
-			agentName: step.agent,
+		const result = await runAgentRef(
+			deps,
+			{ agent: step.agent, cwd: step.cwd, model: step.model, tier: step.tier, tools: step.tools },
 			task,
-			cwd: step.cwd,
-			model: step.model ?? params.model,
-			tier: step.tier ?? params.tier,
-			tools: step.tools,
-			timeoutMs: params.timeoutMs,
-			recordContent: params.recordContent,
-			redactSecrets: params.redactSecrets,
-			step: index + 1,
-			signal,
-			budget: deps.budget,
-			recordSpan: deps.recordSpan,
-			onUpdate: (partial) => {
-				const current = partial.details.results[0];
-				onUpdate?.({
-					content: partial.content,
-					details: makeDetails("chain")([...results, ...(current ? [current] : [])]),
-				});
-			},
-			makeDetails: makeDetails("chain"),
-		});
+			"chain",
+			index + 1,
+			results,
+		);
 		results.push(result);
 
 		if (isFailed(result)) {

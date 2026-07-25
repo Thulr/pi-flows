@@ -9,31 +9,24 @@
 //   npm run eval:select -- --model=openai-codex/gpt-5.4-mini --timeout=60000
 //   npm run eval:select -- --dry-run
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createFlagReader } from "./cli-flags.mjs";
 import { DEFAULT_EVAL_MODEL } from "./lib.mjs";
-import { createProcessTerminator } from "./process-control.mjs";
+import { loadDotenv } from "./preflight.mjs";
+import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
 import { SELECTION_CASES } from "./selection-cases.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 
-const dotenvPath = join(process.cwd(), ".env");
-if (existsSync(dotenvPath)) {
-	try { process.loadEnvFile(dotenvPath); } catch { /* ignore a malformed .env */ }
-}
+loadDotenv();
 
-const args = process.argv.slice(2);
-const flag = (name, fallback) => {
-	const hit = args.find((a) => a.startsWith(`--${name}=`));
-	return hit ? hit.slice(name.length + 3) : fallback;
-};
+const { flag, bool } = createFlagReader(process.argv.slice(2));
 
 const model = flag("model", process.env.PI_FLOWS_EVAL_MODEL ?? DEFAULT_EVAL_MODEL);
 const useDefaultModel = ["agent", "default", ""].includes(model);
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "90000"));
 const filter = flag("filter", "");
-const dryRun = args.includes("--dry-run");
+const dryRun = bool("dry-run");
 
 export function flowCallIdsFromMessage(message) {
 	return flowCallsFromMessage(message).map((call) => call.id);
@@ -322,58 +315,28 @@ async function runSelectionCase(testCase, signal) {
 	const piArgs = ["--mode", "json", "-p", "--no-session", "--no-context-files", "--no-extensions", "-e", "./extensions/pi-flows/index.ts"];
 	if (!useDefaultModel) piArgs.push("--model", model);
 
-	let timedOut = false;
-	const exitCode = await new Promise((resolveExit) => {
-		const proc = spawn("pi", piArgs, { cwd: process.cwd(), shell: false, stdio: ["pipe", "pipe", "pipe"] });
-		let buffer = "";
-		let stderr = "";
-		let closed = false;
-		const terminator = createProcessTerminator(proc, { isClosed: () => closed });
-		const timer = caseTimeoutMs > 0
-			? setTimeout(() => {
-					timedOut = true;
-					stderr = `${stderr}\nselection eval timed out after ${caseTimeoutMs}ms`;
-					terminator.stop();
-				}, caseTimeoutMs)
-			: null;
-		timer?.unref?.();
-		const onAbort = () => terminator.stop();
-		if (signal?.aborted) onAbort();
-		else signal?.addEventListener?.("abort", onAbort, { once: true });
-		const finish = (code) => {
-			if (closed) return;
-			closed = true;
-			if (timer) clearTimeout(timer);
-			terminator.dispose();
-			signal?.removeEventListener?.("abort", onAbort);
-			resolveExit(code);
-		};
-
-		const processLine = (line) => collectSelectionEvent(line, state);
-		proc.stdin.end(`${testCase.task}\n`);
-		proc.stdout.on("data", (data) => {
-			buffer += data.toString();
-			const lines = buffer.split("\n");
-			buffer = lines.pop() ?? "";
-			for (const line of lines) {
-				processLine(line);
-				if (testCase.expectFlow && state.flowExecutionStarted && !state.stoppedAfterFlowCall) {
-					state.stoppedAfterFlowCall = true;
-					terminator.stop();
-				}
+	let stderr = "";
+	const run = await runJsonlProcess({
+		command: "pi",
+		args: piArgs,
+		cwd: process.cwd(),
+		timeoutMs: caseTimeoutMs,
+		signal,
+		stdin: `${testCase.task}\n`,
+		onLine: (line, controls) => {
+			collectSelectionEvent(line, state);
+			if (testCase.expectFlow && state.flowExecutionStarted && !state.stoppedAfterFlowCall) {
+				state.stoppedAfterFlowCall = true;
+				controls.terminate();
 			}
-		});
-		proc.stderr.on("data", (data) => { stderr = `${stderr}${data}`.slice(-4096); });
-		proc.on("error", (error) => {
-			state.error = error.message;
-			finish(1);
-		});
-		proc.on("close", (code) => {
-			if (buffer.trim()) processLine(buffer);
-			if (stderr.trim()) state.stderr = stderr.trim();
-			finish(code ?? 0);
-		});
+		},
+		onStderr: (chunk) => { stderr = `${stderr}${chunk}`.slice(-4096); },
 	});
+	const timedOut = run.timedOut;
+	if (timedOut) stderr = `${stderr}\nselection eval timed out after ${caseTimeoutMs}ms`;
+	if (run.spawnErrorMessage) state.error = run.spawnErrorMessage;
+	if (stderr.trim()) state.stderr = stderr.trim();
+	const exitCode = run.exitCode;
 
 	const error = exitCode === 0 || state.stoppedAfterFlowCall ? null : (state.stderr || state.stdoutSample || `pi exited ${exitCode}`);
 	return {

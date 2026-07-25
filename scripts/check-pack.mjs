@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 const result = spawnSync("npm", ["pack", "--dry-run", "--json"], { encoding: "utf8" });
 if (result.status !== 0) {
@@ -19,7 +21,23 @@ for (const required of ["extensions/pi-flows/index.ts", "README.md", "LICENSE", 
   assert.ok(files.includes(required), `pack missing required file: ${required}`);
 }
 
-// 0.2 adds five runtime modes and their public contracts; keep explicit headroom
-// without excluding the documentation users need to invoke them correctly.
-assert.ok(pack.unpackedSize < 400_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// A packed source file that imports a relative module which is not itself
+// packed ships a package that fails to load at runtime — the `files` globs are
+// extension-suffix based, so a new file with an uncovered suffix slips through
+// silently. Resolve every relative import in packed extension sources and
+// require the target to be packed too.
+const packedSet = new Set(files);
+const relativeImportRe = /from\s+"(\.{1,2}\/[^"]+)"/g;
+for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(ts|mjs)$/.test(name))) {
+  const source = readFileSync(file, "utf8");
+  for (const match of source.matchAll(relativeImportRe)) {
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1]));
+    assert.ok(packedSet.has(resolved), `pack missing ${resolved}, imported by ${file} — add it to package.json "files"`);
+  }
+}
+
+// 0.2 adds five runtime modes and their public contracts, and the seam refactor
+// adds the shared child-process protocol module; keep explicit headroom without
+// excluding the documentation users need to invoke them correctly.
+assert.ok(pack.unpackedSize < 450_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

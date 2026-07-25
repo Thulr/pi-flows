@@ -1,9 +1,7 @@
-import { DEFAULT_CONCURRENCY, MAX_GRAPH_NODES, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_GRAPH_NODES, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
-import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
+import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 export function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
@@ -23,14 +21,14 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			"graph.nodes must be a non-empty static DAG of agent nodes, bounded so graph mode cannot become unbounded orchestration.",
 			`Provide between 1 and ${MAX_GRAPH_NODES} graph nodes.`,
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")([], error) };
 	}
 
 	const ids = new Set<string>();
 	for (const node of nodes) {
 		if (!node?.id || !node.agent || !node.task || ids.has(node.id)) {
 			const error = flowError("GRAPH_INVALID", "Graph nodes require unique id, agent, and task fields.", "A graph node was missing a required field or reused an id.", "Give every graph node a unique id plus agent and task.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")([], error) };
 		}
 		ids.add(node.id);
 	}
@@ -38,30 +36,28 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		for (const dep of node.dependsOn ?? []) {
 			if (!ids.has(dep)) {
 				const error = flowError("GRAPH_INVALID", `Graph node "${node.id}" depends on unknown node "${dep}".`, "Every dependsOn entry must reference another graph node id.", "Fix dependsOn ids or add the missing node.");
-				return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+				return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")([], error) };
 			}
 		}
 	}
 
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "graph", agentScope, concurrencyError) };
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 	const results: FlowRunResult[] = [];
 	const outputs = new Map<string, string>();
 	const completed = new Set<string>();
 	const remaining = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
-	const contractedTask = params.task ? withReflexion(defaultCwd, params, appendReturnContract(params.task, params.returnContract, params.requireEvidence), policy) : undefined;
+	const contractedTask = params.task ? appendReturnContract(params.task, params.returnContract, params.requireEvidence) : undefined;
 	let wave = 0;
 
 	while (remaining.size > 0) {
 		const ready = [...remaining.values()].filter((node) => (node.dependsOn ?? []).every((dep: string) => completed.has(dep)));
 		if (ready.length === 0) {
 			const error = flowError("GRAPH_CYCLE", "Graph has a cycle or unsatisfied dependency.", "No remaining graph node is runnable even though some nodes are incomplete.", "Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "graph", agentScope, error) };
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")(results, error) };
 		}
 		wave += 1;
 		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, ready, params.allowSharedWriteCwd, concurrency);
-		if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "graph", agentScope, sharedWriteError) };
+		if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: makeDetails("graph")(results, sharedWriteError) };
 
 		const waveItems = ready.map((node) => {
 			const depOutputs = new Map(outputs);
@@ -104,10 +100,8 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		const debriefed = await runAgentRef(deps, debriefRef, debriefTask, "graph", results.length + 1, results);
 		results.push(debriefed);
 		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
-		await appendReflexion(defaultCwd, params, "graph", `Graph succeeded for task "${params.task ?? "(no task)"}". Final answer:\n${resultText(debriefed)}`, policy);
 		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
 	}
 
-	await appendReflexion(defaultCwd, params, "graph", `Graph succeeded for task "${params.task ?? "(no task)"}". Terminal outputs:\n${terminalOutputs}`, policy);
 	return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed.\n\n${terminalOutputs}`) }], details: makeDetails("graph")(results) };
 }
