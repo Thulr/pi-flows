@@ -3,8 +3,10 @@ import * as path from "node:path";
 import { getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import {
+	DEFAULT_CONCURRENCY,
 	MAX_FLOW_DEPTH,
 	PI_FLOWS_VERSION,
+	RUN_MODE_NAMES,
 	budgetExceeded,
 	chargeBudget,
 	flowError,
@@ -23,14 +25,15 @@ import { appendReturnContract, canMutateWorkspace, clampIterations, clampLoopIte
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
 import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
+import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
-import { configuredTierModels, resolveAgentModel } from "./runner.ts";
+import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
-import { RUN_MODE_NAMES, activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
+import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
 
 // Public API surface: re-export the names the package exposed when the
@@ -153,10 +156,13 @@ export default function (pi: ExtensionAPI) {
 			"Call flow only when at least one of these holds: (1) the user explicitly asked for delegation, separate agents, parallel investigation, or an independent reviewer; (2) the work spans more independent reading or writing than one context can hold; (3) the output needs verification that must be isolated from its author (separate critic, vote, or deterministic gate).",
 			"If none of those hold, do the work directly in your own context — that is the default. Every spawning call must set `why` with the one-sentence reason delegation beats working directly; calls without it are refused.",
 			"Bundled agents: recon, analyst, strategist, operator, overwatch, redteam, controller, commander, debrief.",
-			"Core shapes: one delegated scout => {\"agent\":\"recon\",\"task\":\"inspect X\",\"why\":\"...\"}; parallel fan-out => {\"tasks\":[{\"agent\":\"recon\",\"task\":\"inspect A\"},{\"agent\":\"recon\",\"task\":\"inspect B\"}],\"why\":\"...\"}; build with separate critique => {\"task\":\"...\",\"evaluate\":{},\"why\":\"...\"}. Further modes (chain, vote, route, orchestrate, graph, loop, search, workflow, worktree, debate, dossier, monitor) are documented in their parameter schemas.",
+			`Core shapes: one delegated scout => {"agent":"recon","task":"inspect X","why":"..."}; parallel fan-out => {"tasks":[{"agent":"recon","task":"inspect A"},{"agent":"recon","task":"inspect B"}],"why":"..."}; build with separate critique => {"task":"...","evaluate":{},"why":"..."}. Further modes (${RUN_MODE_NAMES.filter((mode) => !["single", "parallel", "evaluate"].includes(mode)).join(", ")}) are documented in their parameter schemas.`,
 			"Default scope includes bundled agents and ~/.pi/agent/flow-agents; project-local .pi/flow-agents requires agentScope project/all and explicit trust in headless runs.",
 		].join(" "),
 		promptSnippet: "Work directly by default; call flow only for explicit delegation requests or work that genuinely needs isolated contexts, fan-out, or an independent critic",
+		// Editorial guidance, deliberately hand-written: the mechanical mode surface
+		// derives from modes/contract.ts, but the plain-English mapping below names
+		// modes by intent — when adding a mode, add a line here too if it needs one.
 		promptGuidelines: [
 			"Default to working directly in your own context. A flow child is a separate pi subprocess with its own full model context — it costs real tokens and latency, so spawning must be justified by isolation, fan-out, or independent verification, not by a mode name that happens to match the task.",
 			"Do not use flow for simple factual answers, small code lookups, minor single-file edits, obvious shell commands, or tasks you can complete cheaply in the parent context. When the task is small or already clear, answer or edit directly and reserve flow for later if exploration, verification, or fan-out becomes genuinely necessary.",
@@ -232,6 +238,17 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			// Fan-out bounding is dispatch-core policy: validated and resolved once here
+			// for every mode, so no handler re-derives it and no new mode can forget it.
+			const concurrencyError = validateConcurrency(params.concurrency);
+			if (concurrencyError) {
+				return {
+					content: [{ type: "text", text: formatFlowError(concurrencyError) }],
+					details: catalog.errorDetails(mode, concurrencyError),
+				};
+			}
+			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+
 			const projectAgents = catalog.projectAgentsFor(params);
 			if ((agentScope === "project" || agentScope === "all") && (params.confirmProjectAgents ?? true) && projectAgents.length > 0) {
 				if (!ctx.hasUI) {
@@ -300,9 +317,18 @@ export default function (pi: ExtensionAPI) {
 				onUpdate?.(partial);
 			};
 
+			// Reflexion is a flow-wide cross-cutting concern applied at the dispatch seam:
+			// lessons from prior runs are injected into the top-level task before the
+			// handler runs, and a lesson is recorded from the final output after it —
+			// every mode gets both halves without per-handler wiring.
+			const paramsForRun =
+				typeof params.task === "string" && params.task.trim() && reflexionFile(ctx.cwd, params)
+					? { ...params, task: withReflexion(ctx.cwd, params, params.task, policy) }
+					: params;
+
 			try {
 				const output = await handler({
-					params,
+					params: paramsForRun,
 					discovery,
 					policy,
 					agentScope,
@@ -316,7 +342,14 @@ export default function (pi: ExtensionAPI) {
 						return await ctx.ui.confirm(title, message) ? "approved" : "denied";
 					},
 					makeDetails,
+					runChild: runFlowAgent,
+					concurrency,
 				});
+				// Record the lesson only when at least one run happened — pre-spawn
+				// refusals (validation errors, approvals) are not lessons about the task.
+				if (output.details.results.length > 0) {
+					await appendReflexion(ctx.cwd, params, mode, output.content[0]?.text ?? "", policy);
+				}
 				const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text);
 				if (finalCheckpointError) {
 					output.details.error = finalCheckpointError;

@@ -224,7 +224,7 @@ export const FlowCheckpoint = Type.Object({
 export const FlowReflexion = Type.Object({
 	enabled: Type.Boolean({ description: "Opt in to local cross-run lessons for this flow call. Disabled by default." }),
 	file: Type.Optional(Type.String({ description: "JSONL file for lessons, relative to cwd. Default .pi/flow-reflections.jsonl." })),
-	maxEntries: Type.Optional(Type.Number({ description: "Recent lessons to prepend to compatible prompts. Default 5, cap 20.", minimum: 1, maximum: 20, default: 5 })),
+	maxEntries: Type.Optional(Type.Number({ description: "Recent lessons appended to the top-level task before the mode runs. Default 5, cap 20.", minimum: 1, maximum: 20, default: 5 })),
 });
 
 export const FlowParams = Type.Object({

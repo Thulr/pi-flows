@@ -1,10 +1,8 @@
-import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareHandoff, prepareResultHandoff } from "../handoff.ts";
-import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
+import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
-import { appendReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
@@ -21,16 +19,12 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			"orchestrate mode decomposes `task` into subtasks, fans them out to workers, then synthesizes the results.",
 			'Add a `task` string, e.g. { "task": "...", "orchestrate": {} }.',
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "orchestrate", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("orchestrate")([], error) };
 	}
 	const returnContract = params.returnContract ?? (params.task || nestedTask ? nestedReturnContract : undefined);
 	const contractedGoal = appendReturnContract(goal, returnContract, params.requireEvidence);
 
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) {
-		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "orchestrate", agentScope, concurrencyError) };
-	}
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 
 	const orchestratorRef: FlowAgentRefInput = spec.commander ?? { agent: "commander" };
 	const workerRef: FlowAgentRefInput = spec.recon ?? { agent: "recon" };
@@ -61,7 +55,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			"The orchestrator output contained no JSON array of subtasks.",
 			"Tighten the orchestrator prompt to return a JSON array of strings, or use chain/single mode for work that does not decompose.",
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "orchestrate", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("orchestrate")(results, error) };
 	}
 
 	// Subtasks are commander output reused as worker prompts — a trust boundary.
@@ -74,7 +68,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	if (subtasks.length > 1) {
 		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, subtasks.map(() => workerRef), params.allowSharedWriteCwd, concurrency);
 		if (sharedWriteError) {
-			return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "orchestrate", agentScope, sharedWriteError) };
+			return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: makeDetails("orchestrate")(results, sharedWriteError) };
 		}
 	}
 
@@ -145,11 +139,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	let verifyVerdict: "pass" | "revise" | "not_run" = "not_run";
 	let verifyRounds = 0;
 	const verifyRef: FlowAgentRefInput | undefined = spec.verify && typeof spec.verify.agent === "string" ? spec.verify : undefined;
-	const makeDetailsWithError = (error: FlowError) => {
-		const details = makeDetails("orchestrate")(results);
-		details.error = error;
-		return details;
-	};
+	const makeDetailsWithError = (error: FlowError) => makeDetails("orchestrate")(results, error);
 	const makeVerificationError = (message: string, cause: string) =>
 		flowError(
 			"ORCHESTRATE_VERIFY_FAILED",
@@ -228,7 +218,6 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				: ` Verification not completed by ${verifyRef.agent}.`
 		: "";
 	const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}.${verificationSummary}`;
-	await appendReflexion(defaultCwd, params, "orchestrate", `Orchestrate completed for task "${goal}". Verification: ${verificationSummary || "not requested"}. Final answer:\n${resultText(synthesized)}${verifyNote}`, policy);
 	return {
 		content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`) }],
 		details: makeDetails("orchestrate")(results),

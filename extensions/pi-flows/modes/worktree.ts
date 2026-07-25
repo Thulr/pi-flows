@@ -3,13 +3,12 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_CONCURRENCY, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
-import { appendReturnContract, validateConcurrency } from "../validate.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
+import { appendReturnContract } from "../validate.ts";
 
 interface GitResult {
 	ok: boolean;
@@ -62,9 +61,7 @@ function branchHasCommitsSince(cwd: string, baseSha: string): { ok: boolean; cha
 }
 
 function modeError(deps: ModeDeps, results: FlowRunResult[], error: FlowError, extra = ""): ModeOutput {
-	const details = deps.makeDetails("worktree")(results);
-	details.error = error;
-	return { content: [{ type: "text", text: `${formatFlowError(error)}${extra}` }], details };
+	return { content: [{ type: "text", text: `${formatFlowError(error)}${extra}` }], details: deps.makeDetails("worktree")(results, error) };
 }
 
 export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
@@ -73,38 +70,36 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 	const tasks = Array.isArray(spec.tasks) ? spec.tasks : [];
 	if (tasks.length < 2) {
 		const error = flowError("WORKTREE_SETUP_FAILED", "Worktree mode needs at least two independent write tasks.", "One writer does not need fan-out isolation or an integration branch.", "Use single/evaluate for one writer, or provide two or more worktree.tasks.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "worktree", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("worktree")([], error) };
 	}
 	const ids = new Set<string>();
 	for (const task of tasks) {
 		if (!task?.id || !task?.agent || !task?.task || ids.has(task.id)) {
 			const error = flowError("WORKTREE_SETUP_FAILED", "Worktree tasks need unique id, agent, and task fields.", "A worker task was incomplete or reused an id, so branch ownership would be ambiguous.", "Give every worktree task a unique id plus a concrete agent and task.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "worktree", agentScope, error) };
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("worktree")([], error) };
 		}
 		ids.add(task.id);
 	}
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "worktree", agentScope, concurrencyError) };
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 
 	const rootResult = git(defaultCwd, ["rev-parse", "--show-toplevel"]);
 	if (!rootResult.ok) {
 		const error = flowError("WORKTREE_NOT_GIT", "Worktree mode requires a git repository.", rootResult.stderr || "git rev-parse could not find a repository root.", "Run from a git checkout or use ordinary parallel/evaluate mode.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "worktree", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("worktree")([], error) };
 	}
 	const repoRoot = rootResult.stdout;
 	if (spec.requireClean ?? true) {
 		const status = git(repoRoot, ["status", "--porcelain"]);
 		if (!status.ok || status.stdout) {
 			const error = flowError("WORKTREE_DIRTY_SOURCE", "Worktree source checkout must be clean.", status.stdout || status.stderr || "The source checkout status could not be read.", "Commit/stash the source changes, or set worktree.requireClean:false only when intentionally branching from committed HEAD and omitting local edits.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "worktree", agentScope, error) };
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("worktree")([], error) };
 		}
 	}
 	const baseRef = spec.baseRef?.trim() || "HEAD";
 	const base = git(repoRoot, ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`]);
 	if (!base.ok) {
 		const error = flowError("WORKTREE_SETUP_FAILED", `Could not resolve worktree base ref "${baseRef}".`, base.stderr, "Use an existing commit, branch, or tag as worktree.baseRef.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "worktree", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("worktree")([], error) };
 	}
 	const baseSha = base.stdout;
 	const runId = `${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;

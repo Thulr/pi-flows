@@ -1,12 +1,11 @@
 // Direct-Codex control arm for A/B quality measurement. The task is sent over
 // stdin, never argv. A temporary HOME/CODEX_HOME prevents user skills, plugins,
 // memories, and config from changing the baseline; only auth is copied in.
-import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai";
-import { createProcessTerminator } from "./process-control.mjs";
+import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
 
 export function codexModelFromPi(model) {
 	if (!model) throw new Error("Codex baseline requires an explicit subject model");
@@ -48,56 +47,21 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 	let stderr = "";
 	let stdoutSample = "";
 	let parseErrors = 0;
-	let sawJson = false;
 	let stopReason;
 	let errorMessage;
 
-	let exitCode;
+	let run;
 	try {
-			exitCode = await new Promise((resolveExit) => {
-				const proc = spawn(codexBin, args, { cwd: cwd ?? process.cwd(), env: isolated.env, shell: false, stdio: ["pipe", "pipe", "pipe"] });
-				let buffer = "";
-				let closed = false;
-				let timedOut = false;
-				let aborted = false;
-				const terminator = createProcessTerminator(proc, { isClosed: () => closed, graceMs: killGraceMs });
-				const terminate = (reason) => {
-					if (closed || timedOut || aborted) return;
-					timedOut = reason === "timeout";
-					aborted = reason === "aborted";
-					stopReason = reason;
-					terminator.stop();
-				};
-				const timer = timeoutMs > 0
-					? setTimeout(() => terminate("timeout"), timeoutMs)
-					: null;
-			timer?.unref?.();
-
-				const onAbort = () => {
-					terminate("aborted");
-				};
-			const finish = (code) => {
-				if (closed) return;
-					closed = true;
-					if (timer) clearTimeout(timer);
-					terminator.dispose();
-				signal?.removeEventListener?.("abort", onAbort);
-				if (timedOut) errorMessage = `direct Codex timed out after ${timeoutMs}ms`;
-				else if (aborted) errorMessage = "direct Codex was aborted";
-				resolveExit(code);
-			};
-
-			const processLine = (line) => {
-				if (!line.trim()) return;
-				let event;
-				try {
-					event = JSON.parse(line);
-					sawJson = true;
-				} catch {
-					parseErrors += 1;
-					if (stdoutSample.length < 4096) stdoutSample += `${line}\n`;
-					return;
-				}
+		run = await runJsonlProcess({
+			command: codexBin,
+			args,
+			cwd: cwd ?? process.cwd(),
+			env: isolated.env,
+			timeoutMs,
+			graceMs: killGraceMs,
+			signal,
+			stdin: String(task ?? ""),
+			onEvent: (event) => {
 				if (event.type === "item.completed" && event.item?.type === "agent_message") {
 					finalText = event.item.text ?? finalText;
 				}
@@ -116,33 +80,30 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 					errorMessage = event.error?.message ?? event.message ?? "direct Codex turn failed";
 					stopReason = "error";
 				}
-			};
-
-			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				for (const line of lines) processLine(line);
-			});
-			proc.stderr.on("data", (data) => { stderr = (stderr + data.toString()).slice(-8192); });
-			proc.on("error", (error) => {
-				errorMessage = `direct Codex spawn error: ${error.message}`;
-				stopReason = "error";
-				finish(1);
-			});
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				finish(code ?? 0);
-			});
-			if (signal?.aborted) onAbort();
-			else signal?.addEventListener?.("abort", onAbort, { once: true });
-			proc.stdin.end(String(task ?? ""));
+			},
+			onNonJsonLine: (line) => {
+				parseErrors += 1;
+				if (stdoutSample.length < 4096) stdoutSample += `${line}\n`;
+			},
+			onStderr: (chunk) => { stderr = (stderr + chunk).slice(-8192); },
 		});
 	} finally {
 		rmSync(isolated.root, { recursive: true, force: true });
 	}
 
-	const protocolError = !sawJson && parseErrors > 0;
+	const exitCode = run.exitCode;
+	if (run.timedOut) {
+		stopReason = "timeout";
+		errorMessage = `direct Codex timed out after ${timeoutMs}ms`;
+	} else if (run.aborted) {
+		stopReason = "aborted";
+		errorMessage = "direct Codex was aborted";
+	} else if (run.spawnErrorMessage) {
+		errorMessage = `direct Codex spawn error: ${run.spawnErrorMessage}`;
+		stopReason = "error";
+	}
+
+	const protocolError = !run.sawJsonEvent && parseErrors > 0;
 	if (protocolError) {
 		stopReason = "error";
 		errorMessage = "direct Codex did not produce valid --json output";

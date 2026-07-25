@@ -31,7 +31,16 @@ export const CHECK_OUTPUT_CAP = 16 * 1024;
 
 export type AgentSource = "package" | "user" | "project";
 export type AgentScope = "user" | "project" | "all";
-export type FlowMode = "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search" | "workflow" | "worktree" | "debate" | "dossier" | "monitor" | "list" | "config";
+
+/**
+ * The single source of the mode union. `RunMode`, `FlowMode`, the contract
+ * table in modes/contract.ts (a Record keyed by RunMode), and the derived
+ * handler table all flow from this list — adding a mode here without a
+ * matching contract entry (or vice versa) is a compile error.
+ */
+export const RUN_MODE_NAMES = ["single", "parallel", "chain", "evaluate", "vote", "route", "orchestrate", "graph", "loop", "search", "workflow", "worktree", "debate", "dossier", "monitor"] as const;
+export type RunMode = (typeof RUN_MODE_NAMES)[number];
+export type FlowMode = RunMode | "list" | "config";
 export type DiscoveryIssueSeverity = "warning" | "error";
 export type VerifyPolicy = "note" | "fail" | "revise";
 
@@ -254,7 +263,33 @@ export function emptyUsage(): UsageStats {
 
 export type Update = (partial: { content: Array<{ type: "text"; text: string }>; details: FlowDetails }) => void;
 
-export type RunMode = Extract<FlowMode, "single" | "parallel" | "chain" | "evaluate" | "vote" | "route" | "orchestrate" | "graph" | "loop" | "search" | "workflow" | "worktree" | "debate" | "dossier" | "monitor">;
+/**
+ * Everything needed to execute one child run. This is the interface of the
+ * child-run seam: the production adapter is `runFlowAgent` in runner.ts (a real
+ * pi subprocess); tests inject an in-process fake through `ModeDeps.runChild`
+ * so mode coordination logic runs without spawning anything.
+ */
+export interface RunChildOptions {
+	defaultCwd: string;
+	agents: FlowAgent[];
+	agentName: string;
+	task: string;
+	cwd?: string;
+	model?: string;
+	tier?: string;
+	tools?: string;
+	timeoutMs?: number;
+	recordContent?: boolean;
+	redactSecrets?: boolean;
+	step?: number;
+	signal?: AbortSignal;
+	onUpdate?: Update;
+	budget?: FlowBudget;
+	recordSpan?: RecordSpan;
+	makeDetails: (results: FlowRunResult[]) => FlowDetails;
+}
+
+export type RunChild = (options: RunChildOptions) => Promise<FlowRunResult>;
 
 export interface ModeDeps {
 	params: any;
@@ -267,7 +302,11 @@ export interface ModeDeps {
 	budget?: FlowBudget;
 	recordSpan?: RecordSpan;
 	requestApproval?: (title: string, message: string) => Promise<"approved" | "required" | "denied">;
-	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[]) => FlowDetails;
+	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
+	/** The child-run seam. Handlers reach it via the runner helpers (runAgentRef/runAgentFanout), which execute every child through this — so tests can inject an in-process fake. */
+	runChild: RunChild;
+	/** Fan-out concurrency, validated and defaulted by the dispatch core — handlers never re-derive it. */
+	concurrency: number;
 }
 
 export type ModeOutput = { content: Array<{ type: "text"; text: string }>; details: FlowDetails };

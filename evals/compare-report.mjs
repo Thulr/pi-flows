@@ -53,6 +53,14 @@ export const aggregateTokenUsage = (rows, kind) => ({
 	known: rows.every((row) => row[kind].tokenUsage?.known === true),
 });
 
+/**
+ * A freshly-run arm, explicitly unjudged. Exactly one of applyJudgedRows,
+ * dryRunJudgements, or markUnjudgedRows fills `dims`/`judged` in afterwards;
+ * seeding them at construction means armLine, pickArm, and judgeDelta can never
+ * read an undefined `judged` if a new code path forgets to call one of the three.
+ */
+export const unjudgedArm = () => ({ dims: {}, judged: { verdict: null, score: null } });
+
 export function applyJudgedRows(rows, flowsRun, plainRun) {
 	const flows = dimsByCase(flowsRun);
 	const plain = dimsByCase(plainRun);
@@ -92,9 +100,9 @@ export function armLine(label, arm) {
 }
 
 export const pickArm = (a) => ({
-	dims: a.dims,
-	judgePass: a.judged.verdict,
-	judgeScore: a.judged.score,
+	dims: a.dims ?? {},
+	judgePass: a.judged?.verdict ?? null,
+	judgeScore: a.judged?.score ?? null,
 	objPass: a.exclusion ? null : a.objective.pass,
 	objScore: a.exclusion ? null : a.objective.score,
 	cost: a.cost,
@@ -109,6 +117,43 @@ export const pickArm = (a) => ({
 	attempts: a.attempts ?? 1,
 	answer: a.exclusion ? "" : (a.answer ?? "").slice(0, 1000),
 });
+
+const judgeScore = (arm) => arm.judged?.score ?? 0;
+
+/**
+ * The signed judge-score lift for one case (flows minus baseline), or null when
+ * the pair is inconclusive — only rows where BOTH arms produced judgeable output
+ * can be compared, so one excluded arm makes the whole row unusable.
+ */
+export const judgeDelta = (row) => (row.flowsTraceOk && row.plainTraceOk ? judgeScore(row.flows) - judgeScore(row.plain) : null);
+
+/**
+ * Every headline number in the A/B summary, in one pass over the rows.
+ *
+ * Quality numbers (means, criterion passes, per-case wins) come from comparable
+ * rows only; efficiency numbers (cost, tokens, wall-clock) come from ALL rows,
+ * because an arm that burned tokens and then failed still cost real money. A
+ * per-case delta under 0.001 is a tie, not a win — judge noise is larger than that.
+ */
+export function comparisonTotals(rows) {
+	const qualityRows = rows.filter((row) => row.flowsTraceOk && row.plainTraceOk);
+	return {
+		qualityRows,
+		flowsJudgeMean: mean(qualityRows.map((row) => judgeScore(row.flows))),
+		plainJudgeMean: mean(qualityRows.map((row) => judgeScore(row.plain))),
+		flowsCriterionPasses: qualityRows.filter((row) => row.flows.judged?.verdict === true).length,
+		plainCriterionPasses: qualityRows.filter((row) => row.plain.judged?.verdict === true).length,
+		wins: qualityRows.filter((row) => judgeDelta(row) > 0.001).length,
+		losses: qualityRows.filter((row) => -judgeDelta(row) > 0.001).length,
+		flowsCost: rows.reduce((total, row) => total + row.flows.cost, 0),
+		plainCost: rows.reduce((total, row) => total + row.plain.cost, 0),
+		flowsTokens: aggregateTokenUsage(rows, "flows"),
+		plainTokens: aggregateTokenUsage(rows, "plain"),
+		flowsSeconds: rows.reduce((total, row) => total + row.flows.durationMs, 0) / 1000,
+		plainSeconds: rows.reduce((total, row) => total + row.plain.durationMs, 0) / 1000,
+		baselineCostKnown: rows.every((row) => row.plain.costKnown !== false),
+	};
+}
 
 export function exclusionSummary(rows) {
 	const count = (kind, reason) => rows.filter((row) => row[kind].exclusion?.reason === reason).length;

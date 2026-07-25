@@ -60,7 +60,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `why` | (required to spawn) | One sentence justifying delegation over direct parent execution. Required for every spawning mode; `list`/`showConfig` never need it. Missing/empty ⇒ `WHY_REQUIRED`. |
 | `agentScope` | `user` | `user` = package + user agents; `project` = package + project; `all` = package + user + project. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project agents unless this is explicitly `false`. |
-| `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`. |
+| `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
 | `timeoutMs` | `36000000` | Per child process timeout (10 hours). |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
@@ -506,9 +506,12 @@ they can appear between persisted work phases and resume from `workflow.stateFil
 { "task": "...", "loop": { "body": { "agent": "operator" } }, "reflexion": { "enabled": true } }
 ```
 
-When enabled, recent lessons are read from `.pi/flow-reflections.jsonl` and
-prepended to compatible prompts. Completed `evaluate`, `orchestrate`, `graph`,
-`loop`, and `search` runs append redacted lessons to that JSONL file.
+When enabled, reflexion applies flow-wide, to every mode: recent lessons from
+`.pi/flow-reflections.jsonl` are appended to the top-level `task` before the
+mode runs, and after any run that spawned at least one child, a redacted lesson
+is recorded from the flow's final output. Lessons are injected only into the
+top-level `task` — a goal supplied solely via `evaluate.operator.task` is not
+lesson-augmented.
 
 ## Details object
 
@@ -521,7 +524,7 @@ prepended to compatible prompts. Completed `evaluate`, `orchestrate`, `graph`,
 - `agentsDir`: package/user/project directories with home paths redacted to `~`.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
-- `results`: child run summaries with redacted task preview, usage, duration, stderr, and structured error when applicable.
+- `results`: child run summaries with redacted task preview, usage, duration, stderr, and structured error when applicable. On error, `results` still contains every run that completed before the failure — a graph that ran two waves before hitting a cycle reports those runs' usage and cost alongside `error`.
 
 ## Error contract
 
