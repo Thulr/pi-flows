@@ -134,7 +134,7 @@ export function caseCwd(testCase, { dryRun = false, arm = "flows" } = {}) {
 export function flowTool() {
 	process.argv[1] = "";
 	const tools = new Map();
-	registerPiFlows({ registerCommand() {}, registerTool(tool) { tools.set(tool.name, tool); } });
+	registerPiFlows({ registerCommand() {}, registerShortcut() {}, registerTool(tool) { tools.set(tool.name, tool); } });
 	return tools.get("flow");
 }
 

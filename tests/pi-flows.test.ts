@@ -14,16 +14,20 @@ async function makeTempRepo() {
 
 function registerForTest() {
   const commands = new Map<string, any>();
+  const shortcuts = new Map<string, any>();
   const tools = new Map<string, any>();
   registerPiFlows({
     registerCommand(name: string, command: any) {
       commands.set(name, command);
     },
+    registerShortcut(key: string, shortcut: any) {
+      shortcuts.set(key, shortcut);
+    },
     registerTool(tool: any) {
       tools.set(tool.name, tool);
     },
   } as any);
-  return { commands, tools };
+  return { commands, shortcuts, tools };
 }
 
 test("redacts secret-shaped content and home paths", () => {
@@ -42,9 +46,20 @@ test("does not redact generic bearer-token terminology", () => {
 
 test("/flows argument parsing rejects typos instead of silently falling back", () => {
   assert.deepEqual(__test.parseFlowsCommandArgs("project"), { kind: "list", scope: "project" });
+  assert.deepEqual(__test.parseFlowsCommandArgs("inspect"), { kind: "inspect", scope: "user" });
   const parsed = __test.parseFlowsCommandArgs("projct");
   assert.equal(parsed.kind, "error");
   if (parsed.kind === "error") assert.match(parsed.message, /Unknown \/flows argument/);
+});
+
+test("F8 and /flows inspect expose the live inspector", async () => {
+  const { commands, shortcuts } = registerForTest();
+  const notices: string[] = [];
+  const ctx = { hasUI: true, mode: "tui", ui: { notify: (message: string) => notices.push(message) } };
+  await shortcuts.get("f8").handler(ctx);
+  await commands.get("flows").handler("inspect", ctx);
+  assert.equal(notices.filter((message) => /No child flow agent is queued or running/.test(message)).length, 2);
+  assert.match(__test.flowsHelpText(), /F8/);
 });
 
 test("concurrency validation rejects fractional and out-of-range values", () => {

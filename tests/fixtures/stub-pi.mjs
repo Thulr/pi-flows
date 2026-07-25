@@ -52,6 +52,8 @@ if (Array.isArray(reply)) {
 	reply = matched ?? reply[Math.min(callIndex, reply.length - 1)];
 }
 let exitCode = 0;
+let delayBeforeReplyMs = 0;
+let holdOpenMs = 0;
 if (reply && typeof reply === "object") {
 	for (const [relativePath, content] of Object.entries(reply.writes ?? {})) {
 		const target = path.resolve(process.cwd(), relativePath);
@@ -65,9 +67,12 @@ if (reply && typeof reply === "object") {
 	}
 	if (Array.isArray(reply.gitArgs)) execFileSync("git", reply.gitArgs.map(String), { cwd: process.cwd() });
 	exitCode = Number.isInteger(reply.exitCode) ? reply.exitCode : 0;
+	delayBeforeReplyMs = Number.isFinite(reply.delayBeforeReplyMs) ? Math.max(0, Number(reply.delayBeforeReplyMs)) : 0;
+	holdOpenMs = Number.isFinite(reply.holdOpenMs) ? Math.max(0, Number(reply.holdOpenMs)) : 0;
 	reply = reply.reply;
 }
 if (reply === undefined) reply = `stub reply for ${agent}`;
+if (delayBeforeReplyMs > 0) await new Promise((resolve) => setTimeout(resolve, delayBeforeReplyMs));
 
 const event = {
 	type: "message_end",
@@ -80,4 +85,5 @@ const event = {
 	},
 };
 process.stdout.write(`${JSON.stringify(event)}\n`);
+if (holdOpenMs > 0) await new Promise((resolve) => setTimeout(resolve, holdOpenMs));
 process.exit(exitCode);

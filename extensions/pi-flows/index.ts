@@ -28,6 +28,7 @@ import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summa
 import { configuredFastModel, resolveAgentModel } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
+import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { RUN_MODE_NAMES, activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
@@ -96,8 +97,15 @@ export const __test = {
 };
 
 export default function (pi: ExtensionAPI) {
+	const liveRuns = new FlowRunRegistry();
+
+	pi.registerShortcut("f8", {
+		description: "Inspect a running flow agent",
+		handler: async (ctx) => showFlowInspector(ctx, liveRuns, true),
+	});
+
 	pi.registerCommand("flows", {
-		description: "List available first-party flow agents",
+		description: "List and inspect first-party flow agents",
 		handler: async (args, ctx) => {
 			const parsed = parseFlowsCommandArgs(args);
 			if (parsed.kind === "error") {
@@ -110,6 +118,10 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (parsed.kind === "version") {
 				ctx.ui.notify(`pi-flows ${PI_FLOWS_VERSION}`, "info");
+				return;
+			}
+			if (parsed.kind === "inspect") {
+				await showFlowInspector(ctx, liveRuns);
 				return;
 			}
 			if (parsed.kind === "report") {
@@ -170,7 +182,7 @@ export default function (pi: ExtensionAPI) {
 			"Use flow agentScope:'all' only for trusted repositories because project-local flow agents are repo-controlled prompts.",
 		],
 		parameters: FlowParams,
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const discovery = discoverFlowAgents(ctx.cwd, agentScope);
 			const catalog = createAgentCatalog(discovery, agentScope);
@@ -273,40 +285,50 @@ export default function (pi: ExtensionAPI) {
 					: undefined;
 			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
 			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel) : undefined;
-			updateFlowUi(ctx, makeDetails(mode)([]));
+			let liveDetails = makeDetails(mode)([]);
+			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets);
+			updateFlowUi(ctx, liveDetails);
 			const statusOnUpdate: Update = (partial) => {
-				updateFlowUi(ctx, partial.details);
+				liveDetails = partial.details;
+				liveRuns.update(toolCallId, liveDetails);
+				updateFlowUi(ctx, liveDetails);
 				onUpdate?.(partial);
 			};
 
-			const output = await handler({
-				params,
-				discovery,
-				policy,
-				agentScope,
-				defaultCwd: ctx.cwd,
-				signal,
-				onUpdate: statusOnUpdate,
-				budget,
-				recordSpan: traceSink?.record,
-				requestApproval: async (title, message) => {
-					if (!ctx.hasUI) return "required";
-					return await ctx.ui.confirm(title, message) ? "approved" : "denied";
-				},
-				makeDetails,
-			});
-			const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text);
-			if (finalCheckpointError) {
-				output.details.error = finalCheckpointError;
-				output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];
+			try {
+				const output = await handler({
+					params,
+					discovery,
+					policy,
+					agentScope,
+					defaultCwd: ctx.cwd,
+					signal,
+					onUpdate: statusOnUpdate,
+					budget,
+					recordSpan: traceSink?.record,
+					requestApproval: async (title, message) => {
+						if (!ctx.hasUI) return "required";
+						return await ctx.ui.confirm(title, message) ? "approved" : "denied";
+					},
+					makeDetails,
+				});
+				const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text);
+				if (finalCheckpointError) {
+					output.details.error = finalCheckpointError;
+					output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];
+				}
+				liveDetails = output.details;
+				liveRuns.update(toolCallId, liveDetails);
+				updateFlowUi(ctx, liveDetails);
+				appendFlowSessionEntry(pi, liveDetails);
+				if (traceSink) {
+					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
+					await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
+				}
+				return output;
+			} finally {
+				liveRuns.finish(toolCallId, liveDetails);
 			}
-			updateFlowUi(ctx, output.details);
-			appendFlowSessionEntry(pi, output.details);
-			if (traceSink) {
-				const ok = !output.details.error && !output.details.results.some((result) => result.exitCode !== -1 && isFailed(result));
-				await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
-			}
-			return output;
 		},
 		renderCall(args, theme) {
 			const scope = args.agentScope ?? "user";
