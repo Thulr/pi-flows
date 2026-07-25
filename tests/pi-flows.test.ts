@@ -674,6 +674,7 @@ test("resolveAgentModel: flow model > flow tier > agent pin > agent tier > pi de
   assert.equal(__test.resolveAgentModel({ tier: "fast" }, {}, tiers), "fast-x", "fast uses the configured fast model");
   assert.equal(__test.resolveAgentModel({ tier: "deep" }, {}, tiers), "deep-x", "deep uses the configured deep model");
   assert.equal(__test.resolveAgentModel({ model: "pinned" }, { tier: "deep" }, {}), "pinned", "an unmapped flow-call tier falls through to the agent pin");
+  assert.equal(__test.resolveAgentModel({ model: "pinned", tier: "deep" }, { tier: "capable" }, tiers), undefined, "a flow-call capable tier forces the default model even against an agent pin");
   assert.equal(__test.resolveAgentModel({ tier: "fast" }, {}, {}), undefined, "an unmapped tier defers to the pi default");
   assert.equal(__test.resolveAgentModel({ tier: "capable" }, {}, tiers), undefined, "capable defers to the user's pi default");
   assert.equal(__test.resolveAgentModel({}, {}, tiers), undefined, "no tier/model defers to the pi default");

@@ -68,7 +68,8 @@ pi runs this as an evaluate loop — the `operator` builds the change, a separat
 ```json
 {
   "task": "Add a /health endpoint that returns 200 and a JSON status, with a test",
-  "evaluate": { "checkCommand": "npm test", "maxIterations": 3 }
+  "evaluate": { "checkCommand": "npm test", "maxIterations": 3 },
+  "why": "the result needs an author-independent critic plus a deterministic gate"
 }
 ```
 
@@ -149,7 +150,7 @@ Cost is bounded as well as count and time: pass `maxCostUsd` / `maxTokens` to ca
 
 You don't type these objects — you describe what you want and pi builds the call. This is the exact contract behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
 
-Every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution (missing it returns `WHY_REQUIRED` before any child spawns). The Single and Parallel examples show it; later examples omit it for brevity.
+Every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution (missing it returns `WHY_REQUIRED` before any child spawns).
 
 ### List
 
@@ -192,7 +193,8 @@ Defaults: `concurrency=4` (per-call). `maxParallelTasks` is a fixed hard cap of 
   "chain": [
     { "agent": "recon", "task": "Research this task: {task}" },
     { "agent": "strategist", "task": "Plan using this context:\n\n{previous}" }
-  ]
+  ],
+  "why": "research and planning benefit from a fresh planning context fed a bounded handoff"
 }
 ```
 
@@ -208,7 +210,8 @@ Chain `{previous}` handoffs are capped, redacted, and scanned for injection befo
     "redteam": { "agent": "redteam" },
     "checkCommand": "npm test",
     "maxIterations": 3
-  }
+  },
+  "why": "the result needs an author-independent critic plus a deterministic gate"
 }
 ```
 
@@ -221,7 +224,8 @@ Two optional reliability levers: **`checkCommand`** is a deterministic gate (a s
 ```json
 {
   "task": "Is /^(a+)+$/ vulnerable to catastrophic backtracking?",
-  "vote": { "voters": [{ "agent": "recon" }, { "agent": "overwatch" }], "debrief": { "agent": "debrief" } }
+  "vote": { "voters": [{ "agent": "recon" }, { "agent": "overwatch" }], "debrief": { "agent": "debrief" } },
+  "why": "independent votes suppress a single model's non-deterministic error"
 }
 ```
 
@@ -230,7 +234,7 @@ Runs the same task across ≥2 voters (use different models to break correlated 
 ### Route (classify → dispatch)
 
 ```json
-{ "task": "The billing webhook returns 500s in prod", "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "recon" } }
+{ "task": "The billing webhook returns 500s in prod", "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "recon" }, "why": "the right specialist for this request is not obvious up front" }
 ```
 
 The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits `ROUTE: none` when nothing fits, falling back instead of forcing a guess.
@@ -247,7 +251,8 @@ The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits
     "verify": { "agent": "overwatch" },
     "verifyPolicy": "revise",
     "maxSubtasks": 5
-  }
+  },
+  "why": "a broad cross-codebase map is more reading than one context should serialize"
 }
 ```
 
@@ -265,7 +270,8 @@ The `commander` splits the task into a JSON list of subtasks, `recon` workers ru
       { "id": "summary", "agent": "strategist", "dependsOn": ["frontend", "backend"], "task": "Plan from:\n{node.frontend}\n{node.backend}" }
     ],
     "debrief": { "agent": "debrief" }
-  }
+  },
+  "why": "independent areas fan out while the summary depends on both"
 }
 ```
 
@@ -276,7 +282,8 @@ Ready nodes run by dependency wave, with the same caps, redaction, trace, and wr
 ```json
 {
   "task": "Draft release notes",
-  "loop": { "body": { "agent": "operator" }, "judge": { "agent": "redteam" }, "maxIterations": 3 }
+  "loop": { "body": { "agent": "operator" }, "judge": { "agent": "redteam" }, "maxIterations": 3 },
+  "why": "drafting needs bounded revise-until-done with an independent judge"
 }
 ```
 
@@ -287,7 +294,8 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
 ```json
 {
   "task": "Pick a cache strategy",
-  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam", "tools": "none" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 }
+  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam", "tools": "none" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 },
+  "why": "candidate designs need independent generation and scoring"
 }
 ```
 
@@ -306,7 +314,8 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
       { "id": "apply", "agent": "operator", "task": "Implement the approved plan:\n{phase.plan}", "checkCommand": "npm test" }
     ],
     "debrief": { "agent": "debrief" }
-  }
+  },
+  "why": "the migration needs gated phases with a resumable human approval"
 }
 ```
 
@@ -326,7 +335,8 @@ call with `workflow.resume:true` to continue from the persisted state.
     ],
     "integrator": { "agent": "operator" },
     "checkCommand": "npm test"
-  }
+  },
+  "why": "two concurrent writers need isolated worktrees and a verified integration branch"
 }
 ```
 
@@ -345,7 +355,8 @@ branch for explicit review or merge.
     "participants": [{ "agent": "strategist" }, { "agent": "analyst" }],
     "adjudicator": { "agent": "overwatch" },
     "rounds": 2
-  }
+  },
+  "why": "user asked for opposing advocates and independent adjudication"
 }
 ```
 
@@ -368,7 +379,8 @@ constraints.
       { "agent": "analyst", "task": "Extract evidence from incident.md only" }
     ],
     "debrief": { "agent": "debrief" }
-  }
+  },
+  "why": "three sources must be cited and reconciled without smoothing conflicts away"
 }
 ```
 
@@ -388,7 +400,8 @@ evidence needed instead of smoothing disagreement into false consensus.
     "intervalMs": 5000,
     "maxChecks": 6,
     "reactor": { "agent": "analyst" }
-  }
+  },
+  "why": "a bounded probe must fire before a fresh context diagnoses the event"
 }
 ```
 
@@ -402,7 +415,7 @@ call returns `MONITOR_NOT_TRIGGERED` with the last observations.
 Any mode accepts a cumulative spend ceiling and a trace sink:
 
 ```json
-{ "task": "...", "orchestrate": {}, "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
+{ "task": "...", "orchestrate": {}, "why": "...", "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
 ```
 
 `maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.

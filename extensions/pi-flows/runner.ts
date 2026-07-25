@@ -62,11 +62,14 @@ function childExtensionsDisabled(): boolean {
  * Concrete model for a child run: flow model override > flow tier override >
  * agent pin > agent tier > pi default (undefined = omit --model, child uses the
  * user's default). A call-site tier beats an agent's pinned model because the
- * parent is expressing per-task intent; an unmapped tier falls through so flows
- * still run with zero tier configuration.
+ * parent is expressing per-task intent — including tier "capable", which always
+ * resolves and forces the default model even on a fast/deep agent. Only an
+ * *unmapped* fast/deep call-site tier falls through, so flows still run with
+ * zero tier configuration.
  */
 export function resolveAgentModel(agent: { model?: string; tier?: string }, options: { model?: string; tier?: string }, tiers: TierModels): string | undefined {
 	if (options.model) return options.model;
+	if (options.tier === "capable") return undefined;
 	const optionsTierModel = tierModel(options.tier, tiers);
 	if (optionsTierModel) return optionsTierModel;
 	if (agent.model) return agent.model;
