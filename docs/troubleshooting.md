@@ -336,7 +336,7 @@ Cause: a flow requested a human checkpoint (`checkpoint.before`) in a headless
 non-UI context, so pi-flows could not collect approval.
 
 Fix: run in an interactive pi session, remove the checkpoint for non-interactive
-runs, or replace the human gate with a deterministic gate such as
+runs, or replace the checkpoint with a deterministic gate such as
 `evaluate.checkCommand`.
 
 ### `CHECKPOINT_APPROVAL_DENIED`

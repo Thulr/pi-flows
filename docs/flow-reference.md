@@ -71,7 +71,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
-| `checkpoint` | (none) | Optional human approval gate. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
+| `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
 | `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. Prefer `tier` unless the user named a concrete model. |
 | `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Portable model selection: resolves through `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` when the user mapped them, else the default pi model. Resolution order: call `model` > call `tier` > agent `model` pin > agent `tier` > pi default; a call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent, while an unmapped call-level `fast`/`deep` falls through. |
@@ -487,7 +487,7 @@ automation.
 
 ## Human checkpoints and Reflexion
 
-`checkpoint` adds an explicit human approval gate:
+`checkpoint` adds an explicit human approval point:
 
 ```json
 { "task": "...", "evaluate": {}, "checkpoint": { "before": "spawn" } }
