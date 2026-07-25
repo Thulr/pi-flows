@@ -10,7 +10,11 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-const [pack] = JSON.parse(result.stdout);
+// npm <= 11 emits an array of pack reports; npm >= 12 emits an object keyed by
+// package name. The publish workflow installs npm@latest, so handle both.
+const parsed = JSON.parse(result.stdout);
+const pack = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
+assert.ok(pack?.files, `unrecognized npm pack --json output shape: ${result.stdout.slice(0, 200)}`);
 const files = pack.files.map((file) => file.path);
 const forbidden = [/^audit-artifacts\//, /^docs\/audits\//, /^docs\/research\//, /^node_modules\//, /^tests\//, /^scripts\//, /\.log$/];
 for (const file of files) {
