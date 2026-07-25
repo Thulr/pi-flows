@@ -110,7 +110,7 @@ test("F8 follows a child live and closing the overlay does not abort it", async 
 			},
 		};
 		const ctx = { cwd, hasUI: true, ui } as any;
-		const running = flow.execute("live-flow", { agent: "recon", task: "inspect auth" }, new AbortController().signal, undefined, ctx);
+		const running = flow.execute("live-flow", { agent: "recon", task: "inspect auth", why: "inspector test needs a live child" }, new AbortController().signal, undefined, ctx);
 		await waitForCall(cwd);
 		await shortcuts.get("f8").handler(ctx);
 		const output = await running;

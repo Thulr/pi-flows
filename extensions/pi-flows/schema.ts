@@ -2,11 +2,16 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, DEFAULT_TIMEOUT_MS, MAX_DEBATE_ROUNDS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, MAX_PARALLEL_TASKS, MAX_WORKFLOW_PHASES } from "./types.ts";
 
+const TierDescription = 'Capability tier for this child, portable across providers: "fast" for mechanical scouting/extraction/classification, "capable" (default) for ordinary work, "deep" for the hardest reasoning or final adjudication. Resolves to the user-configured PI_FLOWS_FAST_MODEL / PI_FLOWS_DEEP_MODEL and falls back to their default model when unmapped. Prefer tier over model unless the user named a concrete model.';
+
+export const FlowTier = StringEnum(["fast", "capable", "deep"] as const, { description: TierDescription });
+
 export const FlowTask = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
 	task: Type.String({ minLength: 1, description: "Complete task for that agent, including the target and expected output. Do not use vague one-word tasks. Chain tasks may use {task} and {previous}." }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this agent process" })),
-	model: Type.Optional(Type.String({ description: "Optional model override for this agent process" })),
+	model: Type.Optional(Type.String({ description: "Optional exact-model override for this agent process. Prefer tier unless the user named a concrete model." })),
+	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(
 		Type.String({ description: 'Optional comma-separated tool override. Use "none" for no built-in tools or "default" for pi defaults.' }),
 	),
@@ -16,7 +21,8 @@ export const FlowTask = Type.Object({
 
 export const FlowAgentRef = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run for this role. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
-	model: Type.Optional(Type.String({ description: "Optional model override for this role" })),
+	model: Type.Optional(Type.String({ description: "Optional exact-model override for this role. Prefer tier unless the user named a concrete model." })),
+	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this role's process" })),
 });
@@ -24,7 +30,8 @@ export const FlowAgentRef = Type.Object({
 export const FlowEvaluateOperatorRef = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Generator agent for evaluate mode. Usually operator." }),
 	task: Type.Optional(Type.String({ minLength: 1, description: "Optional alias for the evaluate goal when top-level task is omitted. Prefer top-level task when possible." })),
-	model: Type.Optional(Type.String({ description: "Optional model override for the generator" })),
+	model: Type.Optional(Type.String({ description: "Optional exact-model override for the generator. Prefer tier unless the user named a concrete model." })),
+	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the generator process" })),
 });
@@ -97,7 +104,8 @@ export const FlowGraphNode = Type.Object({
 	task: Type.String({ minLength: 1, description: "Task for this graph node. May use {task} and {node.<id>} placeholders for dependency outputs." }),
 	dependsOn: Type.Optional(Type.Array(Type.String(), { description: "Node ids that must complete before this node can run." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this node process" })),
-	model: Type.Optional(Type.String({ description: "Optional model override for this node" })),
+	model: Type.Optional(Type.String({ description: "Optional exact-model override for this node. Prefer tier unless the user named a concrete model." })),
+	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this node's task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this node's return.", default: false })),
@@ -138,7 +146,8 @@ export const FlowWorkflowPhase = Type.Object({
 	})),
 	checkCommand: Type.Optional(Type.String({ minLength: 1, description: "Deterministic gate run after this work phase. The workflow stops if it exits non-zero." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this phase and its checkCommand." })),
-	model: Type.Optional(Type.String({ description: "Optional model override for this phase." })),
+	model: Type.Optional(Type.String({ description: "Optional exact-model override for this phase. Prefer tier unless the user named a concrete model." })),
+	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this phase task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this phase output.", default: false })),
@@ -157,7 +166,8 @@ export const FlowWorktreeTask = Type.Object({
 	id: Type.String({ minLength: 1, description: "Stable task id used in worker and branch labels." }),
 	agent: Type.String({ minLength: 1, description: "Write-capable agent that works in its own git worktree." }),
 	task: Type.String({ minLength: 1, description: "Independent implementation task for this worktree." }),
-	model: Type.Optional(Type.String({ description: "Optional model override for this worker." })),
+	model: Type.Optional(Type.String({ description: "Optional exact-model override for this worker. Prefer tier unless the user named a concrete model." })),
+	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this worker task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require evidence in this worker output.", default: true })),
@@ -219,7 +229,13 @@ export const FlowReflexion = Type.Object({
 
 export const FlowParams = Type.Object({
 	list: Type.Optional(Type.Boolean({ description: "List available flow agents instead of running one" })),
-	showConfig: Type.Optional(Type.Boolean({ description: "Show effective flow config, agent dirs, discovery issues, and defaults without running an agent" })),
+	showConfig: Type.Optional(Type.Boolean({ description: "Show effective flow config, agent dirs, tier mappings, discovery issues, and defaults without running an agent" })),
+	why: Type.Optional(
+		Type.String({
+			minLength: 1,
+			description: "One sentence: why this work needs isolated child agents instead of being done directly in the parent context (explicit user request for delegation, fan-out one context cannot hold, or author-independent verification). Required for every mode that spawns agents; list/showConfig do not need it. If you cannot state a reason, do the work directly instead of calling flow.",
+		}),
+	),
 	agent: Type.Optional(Type.String({ minLength: 1, description: "Single-agent mode: agent name, e.g. recon for a read-only scout or analyst for deeper investigation. Use with task; never pass an empty agent." })),
 	task: Type.Optional(Type.String({ minLength: 1, description: "Single-agent task, shared {task} value for chain steps, or the goal/contract for evaluate mode. For a named-agent request like 'ask recon to inspect package.json', set agent:'recon' and put the complete requested work here; never use a vague one-word task." })),
 	tasks: Type.Optional(Type.Array(FlowTask, { description: "Parallel mode: tasks to run concurrently" })),
@@ -259,10 +275,11 @@ export const FlowParams = Type.Object({
 	recordContent: Type.Optional(Type.Boolean({ description: "Store and return child message content after redaction. Set false to retain only structural usage/status data.", default: true })),
 	redactSecrets: Type.Optional(Type.Boolean({ description: "Redact secret-shaped strings, emails, and home-directory paths from content/details. Default true.", default: true })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for single-agent mode" })),
-	model: Type.Optional(Type.String({ description: "Flow-wide model fallback. Applies to every delegated role unless that task or role sets its own model." })),
+	model: Type.Optional(Type.String({ description: "Flow-wide exact-model fallback. Applies to every delegated role unless that task or role sets its own model. Prefer tier unless the user named a concrete model." })),
+	tier: Type.Optional(StringEnum(["fast", "capable", "deep"] as const, { description: `Flow-wide capability tier fallback. Applies to every delegated role unless that task or role sets its own tier or model. ${TierDescription}` })),
 	tools: Type.Optional(
 		Type.String({ description: 'Comma-separated tool override for single-agent mode. Use "none" or "default".' }),
 	),
 }, {
-	description: "Exactly one flow mode per call. For a named agent request, fill both agent and task, e.g. {\"agent\":\"recon\",\"task\":\"inspect package.json\"}. For parallel inspection, use tasks with concrete agent names. For implementation plus critique, use {\"task\":\"...\",\"evaluate\":{}}.",
+	description: "Exactly one flow mode per call, and every spawning call must set why. For a named agent request, fill both agent and task, e.g. {\"agent\":\"recon\",\"task\":\"inspect package.json\",\"why\":\"user asked for a delegated scout\"}. For parallel inspection, use tasks with concrete agent names. For implementation plus critique, use {\"task\":\"...\",\"evaluate\":{},\"why\":\"...\"}.",
 });

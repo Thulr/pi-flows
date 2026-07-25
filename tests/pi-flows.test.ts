@@ -115,7 +115,7 @@ test("headless project-local agents fail closed by default", async () => {
 
   const result = await flow.execute(
     "tool-call-id",
-    { agent: "danger-project-agent", task: "secret=do-not-leak", agentScope: "project" },
+    { why: "test: repo-controlled agent must fail closed", agent: "danger-project-agent", task: "secret=do-not-leak", agentScope: "project" },
     new AbortController().signal,
     undefined,
     { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
@@ -147,12 +147,23 @@ test("showConfig is a no-run smoke path", async () => {
 test("flow tool guidance discourages small-task overuse", () => {
   const { tools } = registerForTest();
   const flow = tools.get("flow");
-  assert.match(flow.description, /substantial delegated work/);
-  assert.match(flow.description, /simple answers, small lookups, tiny edits/);
+  assert.match(flow.description, /Call flow only when at least one of these holds/);
+  assert.match(flow.description, /do the work directly in your own context — that is the default/);
+  assert.match(flow.description, /costs real tokens and wall-clock time/);
+  assert.match(flow.description, /must set `why`/);
   assert.match(flow.description, /Bundled agents: recon, analyst, strategist/);
+  assert.match(flow.promptSnippet, /Work directly by default/);
   assert.ok(
     flow.promptGuidelines.some((line: string) => /Do not use flow for simple factual answers/.test(line)),
     "model-facing guidelines should include explicit negative selection guidance",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /Always fill `why`/.test(line)),
+    "model-facing guidelines should require a delegation justification",
+  );
+  assert.ok(
+    flow.promptGuidelines.some((line: string) => /tier 'fast' for mechanical scouting/.test(line)),
+    "model-facing guidelines should teach portable tier-based model selection",
   );
   assert.ok(
     flow.promptGuidelines.some((line: string) => /separate agent, read-only scout, delegated investigation/.test(line)),
@@ -199,7 +210,7 @@ test("too many tasks returns a structured limit error without spawning", async (
   const tasks = Array.from({ length: 9 }, (_, index) => ({ agent: "recon", task: `task ${index}` }));
   const result = await flow.execute(
     "tool-call-id",
-    { tasks },
+    { why: "test: exceed the parallel task cap", tasks },
     new AbortController().signal,
     undefined,
     { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
@@ -264,7 +275,7 @@ test("evaluate mode without a task fails fast without spawning", async () => {
   const flow = tools.get("flow");
   const result = await flow.execute(
     "tool-call-id",
-    { evaluate: {} },
+    { why: "test: evaluate without a goal", evaluate: {} },
     new AbortController().signal,
     undefined,
     { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
@@ -301,8 +312,8 @@ test("parseSubtasks reads string arrays, {task} arrays, and caps to max", () => 
 });
 
 test("detectRunMode recognizes vote, route, orchestrate, and conflicts", () => {
-  assert.deepEqual(__test.detectRunMode({ task: "x", vote: {} }), { mode: "vote" });
-  assert.deepEqual(__test.detectRunMode({ task: "x", route: {} }), { mode: "route" });
+  assert.deepEqual(__test.detectRunMode({ why: "test", task: "x", vote: {} }), { mode: "vote" });
+  assert.deepEqual(__test.detectRunMode({ why: "test", task: "x", route: {} }), { mode: "route" });
   assert.deepEqual(__test.detectRunMode({ task: "x", orchestrate: {} }), { mode: "orchestrate" });
   assert.deepEqual(__test.detectRunMode({ task: "x", graph: { nodes: [] } }), { mode: "graph" });
   assert.deepEqual(__test.detectRunMode({ task: "x", loop: { body: { agent: "operator" } } }), { mode: "loop" });
@@ -326,18 +337,18 @@ test("vote/route/orchestrate fail fast on bad params without spawning", async ()
   const ctx = { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } };
   const signal = new AbortController().signal;
 
-  const noVoters = await flow.execute("id", { task: "x", vote: {} }, signal, undefined, ctx);
+  const noVoters = await flow.execute("id", { why: "test", task: "x", vote: {} }, signal, undefined, ctx);
   assert.equal(noVoters.details.error.code, "INVALID_MODE");
   assert.equal(noVoters.details.mode, "vote");
 
-  const tooFew = await flow.execute("id", { task: "x", vote: { agent: "recon", count: 1 } }, signal, undefined, ctx);
+  const tooFew = await flow.execute("id", { why: "test", task: "x", vote: { agent: "recon", count: 1 } }, signal, undefined, ctx);
   assert.equal(tooFew.details.error.code, "TOO_FEW_VOTERS");
 
-  const noCandidates = await flow.execute("id", { task: "x", route: {} }, signal, undefined, ctx);
+  const noCandidates = await flow.execute("id", { why: "test", task: "x", route: {} }, signal, undefined, ctx);
   assert.equal(noCandidates.details.error.code, "INVALID_MODE");
   assert.equal(noCandidates.details.mode, "route");
 
-  const noGoal = await flow.execute("id", { orchestrate: {} }, signal, undefined, ctx);
+  const noGoal = await flow.execute("id", { why: "test", orchestrate: {} }, signal, undefined, ctx);
   assert.equal(noGoal.details.error.code, "INVALID_MODE");
   assert.equal(noGoal.details.mode, "orchestrate");
 });
@@ -351,7 +362,7 @@ test("nested flow calls are refused past the depth cap without spawning", async 
   try {
     const result = await flow.execute(
       "id",
-      { agent: "recon", task: "x" },
+      { why: "test: depth cap must refuse nested spawning", agent: "recon", task: "x" },
       new AbortController().signal,
       undefined,
       { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
@@ -625,7 +636,7 @@ test("project-local panel critics still fail closed in headless evaluate runs", 
   const flow = tools.get("flow");
   const result = await flow.execute(
     "tool-call-id",
-    { task: "secret=do-not-leak", evaluate: { redteam: [{ agent: "redteam" }, { agent: "panel-critic-project" }] }, agentScope: "project" },
+    { why: "test: project panel critics fail closed", task: "secret=do-not-leak", evaluate: { redteam: [{ agent: "redteam" }, { agent: "panel-critic-project" }] }, agentScope: "project" },
     new AbortController().signal,
     undefined,
     { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
@@ -645,7 +656,7 @@ test("project-local default evaluate roles fail closed in headless runs", async 
   const flow = tools.get("flow");
   const result = await flow.execute(
     "tool-call-id",
-    { task: "secret=do-not-leak", evaluate: {}, agentScope: "project" },
+    { why: "test: project default roles fail closed", task: "secret=do-not-leak", evaluate: {}, agentScope: "project" },
     new AbortController().signal,
     undefined,
     { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify: () => undefined } },
@@ -655,25 +666,35 @@ test("project-local default evaluate roles fail closed in headless runs", async 
   assert(!JSON.stringify(result).includes("do-not-leak"), "task secret must not leak in the refusal");
 });
 
-test("resolveAgentModel: flow override > agent pin > fast-tier override > pi default", () => {
-  assert.equal(__test.resolveAgentModel({ tier: "fast" }, "override", "fast-x"), "override", "a flow-call model override wins");
-  assert.equal(__test.resolveAgentModel({ model: "pinned", tier: "fast" }, undefined, "fast-x"), "pinned", "an explicit agent.model pin wins over its tier");
-  assert.equal(__test.resolveAgentModel({ tier: "fast" }, undefined, "fast-x"), "fast-x", "fast uses the configured fast model");
-  assert.equal(__test.resolveAgentModel({ tier: "fast" }, undefined, undefined), undefined, "fast with no configured model defers to the pi default");
-  assert.equal(__test.resolveAgentModel({ tier: "capable" }, undefined, "fast-x"), undefined, "capable defers to the user's pi default");
-  assert.equal(__test.resolveAgentModel({}, undefined, "fast-x"), undefined, "no tier/model defers to the pi default");
+test("resolveAgentModel: flow model > flow tier > agent pin > agent tier > pi default", () => {
+  const tiers = { fast: "fast-x", deep: "deep-x" };
+  assert.equal(__test.resolveAgentModel({ tier: "fast" }, { model: "override" }, tiers), "override", "a flow-call model override wins");
+  assert.equal(__test.resolveAgentModel({ model: "pinned" }, { tier: "deep" }, tiers), "deep-x", "a flow-call tier expresses per-task intent and beats the agent pin");
+  assert.equal(__test.resolveAgentModel({ model: "pinned", tier: "fast" }, {}, tiers), "pinned", "an explicit agent.model pin wins over its own tier");
+  assert.equal(__test.resolveAgentModel({ tier: "fast" }, {}, tiers), "fast-x", "fast uses the configured fast model");
+  assert.equal(__test.resolveAgentModel({ tier: "deep" }, {}, tiers), "deep-x", "deep uses the configured deep model");
+  assert.equal(__test.resolveAgentModel({ model: "pinned" }, { tier: "deep" }, {}), "pinned", "an unmapped flow-call tier falls through to the agent pin");
+  assert.equal(__test.resolveAgentModel({ model: "pinned", tier: "deep" }, { tier: "capable" }, tiers), undefined, "a flow-call capable tier forces the default model even against an agent pin");
+  assert.equal(__test.resolveAgentModel({ tier: "fast" }, {}, {}), undefined, "an unmapped tier defers to the pi default");
+  assert.equal(__test.resolveAgentModel({ tier: "capable" }, {}, tiers), undefined, "capable defers to the user's pi default");
+  assert.equal(__test.resolveAgentModel({}, {}, tiers), undefined, "no tier/model defers to the pi default");
 });
 
-test("configuredFastModel reads PI_FLOWS_FAST_MODEL, trimmed", () => {
-  const prev = process.env.PI_FLOWS_FAST_MODEL;
+test("configuredTierModels reads PI_FLOWS_FAST_MODEL and PI_FLOWS_DEEP_MODEL, trimmed", () => {
+  const prevFast = process.env.PI_FLOWS_FAST_MODEL;
+  const prevDeep = process.env.PI_FLOWS_DEEP_MODEL;
   try {
     process.env.PI_FLOWS_FAST_MODEL = "  openai-codex/gpt-5.4-mini  ";
-    assert.equal(__test.configuredFastModel(), "openai-codex/gpt-5.4-mini");
+    process.env.PI_FLOWS_DEEP_MODEL = "  anthropic/claude-fable-5  ";
+    assert.deepEqual(__test.configuredTierModels(), { fast: "openai-codex/gpt-5.4-mini", deep: "anthropic/claude-fable-5" });
     delete process.env.PI_FLOWS_FAST_MODEL;
-    assert.equal(__test.configuredFastModel(), undefined);
+    delete process.env.PI_FLOWS_DEEP_MODEL;
+    assert.deepEqual(__test.configuredTierModels(), { fast: undefined, deep: undefined });
   } finally {
-    if (prev === undefined) delete process.env.PI_FLOWS_FAST_MODEL;
-    else process.env.PI_FLOWS_FAST_MODEL = prev;
+    if (prevFast === undefined) delete process.env.PI_FLOWS_FAST_MODEL;
+    else process.env.PI_FLOWS_FAST_MODEL = prevFast;
+    if (prevDeep === undefined) delete process.env.PI_FLOWS_DEEP_MODEL;
+    else process.env.PI_FLOWS_DEEP_MODEL = prevDeep;
   }
 });
 
@@ -683,6 +704,6 @@ test("bundled agents declare portable tiers, not hard-coded vendor models", asyn
   const recon = agents.find((agent) => agent.name === "recon");
   const redteam = agents.find((agent) => agent.name === "redteam");
   assert.equal(recon?.tier, "fast", "recon should be a fast-tier agent");
-  assert.equal(redteam?.tier, "capable", "redteam should be a capable-tier agent");
+  assert.equal(redteam?.tier, "deep", "redteam is an adversarial critic and should be a deep-tier agent");
   assert.ok(!recon?.model && !redteam?.model, "bundled agents should not hard-code a vendor model");
 });

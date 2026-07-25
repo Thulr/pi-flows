@@ -25,7 +25,7 @@ import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.t
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
-import { configuredFastModel, resolveAgentModel } from "./runner.ts";
+import { configuredTierModels, resolveAgentModel } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
@@ -85,7 +85,7 @@ export const __test = {
 	budgetExceeded,
 	chargeBudget,
 	resolveAgentModel,
-	configuredFastModel,
+	configuredTierModels,
 	appendReturnContract,
 	canMutateWorkspace,
 	validateSharedWriteCwd,
@@ -149,36 +149,26 @@ export default function (pi: ExtensionAPI) {
 		name: "flow",
 		label: "Flow",
 		description: [
-			"Run first-party flow agents in isolated pi subprocesses for substantial delegated work.",
-			"When the user explicitly asks to delegate substantial work, use a separate agent, or split investigation across agents/modules, call flow without asking; choose parallel or orchestrate for a broad map.",
-			"Do not use this as the default path for simple answers, small lookups, tiny edits, or shell commands the parent can do directly.",
-			"Modes: list, showConfig, single, parallel, chain, evaluate, vote, route, orchestrate, graph, loop, search, workflow (phase gates + resumable approvals), worktree (isolated writers + integration branch), debate (advocates + adjudicator), dossier (evidence map/reduce), monitor (bounded probe + reactor).",
-			"Default scope includes bundled agents and ~/.pi/agent/flow-agents; project-local .pi/flow-agents requires agentScope project/all and explicit trust in headless runs.",
+			"Spawn delegated flow agents in isolated pi subprocesses. Each child is a full separate model context that costs real tokens and wall-clock time — typically several times the cost of answering directly, so the isolation must earn its cost.",
+			"Call flow only when at least one of these holds: (1) the user explicitly asked for delegation, separate agents, parallel investigation, or an independent reviewer; (2) the work spans more independent reading or writing than one context can hold; (3) the output needs verification that must be isolated from its author (separate critic, vote, or deterministic gate).",
+			"If none of those hold, do the work directly in your own context — that is the default. Every spawning call must set `why` with the one-sentence reason delegation beats working directly; calls without it are refused.",
 			"Bundled agents: recon, analyst, strategist, operator, overwatch, redteam, controller, commander, debrief.",
-			"Exact argument examples: ask recon to inspect X => {\"agent\":\"recon\",\"task\":\"inspect X\"}; inspect A and B in parallel => {\"tasks\":[{\"agent\":\"recon\",\"task\":\"inspect A\"},{\"agent\":\"recon\",\"task\":\"inspect B\"}]}; build with separate critique => {\"task\":\"...\",\"evaluate\":{}}; split and synthesize a broad map => {\"task\":\"map X\",\"orchestrate\":{}}.",
+			"Core shapes: one delegated scout => {\"agent\":\"recon\",\"task\":\"inspect X\",\"why\":\"...\"}; parallel fan-out => {\"tasks\":[{\"agent\":\"recon\",\"task\":\"inspect A\"},{\"agent\":\"recon\",\"task\":\"inspect B\"}],\"why\":\"...\"}; build with separate critique => {\"task\":\"...\",\"evaluate\":{},\"why\":\"...\"}. Further modes (chain, vote, route, orchestrate, graph, loop, search, workflow, worktree, debate, dossier, monitor) are documented in their parameter schemas.",
+			"Default scope includes bundled agents and ~/.pi/agent/flow-agents; project-local .pi/flow-agents requires agentScope project/all and explicit trust in headless runs.",
 		].join(" "),
-		promptSnippet: "Use flow for explicit agent delegation and substantial work that benefits from isolated context windows",
+		promptSnippet: "Work directly by default; call flow only for explicit delegation requests or work that genuinely needs isolated contexts, fan-out, or an independent critic",
 		promptGuidelines: [
-			"Use flow only when the added child-process cost is justified by isolation, parallelism, a separate reviewer, or a bounded multi-step workflow.",
-			"Treat 'delegate', 'have agents', 'use a separate agent', and 'split investigation across modules' as explicit flow requests when the work is substantial; use orchestrate or parallel for broad maps, unless the user says not to delegate.",
-			"Do not use flow for simple factual answers, small code lookups, minor single-file edits, obvious shell commands, or tasks you can complete cheaply in the parent context.",
-			"When the task is small or already clear, answer or edit directly and reserve flow for later if exploration, verification, or fan-out becomes necessary.",
-			"When the user asks for a separate agent, read-only scout, delegated investigation, parallel inspection, independent reviewer, or critic loop, call flow directly without asking them to invoke it by name.",
+			"Default to working directly in your own context. A flow child is a separate pi subprocess with its own full model context — it costs real tokens and latency, so spawning must be justified by isolation, fan-out, or independent verification, not by a mode name that happens to match the task.",
+			"Do not use flow for simple factual answers, small code lookups, minor single-file edits, obvious shell commands, or tasks you can complete cheaply in the parent context. When the task is small or already clear, answer or edit directly and reserve flow for later if exploration, verification, or fan-out becomes genuinely necessary.",
+			"When the user asks for a separate agent, read-only scout, delegated investigation, parallel inspection, independent reviewer, or critic loop, call flow directly without asking them to invoke it by name; treat 'delegate', 'have agents', 'use a separate agent', and 'split investigation across modules' as explicit flow requests.",
+			"Always fill `why` with the one-sentence justification for spawning (which of: explicit user request, fan-out one context cannot hold, author-independent verification). If you cannot state one, that is the signal to work directly instead.",
 			"When calling a named agent, copy the complete work request into task; do not send vague one-word tasks like \"Inspect\".",
-			"Map plain English to flow modes: read-only repo scouting -> single recon/analyst; independent areas in parallel -> parallel; implementation plus separate review or command gate -> evaluate; broad codebase mapping -> orchestrate; explicit gated phases or resumable approvals -> workflow; concurrent writers needing isolation and integration -> worktree; explicitly requested opposing advocates/rebuttal/adjudication -> debate; multi-source evidence reconciliation -> dossier; bounded poll-until-event response -> monitor; uncertain specialist choice -> route.",
 			"If the user names a bundled agent such as recon, analyst, strategist, operator, redteam, or debrief, call that agent directly; do not call list/showConfig first unless the user asks to inspect available agents.",
-			"Argument examples: ask recon to inspect X -> {\"agent\":\"recon\",\"task\":\"inspect X\"}; inspect A and B in parallel -> {\"tasks\":[{\"agent\":\"recon\",\"task\":\"inspect A\"},{\"agent\":\"recon\",\"task\":\"inspect B\"}]}; build with separate critique -> {\"task\":\"...\",\"evaluate\":{}}; split and synthesize a broad map -> {\"task\":\"map X\",\"orchestrate\":{}}.",
-			"Use flow evaluate when output quality must be checked by a separate critic (generate → evaluate → revise) instead of trusting a single pass.",
-			"Use flow vote (especially with different models) to suppress non-deterministic errors on a high-stakes question; add an aggregator to get one synthesized answer.",
-			"Use flow route to classify a heterogeneous request and dispatch it to the right specialist; use orchestrate to split a big task into parallel subtasks and synthesize the results.",
-			"Use flow graph for explicit dependency DAGs, loop for bounded repeat-until-done work, and search for generate-score-refine candidate exploration.",
-			"Use workflow when named phases, deterministic gates, persisted artifacts, or a resumable human approval node are part of correctness.",
-			"Use worktree only for multiple write-capable agents whose independent edits should land on a separate verified integration branch; use ordinary parallel for read-only fan-out.",
-			"Use debate only when the user explicitly requests opposing advocates, rebuttal, or adjudication; direct execution has matched its quality with lower cost. Use dossier when several sources must be cited, reconciled, and left with explicit conflicts/gaps.",
-			"Use monitor only for bounded polling inside one flow call. It is not durable scheduling or background automation.",
+			"Map plain English to flow modes: read-only repo scouting -> single recon/analyst; independent areas in parallel -> parallel; implementation plus separate review or command gate -> evaluate; broad codebase mapping -> orchestrate; explicit gated phases or resumable approvals -> workflow; concurrent writers needing isolation and integration -> worktree; explicitly requested opposing advocates/rebuttal/adjudication -> debate; multi-source evidence reconciliation -> dossier; bounded poll-until-event response -> monitor; uncertain specialist choice -> route.",
+			"Match child model capability to the task with tier, not hard-coded model ids: tier 'fast' for mechanical scouting, extraction, or classification; omit it (capable) for ordinary work; 'deep' for the hardest reasoning or final adjudication. Tiers resolve to models the user configured (PI_FLOWS_FAST_MODEL / PI_FLOWS_DEEP_MODEL) and fall back to their default model, so they stay portable across providers. Pass an explicit model only when the user named one.",
+			"Use debate only when the user explicitly requests opposing advocates, rebuttal, or adjudication; direct execution has matched its quality with lower cost. Use worktree only for multiple write-capable agents needing a verified integration branch; use ordinary parallel for read-only fan-out. Use monitor only for bounded polling inside one flow call, never as durable scheduling.",
 			"Use checkpoint for human approval before spawning children or before finalizing a result; it fails closed in headless contexts.",
-			"Use flow list:true before delegation if you do not know which flow agents are available.",
-			"Use flow showConfig:true to inspect effective dirs, defaults, and discovery issues before debugging.",
+			"Use flow list:true before delegation if you do not know which flow agents are available, and showConfig:true to inspect effective dirs, tier mappings, defaults, and discovery issues.",
 			"Use flow agentScope:'all' only for trusted repositories because project-local flow agents are repo-controlled prompts.",
 		],
 		parameters: FlowParams,
@@ -212,6 +202,21 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const mode: FlowMode = detected.mode;
+
+			// Structural friction against reflexive delegation: a spawning call must
+			// articulate why isolation beats doing the work in the parent context.
+			if (typeof params.why !== "string" || params.why.trim().length === 0) {
+				const error = flowError(
+					"WHY_REQUIRED",
+					"Flow call refused: `why` is required for any call that spawns agents.",
+					`Mode "${mode}" spawns child agent processes, and the call did not say why delegation beats doing the work directly in the parent context.`,
+					"Pass why:'<one sentence naming the explicit user request, the fan-out one context cannot hold, or the author-independent verification this needs>'. If no such reason exists, do the work directly instead of calling flow.",
+				);
+				return {
+					content: [{ type: "text", text: formatFlowError(error) }],
+					details: catalog.errorDetails(mode, error),
+				};
+			}
 
 			const flowDepth = currentFlowDepth();
 			if (flowDepth >= MAX_FLOW_DEPTH) {

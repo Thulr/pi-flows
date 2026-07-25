@@ -12,6 +12,7 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 		task: appendReturnContract(params.task, params.returnContract, params.requireEvidence),
 		cwd: params.cwd,
 		model: params.model,
+		tier: params.tier,
 		tools: params.tools,
 		timeoutMs: params.timeoutMs,
 		recordContent: params.recordContent,

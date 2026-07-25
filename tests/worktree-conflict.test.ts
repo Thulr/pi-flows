@@ -21,7 +21,7 @@ async function runFlow(params: any, plan: Record<string, unknown>, cwd: string) 
 	process.env.PI_STUB_PLAN = JSON.stringify(plan);
 	const result = await flowTool().execute(
 		"tool-call-id",
-		params,
+		{ why: "worktree conflict test exercising the delegation path", ...params },
 		new AbortController().signal,
 		undefined,
 		{ cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } },

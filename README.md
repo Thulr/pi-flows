@@ -55,7 +55,7 @@ You talk to pi in plain English — it reads the `flow` tool and writes the call
 Have a read-only agent find the API routes for billing.
 ```
 
-pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing"}`; these docs show the JSON as the exact contract, for when you want to verify it or take manual control.)
+pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; these docs show the JSON as the exact contract, for when you want to verify it or take manual control.)
 
 Ask for a *verified* result and pi reaches for a stronger mode on its own:
 
@@ -68,7 +68,8 @@ pi runs this as an evaluate loop — the `operator` builds the change, a separat
 ```json
 {
   "task": "Add a /health endpoint that returns 200 and a JSON status, with a test",
-  "evaluate": { "checkCommand": "npm test", "maxIterations": 3 }
+  "evaluate": { "checkCommand": "npm test", "maxIterations": 3 },
+  "why": "the result needs an author-independent critic plus a deterministic gate"
 }
 ```
 
@@ -149,6 +150,8 @@ Cost is bounded as well as count and time: pass `maxCostUsd` / `maxTokens` to ca
 
 You don't type these objects — you describe what you want and pi builds the call. This is the exact contract behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
 
+Every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution (missing it returns `WHY_REQUIRED` before any child spawns).
+
 ### List
 
 ```json
@@ -164,7 +167,7 @@ You don't type these objects — you describe what you want and pi builds the ca
 ### Single
 
 ```json
-{ "agent": "recon", "task": "Find the API routes for billing" }
+{ "agent": "recon", "task": "Find the API routes for billing", "why": "user asked for a delegated read-only scout" }
 ```
 
 ### Parallel
@@ -175,7 +178,8 @@ You don't type these objects — you describe what you want and pi builds the ca
     { "agent": "recon", "task": "Find frontend auth code" },
     { "agent": "recon", "task": "Find backend auth code" }
   ],
-  "concurrency": 2
+  "concurrency": 2,
+  "why": "frontend and backend auth are independent areas one context should not serialize"
 }
 ```
 
@@ -189,7 +193,8 @@ Defaults: `concurrency=4` (per-call). `maxParallelTasks` is a fixed hard cap of 
   "chain": [
     { "agent": "recon", "task": "Research this task: {task}" },
     { "agent": "strategist", "task": "Plan using this context:\n\n{previous}" }
-  ]
+  ],
+  "why": "research and planning benefit from a fresh planning context fed a bounded handoff"
 }
 ```
 
@@ -205,7 +210,8 @@ Chain `{previous}` handoffs are capped, redacted, and scanned for injection befo
     "redteam": { "agent": "redteam" },
     "checkCommand": "npm test",
     "maxIterations": 3
-  }
+  },
+  "why": "the result needs an author-independent critic plus a deterministic gate"
 }
 ```
 
@@ -218,7 +224,8 @@ Two optional reliability levers: **`checkCommand`** is a deterministic gate (a s
 ```json
 {
   "task": "Is /^(a+)+$/ vulnerable to catastrophic backtracking?",
-  "vote": { "voters": [{ "agent": "recon" }, { "agent": "overwatch" }], "debrief": { "agent": "debrief" } }
+  "vote": { "voters": [{ "agent": "recon" }, { "agent": "overwatch" }], "debrief": { "agent": "debrief" } },
+  "why": "independent votes suppress a single model's non-deterministic error"
 }
 ```
 
@@ -227,7 +234,7 @@ Runs the same task across ≥2 voters (use different models to break correlated 
 ### Route (classify → dispatch)
 
 ```json
-{ "task": "The billing webhook returns 500s in prod", "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "recon" } }
+{ "task": "The billing webhook returns 500s in prod", "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "recon" }, "why": "the right specialist for this request is not obvious up front" }
 ```
 
 The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits `ROUTE: none` when nothing fits, falling back instead of forcing a guess.
@@ -244,7 +251,8 @@ The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits
     "verify": { "agent": "overwatch" },
     "verifyPolicy": "revise",
     "maxSubtasks": 5
-  }
+  },
+  "why": "a broad cross-codebase map is more reading than one context should serialize"
 }
 ```
 
@@ -262,7 +270,8 @@ The `commander` splits the task into a JSON list of subtasks, `recon` workers ru
       { "id": "summary", "agent": "strategist", "dependsOn": ["frontend", "backend"], "task": "Plan from:\n{node.frontend}\n{node.backend}" }
     ],
     "debrief": { "agent": "debrief" }
-  }
+  },
+  "why": "independent areas fan out while the summary depends on both"
 }
 ```
 
@@ -273,7 +282,8 @@ Ready nodes run by dependency wave, with the same caps, redaction, trace, and wr
 ```json
 {
   "task": "Draft release notes",
-  "loop": { "body": { "agent": "operator" }, "judge": { "agent": "redteam" }, "maxIterations": 3 }
+  "loop": { "body": { "agent": "operator" }, "judge": { "agent": "redteam" }, "maxIterations": 3 },
+  "why": "drafting needs bounded revise-until-done with an independent judge"
 }
 ```
 
@@ -284,7 +294,8 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
 ```json
 {
   "task": "Pick a cache strategy",
-  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam", "tools": "none" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 }
+  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam", "tools": "none" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 },
+  "why": "candidate designs need independent generation and scoring"
 }
 ```
 
@@ -303,7 +314,8 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
       { "id": "apply", "agent": "operator", "task": "Implement the approved plan:\n{phase.plan}", "checkCommand": "npm test" }
     ],
     "debrief": { "agent": "debrief" }
-  }
+  },
+  "why": "the migration needs gated phases with a resumable human approval"
 }
 ```
 
@@ -323,7 +335,8 @@ call with `workflow.resume:true` to continue from the persisted state.
     ],
     "integrator": { "agent": "operator" },
     "checkCommand": "npm test"
-  }
+  },
+  "why": "two concurrent writers need isolated worktrees and a verified integration branch"
 }
 ```
 
@@ -342,7 +355,8 @@ branch for explicit review or merge.
     "participants": [{ "agent": "strategist" }, { "agent": "analyst" }],
     "adjudicator": { "agent": "overwatch" },
     "rounds": 2
-  }
+  },
+  "why": "user asked for opposing advocates and independent adjudication"
 }
 ```
 
@@ -365,7 +379,8 @@ constraints.
       { "agent": "analyst", "task": "Extract evidence from incident.md only" }
     ],
     "debrief": { "agent": "debrief" }
-  }
+  },
+  "why": "three sources must be cited and reconciled without smoothing conflicts away"
 }
 ```
 
@@ -385,7 +400,8 @@ evidence needed instead of smoothing disagreement into false consensus.
     "intervalMs": 5000,
     "maxChecks": 6,
     "reactor": { "agent": "analyst" }
-  }
+  },
+  "why": "a bounded probe must fire before a fresh context diagnoses the event"
 }
 ```
 
@@ -399,7 +415,7 @@ call returns `MONITOR_NOT_TRIGGERED` with the last observations.
 Any mode accepts a cumulative spend ceiling and a trace sink:
 
 ```json
-{ "task": "...", "orchestrate": {}, "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
+{ "task": "...", "orchestrate": {}, "why": "...", "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
 ```
 
 `maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
@@ -428,7 +444,9 @@ tier: capable
 System prompt for the delegated agent.
 ```
 
-`tier` keeps agents portable — no vendor model is hard-coded. `capable` runs on your pi default model; `fast` runs on `PI_FLOWS_FAST_MODEL` if you set one (e.g. a cheaper model for your provider, like `openai-codex/gpt-5.4-mini`), otherwise your default too. So flows use whatever model you have pi set up with, and the extension never needs updating as providers ship new models. Pin an explicit `model:` to override the tier (a flow-call `model` overrides too). `tools: none` disables built-in tools. Omitting `tools` uses pi defaults. Invalid agent files are reported in `/flows status` and `flow showConfig:true`.
+`tier` keeps agents portable — no vendor model is hard-coded. `capable` runs on your pi default model; `fast` runs on `PI_FLOWS_FAST_MODEL` if you set one (e.g. a cheaper model for your provider, like `openai-codex/gpt-5.4-mini`), otherwise your default too; `deep` runs on `PI_FLOWS_DEEP_MODEL` for the hardest reasoning and critique work (bundled `redteam` and `strategist` declare it). So flows use whatever model you have pi set up with, and the extension never needs updating as providers ship new models.
+
+A flow call can also pass `tier` per task, phase, or role — the parent picks capability by task nature ("fast" scout, "deep" adjudicator) without knowing which models you have. Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier` > your pi default; an unmapped tier just falls back to the default, so everything works with zero configuration. `flow showConfig:true` shows the effective tier mappings. `tools: none` disables built-in tools. Omitting `tools` uses pi defaults. Invalid agent files are reported in `/flows status` and `flow showConfig:true`.
 
 ## Documentation ladder
 

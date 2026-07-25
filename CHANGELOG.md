@@ -11,11 +11,29 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 ### Added
 
 - Added an `F8` / `/flows inspect` TUI overlay for watching a running child agent.
+- Added a `deep` capability tier (mapped via `PI_FLOWS_DEEP_MODEL`, falling back
+  to the default pi model) alongside `fast` and `capable`, and a per-call `tier`
+  parameter on tasks, phases, roles, and the flow level so the parent model can
+  pick capability by task nature without hard-coding vendor model ids.
+  Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin >
+  agent `tier` > pi default. Bundled `redteam` and `strategist` now declare
+  `tier: deep`; `flow showConfig:true` surfaces the effective tier mappings.
+- Added hard-negative selection eval cases (plausible-sounding tasks with no
+  "do not delegate" hint) to `eval:select`, un-saturating the no-flow axis.
 
 ### Changed
 
 - Increased the default per-child `timeoutMs` from 10 minutes to 10 hours.
   Explicit per-flow timeout values still override the default.
+- Rewrote the `flow` tool's model-facing trigger surface (description, prompt
+  snippet, and guidelines) around a positive decision rule — work directly by
+  default; spawn only for explicit delegation requests, fan-out one context
+  cannot hold, or author-independent verification — with the child-process cost
+  stated up front and the mode catalog moved out of the description.
+- Spawning `flow` calls now require a `why` parameter (one-sentence delegation
+  justification). Calls without it are refused with the new `WHY_REQUIRED`
+  error before any child spawns; `list`/`showConfig` are exempt. This is
+  deliberate structural friction against reflexive delegation.
 
 ## 0.2.0 - 2026-07-17
 

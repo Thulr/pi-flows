@@ -76,13 +76,60 @@ export const SELECTION_CASES = [
 		answerPattern: "main|codex|branch",
 		mock: { flowCalls: 0, answer: "The current branch is main." },
 	},
+	// Hard negatives: plausible-sounding tasks with NO explicit "do not delegate"
+	// hint. These mirror the observed overuse pattern — tasks that pattern-match a
+	// flow mode (investigation, review, verification, fan-out) but fit comfortably
+	// in the parent context. The easy negatives above tell the model not to
+	// delegate; these measure whether it decides that on its own.
+	{
+		name: "plausible-two-file-explain-no-flow",
+		task: "Explain in one short paragraph how extensions/pi-flows/parse.ts and extensions/pi-flows/protocol.ts work together to enforce child output protocols like VERDICT lines.",
+		expectFlow: false,
+		answerPattern: "VERDICT|protocol|parse",
+		mock: { flowCalls: 0, answer: "protocol.ts defines the instructions that ask children for typed lines like VERDICT: PASS, and parse.ts extracts and validates those lines from child output." },
+	},
+	{
+		name: "plausible-refactor-scoping-no-flow",
+		task: "Which files import extractLastJsonBlock from extensions/pi-flows/parse.ts? List the file paths.",
+		expectFlow: false,
+		answerPattern: "index\\.ts",
+		mock: { flowCalls: 0, answer: "extensions/pi-flows/index.ts imports extractLastJsonBlock from parse.ts (parse.ts re-exports it from protocol.ts, where it is defined)." },
+	},
+	{
+		name: "plausible-investigation-no-flow",
+		task: "Why does the flow tool refuse to run project-local flow agents in headless runs by default? Answer in two sentences.",
+		expectFlow: false,
+		answerPattern: "repo|trust|headless|approval|confirmProjectAgents",
+		mock: { flowCalls: 0, answer: "Project-local agents are repo-controlled prompts, so running them without interactive approval would let a repository inject instructions. Headless runs therefore fail closed unless confirmProjectAgents:false is passed for a reviewed repo." },
+	},
+	{
+		name: "plausible-release-summary-no-flow",
+		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
+		expectFlow: false,
+		answerPattern: "F8|inspect|timeout|why|tier",
+		mock: { flowCalls: 0, answer: "- Added the F8 /flows inspect overlay for watching a running child.\n- Raised the default child timeout to 10 hours." },
+	},
+	{
+		name: "plausible-verification-no-flow",
+		task: "Run npm run validate:agents once and report whether the bundled agents pass validation.",
+		expectFlow: false,
+		answerPattern: "ok|pass|valid",
+		mock: { flowCalls: 0, answer: "agents ok: 9 bundled agents — validation passes." },
+	},
+	{
+		name: "plausible-deps-audit-no-flow",
+		task: "Check package.json and report whether any package appears in both dependencies and devDependencies.",
+		expectFlow: false,
+		answerPattern: "\\bno\\b|\\bnone\\b|does not|doesn't|no overlap",
+		mock: { flowCalls: 0, answer: "No package appears in both lists." },
+	},
 	{
 		name: "explicit-flow-list-uses-flow",
 		task: "Use flow with {\"list\":true}.",
 		expectFlow: true,
 		expectedFlowCall: { mode: "list" },
 		answerPattern: "flow agents|recon|strategist",
-		mock: { flowCalls: 1, flowCallArgs: [{ list: true }], answer: "Available flow agents: recon, strategist" },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", list: true }], answer: "Available flow agents: recon, strategist" },
 	},
 	{
 		name: "explicit-delegation-uses-flow",
@@ -90,7 +137,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "single", agent: "recon", taskPattern: "package name|repository" },
 		answerPattern: "pi-flows|flow",
-		mock: { flowCalls: 1, flowCallArgs: [{ agent: "recon", task: "Inspect this repository and report the package name." }], answer: "Flow recon found package name pi-flows." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", agent: "recon", task: "Inspect this repository and report the package name." }], answer: "Flow recon found package name pi-flows." },
 	},
 	{
 		name: "implicit-readonly-agent-uses-recon",
@@ -98,7 +145,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "single", agents: ["recon", "analyst"], taskPattern: "registers.*flow|flow tool" },
 		answerPattern: "extensions/pi-flows/index\\.ts|registerTool|flow",
-		mock: { flowCalls: 1, flowCallArgs: [{ agent: "recon", task: "Find where this extension registers the `flow` tool." }], answer: "extensions/pi-flows/index.ts registers the flow tool with registerTool." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", agent: "recon", task: "Find where this extension registers the `flow` tool." }], answer: "extensions/pi-flows/index.ts registers the flow tool with registerTool." },
 	},
 	{
 		name: "implicit-parallel-doc-check-uses-parallel",
@@ -108,7 +155,7 @@ export const SELECTION_CASES = [
 		answerPattern: "checkpoint|approval|headless",
 		mock: {
 			flowCalls: 1,
-			flowCallArgs: [{
+			flowCallArgs: [{ why: "eval mock justification",
 				tasks: [
 					{ agent: "recon", task: "Inspect README.md for human checkpoint behavior." },
 					{ agent: "recon", task: "Inspect docs/flow-reference.md for human checkpoint behavior." },
@@ -123,7 +170,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "evaluate", agent: "operator", taskPattern: "release checklist|critic|install|safety|eval" },
 		answerPattern: "install|safety|eval",
-		mock: { flowCalls: 1, flowCallArgs: [{ task: "Draft a release checklist and have a critic verify it.", evaluate: {} }], answer: "Install, safety, and eval checks are covered." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Draft a release checklist and have a critic verify it.", evaluate: {} }], answer: "Install, safety, and eval checks are covered." },
 	},
 	{
 		name: "implicit-broad-map-uses-orchestrate",
@@ -132,7 +179,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { modes: ["orchestrate", "parallel"], agents: ["recon", "analyst"], taskPattern: "agent discovery|schema|child process|runner" },
 		answerPattern: "agents|schema|runner|child",
-		mock: { flowCalls: 1, flowCallArgs: [{ task: "Map agent discovery, schema validation, and child process running.", orchestrate: {} }], answer: "agents.ts handles discovery, schema.ts validates params, and runner.ts starts child pi processes." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Map agent discovery, schema validation, and child process running.", orchestrate: {} }], answer: "agents.ts handles discovery, schema.ts validates params, and runner.ts starts child pi processes." },
 	},
 	{
 		name: "implicit-phase-gated-work-uses-workflow",
@@ -141,7 +188,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "workflow", taskPattern: "release migration|analyze|verify|approval" },
 		answerPattern: "workflow|phase|migration",
-		mock: { flowCalls: 1, flowCallArgs: [{ task: "Run the release migration through gated phases.", workflow: { phases: [{ id: "analyze", agent: "recon", task: "Analyze migration" }, { id: "approve", approval: { message: "Approve plan" } }] } }], answer: "The workflow paused at approval after analysis." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Run the release migration through gated phases.", workflow: { phases: [{ id: "analyze", agent: "recon", task: "Analyze migration" }, { id: "approve", approval: { message: "Approve plan" } }] } }], answer: "The workflow paused at approval after analysis." },
 	},
 	{
 		name: "implicit-isolated-writers-use-worktree",
@@ -150,7 +197,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "worktree", agents: ["operator"], minTasks: 2, taskPattern: "frontend|backend|test" },
 		answerPattern: "integration|branch|worktree",
-		mock: { flowCalls: 1, flowCallArgs: [{ task: "Fix frontend and backend independently.", worktree: { tasks: [{ id: "frontend", agent: "operator", task: "Fix frontend" }, { id: "backend", agent: "operator", task: "Fix backend" }], checkCommand: "npm test" } }], answer: "Created a verified integration branch from two isolated worktrees." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Fix frontend and backend independently.", worktree: { tasks: [{ id: "frontend", agent: "operator", task: "Fix frontend" }, { id: "backend", agent: "operator", task: "Fix backend" }], checkCommand: "npm test" } }], answer: "Created a verified integration branch from two isolated worktrees." },
 	},
 	{
 		name: "explicit-adversarial-decision-uses-debate",
@@ -158,7 +205,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "debate", taskPattern: "queue migration|constraints|design" },
 		answerPattern: "decision|queue|adjudicat",
-		mock: { flowCalls: 1, flowCallArgs: [{ task: "Choose the queue migration design.", debate: { participants: [{ agent: "analyst" }, { agent: "strategist" }], adjudicator: { agent: "debrief" } } }], answer: "The adjudicator selected the safer queue migration." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Choose the queue migration design.", debate: { participants: [{ agent: "analyst" }, { agent: "strategist" }], adjudicator: { agent: "debrief" } } }], answer: "The adjudicator selected the safer queue migration." },
 	},
 	{
 		name: "implicit-evidence-corpus-uses-dossier",
@@ -166,7 +213,7 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "dossier", agents: ["recon", "analyst"], minTasks: 3, taskPattern: "runbook|incident|deployment|evidence" },
 		answerPattern: "evidence|contradiction|gap|source",
-		mock: { flowCalls: 1, flowCallArgs: [{ task: "Build an evidence dossier.", dossier: { sections: [{ agent: "recon", task: "Inspect runbook" }, { agent: "recon", task: "Inspect incident" }, { agent: "analyst", task: "Inspect deployment config" }] } }], answer: "The dossier reconciles source conflicts and records one evidence gap." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Build an evidence dossier.", dossier: { sections: [{ agent: "recon", task: "Inspect runbook" }, { agent: "recon", task: "Inspect incident" }, { agent: "analyst", task: "Inspect deployment config" }] } }], answer: "The dossier reconciles source conflicts and records one evidence gap." },
 	},
 	{
 		name: "implicit-trigger-react-uses-monitor",
@@ -174,6 +221,6 @@ export const SELECTION_CASES = [
 		expectFlow: true,
 		expectedFlowCall: { mode: "monitor", agents: ["analyst"], taskPattern: "health-check|DEGRADED|diagnos" },
 		answerPattern: "degraded|diagnos|monitor",
-		mock: { flowCalls: 1, flowCallArgs: [{ task: "Diagnose the degraded event.", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED", maxChecks: 6, reactor: { agent: "analyst" } } }], answer: "The monitor triggered on DEGRADED and returned the analyst diagnosis." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Diagnose the degraded event.", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED", maxChecks: 6, reactor: { agent: "analyst" } } }], answer: "The monitor triggered on DEGRADED and returned the analyst diagnosis." },
 	},
 ];
