@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { traceSpansForCase, gateBlocks, gateArgs, compareArgs, duelArgs, judgeArgs, calibrateArgs, inspectTraceArgs, labelFailuresArgs, formatGateScoreSummary, gateCandidateForEvalRun, evalRunDimensions, sharedGateDimensions, paretoArgs, reviewArgs, formatDuelSummary } from "../evals/thulr.mjs";
+import { traceSpansForCase, gateBlocks, gateArgs, compareArgs, duelArgs, judgeArgs, calibrateArgs, inspectTraceArgs, labelFailuresArgs, formatGateScoreSummary, gateCandidateForEvalRun, evalRunDimensions, sharedGateDimensions, paretoArgs, reviewArgs } from "../evals/thulr.mjs";
 
 // thulr ingests a SELF-CONTAINED trace: each case's criterion and its
 // deterministic (objective) label travel INLINE in the span attributes — no more
@@ -293,28 +293,6 @@ test("reviewArgs records one verdict and lists state", () => {
 		["review", "--trace", "t.jsonl", "--case", "route-x", "--verdict", "fail", "--failure-mode", "tool.error", "--note", "missed it", "--reviewer", "justin"],
 	);
 	assert.deepEqual(reviewArgs({ trace: "t.jsonl", list: true, json: true }), ["review", "--json", "--trace", "t.jsonl", "--list"]);
-});
-
-// The duel report (thulr.duel_report.v1): arm A is flows, arm B is plain. Lead with
-// win counts, the win rate over swap-consistent cases, the A-margin, then flips
-// (position bias) and any skipped cases.
-test("formatDuelSummary leads with win counts, win rate, margin, flips, and skips", () => {
-	const lines = formatDuelSummary({
-		a: { label: "flows" },
-		b: { label: "plain" },
-		summary: { a_wins: 3, b_wins: 1, ties: 1, flips: 1, decided: 5, win_rate_a: 0.6, win_rate_b: 0.2, margin_a: 0.4 },
-		skipped: [["lonely-case", "only_in_a"]],
-	});
-	assert.deepEqual(lines, [
-		"flows wins 3 · plain wins 1 · ties 1 · flips 1  (decided 5)",
-		"win rate: flows 60.0% · plain 20.0%  ·  margin flows +0.400",
-		"skipped 1: lonely-case (only_in_a)",
-	]);
-});
-
-test("formatDuelSummary returns nothing without a summary", () => {
-	assert.deepEqual(formatDuelSummary(null), []);
-	assert.deepEqual(formatDuelSummary({}), []);
 });
 
 // Multi-dimension criteria ride the trace as thulr.criteria.<dimension> and are

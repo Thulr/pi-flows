@@ -4,7 +4,6 @@ import { prepareTextHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../commands.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
 
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
 	if (!Number.isFinite(value)) return fallback;
@@ -24,7 +23,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 	const spec = params.monitor ?? {};
 	if (!spec.command?.trim()) {
 		const error = flowError("MONITOR_INVALID", "Monitor mode requires a probe command.", "No deterministic observation source was configured.", "Provide monitor.command and a bounded trigger policy.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "monitor", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("monitor")([], error) };
 	}
 	const trigger = ["failure", "match"].includes(spec.trigger) ? spec.trigger : "success";
 	let pattern: RegExp | null = null;
@@ -34,7 +33,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 			pattern = new RegExp(spec.pattern, "i");
 		} catch (cause) {
 			const error = flowError("MONITOR_INVALID", "Monitor match trigger has an invalid pattern.", cause instanceof Error ? cause.message : String(cause), "Provide a valid JavaScript regular expression in monitor.pattern.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "monitor", agentScope, error) };
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("monitor")([], error) };
 		}
 	}
 
@@ -47,7 +46,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 		const probe = await runProbeCommand(spec.command, path.resolve(defaultCwd, params.cwd ?? defaultCwd), checkTimeoutMs, policy, deps.signal);
 		if (probe.spawnFailed) {
 			const error = flowError("MONITOR_INVALID", "Monitor probe could not start.", probe.output || "The shell failed to spawn the probe command.", "Verify monitor.command and cwd, then retry.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "monitor", agentScope, error) };
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("monitor")([], error) };
 		}
 		const output = probe.output.trim();
 		observations.push(`check ${check}: exit=${probe.exitCode ?? "none"}\n${output || "[no output]"}`);
@@ -66,7 +65,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 
 	if (!triggered) {
 		const error = flowError("MONITOR_NOT_TRIGGERED", `Monitor reached its bound (${maxChecks} checks) without firing.`, observations.at(-1) ?? "No probe observation was produced.", "Raise maxChecks/intervalMs only when the bounded wait is intentional, adjust the trigger, or use durable automation outside pi-flows.", true);
-		return { content: [{ type: "text", text: `${formatFlowError(error)}\n\n${sanitizeText(observations.join("\n\n"), policy)}` }], details: toolErrorDetails(discovery, "monitor", agentScope, error) };
+		return { content: [{ type: "text", text: `${formatFlowError(error)}\n\n${sanitizeText(observations.join("\n\n"), policy)}` }], details: deps.makeDetails("monitor")([], error) };
 	}
 
 	const prepared = prepareTextHandoff(triggered.output, policy);

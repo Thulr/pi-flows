@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
 import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgent, type FlowAgentRefInput, type FlowBudget, type FlowDetails, type FlowMode, type FlowRunResult, type ModeDeps, type RecordSpan, type Update } from "./types.ts";
+import { STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
+import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, getFinalAssistantText, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
 
@@ -86,25 +86,8 @@ export async function writePromptToTempFile(agentName: string, prompt: string, l
 	return { dir, filePath };
 }
 
-export async function runFlowAgent(options: {
-	defaultCwd: string;
-	agents: FlowAgent[];
-	agentName: string;
-	task: string;
-	cwd?: string;
-	model?: string;
-	tier?: string;
-	tools?: string;
-	timeoutMs?: number;
-	recordContent?: boolean;
-	redactSecrets?: boolean;
-	step?: number;
-	signal?: AbortSignal;
-	onUpdate?: Update;
-	budget?: FlowBudget;
-	recordSpan?: RecordSpan;
-	makeDetails: (results: FlowRunResult[]) => FlowDetails;
-}): Promise<FlowRunResult> {
+/** Production adapter for the child-run seam (ModeDeps.runChild): one real pi subprocess per call. */
+export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunResult> {
 	const policy: CapturePolicy = { recordContent: options.recordContent ?? true, redactSecrets: options.redactSecrets ?? true };
 	// Cost ceiling: refuse to spawn once the flow tree's cumulative spend is spent.
 	if (budgetExceeded(options.budget)) {
@@ -171,84 +154,20 @@ export async function runFlowAgent(options: {
 		tempFiles.push(taskPrompt);
 		args.push(`@${taskPrompt.filePath}`);
 
-		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
-			const proc = spawn(invocation.command, invocation.args, {
-				cwd: path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd),
-				shell: false,
-				stdio: ["ignore", "pipe", "pipe"],
-				env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1) },
-			});
-
-			emitUpdate("starting child pi process...");
-			let buffer = "";
-			let sawJsonEvent = false;
-			let closed = false;
-			let timer: NodeJS.Timeout | null = null;
-			let forceKillTimer: NodeJS.Timeout | null = null;
-			let abortListener: (() => void) | null = null;
-			const terminate = () => {
-				if (closed) return;
-				try { proc.kill("SIGTERM"); } catch {}
-				if (forceKillTimer) return;
-				forceKillTimer = setTimeout(() => {
-					forceKillTimer = null;
-					try { if (!closed) proc.kill("SIGKILL"); } catch {}
-				}, 5000);
-				forceKillTimer.unref?.();
-			};
-
-			const finish = (code: number) => {
-				if (closed) return;
-				closed = true;
-				if (timer) clearTimeout(timer);
-				if (forceKillTimer) clearTimeout(forceKillTimer);
-				if (abortListener) options.signal?.removeEventListener("abort", abortListener);
-				resolve(code);
-			};
-
-			if (timeoutMs > 0) {
-				timer = setTimeout(() => {
-					timedOut = true;
-					result.stopReason = "timeout";
-					result.error = flowError(
-						"CHILD_TIMEOUT",
-						`Flow agent "${agent.name}" timed out after ${timeoutMs}ms.`,
-						"The child pi process did not finish before the configured timeout.",
-						"Increase timeoutMs for intentionally long tasks, or inspect child/provider/network stalls.",
-						true,
-					);
-					result.errorMessage = result.error.message;
-					terminate();
-				}, timeoutMs);
-				timer.unref?.();
-			}
-
-			const processLine = (line: string) => {
-				if (!line.trim()) return;
-				let event: any;
-				try {
-					event = JSON.parse(line);
-					sawJsonEvent = true;
-				} catch {
-					result.stdoutParseErrors = (result.stdoutParseErrors ?? 0) + 1;
-					result.stdoutSample = capBytes(`${result.stdoutSample ?? ""}${sanitizeText(line, policy, STDOUT_SAMPLE_CAP)}\n`, STDOUT_SAMPLE_CAP, "Stdout sample");
-					return;
-				}
-
+		const invocation = getPiInvocation(args);
+		emitUpdate("starting child pi process...");
+		const run = await runJsonlProcess({
+			command: invocation.command,
+			args: invocation.args,
+			cwd: path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd),
+			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1) },
+			timeoutMs,
+			signal: options.signal,
+			onEvent: (event) => {
 				if (event.type === "message_end" && event.message) {
 					const message = event.message as Message;
 					if (message.role === "assistant") {
-						result.usage.turns += 1;
-						const usage = message.usage;
-						if (usage) {
-							result.usage.input += usage.input || 0;
-							result.usage.output += usage.output || 0;
-							result.usage.cacheRead += usage.cacheRead || 0;
-							result.usage.cacheWrite += usage.cacheWrite || 0;
-							result.usage.cost += usage.cost?.total || 0;
-							result.usage.contextTokens = usage.totalTokens || result.usage.contextTokens;
-						}
+						accumulatePiUsage(result.usage, message);
 						if (!result.model && message.model) result.model = message.model;
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
@@ -261,60 +180,29 @@ export async function runFlowAgent(options: {
 					result.messages.push(storeMessage(event.message as Message, policy));
 					emitUpdate();
 				}
-			};
-
-			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				for (const line of lines) processLine(line);
-			});
-
-			proc.stderr.on("data", (data) => {
-				result.stderr = appendCapped(result.stderr, data.toString(), policy);
-			});
-
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				if (!sawJsonEvent && (result.stdoutParseErrors ?? 0) > 0 && !result.error) {
-					result.stopReason = "error";
-					result.error = flowError(
-						"CHILD_PROTOCOL_ERROR",
-						`Flow agent "${agent.name}" did not produce valid pi JSON output.`,
-						"The child process wrote non-JSON stdout while pi-flows expected `pi --mode json` events.",
-						"Run with a current pi version and inspect stdoutSample/stderr for provider or startup failures.",
-						true,
-					);
-					result.errorMessage = result.error.message;
-				}
-				finish(code ?? 0);
-			});
-
-			proc.on("error", (error) => {
-				result.stderr = appendCapped(result.stderr, error.message, policy);
-				result.stopReason = "error";
-				result.error = flowError(
-					"CHILD_EXIT_NONZERO",
-					`Could not start flow agent "${agent.name}".`,
-					`Spawning child pi failed: ${sanitizeText(error.message, policy)}.`,
-					"Verify that `pi` is installed and available on PATH, or run pi-flows from the pi CLI.",
-					true,
-				);
-				result.errorMessage = result.error.message;
-				finish(1);
-			});
-
-			abortListener = () => {
-				wasAborted = true;
-				result.stopReason = "aborted";
-				terminate();
-			};
-			if (options.signal?.aborted) abortListener();
-			else options.signal?.addEventListener("abort", abortListener, { once: true });
+			},
+			onNonJsonLine: (line) => {
+				result.stdoutParseErrors = (result.stdoutParseErrors ?? 0) + 1;
+				result.stdoutSample = capBytes(`${result.stdoutSample ?? ""}${sanitizeText(line, policy, STDOUT_SAMPLE_CAP)}\n`, STDOUT_SAMPLE_CAP, "Stdout sample");
+			},
+			onStderr: (chunk) => {
+				result.stderr = appendCapped(result.stderr, chunk, policy);
+			},
 		});
+		timedOut = run.timedOut;
+		wasAborted = run.aborted;
 
-		result.exitCode = exitCode;
+		result.exitCode = run.exitCode;
 		if (timedOut) {
+			result.stopReason = "timeout";
+			result.error = flowError(
+				"CHILD_TIMEOUT",
+				`Flow agent "${agent.name}" timed out after ${timeoutMs}ms.`,
+				"The child pi process did not finish before the configured timeout.",
+				"Increase timeoutMs for intentionally long tasks, or inspect child/provider/network stalls.",
+				true,
+			);
+			result.errorMessage = result.error.message;
 			result.exitCode = result.exitCode === 0 ? 1 : result.exitCode;
 		} else if (wasAborted) {
 			result.stopReason = "aborted";
@@ -326,17 +214,38 @@ export async function runFlowAgent(options: {
 				true,
 			);
 			result.errorMessage = result.error.message;
-		} else if (exitCode !== 0 && !result.error) {
+		} else if (run.spawnErrorMessage) {
+			result.stderr = appendCapped(result.stderr, run.spawnErrorMessage, policy);
 			result.stopReason = "error";
 			result.error = flowError(
 				"CHILD_EXIT_NONZERO",
-				`Flow agent "${agent.name}" exited with code ${exitCode}.`,
+				`Could not start flow agent "${agent.name}".`,
+				`Spawning child pi failed: ${sanitizeText(run.spawnErrorMessage, policy)}.`,
+				"Verify that `pi` is installed and available on PATH, or run pi-flows from the pi CLI.",
+				true,
+			);
+			result.errorMessage = result.error.message;
+		} else if (!run.sawJsonEvent && (result.stdoutParseErrors ?? 0) > 0) {
+			result.stopReason = "error";
+			result.error = flowError(
+				"CHILD_PROTOCOL_ERROR",
+				`Flow agent "${agent.name}" did not produce valid pi JSON output.`,
+				"The child process wrote non-JSON stdout while pi-flows expected `pi --mode json` events.",
+				"Run with a current pi version and inspect stdoutSample/stderr for provider or startup failures.",
+				true,
+			);
+			result.errorMessage = result.error.message;
+		} else if (run.exitCode !== 0) {
+			result.stopReason = "error";
+			result.error = flowError(
+				"CHILD_EXIT_NONZERO",
+				`Flow agent "${agent.name}" exited with code ${run.exitCode}.`,
 				result.stderr || "The child pi process returned a non-zero exit code.",
 				"Inspect stderr and verify provider auth, model name, cwd, and pi installation.",
 				true,
 			);
 			result.errorMessage = result.error.message;
-		} else if (exitCode === 0 && result.messages.length === 0 && !result.error) {
+		} else if (run.exitCode === 0 && result.messages.length === 0) {
 			result.stopReason = "error";
 			result.exitCode = 1;
 			result.error = flowError(
@@ -384,6 +293,28 @@ export interface AgentFanoutItem {
 	placeholderTask?: string;
 }
 
+/** The standard per-run plumbing (everything except onUpdate), built in exactly one place. */
+function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined): Omit<RunChildOptions, "onUpdate"> {
+	return {
+		defaultCwd: deps.defaultCwd,
+		agents: deps.discovery.agents,
+		agentName: ref.agent,
+		task,
+		cwd: ref.cwd,
+		model: ref.model ?? deps.params.model,
+		tier: ref.tier ?? deps.params.tier,
+		tools: ref.tools,
+		timeoutMs: deps.params.timeoutMs,
+		recordContent: deps.params.recordContent,
+		redactSecrets: deps.params.redactSecrets,
+		step,
+		signal: deps.signal,
+		budget: deps.budget,
+		recordSpan: deps.recordSpan,
+		makeDetails: deps.makeDetails(mode),
+	};
+}
+
 export async function runAgentFanout(
 	deps: ModeDeps,
 	mode: FlowMode,
@@ -402,28 +333,13 @@ export async function runAgentFanout(
 	};
 	const baseStep = priorResults.length;
 	return mapWithConcurrency(items, concurrency, async (item, index) => {
-		const result = await runFlowAgent({
-			defaultCwd: deps.defaultCwd,
-			agents: deps.discovery.agents,
-			agentName: item.ref.agent,
-			task: item.task,
-			cwd: item.ref.cwd,
-			model: item.ref.model ?? deps.params.model,
-			tier: item.ref.tier ?? deps.params.tier,
-			tools: item.ref.tools,
-			timeoutMs: deps.params.timeoutMs,
-			recordContent: deps.params.recordContent,
-			redactSecrets: deps.params.redactSecrets,
-			step: baseStep + index + 1,
-			signal: deps.signal,
-			budget: deps.budget,
-			recordSpan: deps.recordSpan,
+		const result = await deps.runChild({
+			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1),
 			onUpdate: (partial) => {
 				const current = partial.details.results[0];
 				if (current) liveResults[index] = current;
 				emit();
 			},
-			makeDetails: deps.makeDetails(mode),
 		});
 		liveResults[index] = result;
 		completed.add(index);
@@ -433,27 +349,12 @@ export async function runAgentFanout(
 }
 
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
-export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number, priorResults: FlowRunResult[]): Promise<FlowRunResult> {
-	return runFlowAgent({
-		defaultCwd: deps.defaultCwd,
-		agents: deps.discovery.agents,
-		agentName: ref.agent,
-		task,
-		cwd: ref.cwd,
-		model: ref.model ?? deps.params.model,
-		tier: ref.tier ?? deps.params.tier,
-		tools: ref.tools,
-		timeoutMs: deps.params.timeoutMs,
-		recordContent: deps.params.recordContent,
-		redactSecrets: deps.params.redactSecrets,
-		step,
-		signal: deps.signal,
-		budget: deps.budget,
-		recordSpan: deps.recordSpan,
+export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[]): Promise<FlowRunResult> {
+	return deps.runChild({
+		...childRunOptions(deps, ref, task, mode, step),
 		onUpdate: (partial) => {
 			const current = partial.details.results[0];
 			deps.onUpdate?.({ content: partial.content, details: deps.makeDetails(mode)([...priorResults, ...(current ? [current] : [])]) });
 		},
-		makeDetails: deps.makeDetails(mode),
 	});
 }

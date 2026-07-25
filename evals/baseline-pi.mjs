@@ -7,11 +7,10 @@
 // It speaks the same `--mode json` protocol the flow tool's children use, and
 // returns a result shaped like a flow result ({ content, details.results[] }) so the
 // existing objective scorers and the cross-model judge consume it unchanged.
-import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProcessTerminator } from "./process-control.mjs";
+import { accumulatePiUsage, runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
 
 function finalAssistantText(messages) {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -43,62 +42,22 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	let stderr = "";
 	let stdoutSample = "";
 	let parseErrors = 0;
-	let sawJson = false;
 	let modelOut;
 	let stopReason;
 	let errorMessage;
 
-	const exitCode = await new Promise((resolveExit) => {
-		const proc = spawn("pi", args, { cwd: cwd ?? process.cwd(), shell: false, stdio: ["ignore", "pipe", "pipe"] });
-		let buffer = "";
-		let closed = false;
-		const terminator = createProcessTerminator(proc, { isClosed: () => closed, graceMs: killGraceMs });
-		const timer = timeoutMs > 0
-			? setTimeout(() => {
-					stopReason = "timeout";
-					terminator.stop();
-				}, timeoutMs)
-			: null;
-		timer?.unref?.();
-		const finish = (code) => {
-			if (closed) return;
-			closed = true;
-			if (timer) clearTimeout(timer);
-			terminator.dispose();
-			signal?.removeEventListener?.("abort", onAbort);
-			resolveExit(code);
-		};
-		const onAbort = () => {
-			stopReason = "aborted";
-			terminator.stop();
-		};
-		if (signal?.aborted) onAbort();
-		else signal?.addEventListener?.("abort", onAbort, { once: true });
-
-		const processLine = (line) => {
-			if (!line.trim()) return;
-			let event;
-			try {
-				event = JSON.parse(line);
-				sawJson = true;
-			} catch {
-				parseErrors += 1;
-				if (stdoutSample.length < 4096) stdoutSample += `${line}\n`;
-				return;
-			}
+	const run = await runJsonlProcess({
+		command: "pi",
+		args,
+		cwd: cwd ?? process.cwd(),
+		timeoutMs,
+		graceMs: killGraceMs,
+		signal,
+		onEvent: (event) => {
 			if (event.type === "message_end" && event.message) {
 				const m = event.message;
 				if (m.role === "assistant") {
-					usage.turns += 1;
-					const u = m.usage;
-					if (u) {
-						usage.input += u.input || 0;
-						usage.output += u.output || 0;
-						usage.cacheRead += u.cacheRead || 0;
-						usage.cacheWrite += u.cacheWrite || 0;
-						usage.cost += u.cost?.total || 0;
-						usage.contextTokens = u.totalTokens || usage.contextTokens;
-					}
+					accumulatePiUsage(usage, m);
 					if (!modelOut && m.model) modelOut = m.model;
 					if (m.stopReason) stopReason = m.stopReason;
 					if (m.errorMessage) errorMessage = m.errorMessage;
@@ -107,23 +66,19 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 			} else if (event.type === "tool_result_end" && event.message) {
 				messages.push(event.message);
 			}
-		};
-
-		proc.stdout.on("data", (data) => {
-			buffer += data.toString();
-			const lines = buffer.split("\n");
-			buffer = lines.pop() ?? "";
-			for (const line of lines) processLine(line);
-		});
-		proc.stderr.on("data", (data) => { stderr = (stderr + data.toString()).slice(-8192); });
-		proc.on("error", (err) => { stderr += `spawn error: ${err.message}`; finish(1); });
-		proc.on("close", (code) => {
-			if (buffer.trim()) processLine(buffer);
-			finish(code ?? 0);
-		});
+		},
+		onNonJsonLine: (line) => {
+			parseErrors += 1;
+			if (stdoutSample.length < 4096) stdoutSample += `${line}\n`;
+		},
+		onStderr: (chunk) => { stderr = (stderr + chunk).slice(-8192); },
 	});
+	if (run.timedOut) stopReason = "timeout";
+	else if (run.aborted) stopReason = "aborted";
+	if (run.spawnErrorMessage) stderr += `spawn error: ${run.spawnErrorMessage}`;
+	const exitCode = run.exitCode;
 
-	const protocolError = !sawJson && parseErrors > 0;
+	const protocolError = !run.sawJsonEvent && parseErrors > 0;
 	const text = finalAssistantText(messages) || errorMessage || stderr || "(no output)";
 	return {
 		content: [{ type: "text", text }],

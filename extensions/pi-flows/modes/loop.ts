@@ -3,8 +3,6 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnContract, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
-import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
 import { runAgentRef } from "../runner.ts";
 
 export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
@@ -13,10 +11,10 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 	const goal: string | undefined = params.task;
 	if (!goal?.trim() || !spec.body?.agent) {
 		const error = flowError("INVALID_MODE", "Loop mode requires task and loop.body.agent.", "loop runs one body agent repeatedly until DONE/PASS or maxIterations.", 'Use { "task": "...", "loop": { "body": { "agent": "operator" } } }.');
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "loop", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("loop")([], error) };
 	}
 	const maxIterations = clampLoopIterations(spec.maxIterations);
-	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
+	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
 	const bodyRef: FlowAgentRefInput = spec.body;
 	const judgeRef: FlowAgentRefInput | undefined = spec.judge?.agent ? spec.judge : undefined;
 	const results: FlowRunResult[] = [];
@@ -65,12 +63,8 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	if (done) {
-		await appendReflexion(defaultCwd, params, "loop", `Loop passed for task "${goal}". Final output:\n${previous}`, policy);
 		return { content: [{ type: "text", text: capModelVisibleText(`Flow loop: DONE after ${Math.ceil(results.length / (judgeRef ? 2 : 1))} iteration(s).\n\n${previous}`) }], details: makeDetails("loop")(results) };
 	}
 	const error = flowError("LOOP_DID_NOT_CONVERGE", "Loop did not reach DONE/PASS within maxIterations.", "The bounded loop exhausted its iteration cap before the stop condition passed.", "Raise loop.maxIterations, narrow the task, improve the stop contract, or inspect the final critique.");
-	const details = makeDetails("loop")(results);
-	details.error = error;
-	await appendReflexion(defaultCwd, params, "loop", `Loop did not converge for task "${goal}". Final critique/output:\n${critique || previous}`, policy);
-	return { content: [{ type: "text", text: capModelVisibleText(`${formatFlowError(error)}\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}`) }], details };
+	return { content: [{ type: "text", text: capModelVisibleText(`${formatFlowError(error)}\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}`) }], details: makeDetails("loop")(results, error) };
 }

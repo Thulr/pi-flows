@@ -1,7 +1,6 @@
-import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
+import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout } from "../runner.ts";
 
 export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
@@ -17,23 +16,16 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 		);
 		return {
 			content: [{ type: "text", text: formatFlowError(error) }],
-			details: toolErrorDetails(discovery, "parallel", agentScope, error),
+			details: makeDetails("parallel")([], error),
 		};
 	}
 
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) {
-		return {
-			content: [{ type: "text", text: formatFlowError(concurrencyError) }],
-			details: toolErrorDetails(discovery, "parallel", agentScope, concurrencyError),
-		};
-	}
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, tasks, params.allowSharedWriteCwd, concurrency);
 	if (sharedWriteError) {
 		return {
 			content: [{ type: "text", text: formatFlowError(sharedWriteError) }],
-			details: toolErrorDetails(discovery, "parallel", agentScope, sharedWriteError),
+			details: makeDetails("parallel")([], sharedWriteError),
 		};
 	}
 	const results = await runAgentFanout(

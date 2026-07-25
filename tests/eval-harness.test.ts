@@ -10,9 +10,12 @@ import { formatTokenComparison, pickArm } from "../evals/compare-report.mjs";
 import { injectModel } from "../evals/model-injection.mjs";
 import { PATTERN_CASES } from "../evals/pattern-cases.mjs";
 import { answerWithArtifacts, armBudgetSignal, exclusionForRun, infraError, scoreObjective, shouldJudgeProductSpans, sumTokenUsage, timeoutPlanForCase } from "../evals/lib.mjs";
-import { createProcessTerminator } from "../evals/process-control.mjs";
+import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection, selectionExitCode } from "../evals/select.mjs";
+import { createFlagReader } from "../evals/cli-flags.mjs";
+import { calibrationSpanFields, caseSpanFields, harnessExitCode, selectMeasurementCases } from "../evals/pipeline.mjs";
+import { runPreflight, thulrDoctorReason } from "../evals/preflight.mjs";
 
 test("Codex baseline maps the Pi model id and parses JSONL without putting the task in argv", async () => {
 	assert.equal(codexModelFromPi("openai-codex/gpt-5.4-mini"), "gpt-5.4-mini");
@@ -55,21 +58,20 @@ setInterval(() => {}, 1000);
 	assert.match(result.details.results[0].errorMessage, /timed out after 500ms/);
 });
 
-test("eval process termination escalates after SIGTERM even when proc.killed is already true", async () => {
-	const signals = [];
-	const proc = {
-		killed: false,
-		kill(signal) {
-			this.killed = true;
-			signals.push(signal);
-			return true;
-		},
-	};
-	const terminator = createProcessTerminator(proc, { isClosed: () => false, graceMs: 10 });
-	terminator.stop();
-	await new Promise((resolve) => setTimeout(resolve, 20));
-	assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
-	terminator.dispose();
+test("runJsonlProcess escalates SIGTERM to SIGKILL for a child that ignores SIGTERM", async () => {
+	const cwd = await mkdtemp(path.join(tmpdir(), "pi-jsonl-child-test-"));
+	const stub = path.join(cwd, "stubborn.mjs");
+	await writeFile(stub, `process.on("SIGTERM", () => {});
+console.log(JSON.stringify({ type: "ready" }));
+setInterval(() => {}, 1000);
+`);
+	const startedAt = Date.now();
+	// Generous timeout: under parallel test load, node startup can take >100ms,
+	// and the child must get to print its JSON line before the timer fires.
+	const run = await runJsonlProcess({ command: process.execPath, args: [stub], cwd, timeoutMs: 2_000, graceMs: 100 });
+	assert.ok(Date.now() - startedAt < 15_000, "SIGKILL escalation should end a SIGTERM-ignoring child promptly");
+	assert.equal(run.timedOut, true);
+	assert.equal(run.sawJsonEvent, true);
 });
 
 test("A/B artifacts preserve token breakdowns and report the candidate multiplier", () => {
@@ -379,6 +381,128 @@ test("eval judge eligibility requires at least one non-excluded product span", (
 	assert.equal(shouldJudgeProductSpans({ productSpans: 1 }), true);
 	assert.equal(shouldJudgeProductSpans({ productSpans: 1, dryRun: true }), false);
 	assert.equal(shouldJudgeProductSpans({ productSpans: 1, traceOnly: true }), false);
+});
+
+// The measurement CLIs (run/compare/select) accept only `--name=value`; the thulr
+// wrappers keep the `--name value` parser in evals/args.mjs. Merging them would let
+// `--dry-run --filter=x` swallow the next token as a value.
+test("eval flag reader keeps --name=value semantics and never consumes the next token", () => {
+	const { flag, has, bool, flags, positiveNumberFlag } = createFlagReader([
+		"--dry-run", "--filter=route", "--model", "openai-codex/gpt-5.5", "--junit",
+		"--efficiency-guardrail=cost_usd,tokens", "--efficiency-guardrail=latency",
+	]);
+	assert.equal(flag("filter", ""), "route");
+	assert.equal(flag("model", null), null, "a space-separated value must not be consumed");
+	assert.equal(has("junit"), true);
+	assert.equal(has("filter"), true, "has() covers both the bare and valued forms");
+	assert.equal(bool("filter"), false, "bool() covers only the bare form");
+	assert.equal(bool("dry-run"), true);
+	assert.deepEqual(flags("efficiency-guardrail"), ["cost_usd", "tokens", "latency"]);
+	assert.equal(positiveNumberFlag("arm-timeout"), null, "an absent millisecond flag is null, not 0");
+});
+
+test("eval flag reader rejects non-positive millisecond flags with the offending flag name", () => {
+	const invalid: string[] = [];
+	const onInvalid = (message: string) => {
+		invalid.push(message);
+		return null;
+	};
+	for (const argv of [["--arm-timeout=0"], ["--arm-timeout=-5"], ["--arm-timeout=abc"], ["--arm-timeout"]]) {
+		assert.equal(createFlagReader(argv, { onInvalid }).positiveNumberFlag("arm-timeout"), null, argv[0]);
+	}
+	assert.equal(invalid.length, 4);
+	assert.match(invalid[0], /--arm-timeout must be a positive number of milliseconds/);
+	assert.equal(createFlagReader(["--arm-timeout=5000"], { onInvalid }).positiveNumberFlag("arm-timeout"), 5_000);
+});
+
+// `thulr doctor` is the eval gate's preflight: it must say WHICH check failed so the
+// message points at the fix (install thulr vs. install its judge binary).
+test("eval preflight names the failing thulr check", () => {
+	assert.equal(thulrDoctorReason({ ok: true, report: { healthy: true } }), null);
+	assert.match(thulrDoctorReason({ ok: false, report: null }), /`thulr` was not found on PATH/);
+	assert.match(
+		thulrDoctorReason({ ok: false, report: { judge_bin_found: false, judge_bin: "pi" } }),
+		/judge binary `pi` was not found on PATH/,
+	);
+	assert.match(thulrDoctorReason({ ok: false, report: { judge_bin_found: true } }), /unhealthy environment/);
+});
+
+test("eval preflight stops at the first failing step and reports only that one", () => {
+	const logged: string[] = [];
+	const log = (message: string) => logged.push(message);
+	assert.equal(runPreflight([() => null, () => null], { log }), true);
+	assert.deepEqual(logged, []);
+	assert.equal(runPreflight([() => null, () => "pi missing", () => "thulr missing"], { log }), false);
+	assert.deepEqual(logged, ["pi missing"], "a later step must not run once one has failed");
+});
+
+// Controls are threshold negatives: they only run when asked for, or when an explicit
+// --filter says the operator wants that specific case.
+test("eval case selection excludes controls unless requested", () => {
+	const cases = [{ name: "route-a" }, { name: "route-b", control: true }, { name: "vote-a" }];
+	assert.deepEqual(selectMeasurementCases(cases, {}).map((c) => c.name), ["route-a", "vote-a"]);
+	assert.deepEqual(selectMeasurementCases(cases, { includeControls: true }).map((c) => c.name), ["route-a", "route-b", "vote-a"]);
+	assert.deepEqual(selectMeasurementCases(cases, { filter: "route", includeControls: true }).map((c) => c.name), ["route-a", "route-b"]);
+});
+
+// One projection feeds every trace span in both harnesses. The three fallbacks are the
+// contract: expectedBehavior defaults to the criterion, a failing case without explicit
+// failure modes gets the deterministic-fail tag, and the label is coerced to a boolean
+// because it is the ground truth thulr calibrates its judge against.
+test("eval case-to-span projection applies the three trace fallbacks", () => {
+	const testCase = {
+		name: "route-classifies-bug",
+		criterion: "routes a bug report to recon",
+		criteria: { evidence_quality: "cites the file" },
+		labels: ["routing"],
+		judgeOnlyDimensions: ["tone"],
+	};
+	const passed = caseSpanFields(testCase, {
+		answer: "recon", label: 1, endMs: 42, model: "openai-codex/gpt-5.4-mini", task: "classify this",
+		costUsd: 0.01, tokensTotal: 500, journeyStage: "delegation", promptVersion: "pi-flows@0.2.0", configVersion: "cfg",
+	});
+	assert.equal(passed.label, true, "a truthy label is coerced to a boolean");
+	assert.equal(passed.expectedBehavior, "routes a bug report to recon");
+	assert.deepEqual(passed.failureModes, []);
+	assert.deepEqual(passed.criteria, { evidence_quality: "cites the file" });
+	assert.equal(passed.judgeOnlyDimensions, testCase.judgeOnlyDimensions);
+	assert.equal(passed.costUsd, 0.01);
+	assert.equal(passed.tokensTotal, 500);
+
+	const failed = caseSpanFields(testCase, { answer: "operator", label: false, endMs: 42 });
+	assert.deepEqual(failed.failureModes, ["final_answer.deterministic_fail"]);
+
+	const tagged = caseSpanFields({ ...testCase, expectedBehavior: "picks recon", failureModes: ["routing.wrong_agent"] }, { label: false, endMs: 1 });
+	assert.equal(tagged.expectedBehavior, "picks recon");
+	assert.deepEqual(tagged.failureModes, ["routing.wrong_agent"]);
+});
+
+test("eval calibration canaries project as free, deterministically negative spans", () => {
+	const span = calibrationSpanFields(
+		{ name: "canary-empty", answer: "n/a", criterion: "answers the question", task: "why did it fail?" },
+		{ model: "agent-frontmatter", endMs: 7, promptVersion: "pi-flows@0.2.0", configVersion: "cfg" },
+	);
+	assert.equal(span.label, false, "a canary with no objective defaults to a negative label");
+	assert.equal(span.journeyStage, "calibration");
+	assert.equal(span.costUsd, 0);
+	assert.equal(span.tokensTotal, 0);
+	assert.deepEqual(span.failureModes, ["final_answer.deterministic_fail"]);
+	assert.equal(
+		calibrationSpanFields({ name: "c", journeyStage: "recovery", objective: { pass: true, score: 1 } }, { endMs: 1 }).journeyStage,
+		"recovery",
+	);
+});
+
+// The two-axis exit contract: green needs every measured case to pass both axes, a
+// clean gate, AND no infra exclusion. A run with nothing measured is green only when
+// infra was not the reason — otherwise a total auth failure would exit 0.
+test("eval harness exit policy blocks on failures, gate regressions, and infra exclusions", () => {
+	assert.equal(harnessExitCode({ measured: 3, passed: 3 }), 0);
+	assert.equal(harnessExitCode({ measured: 3, passed: 2 }), 1);
+	assert.equal(harnessExitCode({ measured: 3, passed: 3, gateBlocks: true }), 1, "a gate regression blocks a clean run");
+	assert.equal(harnessExitCode({ measured: 3, passed: 3, infraExcluded: 1 }), 1, "an excluded case is not a pass");
+	assert.equal(harnessExitCode({ measured: 0, passed: 0 }), 0, "a filtered-to-nothing run is not a failure");
+	assert.equal(harnessExitCode({ measured: 0, passed: 0, infraExcluded: 2 }), 1, "infra wiping out every case must not exit 0");
 });
 
 test("eval CLIs reject non-positive arm-timeout overrides", () => {

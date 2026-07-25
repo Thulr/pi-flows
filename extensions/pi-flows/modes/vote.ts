@@ -1,9 +1,7 @@
-import { DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
-import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import { withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
+import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 const VOTER_STANCES = [
@@ -46,9 +44,9 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			"vote mode runs the same `task` across multiple voters and aggregates the answers.",
 			'Add a `task` string, e.g. { "task": "...", "vote": { "agent": "recon", "count": 3 } }.',
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "vote", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("vote")([], error) };
 	}
-	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
+	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
 
 	// Build voters: explicit heterogeneous list (vendor-diverse) or one agent repeated `count` times.
 	let voters: FlowAgentRefInput[];
@@ -64,7 +62,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			"Provide either `vote.voters` (explicit agents) or `vote.agent` with `vote.count`.",
 			'Use { "vote": { "agent": "recon", "count": 3 } } or { "vote": { "voters": [{"agent":"recon"},{"agent":"recon","model":"..."}] } }.',
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "vote", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("vote")([], error) };
 	}
 
 	if (voters.length < 2) {
@@ -74,7 +72,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			"Voting suppresses non-deterministic errors by comparing independent answers; one voter is just single mode.",
 			"Set vote.count >= 2 or provide >= 2 vote.voters.",
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "vote", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("vote")([], error) };
 	}
 	if (voters.length > MAX_PARALLEL_TASKS) {
 		const error = flowError(
@@ -83,17 +81,13 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			`Vote mode supports at most ${MAX_PARALLEL_TASKS} voters to prevent runaway subprocess fanout.`,
 			`Use ${MAX_PARALLEL_TASKS} or fewer voters.`,
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "vote", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("vote")([], error) };
 	}
 
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) {
-		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "vote", agentScope, concurrencyError) };
-	}
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, voters, params.allowSharedWriteCwd, concurrency);
 	if (sharedWriteError) {
-		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "vote", agentScope, sharedWriteError) };
+		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: makeDetails("vote")([], sharedWriteError) };
 	}
 
 	const diversifyVoters = shouldDiversifyVoterPrompts(voters);

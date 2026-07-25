@@ -241,33 +241,6 @@ export function formatGateScoreSummary(report) {
 	return lines;
 }
 
-/**
- * Summarize a `thulr.duel_report.v1` as the lines pi-flows should print: the
- * head-to-head win counts, the win rate over swap-consistent cases, the margin
- * for arm A, and any position-bias flips (judge noise) or skipped cases. Arm A is
- * the flows arm and arm B is plain — the harness passes `--label-a`/`--label-b`,
- * so labels travel in the report. Pure (string in / lines out) for unit testing.
- *
- * @param {object | string | null | undefined} report
- * @returns {string[]}
- */
-export function formatDuelSummary(report) {
-	const parsed = typeof report === "string" ? JSON.parse(report) : report;
-	const s = parsed?.summary;
-	if (!s) return [];
-	const aLabel = parsed.a?.label ?? "A";
-	const bLabel = parsed.b?.label ?? "B";
-	const lines = [
-		`${aLabel} wins ${s.a_wins} · ${bLabel} wins ${s.b_wins} · ties ${s.ties}${s.flips ? ` · flips ${s.flips}` : ""}  (decided ${s.decided})`,
-		`win rate: ${aLabel} ${pct(s.win_rate_a)} · ${bLabel} ${pct(s.win_rate_b)}  ·  margin ${aLabel} ${signedFixed(s.margin_a, 3)}`,
-	];
-	const skipped = parsed.skipped ?? [];
-	if (skipped.length) {
-		lines.push(`skipped ${skipped.length}: ${skipped.map((x) => (Array.isArray(x) ? `${x[0]} (${x[1]})` : String(x))).join(", ")}`);
-	}
-	return lines;
-}
-
 export function evalRunDimensions(evalRun) {
 	return (evalRun?.summary ?? [])
 		.map((d) => d.dimension)

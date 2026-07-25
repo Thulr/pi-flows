@@ -63,8 +63,13 @@ export function projectAgentsForRequest(discovery: FlowDiscovery, params: any): 
 		.filter((agent): agent is FlowAgent => agent?.source === "project");
 }
 
+/**
+ * The one FlowDetails constructor. `results` is always the runs accumulated so
+ * far — error paths pass what already ran (children that spent real tokens must
+ * stay visible to the ledger, trace, and inspector), plus the error itself.
+ */
 export function makeFlowDetails(discovery: FlowDiscovery, agentScope: AgentScope, mode: FlowMode, agents = discovery.agents) {
-	return (results: FlowRunResult[]): FlowDetails => ({
+	return (results: FlowRunResult[], error?: FlowError): FlowDetails => ({
 		mode,
 		version: PI_FLOWS_VERSION,
 		agentScope,
@@ -84,6 +89,7 @@ export function makeFlowDetails(discovery: FlowDiscovery, agentScope: AgentScope
 		results,
 		agents: agents.map(safeAgentForDetails),
 		discoveryIssues: discovery.issues,
+		...(error ? { error } : {}),
 	});
 }
 
@@ -110,19 +116,13 @@ export function configSummary(discovery: FlowDiscovery, agentScope: AgentScope):
 	return lines.join("\n");
 }
 
-export function toolErrorDetails(discovery: FlowDiscovery, mode: FlowMode, agentScope: AgentScope, error: FlowError): FlowDetails {
-	const details = makeFlowDetails(discovery, agentScope, mode)([]);
-	details.error = error;
-	return details;
-}
-
 export interface AgentCatalog {
 	discovery: FlowDiscovery;
 	agentScope: AgentScope;
 	summary: () => string;
 	configSummary: () => string;
 	projectAgentsFor: (params: any) => FlowAgent[];
-	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[]) => FlowDetails;
+	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
 	errorDetails: (mode: FlowMode, error: FlowError) => FlowDetails;
 }
 
@@ -134,6 +134,6 @@ export function createAgentCatalog(discovery: FlowDiscovery, agentScope: AgentSc
 		configSummary: () => configSummary(discovery, agentScope),
 		projectAgentsFor: (params) => projectAgentsForRequest(discovery, params),
 		makeDetails: (mode, agents) => makeFlowDetails(discovery, agentScope, mode, agents),
-		errorDetails: (mode, error) => toolErrorDetails(discovery, mode, agentScope, error),
+		errorDetails: (mode, error) => makeFlowDetails(discovery, agentScope, mode)([], error),
 	};
 }

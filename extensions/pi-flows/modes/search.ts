@@ -1,10 +1,8 @@
-import { DEFAULT_CONCURRENCY, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
-import { appendReturnContract, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
+import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
-import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 
 export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
@@ -13,7 +11,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const goal: string | undefined = params.task;
 	if (!goal?.trim()) {
 		const error = flowError("INVALID_MODE", "Search mode requires a task.", "search mode generates and scores candidate paths for a top-level goal.", 'Add a task, e.g. { "task": "...", "search": {} }.');
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("search")([], error) };
 	}
 	const generatorRef: FlowAgentRefInput = spec.generator ?? { agent: "strategist" };
 	const scorerRef: FlowAgentRefInput = spec.scorer ?? { agent: "redteam", tools: "none" };
@@ -21,17 +19,15 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const candidateCount = Number.isFinite(spec.candidates) ? Math.max(1, Math.min(MAX_PARALLEL_TASKS, Math.floor(spec.candidates))) : DEFAULT_SEARCH_CANDIDATES;
 	const beamWidth = Number.isFinite(spec.beamWidth) ? Math.max(1, Math.min(candidateCount, Math.floor(spec.beamWidth))) : DEFAULT_SEARCH_BEAM_WIDTH;
 	const rounds = Number.isFinite(spec.maxRounds) ? Math.max(1, Math.min(4, Math.floor(spec.maxRounds))) : DEFAULT_SEARCH_ROUNDS;
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "search", agentScope, concurrencyError) };
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 	const repeatedGenerators = Array.from({ length: candidateCount }, () => generatorRef);
 	const generatorWriteError = validateSharedWriteCwd(discovery, defaultCwd, repeatedGenerators, params.allowSharedWriteCwd, concurrency);
-	if (generatorWriteError) return { content: [{ type: "text", text: formatFlowError(generatorWriteError) }], details: toolErrorDetails(discovery, "search", agentScope, generatorWriteError) };
+	if (generatorWriteError) return { content: [{ type: "text", text: formatFlowError(generatorWriteError) }], details: makeDetails("search")([], generatorWriteError) };
 	const repeatedScorers = Array.from({ length: candidateCount }, () => scorerRef);
 	const scorerWriteError = validateSharedWriteCwd(discovery, defaultCwd, repeatedScorers, params.allowSharedWriteCwd, concurrency);
-	if (scorerWriteError) return { content: [{ type: "text", text: formatFlowError(scorerWriteError) }], details: toolErrorDetails(discovery, "search", agentScope, scorerWriteError) };
+	if (scorerWriteError) return { content: [{ type: "text", text: formatFlowError(scorerWriteError) }], details: makeDetails("search")([], scorerWriteError) };
 
-	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
+	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
 	const results: FlowRunResult[] = [];
 	const handoffWarnings = new HandoffWarnings();
 	let beam: Array<{ text: string; score: number }> = [];
@@ -62,7 +58,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		const candidates = generated.filter((result) => !isFailed(result)).map((result) => handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text);
 		if (candidates.length === 0) {
 			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
+			return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("search")(results, error) };
 		}
 
 		const scoreResults = await runAgentFanout(
@@ -95,7 +91,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 
 	if (beam.length === 0) {
 		const error = flowError("SEARCH_NO_CANDIDATES", "Search kept no candidates after scoring.", "All scored candidates were unusable.", "Reduce scoring strictness or inspect scorer output.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "search", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("search")(results, error) };
 	}
 	const finalTask = [
 		"## Goal / contract",
@@ -108,6 +104,5 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results);
 	results.push(final);
 	if (isFailed(final)) return { content: [{ type: "text", text: sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy) }], details: makeDetails("search")(results) };
-	await appendReflexion(defaultCwd, params, "search", `Search completed for task "${goal}". Best score ${beam[0]?.score}. Final answer:\n${resultText(final)}`, policy);
 	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${handoffWarnings.summary()}\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };
 }

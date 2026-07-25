@@ -34,6 +34,29 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   justification). Calls without it are refused with the new `WHY_REQUIRED`
   error before any child spawns; `list`/`showConfig` are exempt. This is
   deliberate structural friction against reflexive delegation.
+- `reflexion` now applies flow-wide at the dispatch core: recent lessons are
+  appended to the top-level `task` for every mode, and a redacted lesson is
+  recorded from the final output of any run that spawned at least one child.
+  Previously only a subset of modes read or wrote lessons, inconsistently.
+- `concurrency` is validated once at dispatch for every mode; an out-of-range
+  value is refused (`INVALID_CONCURRENCY`) even in modes that run sequentially
+  and previously ignored it.
+- Internal seams deepened (no contract change): mode handlers spawn children
+  through an injectable `ModeDeps.runChild` seam, the mode surface (handler
+  table, detection, labels, tool prose) derives from the single table in
+  `modes/contract.ts`, and one shared JSONL child-process protocol module backs
+  both the extension runner and the eval baselines.
+
+### Fixed
+
+- `details.results` now retains every child run that completed before a
+  mid-flow error, so the session ledger, trace `ok`, and inspector report real
+  usage and cost instead of zero after failures such as `GRAPH_CYCLE` or
+  `CHECK_COMMAND_FAILED`.
+- `npm run pack:dry-run` now resolves every relative import reachable from the
+  packaged extension sources and fails when an imported file is missing from
+  the tarball (the new `.mjs` protocol module is packaged via an added `files`
+  glob).
 
 ## 0.2.0 - 2026-07-17
 

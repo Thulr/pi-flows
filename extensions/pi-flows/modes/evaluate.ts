@@ -1,11 +1,9 @@
-import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, DEFAULT_CONCURRENCY, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowDetails, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff, prepareTextHandoff } from "../handoff.ts";
-import { appendReturnContract, clampIterations, normalizeTimeout, validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
+import { appendReturnContract, clampIterations, normalizeTimeout, validateSharedWriteCwd } from "../validate.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
-import { appendReflexion, withReflexion } from "../reflexion.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
-import { runAgentFanout, runFlowAgent } from "../runner.ts";
+import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
 
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
@@ -22,9 +20,9 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			"evaluate mode needs a top-level `task` describing the goal/contract the generator must satisfy and the evaluator must judge.",
 			'Add a `task` string, e.g. { "task": "Add a /health endpoint with a test", "evaluate": {} }.',
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "evaluate", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")([], error) };
 	}
-	const contractedGoal = withReflexion(defaultCwd, params, appendReturnContract(goal, params.returnContract, params.requireEvidence), policy);
+	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
 
 	const generatorRef: FlowAgentRefInput = spec.operator ?? { agent: "operator" };
 	// The critic may be a single agent or a panel (god-metric → decomposed evaluators:
@@ -36,14 +34,10 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const maxIterations = clampIterations(spec.maxIterations);
 	const passContract: string | undefined = spec.passContract;
 	const checkCommand: string | undefined = typeof spec.checkCommand === "string" && spec.checkCommand.trim() ? spec.checkCommand.trim() : undefined;
-	const concurrencyError = validateConcurrency(params.concurrency);
-	if (concurrencyError) {
-		return { content: [{ type: "text", text: formatFlowError(concurrencyError) }], details: toolErrorDetails(discovery, "evaluate", agentScope, concurrencyError) };
-	}
-	const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+	const { concurrency } = deps;
 	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, evaluatorRefs, params.allowSharedWriteCwd, concurrency);
 	if (sharedWriteError) {
-		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: toolErrorDetails(discovery, "evaluate", agentScope, sharedWriteError) };
+		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: makeDetails("evaluate")([], sharedWriteError) };
 	}
 	const checkTimeoutMs = Math.min(normalizeTimeout(params.timeoutMs), DEFAULT_CHECK_COMMAND_TIMEOUT_MS);
 
@@ -54,10 +48,6 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			content: [{ type: "text", text: `Flow evaluate: ${results.length} step(s) done` }],
 			details: makeDetails("evaluate")([...results, ...(inFlight ? [inFlight] : [])]),
 		});
-	};
-	const stepUpdate = (partial: { content: any; details: FlowDetails }) => {
-		const current = partial.details.results[0];
-		onUpdate?.({ content: partial.content, details: makeDetails("evaluate")([...results, ...(current ? [current] : [])]) });
 	};
 
 	let lastGenerator: FlowRunResult | null = null;
@@ -83,25 +73,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 						"\n## Reviewer feedback on that attempt (address every point)",
 						critique,
 					].join("\n");
-		const generated = await runFlowAgent({
-			defaultCwd,
-			agents: discovery.agents,
-			agentName: generatorRef.agent,
-			task: generatorTask,
-			cwd: generatorRef.cwd,
-			model: generatorRef.model ?? params.model,
-			tier: generatorRef.tier ?? params.tier,
-			tools: generatorRef.tools,
-			timeoutMs: params.timeoutMs,
-			recordContent: params.recordContent,
-			redactSecrets: params.redactSecrets,
-			step: results.length + 1,
-			signal,
-			budget: deps.budget,
-			recordSpan: deps.recordSpan,
-			onUpdate: stepUpdate,
-			makeDetails: makeDetails("evaluate"),
-		});
+		const generated = await runAgentRef(deps, generatorRef, generatorTask, "evaluate", results.length + 1, results);
 		results.push(generated);
 		lastGenerator = generated;
 		emitLive();
@@ -130,7 +102,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 					`The deterministic gate command could not be started: ${check.output}.`,
 					"Verify the command exists and is runnable from the cwd. A non-runnable check is a config error, not a REVISE signal.",
 				);
-				return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "evaluate", agentScope, error) };
+				return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")(results, error) };
 			}
 			lastCheckOk = check.ok;
 			if (!check.ok) {
@@ -196,7 +168,6 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		: `Flow evaluate: did not pass within ${maxIterations} iteration${maxIterations === 1 ? "" : "s"}${gate} — returning the last attempt with the final critique.`;
 	const warningNote = handoffWarnings.summary();
 	const body = passed ? finalArtifact : `## Last attempt\n\n${finalArtifact}\n\n## Final critique\n\n${critique}`;
-	await appendReflexion(defaultCwd, params, "evaluate", passed ? `Evaluate passed for task "${goal}". Final artifact:\n${finalArtifact}` : `Evaluate did not pass for task "${goal}". Final critique:\n${critique}`, policy);
 	return {
 		content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${body}`) }],
 		details: makeDetails("evaluate")(results),

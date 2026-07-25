@@ -2,7 +2,6 @@ import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult,
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnContract } from "../validate.ts";
 import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
-import { toolErrorDetails } from "../agent-catalog.ts";
 import { runAgentRef } from "../runner.ts";
 
 export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
@@ -16,7 +15,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 			"route mode classifies `task` and dispatches it to one candidate agent.",
 			'Add a `task` string, e.g. { "task": "...", "route": { "candidates": ["recon","strategist"] } }.',
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "route", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
 	const candidates: string[] = Array.isArray(spec.candidates) ? spec.candidates.filter((name: any) => typeof name === "string" && name.trim()) : [];
 	if (candidates.length === 0) {
@@ -26,7 +25,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 			"route.candidates lists the agent names the router may choose from.",
 			'Provide route.candidates, e.g. { "route": { "candidates": ["recon","strategist","overwatch"] } }.',
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "route", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
 	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
 
@@ -60,7 +59,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 			`The router output did not name any of: ${candidates.join(", ")}.`,
 			"Tighten the router prompt, adjust candidates, or set route.fallback to a default agent.",
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: toolErrorDetails(discovery, "route", agentScope, error) };
+		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
 
 	const specialist = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results);

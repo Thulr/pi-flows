@@ -34,9 +34,7 @@ function renderPhaseTask(template: string, task: string | undefined, previous: s
 }
 
 function stateError(deps: ModeDeps, results: FlowRunResult[], error: FlowError): ModeOutput {
-	const details = deps.makeDetails("workflow")(results);
-	details.error = error;
-	return { content: [{ type: "text", text: formatFlowError(error) }], details };
+	return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("workflow")(results, error) };
 }
 
 async function persistState(file: string, state: WorkflowState): Promise<void> {
