@@ -12,7 +12,7 @@ process.argv[1] = stubPi;
 
 function flowTool() {
 	const tools = new Map<string, any>();
-	registerPiFlows({ registerCommand() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
+	registerPiFlows({ registerCommand() {}, registerShortcut() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
 	return tools.get("flow");
 }
 

@@ -133,6 +133,7 @@ Or install your working copy as a package with `pi install -l ./`. See [Developm
 
 - `flow` tool: runs isolated pi subprocesses for single, parallel, chain, evaluate (generator-evaluator), vote, route, orchestrate, graph, loop, search, workflow, worktree, debate, dossier, and monitor delegation.
 - `/flows` command: lists available flow agents and shows help/status/version output.
+- Live TUI inspector: press `F8` (or run `/flows inspect`) during a flow to pick a queued or running child and watch its status, task, usage, and recent activity. Closing it does not stop the child.
 - Bundled agents in [`agents/`](./agents/): `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`.
 - Your own agents, no code required — one markdown file (frontmatter + system prompt) per agent. User agents live in `~/.pi/agent/flow-agents/*.md`; project agents in `.pi/flow-agents/*.md` (loaded with `agentScope: "project"` or `"all"`, and trust-gated). Project shadows user shadows bundled, with a visible diagnostic. See [Custom agents](./docs/custom-agents.md).
 

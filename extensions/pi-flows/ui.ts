@@ -80,16 +80,20 @@ export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, 
 	return null;
 }
 
-export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" | "version" | "status"; scope: AgentScope } | { kind: "report"; traceFile?: string } | { kind: "error"; message: string } {
+export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" | "version" | "status" | "inspect"; scope: AgentScope } | { kind: "report"; traceFile?: string } | { kind: "error"; message: string } {
 	const parts = rawArgs.trim().split(/\s+/).filter(Boolean);
 	if (parts.length === 0) return { kind: "list", scope: "user" };
 	const [first, second] = parts;
 	const validScopes = new Set(["user", "project", "all"]);
-	const validKinds = new Set(["help", "version", "status", "list", "report"]);
+	const validKinds = new Set(["help", "version", "status", "inspect", "list", "report"]);
 
 	if (validKinds.has(first)) {
 		if (first === "help") return { kind: "help", scope: "user" };
 		if (first === "version") return { kind: "version", scope: "user" };
+		if (first === "inspect") {
+			if (second) return { kind: "error", message: "Use: /flows inspect" };
+			return { kind: "inspect", scope: "user" };
+		}
 		if (first === "report") {
 			if (parts.length > 2) return { kind: "error", message: "Use: /flows report [trace-file]" };
 			return { kind: "report", traceFile: second };
@@ -105,7 +109,7 @@ export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" 
 	}
 
 	if (validScopes.has(first)) return { kind: "list", scope: first as AgentScope };
-	return { kind: "error", message: `Unknown /flows argument "${first}". Use: /flows [user|project|all], /flows help, /flows version, or /flows status [scope].` };
+	return { kind: "error", message: `Unknown /flows argument "${first}". Use: /flows [user|project|all], /flows inspect, /flows help, /flows version, or /flows status [scope].` };
 }
 
 export function flowsHelpText(): string {
@@ -117,8 +121,9 @@ export function flowsHelpText(): string {
 		"  /flows project                 List bundled + project-local .pi/flow-agents",
 		"  /flows all                     List package + user + project agents",
 		"  /flows status [user|project|all] Show dirs, defaults, and discovery issues",
+		"  /flows inspect                  Inspect a running child (F8)",
 		"  /flows report [trace-file]       Summarize a flow trace JSONL file",
-		"  /flows version                 Show pi-flows version",
+		"  /flows version                  Show pi-flows version",
 		"",
 		"Tool smoke tests:",
 		"  { \"list\": true }",

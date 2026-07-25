@@ -24,6 +24,14 @@ Exactly one mode is valid per call.
 | Dossier | `{ "task": "...", "dossier": { "sections": [{ "agent": "recon", "task": "source A" }, { "agent": "analyst", "task": "source B" }] } }` | Yes |
 | Monitor | `{ "task": "...", "monitor": { "command": "./probe" } }` | On trigger |
 
+## Live TUI inspection
+
+While a flow is running in interactive Pi, press `F8` or run `/flows inspect`.
+Select a queued or running child to see its task, status, usage, and recent text/tool activity.
+Use Up/Down to scroll, End to return to the latest activity, and Escape to close
+the overlay without interrupting the child. The inspector uses existing in-memory
+flow updates and creates no additional persisted data.
+
 ## Activation thresholds
 
 Use the least coordination that materially improves correctness. Do not auto-use
@@ -533,6 +541,7 @@ CI to cover every code the tool can return, so it never drifts from the source.
 /flows version
 /flows status
 /flows status all
+/flows inspect
 /flows report [trace-file]
 ```
 

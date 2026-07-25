@@ -8,6 +8,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- Added an `F8` / `/flows inspect` TUI overlay for watching a running child agent.
+
 ### Changed
 
 - Increased the default per-child `timeoutMs` from 10 minutes to 10 hours.

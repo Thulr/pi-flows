@@ -102,7 +102,7 @@ export async function runFlowAgent(options: {
 		agent: agent.name,
 		agentSource: agent.source,
 		task: sanitizeText(options.task, policy, 4 * 1024),
-		exitCode: 0,
+		exitCode: -1,
 		messages: [],
 		stderr: "",
 		usage: emptyUsage(),
