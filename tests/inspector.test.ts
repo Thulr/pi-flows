@@ -116,6 +116,7 @@ test("F8 follows a child live and closing the overlay does not abort it", async 
 		const output = await running;
 
 		assert.match(lines.join("\n"), /LIVE_ACTIVITY/);
+		assert.doesNotMatch(lines.join("\n"), /\b\d+\.\d+s\b/, "running children should not inherit flow or queue time");
 		assert.match(lines.join("\n"), /x close/);
 		assert.ok(lines.length <= 16);
 		assert.ok(lines.every((line) => visibleWidth(line) <= 80));

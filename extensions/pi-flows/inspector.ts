@@ -7,7 +7,6 @@ import type { FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
 
 interface LiveFlowRun {
 	mode: FlowMode;
-	startedAt: number;
 	details: FlowDetails;
 	redactSecrets: boolean;
 }
@@ -27,7 +26,7 @@ export class FlowRunRegistry {
 	private readonly listeners = new Set<() => void>();
 
 	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true): void {
-		this.runs.set(id, { mode, startedAt: Date.now(), details, redactSecrets });
+		this.runs.set(id, { mode, details, redactSecrets });
 		this.notify();
 	}
 
@@ -183,8 +182,7 @@ class FlowAgentViewer {
 
 		const state = flowAgentState(result);
 		const stateColor = state === "failed" ? "error" : state === "completed" ? "success" : state === "queued" ? "muted" : "warning";
-		const elapsed = result.durationMs ?? (state === "queued" ? undefined : Date.now() - this.target.run.startedAt);
-		const usage = oneLine(formatUsage(result.usage, result.model, elapsed), 120, this.target.run.redactSecrets);
+		const usage = oneLine(formatUsage(result.usage, result.model, result.durationMs), 120, this.target.run.redactSecrets);
 		lines.push(row(` ${this.theme.fg("accent", this.theme.bold(oneLine(result.agent, 70, this.target.run.redactSecrets)))} ${this.theme.fg(stateColor, state)}`));
 		lines.push(row(` ${this.theme.fg("dim", `${this.target.run.mode}${usage ? ` · ${usage}` : ""}`)}`));
 		lines.push(separator());
