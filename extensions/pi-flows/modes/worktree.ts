@@ -131,7 +131,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		const workerItems = workers.map((worker) => ({
-			ref: { agent: worker.task.agent, model: worker.task.model, tools: worker.task.tools, cwd: worker.cwd },
+			ref: { agent: worker.task.agent, model: worker.task.model, tier: worker.task.tier, tools: worker.task.tools, cwd: worker.cwd },
 			placeholderTask: worker.task.task,
 			task: appendReturnContract(
 				["## Overall integration goal", params.task ?? "Complete the assigned implementation tasks and integrate them.", `\n## Your isolated worktree assignment (${worker.id})`, worker.task.task, "\n## Harness contract", "Work only in this worktree. Make the requested edits and run focused verification. Do not commit or merge; the harness owns git integration. Report changed files, verification, and remaining risks."].join("\n"),

@@ -14,6 +14,7 @@ import {
 	type FlowRunResult,
 } from "./types.ts";
 import { safePath } from "./sanitize.ts";
+import { configuredTierModels } from "./runner.ts";
 import { requestedAgentNamesForParams } from "./modes/contract.ts";
 
 export function summarizeDiscoveryIssues(issues: DiscoveryIssue[]): string {
@@ -30,6 +31,7 @@ export function summarizeAgents(agents: FlowAgent[], issues: DiscoveryIssue[] = 
 				.map((agent) => {
 					const bits = [`${agent.name} (${agent.source})`, agent.description];
 					if (agent.model) bits.push(`model=${agent.model}`);
+					if (agent.tier) bits.push(`tier=${agent.tier}`);
 					if (agent.tools) bits.push(`tools=${agent.tools.length ? agent.tools.join(",") : "none"}`);
 					return `- ${bits.join(" — ")}`;
 				})
@@ -38,13 +40,14 @@ export function summarizeAgents(agents: FlowAgent[], issues: DiscoveryIssue[] = 
 	return issueText ? `${agentText}\n\nDiscovery issues:\n${issueText}` : agentText;
 }
 
-export function safeAgentForDetails(agent: FlowAgent): Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tools"> {
+export function safeAgentForDetails(agent: FlowAgent): Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "tools"> {
 	return {
 		name: agent.name,
 		description: agent.description,
 		source: agent.source,
 		filePath: safePath(agent.filePath) ?? agent.filePath,
 		model: agent.model,
+		tier: agent.tier,
 		tools: agent.tools,
 	};
 }
@@ -91,6 +94,9 @@ export function configSummary(discovery: FlowDiscovery, agentScope: AgentScope):
 		`agentsDir.package: ${safePath(discovery.packageAgentsDir)}`,
 		`agentsDir.user: ${safePath(discovery.userAgentsDir)}`,
 		`agentsDir.project: ${safePath(discovery.projectAgentsDir) ?? "(none)"}`,
+		`modelTier.fast: ${configuredTierModels().fast ?? "(unset — falls back to the default pi model; set PI_FLOWS_FAST_MODEL to map it)"}`,
+		`modelTier.capable: (default pi model)`,
+		`modelTier.deep: ${configuredTierModels().deep ?? "(unset — falls back to the default pi model; set PI_FLOWS_DEEP_MODEL to map it)"}`,
 		`defaultConcurrency: ${DEFAULT_CONCURRENCY}`,
 		`maxParallelTasks: ${MAX_PARALLEL_TASKS}`,
 		`defaultTimeoutMs: ${DEFAULT_TIMEOUT_MS}`,

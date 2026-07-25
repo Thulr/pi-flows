@@ -46,6 +46,7 @@ export type VerifyPolicy = "note" | "fail" | "revise";
 export const FLOW_ERROR_CODES = [
 	"UNKNOWN_AGENT",
 	"INVALID_MODE",
+	"WHY_REQUIRED",
 	"INVALID_SCOPE",
 	"INVALID_CONCURRENCY",
 	"TOO_MANY_TASKS",
@@ -170,7 +171,7 @@ export interface FlowDetails {
 		project: string | null;
 	};
 	results: FlowRunResult[];
-	agents?: Array<Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tools">>;
+	agents?: Array<Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "tools">>;
 	discoveryIssues?: DiscoveryIssue[];
 	error?: FlowError;
 }
@@ -180,6 +181,7 @@ export interface FlowTaskInput {
 	task: string;
 	cwd?: string;
 	model?: string;
+	tier?: string;
 	tools?: string;
 	returnContract?: string;
 	requireEvidence?: boolean;
@@ -188,6 +190,7 @@ export interface FlowTaskInput {
 export interface FlowAgentRefInput {
 	agent: string;
 	model?: string;
+	tier?: string;
 	tools?: string;
 	cwd?: string;
 }

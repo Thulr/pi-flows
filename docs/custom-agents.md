@@ -48,7 +48,7 @@ Have sql-reviewer check the migrations in db/migrate added this week.
 | `description` | yes | Shown in `flow list:true` and `/flows` — this is what the parent model reads when choosing an agent, so make it say what the agent is *for*. |
 | `tools` | no | Comma-separated pi tool list, e.g. `read,grep,find,ls`. `none` runs with no built-in tools. Omit for pi defaults — which include `bash`, `edit`, and `write`, making the agent **write-capable** and subject to the `SHARED_WRITE_CWD` fan-out guard. |
 | `model` | no | Pin an exact model id. Prefer `tier` so the agent stays portable across providers. |
-| `tier` | no | `capable` (default — the child uses the user's default pi model) or `fast` (uses `PI_FLOWS_FAST_MODEL` when the user has set one). A flow-call `model` override always wins, then an agent `model` pin, then the tier. |
+| `tier` | no | `capable` (default — the child uses the user's default pi model), `fast` (uses `PI_FLOWS_FAST_MODEL` when the user has set one), or `deep` (uses `PI_FLOWS_DEEP_MODEL` for the hardest reasoning/critique work). Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier` > pi default. An unmapped tier falls back to the default model, so agents stay portable with zero configuration. |
 
 A file missing `name` or `description` is skipped with an `AGENT_FRONTMATTER_INVALID` warning in `/flows status` — it does not break discovery of the other agents.
 

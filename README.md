@@ -55,7 +55,7 @@ You talk to pi in plain English — it reads the `flow` tool and writes the call
 Have a read-only agent find the API routes for billing.
 ```
 
-pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing"}`; these docs show the JSON as the exact contract, for when you want to verify it or take manual control.)
+pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; these docs show the JSON as the exact contract, for when you want to verify it or take manual control.)
 
 Ask for a *verified* result and pi reaches for a stronger mode on its own:
 
@@ -149,6 +149,8 @@ Cost is bounded as well as count and time: pass `maxCostUsd` / `maxTokens` to ca
 
 You don't type these objects — you describe what you want and pi builds the call. This is the exact contract behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
 
+Every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution (missing it returns `WHY_REQUIRED` before any child spawns). The Single and Parallel examples show it; later examples omit it for brevity.
+
 ### List
 
 ```json
@@ -164,7 +166,7 @@ You don't type these objects — you describe what you want and pi builds the ca
 ### Single
 
 ```json
-{ "agent": "recon", "task": "Find the API routes for billing" }
+{ "agent": "recon", "task": "Find the API routes for billing", "why": "user asked for a delegated read-only scout" }
 ```
 
 ### Parallel
@@ -175,7 +177,8 @@ You don't type these objects — you describe what you want and pi builds the ca
     { "agent": "recon", "task": "Find frontend auth code" },
     { "agent": "recon", "task": "Find backend auth code" }
   ],
-  "concurrency": 2
+  "concurrency": 2,
+  "why": "frontend and backend auth are independent areas one context should not serialize"
 }
 ```
 
@@ -428,7 +431,9 @@ tier: capable
 System prompt for the delegated agent.
 ```
 
-`tier` keeps agents portable — no vendor model is hard-coded. `capable` runs on your pi default model; `fast` runs on `PI_FLOWS_FAST_MODEL` if you set one (e.g. a cheaper model for your provider, like `openai-codex/gpt-5.4-mini`), otherwise your default too. So flows use whatever model you have pi set up with, and the extension never needs updating as providers ship new models. Pin an explicit `model:` to override the tier (a flow-call `model` overrides too). `tools: none` disables built-in tools. Omitting `tools` uses pi defaults. Invalid agent files are reported in `/flows status` and `flow showConfig:true`.
+`tier` keeps agents portable — no vendor model is hard-coded. `capable` runs on your pi default model; `fast` runs on `PI_FLOWS_FAST_MODEL` if you set one (e.g. a cheaper model for your provider, like `openai-codex/gpt-5.4-mini`), otherwise your default too; `deep` runs on `PI_FLOWS_DEEP_MODEL` for the hardest reasoning and critique work (bundled `redteam` and `strategist` declare it). So flows use whatever model you have pi set up with, and the extension never needs updating as providers ship new models.
+
+A flow call can also pass `tier` per task, phase, or role — the parent picks capability by task nature ("fast" scout, "deep" adjudicator) without knowing which models you have. Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier` > your pi default; an unmapped tier just falls back to the default, so everything works with zero configuration. `flow showConfig:true` shows the effective tier mappings. `tools: none` disables built-in tools. Omitting `tools` uses pi defaults. Invalid agent files are reported in `/flows status` and `flow showConfig:true`.
 
 ## Documentation ladder
 

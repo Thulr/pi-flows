@@ -22,33 +22,55 @@ export function getPiInvocation(args: string[]): { command: string; args: string
 	return { command: "pi", args };
 }
 
-// Portable model tiers: a bundled agent declares a capability tier instead of a
-// vendor model, so flows run on whatever model the user has pi set up with. No
-// model ids are hard-coded here — pi gives an extension no stable way to enumerate
+// Portable model tiers: agents (and flow calls) declare a capability tier instead
+// of a vendor model, so flows run on whatever model the user has pi set up with.
+// No model ids are hard-coded here — pi gives an extension no stable way to enumerate
 // a provider's models with cost (its registry is not a public export and
 // `pi --list-models` carries no pricing), and a hard-coded map would just go stale
 // as providers ship models. So:
 //
 //   tier: capable  -> omit --model; the child pi uses the user's default model
 //   tier: fast     -> PI_FLOWS_FAST_MODEL if the user set one, else the default
+//   tier: deep     -> PI_FLOWS_DEEP_MODEL if the user set one, else the default
 //   model: <id>    -> explicit pin; always wins (as does a flow `model` override)
 //
-// "fast" is an opt-in the user owns for their own provider (e.g.
+// The mappings are opt-ins the user owns for their own provider (e.g.
 // PI_FLOWS_FAST_MODEL=openai-codex/gpt-5.4-mini) rather than a list we maintain.
-export function configuredFastModel(): string | undefined {
-	return process.env.PI_FLOWS_FAST_MODEL?.trim() || undefined;
+export interface TierModels {
+	fast?: string;
+	deep?: string;
+}
+
+export function configuredTierModels(): TierModels {
+	return {
+		fast: process.env.PI_FLOWS_FAST_MODEL?.trim() || undefined,
+		deep: process.env.PI_FLOWS_DEEP_MODEL?.trim() || undefined,
+	};
+}
+
+function tierModel(tier: string | undefined, tiers: TierModels): string | undefined {
+	if (tier === "fast") return tiers.fast;
+	if (tier === "deep") return tiers.deep;
+	return undefined;
 }
 
 function childExtensionsDisabled(): boolean {
 	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_CHILD_NO_EXTENSIONS?.trim() ?? "");
 }
 
-/** Concrete model for a child run: flow override > agent pin > fast-tier override > pi default (undefined = omit --model, child uses the user's default). */
-export function resolveAgentModel(agent: { model?: string; tier?: string }, optionsModel: string | undefined, fastModel: string | undefined): string | undefined {
-	if (optionsModel) return optionsModel;
+/**
+ * Concrete model for a child run: flow model override > flow tier override >
+ * agent pin > agent tier > pi default (undefined = omit --model, child uses the
+ * user's default). A call-site tier beats an agent's pinned model because the
+ * parent is expressing per-task intent; an unmapped tier falls through so flows
+ * still run with zero tier configuration.
+ */
+export function resolveAgentModel(agent: { model?: string; tier?: string }, options: { model?: string; tier?: string }, tiers: TierModels): string | undefined {
+	if (options.model) return options.model;
+	const optionsTierModel = tierModel(options.tier, tiers);
+	if (optionsTierModel) return optionsTierModel;
 	if (agent.model) return agent.model;
-	if (agent.tier === "fast") return fastModel;
-	return undefined;
+	return tierModel(agent.tier, tiers);
 }
 
 export async function writePromptToTempFile(agentName: string, prompt: string, label = "system"): Promise<{ dir: string; filePath: string }> {
@@ -68,6 +90,7 @@ export async function runFlowAgent(options: {
 	task: string;
 	cwd?: string;
 	model?: string;
+	tier?: string;
 	tools?: string;
 	timeoutMs?: number;
 	recordContent?: boolean;
@@ -106,7 +129,7 @@ export async function runFlowAgent(options: {
 		messages: [],
 		stderr: "",
 		usage: emptyUsage(),
-		model: resolveAgentModel(agent, options.model, configuredFastModel()),
+		model: resolveAgentModel(agent, { model: options.model, tier: options.tier }, configuredTierModels()),
 		step: options.step,
 		stdoutParseErrors: 0,
 		stdoutSample: "",
@@ -122,7 +145,7 @@ export async function runFlowAgent(options: {
 
 	const args = ["--mode", "json", "-p", "--no-session"];
 	if (childExtensionsDisabled()) args.push("--no-extensions");
-	const model = resolveAgentModel(agent, options.model, configuredFastModel());
+	const model = resolveAgentModel(agent, { model: options.model, tier: options.tier }, configuredTierModels());
 	if (model) args.push("--model", model);
 
 	const tools = parseToolsOverride(options.tools, agent.tools);
@@ -383,6 +406,7 @@ export async function runAgentFanout(
 			task: item.task,
 			cwd: item.ref.cwd,
 			model: item.ref.model ?? deps.params.model,
+			tier: item.ref.tier ?? deps.params.tier,
 			tools: item.ref.tools,
 			timeoutMs: deps.params.timeoutMs,
 			recordContent: deps.params.recordContent,
@@ -414,6 +438,7 @@ export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string
 		task,
 		cwd: ref.cwd,
 		model: ref.model ?? deps.params.model,
+		tier: ref.tier ?? deps.params.tier,
 		tools: ref.tools,
 		timeoutMs: deps.params.timeoutMs,
 		recordContent: deps.params.recordContent,

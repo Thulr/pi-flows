@@ -127,7 +127,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			phase.requireEvidence ?? params.requireEvidence,
 		);
 		const phaseCwd = phase.cwd ? path.resolve(defaultCwd, phase.cwd) : defaultCwd;
-		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tools: phase.tools };
+		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tier: phase.tier, tools: phase.tools };
 		const run = await runAgentRef(deps, ref, phaseTask, "workflow", results.length + 1, results);
 		results.push(run);
 		if (isFailed(run)) {

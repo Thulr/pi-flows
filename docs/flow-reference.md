@@ -39,6 +39,12 @@ any flow for a simple task or a **saturated** task, where direct parent executio
 already meets the acceptance criteria reliably and leaves no useful quality
 headroom. In that case, extra subprocesses are only cost and latency.
 
+Every spawning call must pass `why` — one sentence naming the reason delegation
+beats direct execution (an explicit user request, fan-out one context cannot
+hold, or author-independent verification). Calls without it are refused with
+`WHY_REQUIRED` before any child spawns. This is deliberate structural friction:
+if no justification can be stated, the task belongs in the parent context.
+
 | Mode | Activate when | Stay direct or use a simpler mode when |
 |---|---|---|
 | `workflow` | Named phases, persisted artifacts, deterministic gates, or a resumable human approval are part of correctness. | The work is one small edit or an ordinary linear handoff; use the parent, `single`, `chain`, or `evaluate`. |
@@ -51,6 +57,7 @@ headroom. In that case, extra subprocesses are only cost and latency.
 
 | Parameter | Default | Notes |
 |---|---|---|
+| `why` | (required to spawn) | One sentence justifying delegation over direct parent execution. Required for every spawning mode; `list`/`showConfig` never need it. Missing/empty ⇒ `WHY_REQUIRED`. |
 | `agentScope` | `user` | `user` = package + user agents; `project` = package + project; `all` = package + user + project. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project agents unless this is explicitly `false`. |
 | `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`. |
@@ -66,7 +73,8 @@ headroom. In that case, extra subprocesses are only cost and latency.
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human approval gate. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
-| `model` | agent/default | Flow-wide model fallback. A task, phase, participant, or role-level `model` overrides it. |
+| `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. Prefer `tier` unless the user named a concrete model. |
+| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Portable model selection: resolves through `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` when the user mapped them, else the default pi model. Resolution order: call `model` > call `tier` > agent `model` pin > agent `tier` > pi default. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
 | `cwd` | parent cwd | Child process working directory. |
 

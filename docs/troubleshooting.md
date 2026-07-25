@@ -71,6 +71,24 @@ Use flow with {"showConfig":true}
 
 Confirm `agentScope` and review any discovery issues reported by `/flows status`.
 
+### `WHY_REQUIRED`
+
+Cause: the call selected a mode that spawns child agents but did not include
+`why` — the one-sentence justification for delegating instead of doing the work
+directly in the parent context. This gate is deliberate friction against
+reflexive delegation: spawning a child costs a full separate model context.
+
+Fix: pass `why` naming the reason delegation is warranted — an explicit user
+request for delegation, fan-out that one context cannot hold, or verification
+that must be independent of the author:
+
+```text
+{"agent":"recon","task":"map the auth module","why":"user asked for a delegated read-only scout"}
+```
+
+If no such reason exists, that is the signal to do the work directly instead of
+calling `flow`. `list:true` and `showConfig:true` never need `why`.
+
 ### `INVALID_MODE`
 
 Cause: the parameters did not select exactly one mode — zero modes, more than

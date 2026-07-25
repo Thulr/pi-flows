@@ -90,6 +90,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			task: generatorTask,
 			cwd: generatorRef.cwd,
 			model: generatorRef.model ?? params.model,
+			tier: generatorRef.tier ?? params.tier,
 			tools: generatorRef.tools,
 			timeoutMs: params.timeoutMs,
 			recordContent: params.recordContent,

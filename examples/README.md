@@ -24,7 +24,7 @@ Expected: output lists all nine bundled agents (`recon`, `strategist`, `overwatc
 Plain English: *"scout the repo for the extension entrypoint and summarize what it registers."* The call pi builds:
 
 ```json
-{ "agent": "recon", "task": "Find the extension entrypoint and summarize what it registers" }
+{ "agent": "recon", "task": "Find the extension entrypoint and summarize what it registers", "why": "user asked for a delegated read-only scout" }
 ```
 
 Expected: recon returns paths including `extensions/pi-flows/index.ts` and mentions `flow` plus `/flows`.
@@ -37,7 +37,8 @@ Expected: recon returns paths including `extensions/pi-flows/index.ts` and menti
     { "agent": "recon", "task": "Find docs and README surfaces" },
     { "agent": "recon", "task": "Find package/test scripts" }
   ],
-  "concurrency": 2
+  "concurrency": 2,
+  "why": "docs and scripts are independent areas worth inspecting in parallel"
 }
 ```
 
@@ -51,7 +52,8 @@ Expected: both tasks complete; details include one result per agent and duration
   "chain": [
     { "agent": "recon", "task": "Find error-handling code for this task: {task}" },
     { "agent": "strategist", "task": "Plan the change using this context:\n\n{previous}" }
-  ]
+  ],
+  "why": "research and planning benefit from a fresh planning context fed a bounded handoff"
 }
 ```
 
@@ -67,7 +69,8 @@ Expected: recon output is capped/redacted before it becomes strategist context.
     "redteam": { "agent": "redteam" },
     "maxIterations": 3,
     "passContract": "Handles hours, minutes, seconds, and mixed forms; rejects invalid input; tests pass."
-  }
+  },
+  "why": "the result needs verification by a critic independent of the author"
 }
 ```
 
@@ -83,7 +86,8 @@ Expected: `details.results` interleaves `operator` and `redteam` runs (one pair 
     "redteam": [{ "agent": "redteam" }, { "agent": "overwatch" }],
     "checkCommand": "npm test",
     "maxIterations": 4
-  }
+  },
+  "why": "the result needs an author-independent critic panel plus a deterministic gate"
 }
 ```
 
@@ -97,7 +101,8 @@ Expected: each round, `npm test` must exit `0` (a failing run is an automatic `R
   "vote": {
     "voters": [{ "agent": "recon" }, { "agent": "recon", "model": "claude-haiku-4-5" }, { "agent": "overwatch" }],
     "debrief": { "agent": "debrief" }
-  }
+  },
+  "why": "independent votes suppress a single model's non-deterministic error"
 }
 ```
 
@@ -108,7 +113,8 @@ Expected: three independent answers; the `debrief` agent returns one consensus a
 ```json
 {
   "task": "Plan how to add rate limiting to the public API",
-  "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "strategist" }
+  "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "strategist" },
+  "why": "the right specialist for this request is not obvious up front"
 }
 ```
 
@@ -119,7 +125,8 @@ Expected: the `controller` emits `ROUTE: strategist`, then strategist runs the t
 ```json
 {
   "task": "Summarize how this repo handles errors, logging, and configuration",
-  "orchestrate": { "recon": { "agent": "recon" }, "maxSubtasks": 3 }
+  "orchestrate": { "recon": { "agent": "recon" }, "maxSubtasks": 3 },
+  "why": "a broad three-area map is more reading than one context should serialize"
 }
 ```
 
@@ -138,7 +145,8 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
       { "id": "approve", "approval": { "message": "Approve the migration plan?" } },
       { "id": "apply", "agent": "operator", "task": "Apply {phase.plan}", "checkCommand": "npm test" }
     ]
-  }
+  },
+  "why": "the migration needs gated phases with a resumable human approval"
 }
 ```
 
@@ -153,7 +161,8 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
       { "id": "backend", "agent": "operator", "task": "Fix backend auth" }
     ],
     "checkCommand": "npm test"
-  }
+  },
+  "why": "two concurrent writers need isolated worktrees and a verified integration branch"
 }
 ```
 
@@ -166,7 +175,8 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
     "participants": [{ "agent": "strategist" }, { "agent": "analyst" }],
     "adjudicator": { "agent": "overwatch" },
     "rounds": 2
-  }
+  },
+  "why": "user asked for opposing advocates and independent adjudication"
 }
 ```
 
@@ -180,7 +190,8 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
       { "agent": "recon", "task": "Extract evidence from runbook.md" },
       { "agent": "analyst", "task": "Extract evidence from incident.md" }
     ]
-  }
+  },
+  "why": "two sources must be cited and reconciled without smoothing conflicts away"
 }
 ```
 
@@ -195,7 +206,8 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
     "pattern": "DEGRADED",
     "intervalMs": 5000,
     "maxChecks": 6
-  }
+  },
+  "why": "a bounded probe must fire before a fresh context diagnoses the event"
 }
 ```
 
@@ -206,7 +218,8 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
   "task": "Summarize how this repo handles errors, logging, and configuration",
   "orchestrate": { "recon": { "agent": "recon" }, "maxSubtasks": 3 },
   "maxCostUsd": 0.25,
-  "traceFile": "flow-trace.jsonl"
+  "traceFile": "flow-trace.jsonl",
+  "why": "a broad three-area map is more reading than one context should serialize"
 }
 ```
 
@@ -229,7 +242,7 @@ You are a tiny test agent. Reply with exactly: hello from flow
 Then run:
 
 ```json
-{ "agent": "hello-flow", "task": "Say hello" }
+{ "agent": "hello-flow", "task": "Say hello", "why": "smoke-testing a custom user agent end to end" }
 ```
 
 ## Project-agent example
@@ -253,7 +266,8 @@ Interactive sessions prompt before running this agent. Headless runs refuse unle
   "agent": "project-check",
   "task": "What check should I run?",
   "agentScope": "project",
-  "confirmProjectAgents": false
+  "confirmProjectAgents": false,
+  "why": "user asked to run the repo-local reviewer agent"
 }
 ```
 
@@ -261,10 +275,18 @@ Only set `confirmProjectAgents:false` after reviewing the project-local prompt.
 
 ## Error-case examples
 
+Missing delegation justification:
+
+```json
+{ "agent": "recon", "task": "Find the API routes" }
+```
+
+Expected error code: `WHY_REQUIRED` (every spawning call needs a one-sentence `why`; `list`/`showConfig` are exempt).
+
 Unknown agent:
 
 ```json
-{ "agent": "not-real", "task": "test" }
+{ "agent": "not-real", "task": "test", "why": "error-path demo" }
 ```
 
 Expected error code: `UNKNOWN_AGENT`.
@@ -272,7 +294,7 @@ Expected error code: `UNKNOWN_AGENT`.
 Bad concurrency:
 
 ```json
-{ "tasks": [{ "agent": "recon", "task": "test" }], "concurrency": 1.5 }
+{ "tasks": [{ "agent": "recon", "task": "test" }], "concurrency": 1.5, "why": "error-path demo" }
 ```
 
 Expected error code: `INVALID_CONCURRENCY`.
@@ -280,7 +302,7 @@ Expected error code: `INVALID_CONCURRENCY`.
 Budget exhausted before any child runs:
 
 ```json
-{ "agent": "recon", "task": "Find the API routes", "maxCostUsd": 0 }
+{ "agent": "recon", "task": "Find the API routes", "maxCostUsd": 0, "why": "error-path demo" }
 ```
 
 Expected error code: `BUDGET_EXCEEDED` (the ceiling trips before the first child spawns).
@@ -291,7 +313,8 @@ Headless project-agent refusal:
 {
   "agent": "project-check",
   "task": "test",
-  "agentScope": "project"
+  "agentScope": "project",
+  "why": "error-path demo"
 }
 ```
 

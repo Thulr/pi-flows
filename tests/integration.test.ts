@@ -1,61 +1,16 @@
 // Offline integration tests for the flow execution path.
-//
-// These exercise the real spawn/parse/orchestrate machinery in
-// extensions/pi-flows/index.ts against a stub `pi` (tests/fixtures/stub-pi.mjs)
-// instead of a live model. pi-flows spawns a child agent by re-running its own
-// entrypoint (process.argv[1]) via the current runtime — see getPiInvocation() —
-// so pointing argv[1] at the stub makes pi-flows spawn the stub. No production
-// code change and no network/model is involved.
-//
-// The stub keys its reply off the agent name and logs every invocation, so each
-// test asserts on the wiring it cares about: which agents ran, in what order,
-// and what task text each received (i.e. that handoffs actually propagated).
+// See tests/stub-harness.ts for how the stub `pi` (tests/fixtures/stub-pi.mjs)
+// stands in for real child processes; the delegation-gate and tier tests live
+// in tests/delegation-contract.test.ts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../extensions/pi-flows/commands.ts";
+import { byAgent, flowTool, freshDir, runFlow, stubPi, type Call } from "./stub-harness.ts";
 
-const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
-process.argv[1] = stubPi;
-
-function flowTool(api: Record<string, any> = {}) {
-	const tools = new Map<string, any>();
-	registerPiFlows({ ...api, registerCommand() {}, registerShortcut() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
-	return tools.get("flow");
-}
-
-type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[]; cwd: string };
-
-async function freshDir() {
-	return mkdtemp(path.join(tmpdir(), "stub-pi-"));
-}
-
-async function runFlow(
-	params: any,
-	plan: Record<string, unknown>,
-	options: { api?: Record<string, any>; ui?: Record<string, any>; cwd?: string; hasUI?: boolean } = {},
-) {
-	const stubDir = options.cwd ?? await freshDir();
-	process.env.PI_STUB_DIR = stubDir;
-	process.env.PI_STUB_PLAN = JSON.stringify(plan);
-	const result = await flowTool(options.api).execute(
-		"tool-call-id",
-		params,
-		new AbortController().signal,
-		undefined,
-		{ cwd: stubDir, hasUI: options.hasUI ?? false, ui: { confirm: async () => true, notify: () => undefined, ...(options.ui ?? {}) } },
-	);
-	const log = await readFile(path.join(stubDir, "calls.jsonl"), "utf8").catch(() => "");
-	const calls: Call[] = log.split("\n").filter(Boolean).map((line) => JSON.parse(line));
-	return { result, calls, text: result.content[0]?.text ?? "", stubDir };
-}
-
-const byAgent = (calls: Call[], name: string) => calls.filter((call) => call.agent === name);
 const ZWSP = String.fromCharCode(0x200b);
 
 test("single: spawns the stub child, returns its text, and accumulates usage", async () => {
@@ -452,7 +407,7 @@ test("reflexion: enabled runs append a local lesson and feed it into later runs"
 	process.env.PI_STUB_PLAN = JSON.stringify({ operator: "LOOP: DONE\nSECOND" });
 	const result = await flowTool().execute(
 		"tool-call-id",
-		{ task: "draft docs again", loop: { body: { agent: "operator" }, maxIterations: 1 }, reflexion: { enabled: true, file: "reflections.jsonl" } },
+		{ why: "integration test exercising the delegation path", task: "draft docs again", loop: { body: { agent: "operator" }, maxIterations: 1 }, reflexion: { enabled: true, file: "reflections.jsonl" } },
 		new AbortController().signal,
 		undefined,
 		{ cwd: first.stubDir, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } },

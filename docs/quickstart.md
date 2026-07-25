@@ -59,6 +59,6 @@ Just ask pi in plain English. You don't have to name an agent or write JSON — 
 Scout the codebase and find the extension entrypoint.
 ```
 
-pi delegates this to `recon` (a read-only scout) and hands back the findings. Want to be explicit instead? Name the agent — *"use recon to find the extension entrypoint"* — or pass the exact call `{"agent":"recon","task":"..."}`.
+pi delegates this to `recon` (a read-only scout) and hands back the findings. Want to be explicit instead? Name the agent — *"use recon to find the extension entrypoint"* — or pass the exact call `{"agent":"recon","task":"...","why":"..."}` (`why` is the required one-sentence delegation justification).
 
 If your provider credentials are not configured, use the no-model checks above first and then see [Troubleshooting](./troubleshooting.md).

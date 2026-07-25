@@ -13,8 +13,15 @@ for (const file of files) {
   const frontmatter = content.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "";
   const name = frontmatter.match(/^name:\s*(.+)$/m)?.[1]?.trim();
   const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+  const tier = frontmatter.match(/^tier:\s*(.+)$/m)?.[1]?.trim();
   assert.ok(name, `${file} missing name`);
   assert.ok(description, `${file} missing description`);
+  if (tier !== undefined) {
+    assert.ok(
+      ["fast", "capable", "deep"].includes(tier),
+      `${file} has invalid tier "${tier}"; expected one of fast, capable, deep`,
+    );
+  }
   assert.ok(!names.has(name), `duplicate agent name: ${name}`);
   names.add(name);
 }
