@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { formatPortfolioReport, portfolioReport, runCorpusPreflight, validateCaseCorpus } from "../evals/case-contract.mjs";
+import { corpusPreflightStep, formatPortfolioReport, portfolioReport, validateCaseCorpus } from "../evals/case-contract.mjs";
 import { EVAL_CORPUS } from "../evals/corpus.mjs";
+import { runPreflight } from "../evals/preflight.mjs";
 
 const structure = {
 	decomposability: "atomic",
@@ -30,7 +31,7 @@ test("the checked-in eval corpus has unique stable ids and complete structural m
 	const validation = validateCaseCorpus(EVAL_CORPUS);
 	assert.deepEqual(validation.issues, []);
 
-	const cases = Object.values(EVAL_CORPUS).flat();
+	const cases = ["measurement", "calibration", "selection"].flatMap((group) => EVAL_CORPUS[group]);
 	assert.ok(cases.length > 0);
 	assert.equal(new Set(cases.map((testCase) => testCase.name)).size, cases.length);
 	for (const testCase of cases) {
@@ -82,11 +83,36 @@ test("source-backed expectations fail preflight when the workspace value drifts"
 
 	let modelCalls = 0;
 	const errors = [];
-	const ok = runCorpusPreflight(corpus, { repoRoot, log: (message) => errors.push(message) });
-	if (ok) modelCalls += 1;
+	const ok = runPreflight([
+		corpusPreflightStep(corpus, { repoRoot, onValid: () => undefined }),
+		() => {
+			modelCalls += 1;
+			return null;
+		},
+	], { log: (message) => errors.push(message) });
 	assert.equal(ok, false);
 	assert.equal(modelCalls, 0);
 	assert.match(errors.join("\n"), /Eval corpus preflight failed/);
+});
+
+test("fixture snapshots reject drift anywhere in the source corpus", async () => {
+	const repoRoot = await mkdtemp(path.join(tmpdir(), "pi-flow-fixtures-"));
+	const fixtures = path.join(repoRoot, "evals", "fixtures");
+	await mkdir(fixtures, { recursive: true });
+	await writeFile(path.join(fixtures, "settings.txt"), "SAMPLE_IDENTIFIER=changed\n");
+	const corpus = {
+		measurement: [evalCase()],
+		calibration: [],
+		selection: [],
+		sourceSnapshots: [{
+			id: "eval-fixtures",
+			path: "evals/fixtures",
+			sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+		}],
+	};
+
+	const validation = validateCaseCorpus(corpus, { repoRoot });
+	assert.match(validation.issues.join("\n"), /source snapshot eval-fixtures is stale/);
 });
 
 test("portfolio reports count cases and exclusions by suite and task family", () => {
@@ -112,6 +138,7 @@ test("portfolio reports count cases and exclusions by suite and task family", ()
 test("eval, comparison, and selection dry-runs execute the shared corpus preflight", () => {
 	const commands = [
 		["evals/run.mjs", "--dry-run", "--filter=route-classifies"],
+		["evals/run.mjs", "--dry-run", "--trace-only", "--filter=route-classifies"],
 		["evals/compare.mjs", "--dry-run", "--filter=route-classifies"],
 		["evals/select.mjs", "--dry-run", "--filter=package-version"],
 	];
@@ -122,5 +149,6 @@ test("eval, comparison, and selection dry-runs execute the shared corpus preflig
 		});
 		assert.equal(run.status, 0, `${script}\n${run.stderr}\n${run.stdout}`);
 		assert.match(`${run.stdout}\n${run.stderr}`, /Eval corpus:/, script);
+		assert.match(`${run.stdout}\n${run.stderr}`, /suite: regression 1 \(0 excluded\)/, script);
 	}
 });

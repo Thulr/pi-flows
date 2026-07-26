@@ -10,11 +10,11 @@
 //   npm run eval:select -- --dry-run
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { formatPortfolioReport, portfolioReport, runCorpusPreflight } from "./case-contract.mjs";
+import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
 import { EVAL_CORPUS, SELECTION_CASES } from "./corpus.mjs";
 import { DEFAULT_EVAL_MODEL } from "./lib.mjs";
-import { loadDotenv } from "./preflight.mjs";
+import { loadDotenv, runPreflight } from "./preflight.mjs";
 import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
@@ -356,7 +356,7 @@ async function runSelectionCase(testCase, signal) {
 }
 
 async function preflight() {
-	if (!runCorpusPreflight(EVAL_CORPUS, { log: console.log })) return false;
+	if (!runPreflight([corpusPreflightStep(EVAL_CORPUS)])) return false;
 	if (dryRun) return true;
 	return new Promise((resolve) => {
 		const proc = spawn("pi", ["--version"], { stdio: "ignore" });

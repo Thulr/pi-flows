@@ -503,9 +503,11 @@ sourceExpectation: {
 ```
 
 The preflight verifies that both the mock answer and answer pattern accept the
-current source value. Terminal reports count selected cases and exclusions by
-portfolio suite and task family, so a green aggregate cannot hide which evidence
-families were absent.
+current source value. `corpus.mjs` also pins a digest of `evals/fixtures`, so any
+fixture edit stops every entrypoint until the fixture-backed expectations and the
+snapshot are reviewed together. Terminal reports count selected cases and
+exclusions by portfolio suite and task family, so a green aggregate cannot hide
+which evidence families were absent.
 
 Keep `score` **objective** (a known answer, the chosen route, a passing gate) — it
 gates behaviour *and* becomes thulr's calibration label. Write `criterion` as the

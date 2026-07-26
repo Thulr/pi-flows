@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -146,6 +147,13 @@ function getPath(value, segments) {
 	return segments.reduce((current, segment) => current?.[segment], value);
 }
 
+function pathInsideRoot(repoRoot, relativePath) {
+	const absolutePath = resolve(repoRoot, relativePath);
+	const sourceRelative = relative(repoRoot, absolutePath);
+	const outsideRoot = sourceRelative === ".." || sourceRelative.startsWith(`..${sep}`) || isAbsolute(sourceRelative);
+	return outsideRoot ? null : absolutePath;
+}
+
 function sourceExpectationIssues(testCase, repoRoot) {
 	const expectation = testCase.sourceExpectation;
 	if (!expectation) return [];
@@ -153,10 +161,8 @@ function sourceExpectationIssues(testCase, repoRoot) {
 	if (typeof expectation.path !== "string" || !Array.isArray(expectation.jsonPath)) {
 		return [`${label} must declare path and jsonPath`];
 	}
-	const sourcePath = resolve(repoRoot, expectation.path);
-	const sourceRelative = relative(repoRoot, sourcePath);
-	const outsideRoot = sourceRelative === ".." || sourceRelative.startsWith(`..${sep}`) || isAbsolute(sourceRelative);
-	if (outsideRoot) return [`${label}.path must stay inside the repository`];
+	const sourcePath = pathInsideRoot(repoRoot, expectation.path);
+	if (!sourcePath) return [`${label}.path must stay inside the repository`];
 	let source;
 	try {
 		source = getPath(JSON.parse(readFileSync(sourcePath, "utf8")), expectation.jsonPath);
@@ -177,6 +183,51 @@ function sourceExpectationIssues(testCase, repoRoot) {
 		}
 	} catch {
 		issues.push(`${label} pattern ${JSON.stringify(pattern)} is not a valid regular expression`);
+	}
+	return issues;
+}
+
+function directoryFiles(directory) {
+	return readdirSync(directory).sort().flatMap((entry) => {
+		const path = resolve(directory, entry);
+		return statSync(path).isDirectory() ? directoryFiles(path) : [path];
+	});
+}
+
+function directoryDigest(directory) {
+	const digest = createHash("sha256");
+	for (const path of directoryFiles(directory)) {
+		digest.update(relative(directory, path).split(sep).join("/"));
+		digest.update("\0");
+		digest.update(readFileSync(path));
+		digest.update("\0");
+	}
+	return digest.digest("hex");
+}
+
+function sourceSnapshotIssues(snapshots, repoRoot) {
+	if (snapshots === undefined) return [];
+	if (!Array.isArray(snapshots)) return ["corpus.sourceSnapshots must be an array"];
+	const issues = [];
+	const seen = new Set();
+	for (const snapshot of snapshots) {
+		const label = `source snapshot ${snapshot?.id ?? "<unnamed>"}`;
+		if (!ID_PATTERN.test(snapshot?.id ?? "")) issues.push(`${label} must have a stable kebab-case id`);
+		if (seen.has(snapshot?.id)) issues.push(`${label} is duplicated`);
+		seen.add(snapshot?.id);
+		const sourcePath = typeof snapshot?.path === "string" ? pathInsideRoot(repoRoot, snapshot.path) : null;
+		if (!sourcePath) {
+			issues.push(`${label} path must stay inside the repository`);
+			continue;
+		}
+		try {
+			const actual = directoryDigest(sourcePath);
+			if (actual !== snapshot.sha256) {
+				issues.push(`${label} is stale: ${snapshot.path} digest is ${actual}, expected ${snapshot.sha256}`);
+			}
+		} catch (error) {
+			issues.push(`${label} could not read ${snapshot.path}: ${error.message}`);
+		}
 	}
 	return issues;
 }
@@ -213,6 +264,7 @@ export function validateCaseCorpus(corpus, { repoRoot = REPO_ROOT } = {}) {
 			seen.add(testCase.id);
 		}
 	}
+	issues.push(...sourceSnapshotIssues(corpus?.sourceSnapshots, repoRoot));
 	return { ok: issues.length === 0, issues, caseCount: seen.size };
 }
 
@@ -245,13 +297,12 @@ export function formatPortfolioReport(report) {
 	return `suite: ${formatCounts(report.bySuite)}\ntask family: ${formatCounts(report.byTaskFamily)}`;
 }
 
-export function runCorpusPreflight(corpus, { repoRoot = REPO_ROOT, log = console.error } = {}) {
-	const validation = validateCaseCorpus(corpus, { repoRoot });
-	if (!validation.ok) {
-		log(`Eval corpus preflight failed before model invocation:\n- ${validation.issues.join("\n- ")}`);
-		return false;
-	}
-	const cases = Object.values(corpus).flat();
-	log(`Eval corpus: ${validation.caseCount} cases\n${formatPortfolioReport(portfolioReport(cases))}`);
-	return true;
+export function corpusPreflightStep(corpus, { repoRoot = REPO_ROOT, onValid = console.log } = {}) {
+	return () => {
+		const validation = validateCaseCorpus(corpus, { repoRoot });
+		if (!validation.ok) return `Eval corpus preflight failed before model invocation:\n- ${validation.issues.join("\n- ")}`;
+		const cases = ["measurement", "calibration", "selection"].flatMap((group) => corpus[group]);
+		onValid(`Eval corpus: ${validation.caseCount} cases\n${formatPortfolioReport(portfolioReport(cases))}`);
+		return null;
+	};
 }
