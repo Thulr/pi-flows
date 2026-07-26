@@ -234,7 +234,8 @@ function directoryDigest(directory) {
 	for (const path of directoryFiles(directory)) {
 		digest.update(relative(directory, path).split(sep).join("/"));
 		digest.update("\0");
-		digest.update(readFileSync(path));
+		const content = readFileSync(path);
+		digest.update(content.includes(0) ? content : content.toString("utf8").replaceAll("\r\n", "\n"));
 		digest.update("\0");
 	}
 	return digest.digest("hex");

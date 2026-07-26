@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -113,6 +114,27 @@ test("fixture snapshots reject drift anywhere in the source corpus", async () =>
 
 	const validation = validateCaseCorpus(corpus, { repoRoot });
 	assert.match(validation.issues.join("\n"), /source snapshot eval-fixtures is stale/);
+});
+
+test("fixture snapshots canonicalize CRLF checkouts before hashing", async () => {
+	const repoRoot = await mkdtemp(path.join(tmpdir(), "pi-flow-crlf-fixtures-"));
+	const fixtures = path.join(repoRoot, "evals", "fixtures");
+	await mkdir(fixtures, { recursive: true });
+	await writeFile(path.join(fixtures, "sample.txt"), "first\r\nsecond\r\n");
+	const digest = createHash("sha256")
+		.update("sample.txt")
+		.update("\0")
+		.update("first\nsecond\n")
+		.update("\0")
+		.digest("hex");
+	const corpus = {
+		measurement: [evalCase()],
+		calibration: [],
+		selection: [],
+		sourceSnapshots: [{ id: "eval-fixtures", path: "evals/fixtures", sha256: digest }],
+	};
+
+	assert.deepEqual(validateCaseCorpus(corpus, { repoRoot }).issues, []);
 });
 
 test("portfolio reports count cases and exclusions by suite and task family", () => {
