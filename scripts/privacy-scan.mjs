@@ -16,7 +16,11 @@ const forbiddenPaths = [
   { pattern: /^evals\/thulr-trace(?:\.dry-run)?\.jsonl$/, reason: "generated eval traces must not be committed" },
   { pattern: /^evals\/(?:baseline|compare)\.json$/, reason: "generated eval outputs must not be committed" },
   { pattern: /(?:^|\/)\.env(?:\..+)?$/, reason: "environment files must not be committed", allow: (file) => file === ".env.example" },
-  { pattern: /\.log$/, reason: "logs must not be committed" },
+  {
+    pattern: /\.log$/,
+    reason: "logs must not be committed",
+    allow: (file) => /^evals\/fixtures\/patterns\/monitor-(?:disk|queue)\/service\.log$/.test(file),
+  },
 ];
 
 const lineRules = [
