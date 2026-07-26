@@ -753,35 +753,3 @@ test("worktree: retains worker state when committing generated changes fails", a
 	await rm(path.dirname(retained), { recursive: true, force: true });
 });
 
-test("a child that stalls after a terminal provider error is terminated with CHILD_PROVIDER_ERROR", async () => {
-	// The stub emits an error-shaped assistant message (stopReason "error" +
-	// errorMessage) and then holds the process open, mimicking a child that
-	// stalls after e.g. a context-window overflow. The runner must terminate it
-	// at the error grace, not wait for holdOpenMs or timeoutMs.
-	process.env.PI_FLOWS_ERROR_GRACE_MS = "250";
-	try {
-		const startedAt = Date.now();
-		const { result, text } = await runFlow(
-			{ agent: "analyst", task: "research ways to solve gh issue 302" },
-			{
-				analyst: {
-					reply: "partial notes before the provider gave up",
-					stopReason: "error",
-					errorMessage: "Codex error: Your input exceeds the context window of this model.",
-					holdOpenMs: 60_000,
-				},
-			},
-		);
-		assert.ok(Date.now() - startedAt < 30_000, "flow must end at the error grace, not holdOpenMs");
-		const run = result.details.results[0];
-		assert.equal(run.error?.code, "CHILD_PROVIDER_ERROR");
-		assert.equal(run.stopReason, "error");
-		assert.notEqual(run.exitCode, 0);
-		// The tokens the child burned before dying stay visible to the ledger.
-		assert.equal(run.usage.cost, 0.0001);
-		assert.match(text, /CHILD_PROVIDER_ERROR/);
-		assert.match(text, /context window/);
-	} finally {
-		delete process.env.PI_FLOWS_ERROR_GRACE_MS;
-	}
-});

@@ -159,6 +159,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		const rawGrace = Number(process.env.PI_FLOWS_ERROR_GRACE_MS);
 		const errorGraceMs = Number.isFinite(rawGrace) && rawGrace >= 0 ? rawGrace : DEFAULT_CHILD_ERROR_GRACE_MS;
 		let terminalErrorTimer: NodeJS.Timeout | null = null;
+		let terminalErrorSeen = false;
 		let terminalProviderError = false;
 		const run = await runJsonlProcess({
 			command: invocation.command,
@@ -168,12 +169,6 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			timeoutMs,
 			signal: options.signal,
 			onEvent: (event, controls) => {
-				// Any later event means the child is still making progress; only a
-				// terminal error followed by silence triggers the grace termination.
-				if (terminalErrorTimer) {
-					clearTimeout(terminalErrorTimer);
-					terminalErrorTimer = null;
-				}
 				if (event.type === "message_end" && event.message) {
 					const message = event.message as Message;
 					if (message.role === "assistant") {
@@ -181,17 +176,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						if (!result.model && message.model) result.model = message.model;
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
-						if (message.errorMessage && message.stopReason === "error") {
-							// Terminal provider error (e.g. context window exceeded). The
-							// child should exit on its own; when it stalls instead,
-							// terminate it after a short grace rather than waiting out
-							// timeoutMs.
-							terminalErrorTimer = setTimeout(() => {
-								terminalProviderError = true;
-								controls.terminate();
-							}, errorGraceMs);
-							terminalErrorTimer.unref?.();
-						}
+						// A terminal provider error (e.g. context window exceeded) marks
+						// the child as expected-to-exit; only a later HEALTHY assistant
+						// turn (no errorMessage) proves recovery and clears the mark.
+						if (message.errorMessage && message.stopReason === "error") terminalErrorSeen = true;
+						else if (!message.errorMessage) terminalErrorSeen = false;
 					}
 					result.messages.push(storeMessage(message, policy));
 					emitUpdate();
@@ -200,6 +189,23 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				if (event.type === "tool_result_end" && event.message) {
 					result.messages.push(storeMessage(event.message as Message, policy));
 					emitUpdate();
+				}
+
+				// After a terminal error the child should exit on its own; each event
+				// restarts the grace (momentary progress is not recovery), so the
+				// timer is never left disarmed while the error state stands. When it
+				// fires, the stalled child is terminated instead of hanging until
+				// timeoutMs.
+				if (terminalErrorTimer) {
+					clearTimeout(terminalErrorTimer);
+					terminalErrorTimer = null;
+				}
+				if (terminalErrorSeen) {
+					terminalErrorTimer = setTimeout(() => {
+						terminalProviderError = true;
+						controls.terminate();
+					}, errorGraceMs);
+					terminalErrorTimer.unref?.();
 				}
 			},
 			onNonJsonLine: (line) => {
