@@ -463,7 +463,13 @@ template or `--max-candidates` before launching a wide grid.
 
 ## Add a case
 
-Append to `cases.mjs`:
+Append to `cases.mjs`, `pattern-cases.mjs`, or `selection-cases.mjs`, then register
+the stable case id in `case-contract.mjs` with one portfolio suite
+(`representative`, `capability`, `regression`, or `adversarial`), a task-family
+label, and the structural fields for decomposability, dependency depth, shared
+state, risk, and reversibility. All eval entrypoints run this corpus preflight
+before checking model binaries or spending tokens. A missing/invalid declaration,
+a duplicate id, or a stale source-backed expectation stops the run.
 
 ```js
 {
@@ -483,6 +489,23 @@ Append to `cases.mjs`:
   mock: { content: [{ type: "text", text: "expected" }], details: { results: [] } },
 }
 ```
+
+When an expected answer comes from a workspace JSON value, bind the expectation
+to that source instead of relying on a comment or fixture convention:
+
+```js
+sourceExpectation: {
+  path: "package.json",
+  jsonPath: ["version"],
+  expectedPath: ["mock", "answer"],
+  patternPath: ["answerPattern"],
+}
+```
+
+The preflight verifies that both the mock answer and answer pattern accept the
+current source value. Terminal reports count selected cases and exclusions by
+portfolio suite and task family, so a green aggregate cannot hide which evidence
+families were absent.
 
 Keep `score` **objective** (a known answer, the chosen route, a passing gate) — it
 gates behaviour *and* becomes thulr's calibration label. Write `criterion` as the

@@ -10,11 +10,12 @@
 //   npm run eval:select -- --dry-run
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { formatPortfolioReport, portfolioReport, runCorpusPreflight } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
+import { EVAL_CORPUS, SELECTION_CASES } from "./corpus.mjs";
 import { DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { loadDotenv } from "./preflight.mjs";
 import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
-import { SELECTION_CASES } from "./selection-cases.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 
@@ -354,7 +355,8 @@ async function runSelectionCase(testCase, signal) {
 	};
 }
 
-function preflight() {
+async function preflight() {
+	if (!runCorpusPreflight(EVAL_CORPUS, { log: console.log })) return false;
 	if (dryRun) return true;
 	return new Promise((resolve) => {
 		const proc = spawn("pi", ["--version"], { stdio: "ignore" });
@@ -381,12 +383,16 @@ async function main() {
 	let failed = 0;
 	let inconclusive = 0;
 	let totalCost = 0;
+	const excludedIds = [];
 	for (const testCase of selected) {
 		const startedAt = Date.now();
 		const result = await runSelectionCase(testCase, signal);
 		const scored = scoreSelection(testCase, result);
 		totalCost += result.usage?.cost ?? 0;
-		if (scored.inconclusive) inconclusive += 1;
+		if (scored.inconclusive) {
+			inconclusive += 1;
+			excludedIds.push(testCase.id);
+		}
 		else if (scored.pass) passed += 1;
 		else failed += 1;
 		const status = scored.inconclusive ? "INCONCLUSIVE" : scored.pass ? "PASS" : "FAIL";
@@ -396,6 +402,7 @@ async function main() {
 	}
 	const comparable = selected.length - inconclusive;
 	console.log(`\n${passed}/${comparable} comparable selection cases passed - ${inconclusive} infra exclusion(s) - total $${totalCost.toFixed(4)}`);
+	console.log(formatPortfolioReport(portfolioReport(selected, { excluded: excludedIds })));
 	process.exit(selectionExitCode({ failed, comparable }));
 }
 

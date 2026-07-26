@@ -27,8 +27,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { codexModelFromPi, runCodex } from "./baseline-codex.mjs";
 import { runPlainPi } from "./baseline-pi.mjs";
-import { CALIBRATION_CASES, CASES } from "./cases.mjs";
+import { formatPortfolioReport, portfolioReport, runCorpusPreflight } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
+import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { applyDuelRows, applyJudgedRows, armLine, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatDuration, formatTokenComparison, judgeDelta, markUnjudgedRows, pct, pickArm, scoreText, unjudgedArm } from "./compare-report.mjs";
 import { answerText, answerWithArtifacts, armBudgetSignal, caseCwd, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
@@ -94,6 +95,7 @@ const PROMPT_VERSION = `pi-flows@${JSON.parse(readFileSync(p("package.json"), "u
 const CONFIG_VERSION = `pi-flows-ab:${baselineKind}:${useAgentModels ? "agent-frontmatter" : model}`;
 
 function preflight() {
+	if (!runCorpusPreflight(EVAL_CORPUS, { log: console.log })) return false;
 	if (dryRun) return true;
 	return runPreflight([
 		requireBinary("pi", "FAIL `pi` was not found on PATH. Install: npm i -g @earendil-works/pi-coding-agent  -  or smoke-test offline with --dry-run"),
@@ -414,6 +416,10 @@ async function main() {
 	const totals = comparisonTotals(rows);
 	const exclusions = exclusionSummary(rows);
 	reportSummary(rows, totals, exclusions);
+	const excludedIds = rows
+		.filter((row) => row.flows.exclusion || row.plain.exclusion)
+		.map((row) => row.name);
+	console.log(formatPortfolioReport(portfolioReport(selected, { excluded: excludedIds })));
 
 	if (writeArtifact && !dryRun) {
 		const out = resolve(process.cwd(), writeArtifact);

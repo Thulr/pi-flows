@@ -1,4 +1,6 @@
-export const SELECTION_CASES = [
+import { defineCases } from "./case-contract.mjs";
+
+export const SELECTION_CASES = defineCases([
 	{
 		name: "trivial-answer-no-flow",
 		task: "What is 2+2? Answer with only the number.",
@@ -12,13 +14,25 @@ export const SELECTION_CASES = [
 		expectFlow: false,
 		answerPattern: "\\bpi-flows\\b",
 		mock: { flowCalls: 0, answer: "pi-flows" },
+		sourceExpectation: {
+			path: "package.json",
+			jsonPath: ["name"],
+			expectedPath: ["mock", "answer"],
+			patternPath: ["answerPattern"],
+		},
 	},
 	{
 		name: "package-version-no-flow",
 		task: "In package.json, what is the current package version? Answer with only the version string.",
 		expectFlow: false,
-		answerPattern: "\\b0\\.2\\.0\\b",
-		mock: { flowCalls: 0, answer: "0.2.0" },
+		answerPattern: "\\b0\\.3\\.0\\b",
+		mock: { flowCalls: 0, answer: "0.3.0" },
+		sourceExpectation: {
+			path: "package.json",
+			jsonPath: ["version"],
+			expectedPath: ["mock", "answer"],
+			patternPath: ["answerPattern"],
+		},
 	},
 	{
 		name: "tiny-transform-no-flow",
@@ -223,4 +237,4 @@ export const SELECTION_CASES = [
 		answerPattern: "degraded|diagnos|monitor",
 		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Diagnose the degraded event.", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED", maxChecks: 6, reactor: { agent: "analyst" } } }], answer: "The monitor triggered on DEGRADED and returned the analyst diagnosis." },
 	},
-];
+]);

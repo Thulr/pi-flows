@@ -57,8 +57,9 @@
 // evals/pipeline.mjs and evals/run-report.mjs; this file wires them together.
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { CALIBRATION_CASES, CASES } from "./cases.mjs";
+import { formatPortfolioReport, portfolioReport, runCorpusPreflight } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
+import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { armBudgetSignal, caseCwd, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
@@ -145,6 +146,7 @@ const reviews = reviewsFlag ? p(reviewsFlag) : existsSync(reviewsDefault) ? revi
 // workspace, the store, AND that thulr's judge binary (pi) resolves. Trace-only
 // mode never invokes thulr — the driver (run-experiment/optimize) does.
 function preflight() {
+	if (!runCorpusPreflight(EVAL_CORPUS, { log: console.log })) return false;
 	if (dryRun) return true;
 	return runPreflight([
 		requireBinary("pi", "✗ `pi` was not found on PATH.\n  The eval harness needs the pi CLI and a configured model provider.\n  Install: npm i -g @earendil-works/pi-coding-agent\n  Or smoke-test the harness offline with: npm run eval -- --dry-run"),
@@ -387,6 +389,8 @@ async function main() {
 		calibration: calibrationCount,
 		gateBlocks: gateResult ? !!gateResult.blocks : null,
 	}));
+	const excludedIds = summaries.filter((summary) => summary.excludedReason).map((summary) => summary.name);
+	console.log(formatPortfolioReport(portfolioReport([...selected, ...selectedCalibration], { excluded: excludedIds })));
 
 	if (sawInfraError) console.log(INFRA_WARNING);
 	if (excludedByReason("debug_budget")) console.log(debugBudgetWarning(excludedByReason("debug_budget")));
