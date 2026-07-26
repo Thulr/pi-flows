@@ -1,0 +1,2 @@
+2026-07-10T11:02:03Z trace=t-41 shard=s7 worker=w3 compactor lease expired; ntp clock skew=47s
+2026-07-10T11:02:04Z trace=t-41 shard=s7 queue_depth=912

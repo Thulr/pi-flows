@@ -10,6 +10,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- Eval, comparison, selection, and dry-run commands now reject malformed corpus
+  metadata and stale source-backed expectations before model invocation. Every
+  case declares a portfolio suite, task family, and task structure; reports show
+  case counts and exclusions across both classifications. The package-version
+  selection fixture now expects the current `0.3.0` package value.
 - A child that reports a terminal provider error (for example "input exceeds
   the context window of this model") and then stalls no longer hangs the flow
   until `timeoutMs` (default 10 hours): pi-flows now terminates the child after

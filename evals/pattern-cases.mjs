@@ -3,6 +3,7 @@ import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, 
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { defineCases } from "./case-contract.mjs";
 
 const fixtures = fileURLToPath(new URL("./fixtures/patterns", import.meta.url));
 const answer = (result) => result?.content?.[0]?.text ?? "";
@@ -75,7 +76,7 @@ const sharedCriteria = (correctness, completeness, evidenceQuality) => ({
 	evidence_quality: evidenceQuality,
 });
 
-export const PATTERN_CASES = [
+export const PATTERN_CASES = defineCases([
 	{
 		name: "pattern-workflow-train-release",
 		pattern: "workflow",
@@ -358,9 +359,9 @@ export const PATTERN_CASES = [
 		score: (result, ctx) => worktreeScore(result, ctx, ["all"]),
 		mock: { content: [{ type: "text", text: "Integrated auth and idempotency branches, resolved src/pipeline.js, and passed node test.js all." }], details: { mode: "worktree", results: [] } },
 	},
-];
+]);
 
-export const PATTERN_CALIBRATION_CASES = [
+export const PATTERN_CALIBRATION_CASES = defineCases([
 	{
 		name: "calibration-pattern-migration-unsupported",
 		task: "Produce a source-grounded migration runbook with gates and rollback.",
@@ -391,4 +392,4 @@ export const PATTERN_CALIBRATION_CASES = [
 		objective: { pass: false, score: 0, notes: "known-bad invented monitor response" },
 		failureModes: ["final_answer.factually_wrong", "final_answer.incomplete", "final_answer.unsupported"],
 	},
-];
+]);

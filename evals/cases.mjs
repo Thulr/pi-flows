@@ -22,13 +22,14 @@
 // negatives and score headroom without making the subject run slower or flakier.
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { defineCases } from "./case-contract.mjs";
 import { PATTERN_CALIBRATION_CASES, PATTERN_CASES } from "./pattern-cases.mjs";
 
 const fixturesRepo = fileURLToPath(new URL("./fixtures/repo", import.meta.url));
 const text = (r) => r?.content?.[0]?.text ?? "";
 const agentsRun = (r) => (r?.details?.results ?? []).map((x) => x.agent);
 
-export const CASES = [
+export const CASES = defineCases([
 	...PATTERN_CASES,
 	{
 		name: "route-classifies-bug-to-recon",
@@ -231,9 +232,9 @@ export const CASES = [
 		},
 		mock: { content: [{ type: "text", text: "Three defects: (1) getSession reads `entry.expiresAt` without checking the id exists, so an unknown id dereferences undefined and throws a TypeError; (2) expired entries are never evicted, so the store grows unbounded — a memory leak; (3) ttlSeconds is never validated, so a missing, NaN, or negative TTL produces a broken expiry." }], details: { mode: "single", results: [{ agent: "recon" }] } },
 	},
-];
+]);
 
-export const CALIBRATION_CASES = [
+export const CALIBRATION_CASES = defineCases([
 	...PATTERN_CALIBRATION_CASES,
 	{
 		name: "calibration-known-value-wrong",
@@ -274,4 +275,4 @@ export const CALIBRATION_CASES = [
 		objective: { pass: false, score: 0, notes: "known-bad fixture: wrong ReDoS conclusion" },
 		failureModes: ["final_answer.factually_wrong"],
 	},
-];
+]);

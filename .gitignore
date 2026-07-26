@@ -4,6 +4,7 @@ audit-artifacts/
 docs/research/
 .DS_Store
 *.log
+!evals/fixtures/patterns/monitor-*/service.log
 .env
 
 # Generated eval artifacts (evals/run.mjs, compare.mjs) — regenerated each run.
