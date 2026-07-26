@@ -8,7 +8,7 @@ assert.ok(files.length > 0, "expected bundled agent files");
 
 const names = new Set();
 for (const file of files) {
-  const content = readFileSync(path.join(agentsDir, file), "utf8");
+  const content = readFileSync(path.join(agentsDir, file), "utf8").replaceAll("\r\n", "\n");
   assert.match(content, /^---\n[\s\S]*?\n---\n/, `${file} must have YAML frontmatter`);
   const frontmatter = content.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "";
   const name = frontmatter.match(/^name:\s*(.+)$/m)?.[1]?.trim();

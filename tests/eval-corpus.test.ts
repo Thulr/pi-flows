@@ -137,6 +137,22 @@ test("fixture snapshots canonicalize CRLF checkouts before hashing", async () =>
 	assert.deepEqual(validateCaseCorpus(corpus, { repoRoot }).issues, []);
 });
 
+test("agent validation accepts CRLF checkouts", async () => {
+	const repoRoot = await mkdtemp(path.join(tmpdir(), "pi-flow-crlf-agents-"));
+	await mkdir(path.join(repoRoot, "agents"), { recursive: true });
+	await writeFile(
+		path.join(repoRoot, "agents", "analyst.md"),
+		"---\r\nname: analyst\r\ndescription: Analyze evidence\r\ntier: capable\r\n---\r\n\r\nPrompt\r\n",
+	);
+	const run = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "..", "scripts", "validate-agents.mjs")], {
+		cwd: repoRoot,
+		encoding: "utf8",
+	});
+
+	assert.equal(run.status, 0, run.stderr);
+	assert.match(run.stdout, /agents ok: 1 bundled agents/);
+});
+
 test("portfolio reports count cases and exclusions by suite and task family", () => {
 	const cases = [
 		evalCase({ name: "one", suite: "representative", taskFamily: "lookup" }),
