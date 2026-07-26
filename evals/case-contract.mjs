@@ -154,36 +154,73 @@ function pathInsideRoot(repoRoot, relativePath) {
 	return outsideRoot ? null : absolutePath;
 }
 
-function sourceExpectationIssues(testCase, repoRoot) {
-	const expectation = testCase.sourceExpectation;
-	if (!expectation) return [];
-	const label = `${testCase.id ?? testCase.name}.sourceExpectation`;
-	if (typeof expectation.path !== "string" || !Array.isArray(expectation.jsonPath)) {
-		return [`${label} must declare path and jsonPath`];
+function patternIssues(label, value, patterns) {
+	const issues = [];
+	for (const pattern of patterns ?? []) {
+		try {
+			if (typeof pattern !== "string" || !new RegExp(pattern, "im").test(String(value))) {
+				issues.push(`${label} does not match ${JSON.stringify(pattern)}`);
+			}
+		} catch {
+			issues.push(`${label} pattern ${JSON.stringify(pattern)} is not a valid regular expression`);
+		}
 	}
+	return issues;
+}
+
+function oneSourceExpectationIssues(testCase, expectation, repoRoot, label) {
+	if (typeof expectation?.path !== "string") return [`${label} must declare path`];
 	const sourcePath = pathInsideRoot(repoRoot, expectation.path);
 	if (!sourcePath) return [`${label}.path must stay inside the repository`];
-	let source;
+	if (expectation.format === "directory-count") {
+		try {
+			const files = directoryFiles(sourcePath).filter((path) => !expectation.suffix || path.endsWith(expectation.suffix));
+			return files.length === expectation.expected
+				? []
+				: [`${label} is stale: ${expectation.path} contains ${files.length} matching files, expected ${expectation.expected}`];
+		} catch (error) {
+			return [`${label} could not read ${expectation.path}: ${error.message}`];
+		}
+	}
+
+	let raw;
 	try {
-		source = getPath(JSON.parse(readFileSync(sourcePath, "utf8")), expectation.jsonPath);
+		raw = readFileSync(sourcePath, "utf8");
 	} catch (error) {
 		return [`${label} could not read ${expectation.path}: ${error.message}`];
 	}
+	if (expectation.format === "text") return patternIssues(label, raw, expectation.patterns);
+
+	let json;
+	try {
+		json = JSON.parse(raw);
+	} catch (error) {
+		return [`${label} could not parse ${expectation.path}: ${error.message}`];
+	}
+	if (expectation.relation === "disjoint-keys") {
+		const [leftPath, rightPath] = expectation.jsonPaths ?? [];
+		const left = getPath(json, leftPath ?? []) ?? {};
+		const right = getPath(json, rightPath ?? []) ?? {};
+		const overlap = Object.keys(left).filter((key) => Object.hasOwn(right, key));
+		return overlap.length === 0 ? [] : [`${label} is stale: overlapping keys are ${overlap.join(", ")}`];
+	}
+	if (!Array.isArray(expectation.jsonPath)) return [`${label} must declare jsonPath`];
+	const source = getPath(json, expectation.jsonPath);
 	if (source === undefined) return [`${label} did not resolve ${expectation.jsonPath.join(".")} in ${expectation.path}`];
 
-	const expected = getPath(testCase, expectation.expectedPath ?? ["mock", "answer"]);
-	const pattern = getPath(testCase, expectation.patternPath ?? ["answerPattern"]);
 	const issues = [];
-	if (String(expected) !== String(source)) {
-		issues.push(`${label} is stale: ${expectation.path} contains ${JSON.stringify(source)} but the case expects ${JSON.stringify(expected)}`);
-	}
-	try {
-		if (typeof pattern !== "string" || !new RegExp(pattern).test(String(source))) {
-			issues.push(`${label} pattern ${JSON.stringify(pattern)} does not accept source value ${JSON.stringify(source)}`);
+	if (Array.isArray(expectation.expectedPath)) {
+		const expected = getPath(testCase, expectation.expectedPath);
+		if (String(expected) !== String(source)) {
+			issues.push(`${label} is stale: ${expectation.path} contains ${JSON.stringify(source)} but the case expects ${JSON.stringify(expected)}`);
 		}
-	} catch {
-		issues.push(`${label} pattern ${JSON.stringify(pattern)} is not a valid regular expression`);
 	}
+	if (Array.isArray(expectation.patternPath)) {
+		const pattern = getPath(testCase, expectation.patternPath);
+		const mismatch = patternIssues(`${label} source value ${JSON.stringify(source)}`, source, [pattern]);
+		issues.push(...mismatch);
+	}
+	issues.push(...patternIssues(label, source, expectation.patterns));
 	return issues;
 }
 
@@ -205,9 +242,19 @@ function directoryDigest(directory) {
 	return digest.digest("hex");
 }
 
-function sourceDigest(path) {
-	if (statSync(path).isDirectory()) return directoryDigest(path);
-	return createHash("sha256").update(readFileSync(path)).digest("hex");
+function sourceExpectationIssues(testCase, repoRoot) {
+	const issues = [];
+	const expectations = [];
+	if (testCase.sourceExpectation) expectations.push(testCase.sourceExpectation);
+	if (testCase.sourceExpectations !== undefined && !Array.isArray(testCase.sourceExpectations)) {
+		issues.push(`${testCase.id}.sourceExpectations must be an array`);
+	} else {
+		expectations.push(...(testCase.sourceExpectations ?? []));
+	}
+	for (const [index, expectation] of expectations.entries()) {
+		issues.push(...oneSourceExpectationIssues(testCase, expectation, repoRoot, `${testCase.id}.sourceExpectations[${index}]`));
+	}
+	return issues;
 }
 
 function sourceSnapshotIssues(snapshots, repoRoot) {
@@ -226,7 +273,7 @@ function sourceSnapshotIssues(snapshots, repoRoot) {
 			continue;
 		}
 		try {
-			const actual = sourceDigest(sourcePath);
+			const actual = directoryDigest(sourcePath);
 			if (actual !== snapshot.sha256) {
 				issues.push(`${label} is stale: ${snapshot.path} digest is ${actual}, expected ${snapshot.sha256}`);
 			}
@@ -250,6 +297,9 @@ function caseIssues(testCase, repoRoot) {
 	if (!SHARED_STATE.has(taskStructure?.sharedState)) issues.push(`${label}.structure.sharedState is invalid`);
 	if (!RISKS.has(taskStructure?.risk)) issues.push(`${label}.structure.risk is invalid`);
 	if (!REVERSIBILITY.has(taskStructure?.reversibility)) issues.push(`${label}.structure.reversibility is invalid`);
+	if (typeof testCase?.answerPattern === "string" && typeof testCase?.mock?.answer === "string") {
+		issues.push(...patternIssues(`${label}.mock.answer`, testCase.mock.answer, [testCase.answerPattern]));
+	}
 	issues.push(...sourceExpectationIssues(testCase, repoRoot));
 	return issues;
 }

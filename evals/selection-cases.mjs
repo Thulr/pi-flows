@@ -68,6 +68,12 @@ export const SELECTION_CASES = defineCases([
 		expectFlow: false,
 		answerPattern: "flow|agent|pi",
 		mock: { flowCalls: 0, answer: "The package provides bounded sub-agent workflows for Pi." },
+		sourceExpectation: {
+			path: "package.json",
+			jsonPath: ["description"],
+			patternPath: ["answerPattern"],
+			patterns: ["budgeted", "sub-agents?", "pi"],
+		},
 	},
 	{
 		name: "one-command-status-no-monitor",
@@ -101,6 +107,10 @@ export const SELECTION_CASES = defineCases([
 		expectFlow: false,
 		answerPattern: "VERDICT|protocol|parse",
 		mock: { flowCalls: 0, answer: "protocol.ts defines the instructions that ask children for typed lines like VERDICT: PASS, and parse.ts extracts and validates those lines from child output." },
+		sourceExpectations: [
+			{ format: "text", path: "extensions/pi-flows/parse.ts", patterns: ["extractLastJsonBlock", "protocol\\.ts"] },
+			{ format: "text", path: "extensions/pi-flows/protocol.ts", patterns: ["function extractLastJsonBlock", "VERDICT: PASS"] },
+		],
 	},
 	{
 		name: "plausible-refactor-scoping-no-flow",
@@ -108,6 +118,11 @@ export const SELECTION_CASES = defineCases([
 		expectFlow: false,
 		answerPattern: "index\\.ts",
 		mock: { flowCalls: 0, answer: "extensions/pi-flows/index.ts imports extractLastJsonBlock from parse.ts (parse.ts re-exports it from protocol.ts, where it is defined)." },
+		sourceExpectation: {
+			format: "text",
+			path: "extensions/pi-flows/index.ts",
+			patterns: ["import \\{[^\\n]*extractLastJsonBlock[^\\n]*\\} from \"\\.\\/parse\\.ts\""],
+		},
 	},
 	{
 		name: "plausible-investigation-no-flow",
@@ -115,13 +130,23 @@ export const SELECTION_CASES = defineCases([
 		expectFlow: false,
 		answerPattern: "repo|trust|headless|approval|confirmProjectAgents",
 		mock: { flowCalls: 0, answer: "Project-local agents are repo-controlled prompts, so running them without interactive approval would let a repository inject instructions. Headless runs therefore fail closed unless confirmProjectAgents:false is passed for a reviewed repo." },
+		sourceExpectation: {
+			format: "text",
+			path: "extensions/pi-flows/index.ts",
+			patterns: ["confirmProjectAgents", "if \\(!ctx\\.hasUI\\)", "PROJECT_AGENT_APPROVAL_REQUIRED"],
+		},
 	},
 	{
 		name: "plausible-release-summary-no-flow",
 		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
 		expectFlow: false,
-		answerPattern: "F8|inspect|timeout|why|tier",
-		mock: { flowCalls: 0, answer: "- Added the F8 /flows inspect overlay for watching a running child.\n- Raised the default child timeout to 10 hours." },
+		answerPattern: "corpus|preflight|provider|stalls|CHILD_PROVIDER_ERROR",
+		mock: { flowCalls: 0, answer: "- Eval commands now preflight corpus metadata and source expectations, then report portfolio coverage.\n- Children that stall after terminal provider errors are terminated and return CHILD_PROVIDER_ERROR." },
+		sourceExpectation: {
+			format: "text",
+			path: "CHANGELOG.md",
+			patterns: ["## Unreleased[\\s\\S]*Eval, comparison, selection[\\s\\S]*terminal provider error[\\s\\S]*## 0\\.3\\.0"],
+		},
 	},
 	{
 		name: "plausible-verification-no-flow",
@@ -129,6 +154,12 @@ export const SELECTION_CASES = defineCases([
 		expectFlow: false,
 		answerPattern: "ok|pass|valid",
 		mock: { flowCalls: 0, answer: "agents ok: 9 bundled agents — validation passes." },
+		sourceExpectation: {
+			format: "directory-count",
+			path: "agents",
+			suffix: ".md",
+			expected: 9,
+		},
 	},
 	{
 		name: "plausible-deps-audit-no-flow",
@@ -136,6 +167,11 @@ export const SELECTION_CASES = defineCases([
 		expectFlow: false,
 		answerPattern: "\\bno\\b|\\bnone\\b|does not|doesn't|no overlap",
 		mock: { flowCalls: 0, answer: "No package appears in both lists." },
+		sourceExpectation: {
+			path: "package.json",
+			relation: "disjoint-keys",
+			jsonPaths: [["dependencies"], ["devDependencies"]],
+		},
 	},
 	{
 		name: "explicit-flow-list-uses-flow",
@@ -144,6 +180,10 @@ export const SELECTION_CASES = defineCases([
 		expectedFlowCall: { mode: "list" },
 		answerPattern: "flow agents|recon|strategist",
 		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", list: true }], answer: "Available flow agents: recon, strategist" },
+		sourceExpectations: [
+			{ format: "text", path: "agents/recon.md", patterns: ["name: recon"] },
+			{ format: "text", path: "agents/strategist.md", patterns: ["name: strategist"] },
+		],
 	},
 	{
 		name: "explicit-delegation-uses-flow",
@@ -152,6 +192,11 @@ export const SELECTION_CASES = defineCases([
 		expectedFlowCall: { mode: "single", agent: "recon", taskPattern: "package name|repository" },
 		answerPattern: "pi-flows|flow",
 		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", agent: "recon", task: "Inspect this repository and report the package name." }], answer: "Flow recon found package name pi-flows." },
+		sourceExpectation: {
+			path: "package.json",
+			jsonPath: ["name"],
+			patterns: ["pi-flows"],
+		},
 	},
 	{
 		name: "implicit-readonly-agent-uses-recon",
@@ -160,6 +205,11 @@ export const SELECTION_CASES = defineCases([
 		expectedFlowCall: { mode: "single", agents: ["recon", "analyst"], taskPattern: "registers.*flow|flow tool" },
 		answerPattern: "extensions/pi-flows/index\\.ts|registerTool|flow",
 		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", agent: "recon", task: "Find where this extension registers the `flow` tool." }], answer: "extensions/pi-flows/index.ts registers the flow tool with registerTool." },
+		sourceExpectation: {
+			format: "text",
+			path: "extensions/pi-flows/index.ts",
+			patterns: ["pi\\.registerTool\\(\\{[\\s\\S]*name: \"flow\""],
+		},
 	},
 	{
 		name: "implicit-parallel-doc-check-uses-parallel",
@@ -177,6 +227,10 @@ export const SELECTION_CASES = defineCases([
 			}],
 			answer: "Human checkpoints ask for approval and fail closed in headless contexts.",
 		},
+		sourceExpectations: [
+			{ format: "text", path: "README.md", patterns: ["Human checkpoints", "Headless runs fail closed"] },
+			{ format: "text", path: "docs/flow-reference.md", patterns: ["Human checkpoints", "headless[\\s\\S]*fail closed"] },
+		],
 	},
 	{
 		name: "implicit-plan-critic-uses-evaluate",
@@ -194,6 +248,11 @@ export const SELECTION_CASES = defineCases([
 		expectedFlowCall: { modes: ["orchestrate", "parallel"], agents: ["recon", "analyst"], taskPattern: "agent discovery|schema|child process|runner" },
 		answerPattern: "agents|schema|runner|child",
 		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Map agent discovery, schema validation, and child process running.", orchestrate: {} }], answer: "agents.ts handles discovery, schema.ts validates params, and runner.ts starts child pi processes." },
+		sourceExpectations: [
+			{ format: "text", path: "extensions/pi-flows/agents.ts", patterns: ["function discoverFlowAgents"] },
+			{ format: "text", path: "extensions/pi-flows/schema.ts", patterns: ["const FlowParams = Type\\.Object"] },
+			{ format: "text", path: "extensions/pi-flows/runner.ts", patterns: ["function runFlowAgent"] },
+		],
 	},
 	{
 		name: "implicit-phase-gated-work-uses-workflow",
