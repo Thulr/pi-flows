@@ -61,7 +61,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `agentScope` | `user` | `user` = package + user agents; `project` = package + project; `all` = package + user + project. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project agents unless this is explicitly `false`. |
 | `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
-| `timeoutMs` | `36000000` | Per child process timeout (10 hours). |
+| `timeoutMs` | `36000000` | Per child process timeout (10 hours). Independently of it, a child that reports a terminal provider error and then stalls is terminated after a short grace (`PI_FLOWS_ERROR_GRACE_MS`, default 30000ms) with `CHILD_PROVIDER_ERROR`. |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
 | `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached, no further child spawns (`BUDGET_EXCEEDED`). Omit to run uncapped. |

@@ -54,6 +54,8 @@ if (Array.isArray(reply)) {
 let exitCode = 0;
 let delayBeforeReplyMs = 0;
 let holdOpenMs = 0;
+let stopReason = "endTurn";
+let errorMessage;
 if (reply && typeof reply === "object") {
 	for (const [relativePath, content] of Object.entries(reply.writes ?? {})) {
 		const target = path.resolve(process.cwd(), relativePath);
@@ -69,6 +71,8 @@ if (reply && typeof reply === "object") {
 	exitCode = Number.isInteger(reply.exitCode) ? reply.exitCode : 0;
 	delayBeforeReplyMs = Number.isFinite(reply.delayBeforeReplyMs) ? Math.max(0, Number(reply.delayBeforeReplyMs)) : 0;
 	holdOpenMs = Number.isFinite(reply.holdOpenMs) ? Math.max(0, Number(reply.holdOpenMs)) : 0;
+	if (typeof reply.stopReason === "string") stopReason = reply.stopReason;
+	if (typeof reply.errorMessage === "string") errorMessage = reply.errorMessage;
 	reply = reply.reply;
 }
 if (reply === undefined) reply = `stub reply for ${agent}`;
@@ -81,7 +85,8 @@ const event = {
 		content: [{ type: "text", text: String(reply) }],
 		usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, cost: { total: 0.0001 }, totalTokens: 20 },
 		model,
-		stopReason: "endTurn",
+		stopReason,
+		...(errorMessage ? { errorMessage } : {}),
 	},
 };
 process.stdout.write(`${JSON.stringify(event)}\n`);

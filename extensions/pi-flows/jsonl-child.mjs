@@ -16,7 +16,7 @@ import { spawn } from "node:child_process";
  * @property {number} [graceMs] SIGTERM -> SIGKILL escalation delay (default 5000).
  * @property {AbortSignal} [signal]
  * @property {string} [stdin] When set, written to the child's stdin (then closed); otherwise stdin is ignored.
- * @property {(event: any) => void} [onEvent] Called per parsed JSON stdout line.
+ * @property {(event: any, controls: { terminate: () => void }) => void} [onEvent] Called per parsed JSON stdout line. controls.terminate() stops the child early under the same bounded escalation.
  * @property {(line: string) => void} [onNonJsonLine] Called per non-JSON, non-blank stdout line.
  * @property {(line: string, controls: { terminate: () => void }) => void} [onLine] Raw-line mode: called per non-blank stdout line INSTEAD of JSON parsing (onEvent/onNonJsonLine are not called and sawJsonEvent stays false). controls.terminate() stops the child early under the same bounded escalation.
  * @property {(chunk: string) => void} [onStderr] Called per stderr chunk.
@@ -105,7 +105,7 @@ export function runJsonlProcess(options) {
 				return;
 			}
 			sawJsonEvent = true;
-			options.onEvent?.(event);
+			options.onEvent?.(event, controls);
 		};
 
 		proc.stdout?.on("data", (data) => {
