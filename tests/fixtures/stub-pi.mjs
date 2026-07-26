@@ -54,6 +54,9 @@ if (Array.isArray(reply)) {
 let exitCode = 0;
 let delayBeforeReplyMs = 0;
 let holdOpenMs = 0;
+let stopReason = "endTurn";
+let errorMessage;
+let extraEvents = [];
 if (reply && typeof reply === "object") {
 	for (const [relativePath, content] of Object.entries(reply.writes ?? {})) {
 		const target = path.resolve(process.cwd(), relativePath);
@@ -69,6 +72,9 @@ if (reply && typeof reply === "object") {
 	exitCode = Number.isInteger(reply.exitCode) ? reply.exitCode : 0;
 	delayBeforeReplyMs = Number.isFinite(reply.delayBeforeReplyMs) ? Math.max(0, Number(reply.delayBeforeReplyMs)) : 0;
 	holdOpenMs = Number.isFinite(reply.holdOpenMs) ? Math.max(0, Number(reply.holdOpenMs)) : 0;
+	if (typeof reply.stopReason === "string") stopReason = reply.stopReason;
+	if (typeof reply.errorMessage === "string") errorMessage = reply.errorMessage;
+	if (Array.isArray(reply.extraEvents)) extraEvents = reply.extraEvents;
 	reply = reply.reply;
 }
 if (reply === undefined) reply = `stub reply for ${agent}`;
@@ -81,9 +87,17 @@ const event = {
 		content: [{ type: "text", text: String(reply) }],
 		usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, cost: { total: 0.0001 }, totalTokens: 20 },
 		model,
-		stopReason: "endTurn",
+		stopReason,
+		...(errorMessage ? { errorMessage } : {}),
 	},
 };
 process.stdout.write(`${JSON.stringify(event)}\n`);
+// Raw JSONL events emitted after the reply (e.g. an agent_end trailing a
+// terminal error), each after its own delay.
+for (const extra of extraEvents) {
+	const delayMs = Number.isFinite(extra?.delayMs) ? Math.max(0, Number(extra.delayMs)) : 0;
+	if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+	process.stdout.write(`${JSON.stringify(extra?.event ?? {})}\n`);
+}
 if (holdOpenMs > 0) await new Promise((resolve) => setTimeout(resolve, holdOpenMs));
 process.exit(exitCode);

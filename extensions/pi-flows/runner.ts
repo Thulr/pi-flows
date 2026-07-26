@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, getFinalAssistantText, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
@@ -156,6 +156,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 
 		const invocation = getPiInvocation(args);
 		emitUpdate("starting child pi process...");
+		const rawGrace = Number(process.env.PI_FLOWS_ERROR_GRACE_MS);
+		const errorGraceMs = Number.isFinite(rawGrace) && rawGrace >= 0 ? rawGrace : DEFAULT_CHILD_ERROR_GRACE_MS;
+		let terminalErrorTimer: NodeJS.Timeout | null = null;
+		let terminalErrorSeen = false;
+		let terminalProviderError = false;
 		const run = await runJsonlProcess({
 			command: invocation.command,
 			args: invocation.args,
@@ -163,7 +168,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1) },
 			timeoutMs,
 			signal: options.signal,
-			onEvent: (event) => {
+			onEvent: (event, controls) => {
 				if (event.type === "message_end" && event.message) {
 					const message = event.message as Message;
 					if (message.role === "assistant") {
@@ -171,6 +176,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						if (!result.model && message.model) result.model = message.model;
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
+						// A terminal provider error (e.g. context window exceeded) marks
+						// the child as expected-to-exit; only a later HEALTHY assistant
+						// turn (no errorMessage) proves recovery and clears the mark.
+						if (message.errorMessage && message.stopReason === "error") terminalErrorSeen = true;
+						else if (!message.errorMessage) terminalErrorSeen = false;
 					}
 					result.messages.push(storeMessage(message, policy));
 					emitUpdate();
@@ -179,6 +189,23 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				if (event.type === "tool_result_end" && event.message) {
 					result.messages.push(storeMessage(event.message as Message, policy));
 					emitUpdate();
+				}
+
+				// After a terminal error the child should exit on its own; each event
+				// restarts the grace (momentary progress is not recovery), so the
+				// timer is never left disarmed while the error state stands. When it
+				// fires, the stalled child is terminated instead of hanging until
+				// timeoutMs.
+				if (terminalErrorTimer) {
+					clearTimeout(terminalErrorTimer);
+					terminalErrorTimer = null;
+				}
+				if (terminalErrorSeen) {
+					terminalErrorTimer = setTimeout(() => {
+						terminalProviderError = true;
+						controls.terminate();
+					}, errorGraceMs);
+					terminalErrorTimer.unref?.();
 				}
 			},
 			onNonJsonLine: (line) => {
@@ -189,6 +216,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				result.stderr = appendCapped(result.stderr, chunk, policy);
 			},
 		});
+		if (terminalErrorTimer) clearTimeout(terminalErrorTimer);
 		timedOut = run.timedOut;
 		wasAborted = run.aborted;
 
@@ -211,6 +239,17 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				"Flow agent was aborted.",
 				"The parent request was interrupted before the child pi process completed.",
 				"Retry the flow if the interruption was accidental.",
+				true,
+			);
+			result.errorMessage = result.error.message;
+		} else if (terminalProviderError) {
+			result.stopReason = "error";
+			result.exitCode = result.exitCode === 0 ? 1 : result.exitCode;
+			result.error = flowError(
+				"CHILD_PROVIDER_ERROR",
+				`Flow agent "${agent.name}" hit a terminal provider error: ${result.errorMessage ?? "unknown provider error"}`,
+				"The child's model provider returned a terminal error and the child process stalled instead of exiting, so pi-flows terminated it after the error grace period rather than waiting out timeoutMs.",
+				"Narrow the task or the material the child reads, or pick a larger-context model via tier/model, then retry. PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000).",
 				true,
 			);
 			result.errorMessage = result.error.message;

@@ -6,6 +6,17 @@ All notable changes to pi-flows are documented here, following
 that must agree are `package.json`, `PI_FLOWS_VERSION` in
 `extensions/pi-flows/types.ts`, this file, and the release tag.
 
+## Unreleased
+
+### Fixed
+
+- A child that reports a terminal provider error (for example "input exceeds
+  the context window of this model") and then stalls no longer hangs the flow
+  until `timeoutMs` (default 10 hours): pi-flows now terminates the child after
+  a short grace period (`PI_FLOWS_ERROR_GRACE_MS`, default 30s) and returns a
+  structured `CHILD_PROVIDER_ERROR` with the provider message, retaining the
+  usage already spent.
+
 ## 0.3.0 - 2026-07-25
 
 ### Added

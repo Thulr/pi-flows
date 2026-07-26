@@ -27,6 +27,14 @@ export const STDERR_CAPTURE_CAP = 50 * 1024;
 export const STDOUT_SAMPLE_CAP = 8 * 1024;
 /** Wall-clock cap for an evaluate `checkCommand` (deterministic gate) child process. */
 export const DEFAULT_CHECK_COMMAND_TIMEOUT_MS = 5 * 60 * 1000;
+/**
+ * Grace after a child reports a terminal provider error (assistant message with
+ * stopReason "error" + errorMessage) before pi-flows terminates it. A child
+ * should exit on its own after such an error; when it stalls instead, this
+ * bounds the hang at seconds rather than the full timeoutMs (default 10h).
+ * Override with PI_FLOWS_ERROR_GRACE_MS.
+ */
+export const DEFAULT_CHILD_ERROR_GRACE_MS = 30_000;
 export const CHECK_OUTPUT_CAP = 16 * 1024;
 
 export type AgentSource = "package" | "user" | "project";
@@ -93,6 +101,7 @@ export const FLOW_ERROR_CODES = [
 	"CHILD_EXIT_NONZERO",
 	"CHILD_ABORTED",
 	"CHILD_TIMEOUT",
+	"CHILD_PROVIDER_ERROR",
 ] as const;
 
 export type FlowErrorCode = (typeof FLOW_ERROR_CODES)[number];

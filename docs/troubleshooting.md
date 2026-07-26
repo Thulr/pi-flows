@@ -404,3 +404,14 @@ Cause: a child process exceeded `timeoutMs`.
 
 Fix: increase `timeoutMs` for intentionally long tasks, or split the task. For
 stuck auth/provider cases, run a smaller no-model smoke check first.
+
+### `CHILD_PROVIDER_ERROR`
+
+Cause: the child's model provider returned a terminal error (for example
+"input exceeds the context window of this model") and the child process then
+stalled instead of exiting, so pi-flows terminated it after a short grace
+period rather than letting it hang until `timeoutMs`.
+
+Fix: narrow the task or the material the child reads (a smaller issue thread,
+fewer files), or pick a larger-context model via `tier`/`model`, then retry.
+`PI_FLOWS_ERROR_GRACE_MS` tunes the grace period (default 30000ms).
