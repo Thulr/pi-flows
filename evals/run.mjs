@@ -13,6 +13,7 @@
 //   npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default below)
 //   npm run eval -- --judge-bin=/path/to/judge-wrapper   # override thulr's judge command
 //   npm run eval -- --samples=3           # judge each case 3x: majority verdict, mean score, judge-noise stddev + flake warnings
+//   npm run eval -- --trials=5            # run each stochastic subject case 5x in isolated workspaces
 //   npm run eval -- --eval-set=.thulr/eval-sets/smoke.json   # overlay promoted criteria/authority metadata
 //   npm run eval -- --reviews=.thulr/reviews/thulr-trace.reviews.json   # fold human SME verdicts into calibration (judge-vs-human TPR/TNR)
 //   npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/size regressions
@@ -55,16 +56,17 @@
 //
 // The five phases (argv -> preflight -> run arms -> trace -> judge/gate) live in
 // evals/pipeline.mjs and evals/run-report.mjs; this file wires them together.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
 import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
-import { armBudgetSignal, caseCwd, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
+import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, verdictLine, INFRA_WARNING } from "./run-report.mjs";
+import { buildReliabilityReport, formatReliabilitySummary, MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
 import * as thulr from "./thulr.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
@@ -72,7 +74,7 @@ process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 // Load a local .env (provider keys) if present, before any child pi inherits env.
 loadDotenv();
 
-const { flag, has, bool, flags, positiveNumberFlag } = createFlagReader(process.argv.slice(2));
+const { flag, has, bool, flags, positiveNumberFlag, positiveIntegerFlag } = createFlagReader(process.argv.slice(2));
 
 const cliModel = flag("model", null);
 const model = cliModel ?? DEFAULT_EVAL_MODEL;
@@ -96,6 +98,7 @@ const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL
 // Judge repeat-sampling: each case judged N times, majority verdict +
 // mean score; the EvalRun's score_stddev becomes judge noise. Costs N× judge spend.
 const samples = Math.min(10, Math.max(1, Number(flag("samples", "1")) || 1));
+const subjectTrials = positiveIntegerFlag("trials", 1, MAX_SUBJECT_TRIALS);
 const evalSet = flag("eval-set", null);
 const redaction = flag("redaction", null);
 const rate = Number(flag("rate", "0"));
@@ -117,6 +120,7 @@ process.env.PI_FLOWS_JUDGE_MODEL = judgeModel;
 // Dry-run gets its own trace path: mock spans must never clobber the last real
 // trace (which re-judging with a different judge model depends on).
 const TRACE = p(flag("trace-out", dryRun ? "evals/thulr-trace.dry-run.jsonl" : "evals/thulr-trace.jsonl"));
+const RELIABILITY = p(flag("reliability-out", ".thulr/runs/reliability.json"));
 const CANDIDATE = p(".thulr/runs/candidate.json");
 const GATE_CANDIDATE = p(".thulr/runs/candidate.gate.json");
 const BASELINE_DEFAULT = p("evals/thulr-baseline.json");
@@ -165,63 +169,82 @@ async function runCases(selected, selectedCalibration, flow) {
 	let sawInfraError = false;
 
 	for (const testCase of selected) {
-		const flowCtx = { cwd: caseCwd(testCase, { dryRun, arm: "flows" }), hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
-		const ctx = { flow, model: useAgentModels ? undefined : model, dryRun, flowCtx };
-		const startedAt = Date.now();
-		const timeoutPlan = timeoutPlanForCase(testCase, { defaultTimeoutMs: timeoutMs, armTimeoutMs });
+		for (let trialIndex = 1; trialIndex <= subjectTrials; trialIndex += 1) {
+			const identity = trialIdentity(testCase.name, trialIndex, subjectTrials);
+			const workspace = caseWorkspace(testCase, { dryRun, arm: "flows", isolate: true });
+			const flowCtx = { cwd: workspace.cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
+			const ctx = { flow, model: useAgentModels ? undefined : model, dryRun, flowCtx };
+			const startedAt = Date.now();
+			const timeoutPlan = timeoutPlanForCase(testCase, { defaultTimeoutMs: timeoutMs, armTimeoutMs });
 
-		let result;
-		let thrown;
-		const armBudget = armBudgetSignal(new AbortController().signal, dryRun ? 0 : timeoutPlan.effectiveTimeoutMs);
-		try {
-			if (dryRun) {
-				result = testCase.mock;
-			} else {
-				const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: testCase.name, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: timeoutPlan.effectiveTimeoutMs };
-				try {
-					result = await flow.execute(`eval:${testCase.name}`, params, armBudget.signal, undefined, flowCtx);
-				} catch (error) {
-					thrown = error;
+			let result;
+			let thrown;
+			const armBudget = armBudgetSignal(new AbortController().signal, dryRun ? 0 : timeoutPlan.effectiveTimeoutMs);
+			try {
+				if (dryRun) {
+					result = testCase.mock;
+				} else {
+					const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: identity.trialId, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: timeoutPlan.effectiveTimeoutMs };
+					try {
+						result = await flow.execute(`eval:${identity.trialId}`, params, armBudget.signal, undefined, flowCtx);
+					} catch (error) {
+						thrown = error;
+					}
 				}
+
+				const { objective, reachedModel, cost, answer } = await scoreObjective({ result, thrown, testCase, ctx });
+				const endedAt = Date.now();
+				const exclusion = armBudget.timedOut
+					? {
+						reason: timeoutPlan.debugBudget ? "debug_budget" : "infra",
+						detail: `${timeoutPlan.debugBudget ? "debug " : ""}arm timed out after ${timeoutPlan.effectiveTimeoutMs}ms (case budget ${timeoutPlan.caseTimeoutMs}ms)`,
+					}
+					: exclusionForRun({ reachedModel, timeoutPlan });
+				const excludedReason = exclusion?.reason ?? null;
+				const tokens = sumTokens(result);
+				totalCost += cost;
+				if (excludedReason === "infra") sawInfraError = true;
+
+				if (!excludedReason) {
+					thulr.appendCaseSpans(TRACE, caseSpanFields(testCase, {
+						answer,
+						label: objective.pass,
+						endMs: endedAt,
+						model: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),
+						task: testCase.params.task,
+						costUsd: cost,
+						tokensTotal: tokens,
+						journeyStage: testCase.journeyStage,
+						promptVersion: PROMPT_VERSION,
+						configVersion: CONFIG_VERSION,
+						...identity,
+					}));
+					judgedCount += 1;
+					productJudgedCount += 1;
+				}
+
+				const durationMs = endedAt - startedAt;
+				for (const line of caseLines({ name: identity.trialId, objective, excludedReason, timeoutPlan, reachedModel, cost, durationMs, hard: testCase.hard })) console.log(line);
+				summaries.push({
+					...identity,
+					name: identity.trialId,
+					hard: !!testCase.hard,
+					objective,
+					answer,
+					reachedModel,
+					exclusion,
+					excludedReason,
+					infraFailure: excludedReason === "infra" ? (exclusion?.detail ?? reachedModel ?? "infrastructure failure") : null,
+					cost,
+					costUsd: cost,
+					tokens,
+					durationMs,
+				});
+			} finally {
+				armBudget.dispose();
+				workspace.dispose();
 			}
-		} finally {
-			armBudget.dispose();
 		}
-
-		const { objective, reachedModel, cost, answer } = await scoreObjective({ result, thrown, testCase, ctx });
-		const endedAt = Date.now();
-		const exclusion = armBudget.timedOut
-			? {
-				reason: timeoutPlan.debugBudget ? "debug_budget" : "infra",
-				detail: `${timeoutPlan.debugBudget ? "debug " : ""}arm timed out after ${timeoutPlan.effectiveTimeoutMs}ms (case budget ${timeoutPlan.caseTimeoutMs}ms)`,
-			}
-			: exclusionForRun({ reachedModel, timeoutPlan });
-		const excludedReason = exclusion?.reason ?? null;
-		totalCost += cost;
-		if (excludedReason === "infra") sawInfraError = true;
-
-		// Only cases that reached the model carry a real answer to judge and a
-		// trustworthy label to calibrate against; infra failures are reported as ⚠.
-		if (!excludedReason) {
-			thulr.appendCaseSpans(TRACE, caseSpanFields(testCase, {
-				answer,
-				label: objective.pass,
-				endMs: endedAt,
-				model: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),
-				task: testCase.params.task,
-				costUsd: cost,
-				tokensTotal: sumTokens(result),
-				journeyStage: testCase.journeyStage,
-				promptVersion: PROMPT_VERSION,
-				configVersion: CONFIG_VERSION,
-			}));
-			judgedCount += 1;
-			productJudgedCount += 1;
-		}
-
-		const durationMs = endedAt - startedAt;
-		for (const line of caseLines({ name: testCase.name, objective, excludedReason, timeoutPlan, reachedModel, cost, durationMs, hard: testCase.hard })) console.log(line);
-		summaries.push({ name: testCase.name, hard: !!testCase.hard, objective, reachedModel, exclusion, excludedReason, cost, durationMs });
 	}
 
 	for (const testCase of selectedCalibration) {
@@ -238,6 +261,34 @@ async function runCases(selected, selectedCalibration, flow) {
 	}
 
 	return { summaries, calibrationSummaries, judgedCount, productJudgedCount, totalCost, sawInfraError };
+}
+
+function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable }) {
+	const rawTrials = summaries.map((summary) => {
+		const judge = verdicts.get(summary.traceCaseId) ?? null;
+		const judgePass = judge?.criterion?.verdict ?? null;
+		return {
+			caseId: summary.caseId,
+			trialId: summary.trialId,
+			traceCaseId: summary.traceCaseId,
+			trialIndex: summary.trialIndex,
+			pass: !summary.exclusion && summary.objective.pass && (!judgeAvailable || judgePass === true),
+			objective: summary.objective,
+			judge,
+			answer: summary.answer,
+			costUsd: summary.costUsd,
+			tokens: summary.tokens,
+			durationMs: summary.durationMs,
+			exclusion: summary.exclusion,
+			infraFailure: summary.infraFailure,
+		};
+	});
+	const report = buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples: samples });
+	mkdirSync(dirname(RELIABILITY), { recursive: true });
+	writeFileSync(RELIABILITY, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+	for (const line of formatReliabilitySummary(report)) console.log(line);
+	console.log(`Raw trial reliability report: ${rel(RELIABILITY)} (subject trials ${subjectTrials}; judge-noise samples ${samples})`);
+	return report;
 }
 
 // --- Phase: thulr judge -> calibrate -> gate -> baseline (skipped in dry-run) ---
@@ -267,7 +318,7 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }
 	for (const c of judged.evalRun.cases ?? []) verdicts.set(c.case_id, c.dims ?? {});
 	for (const s of [...summaries, ...calibrationSummaries]) {
 		if (s.excludedReason) continue;
-		console.log(verdictLine(s, verdicts.get(s.name) ?? {}));
+		console.log(verdictLine(s, verdicts.get(s.traceCaseId ?? s.name) ?? {}));
 	}
 	// With repeat sampling, the EvalRun's score_stddev is the pooled within-case
 	// sample variance — i.e. how noisy the judge itself is on this suite.
@@ -329,6 +380,7 @@ async function main() {
 	console.log(headerLine({
 		subject: useAgentModels ? "(agent frontmatter)" : model,
 		modelSource,
+		subjectTrials,
 		judgeModel,
 		samples,
 		judgeBin: judgeBin ? rel(judgeBin) : null,
@@ -368,6 +420,7 @@ async function main() {
 		// ranks, and selects. Exit 0 iff a judgeable trace was emitted — objective
 		// misses are labels in the trace, not a candidate failure.
 		console.log(`\n(trace-only) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; judge/gate left to the driver.`);
+		writeReliabilityArtifact(summaries, verdicts, { judgeAvailable: false });
 		process.exit(productJudgedCount > 0 ? 0 : 1);
 	}
 
@@ -378,11 +431,12 @@ async function main() {
 	} else {
 		gateResult = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts });
 	}
+	writeReliabilityArtifact(summaries, verdicts, { judgeAvailable: !dryRun && productJudgedCount > 0 });
 
 	// A behaviour case passes only when its objective check AND thulr's criterion
 	// agree (the two-axis contract). Hard cases are score-tracked, not pass-gated —
 	// only a regression in their score (caught by --score-guardrail) blocks the run.
-	const passed = measuredBehaviourCases.filter((s) => s.objective.pass && (dryRun || verdicts.get(s.name)?.criterion?.verdict !== false)).length;
+	const passed = measuredBehaviourCases.filter((s) => s.objective.pass && (dryRun || verdicts.get(s.traceCaseId)?.criterion?.verdict === true)).length;
 	const excludedByReason = (reason) => summaries.filter((s) => s.excludedReason === reason).length;
 	console.log(finalCountsLine({
 		passed,

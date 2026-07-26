@@ -40,6 +40,8 @@ npm run eval -- --model=openai-codex/gpt-5.5   # explicit subject provider/model
 npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default: anthropic/claude-haiku-4-5)
 npm run eval -- --judge-bin=/path/to/judge-wrapper   # override thulr's judge command
 npm run eval -- --samples=3        # judge each case 3×: majority verdict, mean score, flake warnings (3× judge spend)
+npm run eval -- --trials=5         # run the stochastic subject case 5× in isolated workspaces
+npm run eval -- --trials=20 --reliability-out=.thulr/runs/reliability.json
 npm run eval -- --eval-set=.thulr/eval-sets/release.json   # overlay promoted criteria / guardrail authority
 npm run eval -- --reviews=.thulr/reviews/thulr-trace.reviews.json   # fold human SME verdicts into calibration (judge-vs-human TPR/TNR)
 npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/token regressions
@@ -53,6 +55,17 @@ npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the t
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 npm run eval:select                # tool-selection eval: should the parent model call flow at all?
 ```
+
+`--trials=N` measures **subject reliability** and is independent of
+`--samples=N`, which repeats only the judge to estimate **judge noise**. Every
+subject trial gets a stable base case id plus a unique `::trial-NNN` id and a
+fresh equivalent workspace. The reliability artifact retains raw per-trial
+answers, objective and judge outcomes, cost, tokens, duration, exclusions, and
+infrastructure failures. Its per-case and aggregate summaries report empirical
+pass@1, pass@k, pass^k, Wilson 95% intervals for binary pass rates, and p50/p95
+latency and cost when enough valid trials exist. A separate sensitivity view
+counts infrastructure-invalid trials as failures. Subject trials are capped at
+50 because each one can spend the case's full token and cost budget.
 
 Exit code is `0` when every selected **behaviour** case passes (objective **and**
 thulr's criterion) **and** thulr's gate reports no regression; `1` otherwise.

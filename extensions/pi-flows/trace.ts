@@ -4,6 +4,7 @@ import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { emptyUsage, type CapturePolicy, type FlowMode, type FlowRunResult, type ModeOutput, type RecordSpan, type UsageStats } from "./types.ts";
 import { capModelVisibleText, isFailed, resultText, safePath } from "./sanitize.ts";
 import { parseVerdict } from "./parse.ts";
+import { debateRounds, searchTopology, successfulRuns } from "./topology.ts";
 
 export function formatTokens(count: number): string {
 	if (count < 1000) return String(count);
@@ -31,15 +32,7 @@ export interface TraceSink {
 	finalize: (status: { ok: boolean }, attributes?: Record<string, unknown>) => Promise<void>;
 }
 
-/**
- * Emit one OpenInference-shaped JSON span per child run to an append-only JSONL
- * file. The wiki's llm-observability page makes OpenTelemetry + OpenInference the
- * de-facto agent-tracing stack and stresses "build for agents, not just humans" —
- * trace data a coding agent can query (SQL/jq) and self-heal from. A delegation
- * tree is exactly the multi-step trajectory those spans are meant to attribute
- * failure across. Dependency-free by design: JSONL any OTel pipeline can ingest.
- * All values are already redacted/capped by the capture policy upstream.
- */
+/** Emit redacted OpenInference-shaped child and root spans to JSONL. */
 export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, traceLabel?: string): TraceSink {
 	const traceId = randomUUID().replace(/-/g, "");
 	const rootSpanId = randomUUID().replace(/-/g, "");
@@ -91,15 +84,23 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			});
 		},
 		async finalize(status, attributes = {}) {
+			const end = Date.now();
 			await append({
 				trace_id: traceId,
 				span_id: rootSpanId,
 				parent_span_id: null,
 				name: `flow.${mode}`,
 				start_time_unix_ms: rootStart,
-				end_time_unix_ms: Date.now(),
+				end_time_unix_ms: end,
 				status: { code: status.ok ? "OK" : "ERROR" },
-				attributes: { "openinference.span.kind": "CHAIN", "flow.mode": mode, "flow.trace_label": traceLabel, ...attributes },
+				attributes: {
+					"openinference.span.kind": "CHAIN",
+					"flow.mode": mode,
+					"flow.trace_label": traceLabel,
+					...attributes,
+					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
+					"flow.execution_success": status.ok,
+				},
 			});
 		},
 	};
@@ -118,39 +119,66 @@ export interface TraceSpanRecord {
 
 export interface TraceReportBucket {
 	traces: number;
+	/** @deprecated Compatibility alias for executionSuccesses. */
 	successes: number;
+	executionSuccesses: number;
+	verifiedOutcomes: number;
+	outcomeSuccesses: number;
 	costUsd: number;
 	tokens: number;
+	/** @deprecated Compatibility alias for elapsedTimeMs. */
 	durationMs: number;
+	elapsedTimeMs: number;
+	workerTimeMs: number;
+	criticalPathMs: number;
+	criticalPathTraces: number;
+	legacyDurationTraces: number;
 	budgetHits: number;
 	sameModelVoteWarnings: number;
 }
 
-export interface TraceReport {
+export interface TraceReport extends TraceReportBucket {
 	source?: string;
 	parseErrors: number;
-	traces: number;
-	successes: number;
-	costUsd: number;
-	tokens: number;
-	durationMs: number;
-	budgetHits: number;
-	sameModelVoteWarnings: number;
 	routeChoices: Record<string, number>;
 	byMode: Record<string, TraceReportBucket>;
 	byLabel: Record<string, TraceReportBucket>;
 }
 
 export function emptyTraceBucket(): TraceReportBucket {
-	return { traces: 0, successes: 0, costUsd: 0, tokens: 0, durationMs: 0, budgetHits: 0, sameModelVoteWarnings: 0 };
+	return {
+		traces: 0,
+		successes: 0,
+		executionSuccesses: 0,
+		verifiedOutcomes: 0,
+		outcomeSuccesses: 0,
+		costUsd: 0,
+		tokens: 0,
+		durationMs: 0,
+		elapsedTimeMs: 0,
+		workerTimeMs: 0,
+		criticalPathMs: 0,
+		criticalPathTraces: 0,
+		legacyDurationTraces: 0,
+		budgetHits: 0,
+		sameModelVoteWarnings: 0,
+	};
 }
 
 export function addTraceBucket(bucket: TraceReportBucket, delta: TraceReportBucket): void {
 	bucket.traces += delta.traces;
 	bucket.successes += delta.successes;
+	bucket.executionSuccesses += delta.executionSuccesses;
+	bucket.verifiedOutcomes += delta.verifiedOutcomes;
+	bucket.outcomeSuccesses += delta.outcomeSuccesses;
 	bucket.costUsd += delta.costUsd;
 	bucket.tokens += delta.tokens;
 	bucket.durationMs += delta.durationMs;
+	bucket.elapsedTimeMs += delta.elapsedTimeMs;
+	bucket.workerTimeMs += delta.workerTimeMs;
+	bucket.criticalPathMs += delta.criticalPathMs;
+	bucket.criticalPathTraces += delta.criticalPathTraces;
+	bucket.legacyDurationTraces += delta.legacyDurationTraces;
 	bucket.budgetHits += delta.budgetHits;
 	bucket.sameModelVoteWarnings += delta.sameModelVoteWarnings;
 }
@@ -160,6 +188,11 @@ export function numericAttr(span: TraceSpanRecord, key: string): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+export function optionalNumericAttr(span: TraceSpanRecord, key: string): number | undefined {
+	const value = span.attributes?.[key];
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 export function stringAttr(span: TraceSpanRecord, key: string): string | undefined {
 	const value = span.attributes?.[key];
 	return typeof value === "string" && value.trim() ? value : undefined;
@@ -167,6 +200,11 @@ export function stringAttr(span: TraceSpanRecord, key: string): string | undefin
 
 export function boolAttr(span: TraceSpanRecord, key: string): boolean {
 	return span.attributes?.[key] === true;
+}
+
+export function optionalBoolAttr(span: TraceSpanRecord, key: string): boolean | undefined {
+	const value = span.attributes?.[key];
+	return typeof value === "boolean" ? value : undefined;
 }
 
 export function parseTraceJsonl(text: string): { spans: TraceSpanRecord[]; parseErrors: number } {
@@ -190,15 +228,9 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		byTrace.set(span.trace_id, [...(byTrace.get(span.trace_id) ?? []), span]);
 	}
 	const report: TraceReport = {
+		...emptyTraceBucket(),
 		source,
 		parseErrors,
-		traces: 0,
-		successes: 0,
-		costUsd: 0,
-		tokens: 0,
-		durationMs: 0,
-		budgetHits: 0,
-		sameModelVoteWarnings: 0,
 		routeChoices: {},
 		byMode: {},
 		byLabel: {},
@@ -215,30 +247,42 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const tokens =
 			numericAttr(rootSpan, "flow.token_count_total") ||
 			childSpans.reduce((sum, span) => sum + numericAttr(span, "llm.token_count.prompt") + numericAttr(span, "llm.token_count.completion"), 0);
-		const durationMs =
-			numericAttr(rootSpan, "flow.duration_ms_total") ||
+		const legacyWorkerTime = optionalNumericAttr(rootSpan, "flow.duration_ms_total");
+		const elapsedTimeMs =
+			optionalNumericAttr(rootSpan, "flow.elapsed_time_ms") ??
 			(root?.start_time_unix_ms !== undefined && root?.end_time_unix_ms !== undefined ? Math.max(0, root.end_time_unix_ms - root.start_time_unix_ms) : 0);
-		const success = (root?.status?.code ?? "OK") === "OK" && !childSpans.some((span) => span.status?.code === "ERROR");
+		const workerTimeMs =
+			optionalNumericAttr(rootSpan, "flow.worker_time_ms") ??
+			legacyWorkerTime ??
+			childSpans.reduce((sum, span) => sum + numericAttr(span, "flow.duration_ms"), 0);
+		const criticalPath = optionalNumericAttr(rootSpan, "flow.critical_path_ms");
+		const executionSuccess =
+			optionalBoolAttr(rootSpan, "flow.execution_success") ??
+			((root?.status?.code ?? "OK") === "OK" && !childSpans.some((span) => span.status?.code === "ERROR"));
+		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified");
+		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
 		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
 		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");
 		const routeChoice = stringAttr(rootSpan, "flow.route_choice");
 
 		const delta: TraceReportBucket = {
 			traces: 1,
-			successes: success ? 1 : 0,
+			successes: executionSuccess ? 1 : 0,
+			executionSuccesses: executionSuccess ? 1 : 0,
+			verifiedOutcomes: outcomeVerified ? 1 : 0,
+			outcomeSuccesses: outcomeSuccess ? 1 : 0,
 			costUsd,
 			tokens,
-			durationMs,
+			durationMs: elapsedTimeMs,
+			elapsedTimeMs,
+			workerTimeMs,
+			criticalPathMs: criticalPath ?? 0,
+			criticalPathTraces: criticalPath === undefined ? 0 : 1,
+			legacyDurationTraces: legacyWorkerTime === undefined || optionalNumericAttr(rootSpan, "flow.worker_time_ms") !== undefined ? 0 : 1,
 			budgetHits: budgetHit ? 1 : 0,
 			sameModelVoteWarnings: sameModelVoteWarning ? 1 : 0,
 		};
-		report.traces += 1;
-		report.successes += delta.successes;
-		report.costUsd += costUsd;
-		report.tokens += tokens;
-		report.durationMs += durationMs;
-		report.budgetHits += delta.budgetHits;
-		report.sameModelVoteWarnings += delta.sameModelVoteWarnings;
+		addTraceBucket(report, delta);
 		if (routeChoice) report.routeChoices[routeChoice] = (report.routeChoices[routeChoice] ?? 0) + 1;
 		report.byMode[mode] ??= emptyTraceBucket();
 		addTraceBucket(report.byMode[mode], delta);
@@ -253,26 +297,30 @@ export function formatRate(numerator: number, denominator: number): string {
 }
 
 export function formatTpso(bucket: TraceReportBucket): string {
-	return bucket.successes > 0 ? (bucket.tokens / bucket.successes).toFixed(0) : "n/a";
+	return bucket.outcomeSuccesses > 0 ? (bucket.tokens / bucket.outcomeSuccesses).toFixed(0) : "n/a";
 }
 
 export function formatTraceReport(report: TraceReport): string {
 	const lines = [
 		`Trace report${report.source ? `: ${safePath(report.source)}` : ""}`,
-		`Runs: ${report.traces} (${report.successes} succeeded, ${formatRate(report.successes, report.traces)} success)`,
-		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}  Duration: ${(report.durationMs / 1000).toFixed(1)}s`,
-		`TPSO: ${formatTpso({ ...emptyTraceBucket(), successes: report.successes, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
+		`Runs: ${report.traces}`,
+		`Execution success: ${report.executionSuccesses}/${report.traces} (${formatRate(report.executionSuccesses, report.traces)})`,
+		`Verified outcome success: ${report.outcomeSuccesses}/${report.verifiedOutcomes} (${formatRate(report.outcomeSuccesses, report.verifiedOutcomes)}; ${report.traces - report.verifiedOutcomes} unavailable)`,
+		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
+		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
+		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
 	];
 	if (report.parseErrors) lines.push(`Parse errors: ${report.parseErrors}`);
+	if (report.legacyDurationTraces) lines.push(`Compatibility: legacy \`flow.duration_ms_total\` compatibility: ${report.legacyDurationTraces} trace${report.legacyDurationTraces === 1 ? "" : "s"} (interpreted as worker time).`);
 
 	const renderBuckets = (title: string, buckets: Record<string, TraceReportBucket>) => {
 		const entries = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b));
 		if (entries.length === 0) return;
-		lines.push("", title, "name | runs | success | cost | tokens | tpso | budget | vote-model");
-		lines.push("--- | ---: | ---: | ---: | ---: | ---: | ---: | ---:");
+		lines.push("", title, "name | runs | execution | verified outcome | cost | tokens | elapsed | worker | critical | verified tpso | budget | vote-model");
+		lines.push("--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---:");
 		for (const [name, bucket] of entries) {
 			lines.push(
-				`${name} | ${bucket.traces} | ${formatRate(bucket.successes, bucket.traces)} | $${bucket.costUsd.toFixed(4)} | ${formatTokens(bucket.tokens)} | ${formatTpso(bucket)} | ${bucket.budgetHits} | ${bucket.sameModelVoteWarnings}`,
+				`${name} | ${bucket.traces} | ${formatRate(bucket.executionSuccesses, bucket.traces)} | ${formatRate(bucket.outcomeSuccesses, bucket.verifiedOutcomes)} | $${bucket.costUsd.toFixed(4)} | ${formatTokens(bucket.tokens)} | ${(bucket.elapsedTimeMs / 1000).toFixed(1)}s | ${(bucket.workerTimeMs / 1000).toFixed(1)}s | ${bucket.criticalPathTraces ? `${(bucket.criticalPathMs / 1000).toFixed(1)}s` : "n/a"} | ${formatTpso(bucket)} | ${bucket.budgetHits} | ${bucket.sameModelVoteWarnings}`,
 			);
 		}
 	};
@@ -301,18 +349,124 @@ export function flowUsageTotals(results: FlowRunResult[]): UsageStats {
 	return total;
 }
 
+function runDuration(result: FlowRunResult | undefined): number {
+	return Math.max(0, result?.durationMs ?? 0);
+}
+
+function fanoutThenTailCriticalPath(results: FlowRunResult[], fanoutCount: number): number {
+	const fanout = results.slice(0, Math.max(0, fanoutCount));
+	const tail = results.slice(fanout.length);
+	return Math.max(0, ...fanout.map(runDuration)) + tail.reduce((sum, result) => sum + runDuration(result), 0);
+}
+
+function graphCriticalPath(params: any, results: FlowRunResult[]): number | undefined {
+	const nodes = Array.isArray(params.graph?.nodes) ? params.graph.nodes : [];
+	if (nodes.length === 0 || results.length < nodes.length) return undefined;
+	const remaining = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
+	const completed = new Set<string>();
+	const pathById = new Map<string, number>();
+	let resultIndex = 0;
+	while (remaining.size > 0 && resultIndex < Math.min(nodes.length, results.length)) {
+		const ready = [...remaining.values()].filter((node) => (node.dependsOn ?? []).every((dependency: string) => completed.has(dependency)));
+		if (ready.length === 0) return undefined;
+		for (const node of ready) {
+			const dependencyPath = Math.max(0, ...(node.dependsOn ?? []).map((dependency: string) => pathById.get(dependency) ?? 0));
+			pathById.set(node.id, dependencyPath + runDuration(results[resultIndex]));
+			resultIndex += 1;
+			remaining.delete(node.id);
+		}
+		for (const node of ready) completed.add(node.id);
+	}
+	const nodePath = Math.max(0, ...pathById.values());
+	return nodePath + results.slice(resultIndex).reduce((sum, result) => sum + runDuration(result), 0);
+}
+
+function debateCriticalPath(params: any, results: FlowRunResult[]): number | undefined {
+	const participantCount = Array.isArray(params.debate?.participants) ? params.debate.participants.length : 0;
+	const rounds = debateRounds(params.debate);
+	if (participantCount < 2 || results.length !== participantCount * rounds + 1) return undefined;
+	let path = runDuration(results.at(-1));
+	for (let round = 0; round < rounds; round += 1) {
+		path += Math.max(...results.slice(round * participantCount, (round + 1) * participantCount).map(runDuration));
+	}
+	return path;
+}
+
+function searchCriticalPath(params: any, results: FlowRunResult[]): number | undefined {
+	const { candidateCount: candidates, rounds } = searchTopology(params.search);
+	let offset = 0;
+	let path = 0;
+	for (let round = 0; round < rounds; round += 1) {
+		const generated = results.slice(offset, offset + candidates);
+		if (generated.length !== candidates) return undefined;
+		path += Math.max(...generated.map(runDuration));
+		offset += candidates;
+		const scoredCount = successfulRuns(generated).length;
+		const scored = results.slice(offset, offset + scoredCount);
+		if (scoredCount === 0 || scored.length !== scoredCount) return undefined;
+		path += Math.max(...scored.map(runDuration));
+		offset += scoredCount;
+	}
+	return results.length === offset + 1 ? path + runDuration(results[offset]) : undefined;
+}
+
+export function criticalPathForMode(mode: FlowMode, params: any, results: FlowRunResult[]): number | undefined {
+	if (results.length === 0) return undefined;
+	if (mode === "parallel") return Math.max(...results.map(runDuration));
+	if (["single", "chain", "route", "loop", "workflow"].includes(mode)) return results.reduce((sum, result) => sum + runDuration(result), 0);
+	if (mode === "evaluate") return !Array.isArray(params.evaluate?.redteam) || params.evaluate.redteam.length <= 1 ? results.reduce((sum, result) => sum + runDuration(result), 0) : undefined;
+	if (mode === "graph") return graphCriticalPath(params, results);
+	if (mode === "debate") return debateCriticalPath(params, results);
+	if (mode === "search") return searchCriticalPath(params, results);
+	if (mode === "vote") {
+		const voterCount = Array.isArray(params.vote?.voters) && params.vote.voters.length > 0 ? params.vote.voters.length : Math.floor(params.vote?.count ?? 3);
+		return voterCount > 0 ? fanoutThenTailCriticalPath(results, voterCount) : undefined;
+	}
+	if (mode === "dossier") {
+		const sectionCount = Array.isArray(params.dossier?.sections) ? params.dossier.sections.length : 0;
+		return sectionCount > 0 ? fanoutThenTailCriticalPath(results, sectionCount) : undefined;
+	}
+	if (mode === "worktree") {
+		const workerCount = Array.isArray(params.worktree?.tasks) ? params.worktree.tasks.length : 0;
+		return workerCount > 0 ? fanoutThenTailCriticalPath(results, workerCount) : undefined;
+	}
+	return undefined;
+}
+
+function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { verified: boolean; success?: boolean } {
+	const text = output.content[0]?.type === "text" ? output.content[0].text : "";
+	if (mode === "evaluate") {
+		if (/^Flow evaluate: PASS\b/.test(text)) return { verified: true, success: true };
+		if (/^Flow evaluate: did not pass\b/.test(text)) return { verified: true, success: false };
+	}
+	if (mode === "orchestrate" && params.orchestrate?.verify?.agent) {
+		const verifier = output.details.results.at(-1);
+		if (verifier && verifier.agent === params.orchestrate.verify.agent && !isFailed(verifier)) {
+			return { verified: true, success: parseVerdict(resultText(verifier)) === "pass" };
+		}
+	}
+	return { verified: false };
+}
+
 export function traceSummaryAttributes(mode: FlowMode, params: any, output: ModeOutput): Record<string, unknown> {
 	const results = output.details.results.filter((result) => result.exitCode !== -1);
 	const usage = flowUsageTotals(results);
 	const failed = results.filter(isFailed);
+	const workerTimeMs = results.reduce((sum, result) => sum + (result.durationMs ?? 0), 0);
+	const criticalPathMs = criticalPathForMode(mode, params, results);
+	const outcome = verifiedOutcome(mode, params, output);
 	const attrs: Record<string, unknown> = {
 		"flow.child_count": results.length,
 		"flow.failed_child_count": failed.length,
 		"flow.cost_usd_total": usage.cost,
 		"flow.token_count_total": usage.input + usage.output,
-		"flow.duration_ms_total": results.reduce((sum, result) => sum + (result.durationMs ?? 0), 0),
+		"flow.worker_time_ms": workerTimeMs,
+		"flow.critical_path_available": criticalPathMs !== undefined,
+		"flow.outcome_verified": outcome.verified,
 		"flow.budget_exceeded": results.some((result) => result.error?.code === "BUDGET_EXCEEDED") || output.details.error?.code === "BUDGET_EXCEEDED",
 	};
+	if (criticalPathMs !== undefined) attrs["flow.critical_path_ms"] = criticalPathMs;
+	if (outcome.success !== undefined) attrs["flow.outcome_success"] = outcome.success;
 	if (mode === "vote") {
 		const voterCount = Array.isArray(params.vote?.voters) && params.vote.voters.length > 0 ? params.vote.voters.length : Number.isFinite(params.vote?.count) ? Math.floor(params.vote.count) : results.length;
 		const voters = results.slice(0, Math.max(0, voterCount));

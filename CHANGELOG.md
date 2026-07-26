@@ -8,6 +8,24 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- The single-arm eval runner now accepts `--trials=N` (maximum 50) to repeat the
+  stochastic subject case in clean per-trial workspaces, independently of
+  `--samples` judge-noise sampling. It writes an auditable raw reliability
+  artifact with stable case/unique trial ids, per-trial outcomes and telemetry,
+  pass@1/pass@k/pass^k, Wilson intervals, supported p50/p95 latency and cost, and
+  an infrastructure-invalid-as-failure sensitivity view.
+
+### Changed
+
+- Flow root traces and `/flows report` now separate end-to-end elapsed time,
+  accumulated worker time, and available critical-path latency. Reports call
+  clean process completion execution success and only report verified outcome
+  success/TPSO when a verifier supplied a verdict. Legacy
+  `flow.duration_ms_total` traces remain readable and are labeled compatibility
+  data.
+
 ### Fixed
 
 - Eval, comparison, selection, and dry-run commands now reject malformed corpus

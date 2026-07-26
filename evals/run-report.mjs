@@ -10,16 +10,16 @@ import { formatDuration } from "./compare-report.mjs";
  * The one-line run banner: subject model and where it came from, judge model and
  * sampling, per-case cap, timeout policy, and the mode the run is in.
  */
-export function headerLine({ subject, modelSource, judgeModel, samples, judgeBin, capUsd, timeoutMs, armTimeoutMs, efficiencyGuardrails, dryRun, traceOnly }) {
+export function headerLine({ subject, modelSource, subjectTrials = 1, judgeModel, samples, judgeBin, capUsd, timeoutMs, armTimeoutMs, efficiencyGuardrails, dryRun, traceOnly }) {
 	const judged = !dryRun && !traceOnly;
-	const judgeLabel = judged ? (samples > 1 ? `${judgeModel} ×${samples} samples` : judgeModel) : "(skipped)";
+	const judgeLabel = judged ? (samples > 1 ? `${judgeModel} ×${samples} samples (judge noise)` : `${judgeModel} ×1 sample (judge noise)`) : "(skipped)";
 	const judgeBinLabel = judged && judgeBin ? ` via ${judgeBin}` : "";
 	const efficiencyLabel = efficiencyGuardrails.length ? `  ·  efficiency ${efficiencyGuardrails.join(",")}` : "";
 	const timeoutLabel = armTimeoutMs !== null
 		? `arm-timeout ${formatDuration(armTimeoutMs)} DEBUG/SMOKE`
 		: `timeout ${formatDuration(timeoutMs)}/agent default; per-case budgets honored`;
 	const mode = dryRun ? "  ·  DRY RUN" : traceOnly ? "  ·  TRACE ONLY" : "";
-	return `pi-flows evals  ·  subject ${subject} (${modelSource})  ·  judge ${judgeLabel}${judgeBinLabel}  ·  cap $${capUsd.toFixed(2)}/case  ·  ${timeoutLabel}${efficiencyLabel}${mode}\n`;
+	return `pi-flows evals  ·  subject ${subject} (${modelSource}) · ${subjectTrials} subject trial${subjectTrials === 1 ? "" : "s"}  ·  judge ${judgeLabel}${judgeBinLabel}  ·  cap $${capUsd.toFixed(2)}/case/trial  ·  ${timeoutLabel}${efficiencyLabel}${mode}\n`;
 }
 
 /**
