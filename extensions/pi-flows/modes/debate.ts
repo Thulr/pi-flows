@@ -1,13 +1,9 @@
-import { DEFAULT_DEBATE_ROUNDS, MAX_DEBATE_ROUNDS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { debateRounds, successfulRuns } from "../topology.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
-
-function boundedRounds(value: number | undefined): number {
-	if (!Number.isFinite(value)) return DEFAULT_DEBATE_ROUNDS;
-	return Math.max(1, Math.min(MAX_DEBATE_ROUNDS, Math.floor(value as number)));
-}
 
 export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -25,7 +21,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, participants, params.allowSharedWriteCwd, concurrency);
 	if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: deps.makeDetails("debate")([], sharedWriteError) };
 
-	const rounds = boundedRounds(spec.rounds);
+	const rounds = debateRounds(spec);
 	const allResults: FlowRunResult[] = [];
 	const warnings = new HandoffWarnings();
 	let priorArguments: string[] = [];
@@ -49,7 +45,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		}));
 		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (done, total) => `Flow debate: round ${round}/${rounds}, ${done}/${total} advocates done`);
 		allResults.push(...roundResults);
-		if (roundResults.filter((result) => !isFailed(result)).length < 2) {
+		if (successfulRuns(roundResults).length < 2) {
 			return { content: [{ type: "text", text: "Flow debate stopped: fewer than two advocates produced usable arguments." }], details: deps.makeDetails("debate")(allResults) };
 		}
 		priorArguments = roundResults.map((result) => {

@@ -87,7 +87,7 @@ not a per-call input. It is enforced by the runtime and surfaced read-only in
 
 ### Trace export (observability)
 
-Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Spans carry OpenInference-style attributes — `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, `flow.duration_ms`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. The format is plain JSONL: ingest it into any OpenTelemetry/OpenInference backend, or let a coding agent query it directly with `jq`/SQL to self-diagnose a flow. Export is best-effort and never fails a flow.
+Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`; root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. Export is best-effort and never fails a flow.
 
 Summarize a trace file from inside pi:
 
@@ -101,9 +101,7 @@ Or from a checkout:
 npm run trace:report -- flow-trace.jsonl
 ```
 
-The report groups runs by `flow.mode` and `traceLabel`, with success rate, cost,
-tokens-per-success (TPSO), budget hits, same-model vote warnings, and route
-choices.
+The report groups runs by `flow.mode` and `traceLabel`. It labels a clean child/process run as **execution success**. **Verified outcome success** and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence; ordinary process completion is never promoted to task success. Elapsed, worker, and critical-path time remain separate. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data.
 
 ## Return contracts and write isolation
 

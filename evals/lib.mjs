@@ -1,7 +1,7 @@
 // Shared helpers for the eval runners — the single-arm harness (run.mjs) and the
 // flows-vs-plain A/B (compare.mjs). Kept here so both build the flow tool the same
 // way and compute the deterministic objective labels that thulr calibrates against.
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
@@ -127,6 +127,27 @@ export function caseCwd(testCase, { dryRun = false, arm = "flows" } = {}) {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-eval-ws-"));
 	testCase.setupWorkspace?.(cwd, { arm });
 	return cwd;
+}
+
+export function caseWorkspace(testCase, { dryRun = false, arm = "flows", isolate = false } = {}) {
+	if (!isolate || dryRun) return { cwd: caseCwd(testCase, { dryRun, arm }), dispose() {} };
+	const cwd = mkdtempSync(join(tmpdir(), "pi-eval-trial-"));
+	try {
+		if (testCase.workspace) {
+			testCase.setupWorkspace?.(cwd, { arm });
+		} else if (testCase.cwd) {
+			for (const entry of readdirSync(testCase.cwd)) cpSync(join(testCase.cwd, entry), join(cwd, entry), { recursive: true });
+		}
+	} catch (error) {
+		rmSync(cwd, { recursive: true, force: true });
+		throw error;
+	}
+	return {
+		cwd,
+		dispose() {
+			rmSync(cwd, { recursive: true, force: true });
+		},
+	};
 }
 
 // Build the `flow` tool from the extension. Zeroing argv[1] makes the extension's

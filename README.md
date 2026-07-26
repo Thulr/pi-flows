@@ -418,7 +418,7 @@ Any mode accepts a cumulative spend ceiling and a trace sink:
 { "task": "...", "orchestrate": {}, "why": "...", "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
 ```
 
-`maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
+`maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
 
 ### Human checkpoints and Reflexion
 

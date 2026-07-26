@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CALIBRATION_CASES, CASES } from "../evals/cases.mjs";
@@ -9,13 +9,19 @@ import { codexModelFromPi, runCodex } from "../evals/baseline-codex.mjs";
 import { formatTokenComparison, pickArm } from "../evals/compare-report.mjs";
 import { injectModel } from "../evals/model-injection.mjs";
 import { PATTERN_CASES } from "../evals/pattern-cases.mjs";
-import { answerWithArtifacts, armBudgetSignal, exclusionForRun, infraError, scoreObjective, shouldJudgeProductSpans, sumTokenUsage, timeoutPlanForCase } from "../evals/lib.mjs";
+import { answerWithArtifacts, armBudgetSignal, caseWorkspace, exclusionForRun, infraError, scoreObjective, shouldJudgeProductSpans, sumTokenUsage, timeoutPlanForCase } from "../evals/lib.mjs";
 import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { collectSelectionEvent, flowCallIdsFromMessage, flowCallsFromMessage, flowCallMatchesExpectation, scoreSelection, selectionExitCode } from "../evals/select.mjs";
 import { createFlagReader } from "../evals/cli-flags.mjs";
 import { calibrationSpanFields, caseSpanFields, harnessExitCode, selectMeasurementCases } from "../evals/pipeline.mjs";
 import { runPreflight, thulrDoctorReason } from "../evals/preflight.mjs";
+import { buildReliabilityReport, trialIdentity } from "../evals/reliability.mjs";
+import { headerLine, portfolioExcludedCaseIds } from "../evals/run-report.mjs";
+
+test("portfolio exclusions collapse repeated trials onto stable base case ids", () => {
+	assert.deepEqual(portfolioExcludedCaseIds([{ caseId: "case-a", name: "case-a::trial-001", excludedReason: "infra" }, { caseId: "case-a", name: "case-a::trial-002", excludedReason: "infra" }, { caseId: "case-b", name: "case-b::trial-001", excludedReason: null }]), ["case-a"]);
+});
 
 test("Codex baseline maps the Pi model id and parses JSONL without putting the task in argv", async () => {
 	assert.equal(codexModelFromPi("openai-codex/gpt-5.4-mini"), "gpt-5.4-mini");
@@ -415,6 +421,83 @@ test("eval flag reader rejects non-positive millisecond flags with the offending
 	assert.equal(createFlagReader(["--arm-timeout=5000"], { onInvalid }).positiveNumberFlag("arm-timeout"), 5_000);
 });
 
+test("eval flag reader accepts bounded positive subject trial counts", () => {
+	const invalid: string[] = [];
+	const onInvalid = (message: string) => {
+		invalid.push(message);
+		return null;
+	};
+	assert.equal(createFlagReader([], { onInvalid }).positiveIntegerFlag("trials", 1, 50), 1);
+	assert.equal(createFlagReader(["--trials=3"], { onInvalid }).positiveIntegerFlag("trials", 1, 50), 3);
+	assert.equal(createFlagReader(["--trials=1.5"], { onInvalid }).positiveIntegerFlag("trials", 1, 50), null);
+	assert.equal(createFlagReader(["--trials=51"], { onInvalid }).positiveIntegerFlag("trials", 1, 50), null);
+	assert.match(invalid.join("\n"), /--trials must be an integer from 1 to 50/);
+});
+
+test("trial identities retain a stable case id and unique deterministic trial ids", () => {
+	assert.deepEqual(trialIdentity("route-classifies", 1, 3), { caseId: "route-classifies", trialId: "route-classifies::trial-001", traceCaseId: "route-classifies::trial-001", trialIndex: 1 });
+	assert.equal(trialIdentity("route-classifies", 1, 1).traceCaseId, "route-classifies");
+	assert.notEqual(trialIdentity("route-classifies", 1, 3).trialId, trialIdentity("route-classifies", 2, 3).trialId);
+});
+
+test("reliability reports retain raw trials and calculate nominal plus infra-as-failure sensitivity", () => {
+	const rawTrials = [
+		{ caseId: "case-a", trialId: "case-a::trial-001", trialIndex: 1, pass: true, costUsd: 1, tokens: 10, durationMs: 100, answer: "a", objective: { pass: true }, exclusion: null, infraFailure: null },
+		{ caseId: "case-a", trialId: "case-a::trial-002", trialIndex: 2, pass: false, costUsd: 2, tokens: 20, durationMs: 200, answer: "b", objective: { pass: false }, exclusion: null, infraFailure: null },
+		{ caseId: "case-a", trialId: "case-a::trial-003", trialIndex: 3, pass: true, costUsd: 3, tokens: 30, durationMs: 300, answer: "c", objective: { pass: true }, exclusion: null, infraFailure: null },
+		{ caseId: "case-a", trialId: "case-a::trial-004", trialIndex: 4, pass: false, costUsd: 4, tokens: 40, durationMs: 400, answer: "d", objective: { pass: false }, exclusion: null, infraFailure: null },
+		{ caseId: "case-a", trialId: "case-a::trial-005", trialIndex: 5, pass: false, costUsd: 5, tokens: 50, durationMs: 500, answer: "", objective: { pass: false }, exclusion: { reason: "infra" }, infraFailure: "provider timeout" },
+	];
+	const report = buildReliabilityReport(rawTrials, { subjectTrials: 5, judgeSamples: 3, generatedAt: "2026-07-26T00:00:00.000Z" });
+	const entry = report.cases[0];
+	assert.equal(report.subjectTrials, 5);
+	assert.equal(report.judgeSamples, 3);
+	assert.equal(entry.trials[4].infraFailure, "provider timeout");
+	assert.equal(entry.nominal.passAt1.value, 0.5);
+	assert.equal(entry.nominal.passAtK.k, 5);
+	assert.equal(entry.nominal.passAtK.value, null, "four valid trials cannot support pass@5");
+	assert.ok(entry.nominal.passAt1.confidence95.lower < 0.5);
+	assert.ok(entry.nominal.passAt1.confidence95.upper > 0.5);
+	assert.equal(entry.sensitivityInvalidAsFailure.passAt1.value, 0.4);
+	assert.equal(entry.latencyMs.p50, 250);
+	assert.equal(entry.latencyMs.p95, null, "p95 needs at least twenty valid trials");
+	assert.equal(entry.costUsd.p50, 2.5);
+	const mixed = buildReliabilityReport([
+		...[true, true].map((pass, index) => ({ caseId: "all-pass", trialId: `pass-${index}`, pass, exclusion: null })),
+		...[false, false].map((pass, index) => ({ caseId: "all-fail", trialId: `fail-${index}`, pass, exclusion: null })),
+	], { subjectTrials: 2, judgeSamples: 1 });
+	assert.equal(mixed.overall.nominal.passAtK.value, 0.5, "portfolio pass@k averages same-case estimates instead of mixing trials across cases");
+	assert.equal(mixed.overall.nominal.passToK.value, 0.5);
+});
+
+test("reliability reports publish p95 latency and cost once twenty valid trials exist", () => {
+	const trials = Array.from({ length: 20 }, (_, index) => ({ caseId: "case-a", trialId: `case-a::trial-${String(index + 1).padStart(3, "0")}`, trialIndex: index + 1, pass: true, costUsd: index + 1, tokens: index + 1, durationMs: (index + 1) * 100, answer: "ok", objective: { pass: true }, exclusion: null, infraFailure: null }));
+	const entry = buildReliabilityReport(trials, { subjectTrials: 20, judgeSamples: 1 }).cases[0];
+	assert.equal(entry.latencyMs.p95, 1905);
+	assert.equal(entry.costUsd.p95, 19.05);
+});
+
+test("case workspaces isolate mutable state across subject trials", async () => {
+	const source = await mkdtemp(path.join(tmpdir(), "pi-eval-source-"));
+	await writeFile(path.join(source, "seed.txt"), "clean\n");
+	const first = caseWorkspace({ cwd: source }, { isolate: true });
+	const second = caseWorkspace({ cwd: source }, { isolate: true });
+	try {
+		await writeFile(path.join(first.cwd, "seed.txt"), "mutated\n");
+		assert.equal(await readFile(path.join(second.cwd, "seed.txt"), "utf8"), "clean\n");
+		assert.equal(await readFile(path.join(source, "seed.txt"), "utf8"), "clean\n");
+	} finally {
+		first.dispose();
+		second.dispose();
+	}
+});
+
+test("eval header labels subject trials separately from judge-noise samples", () => {
+	const line = headerLine({ subject: "subject/model", modelSource: "--model", subjectTrials: 4, judgeModel: "judge/model", samples: 3, judgeBin: null, capUsd: 0.5, timeoutMs: 1000, armTimeoutMs: null, efficiencyGuardrails: [], dryRun: false, traceOnly: false });
+	assert.match(line, /subject subject\/model.*4 subject trials/);
+	assert.match(line, /judge judge\/model ×3 samples \(judge noise\)/);
+});
+
 // `thulr doctor` is the eval gate's preflight: it must say WHICH check failed so the
 // message points at the fix (install thulr vs. install its judge binary).
 test("eval preflight names the failing thulr check", () => {
@@ -514,6 +597,38 @@ test("eval CLIs reject non-positive arm-timeout overrides", () => {
 		assert.equal(child.status, 2, script);
 		assert.match(child.stderr, /--arm-timeout must be a positive number/);
 	}
+});
+
+test("eval runner repeats isolated subject trials and writes the raw reliability artifact", async () => {
+	const outputDir = await mkdtemp(path.join(tmpdir(), "pi-eval-reliability-cli-"));
+	const traceOut = path.join(outputDir, "trace.jsonl");
+	const reliabilityOut = path.join(outputDir, "reliability.json");
+	const child = spawnSync(
+		process.execPath,
+		[
+			"--import",
+			"tsx",
+			"evals/run.mjs",
+			"--dry-run",
+			"--filter=route-classifies",
+			"--trials=2",
+			`--trace-out=${traceOut}`,
+			`--reliability-out=${reliabilityOut}`,
+		],
+		{ cwd: process.cwd(), encoding: "utf8" },
+	);
+
+	assert.equal(child.status, 0, child.stderr);
+	assert.match(child.stdout, /route-classifies-bug-to-recon::trial-001/);
+	assert.match(child.stdout, /route-classifies-bug-to-recon::trial-002/);
+	const report = JSON.parse(await readFile(reliabilityOut, "utf8"));
+	assert.equal(report.subjectTrials, 2);
+	assert.equal(report.judgeSamples, 1);
+	assert.deepEqual(report.cases[0].trials.map((trial) => trial.trialId), [
+		"route-classifies-bug-to-recon::trial-001",
+		"route-classifies-bug-to-recon::trial-002",
+	]);
+	assert.equal(report.cases[0].trials.every((trial) => trial.answer.includes("ledger")), true);
 });
 
 test("eval calibration canaries are fixed true-negative judge fixtures", () => {

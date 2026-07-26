@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import registerPiFlows, { __test, PI_FLOWS_VERSION, MAX_FLOW_DEPTH, FLOW_ERROR_CODES } from "../extensions/pi-flows/index.ts";
 import { FlowMonitor } from "../extensions/pi-flows/schema.ts";
+import { makeTraceSink, traceSummaryAttributes } from "../extensions/pi-flows/trace.ts";
 
 async function makeTempRepo() {
   const dir = path.join(tmpdir(), `pi-flows-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -543,7 +544,96 @@ test("trace report parser groups by mode and trace label", () => {
   assert.equal(report.byMode.vote.traces, 1);
   assert.equal(report.byLabel["release-gate"].tokens, 140);
   assert.equal(report.sameModelVoteWarnings, 1);
-  assert.match(__test.formatTraceReport(report), /TPSO: 140 tokens\/success/);
+  assert.match(__test.formatTraceReport(report), /Execution success: 1\/1/);
+  assert.match(__test.formatTraceReport(report), /Verified TPSO: n\/a tokens\/success/);
+});
+
+test("parallel traces separate elapsed, critical-path, and accumulated worker time", async () => {
+  const traceFile = path.join(tmpdir(), `pi-flows-parallel-trace-${process.pid}-${Date.now()}.jsonl`);
+  const results = [
+    { agent: "a", agentSource: "package", task: "a", exitCode: 0, messages: [], stderr: "", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 }, durationMs: 10_000 },
+    { agent: "b", agentSource: "package", task: "b", exitCode: 0, messages: [], stderr: "", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 }, durationMs: 12_000 },
+  ] as any[];
+  const output = { content: [{ type: "text", text: "done" }], details: { results } } as any;
+  const sink = makeTraceSink(traceFile, "parallel", { recordContent: false, redactSecrets: true });
+  for (const result of results) sink.record(result);
+  await sink.finalize({ ok: true }, traceSummaryAttributes("parallel", { tasks: [{}, {}] }, output));
+  const report = __test.summarizeTraceSpans(__test.parseTraceJsonl(await readFile(traceFile, "utf8")).spans);
+  assert.equal(report.workerTimeMs, 22_000);
+  assert.equal(report.criticalPathMs, 12_000);
+  assert.equal(report.criticalPathTraces, 1);
+  assert.ok(report.elapsedTimeMs < report.workerTimeMs);
+});
+test("trace summaries calculate known dependency paths and leave unknown paths unavailable", () => {
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+  const result = (agent: string, durationMs: number) => ({ agent, agentSource: "package", task: agent, exitCode: 0, messages: [], stderr: "", usage, durationMs });
+  const graphResults = [result("a", 100), result("b", 200), result("c", 50), result("debrief", 30)];
+  const graph = {
+    nodes: [{ id: "a", agent: "a", task: "a" }, { id: "b", agent: "b", task: "b" }, { id: "c", agent: "c", task: "c", dependsOn: ["a", "b"] }],
+    debrief: { agent: "debrief" },
+  };
+  const graphAttrs = traceSummaryAttributes("graph", { graph }, { content: [], details: { results: graphResults } } as any);
+  assert.equal(graphAttrs["flow.critical_path_available"], true);
+  assert.equal(graphAttrs["flow.critical_path_ms"], 280);
+  assert.equal(traceSummaryAttributes("graph", { graph }, { content: [], details: { results: graphResults.slice(0, 2) } } as any)["flow.critical_path_available"], false);
+  assert.equal(traceSummaryAttributes("evaluate", { evaluate: {} }, { content: [], details: { results: graphResults.slice(0, 2) } } as any)["flow.critical_path_ms"], 300);
+  assert.equal(traceSummaryAttributes("vote", { vote: { agent: "a" } }, { content: [], details: { results: graphResults.slice(0, 3) } } as any)["flow.critical_path_ms"], 200);
+  assert.equal(traceSummaryAttributes("debate", { debate: { participants: [{}, {}], rounds: 2 } }, { content: [], details: { results: [result("a", 100), result("b", 200), result("a", 50), result("b", 80), result("judge", 30)] } } as any)["flow.critical_path_ms"], 310);
+  const unknownAttrs = traceSummaryAttributes("orchestrate", { orchestrate: {} }, { content: [], details: { results: [result("commander", 100), result("recon", 200)] } } as any);
+  assert.equal(unknownAttrs["flow.critical_path_available"], false);
+  assert.equal(unknownAttrs["flow.critical_path_ms"], undefined);
+});
+
+test("trace summaries publish outcome success only when a verifier supplied a verdict", () => {
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+  const result = { agent: "operator", agentSource: "package", task: "task", exitCode: 0, messages: [], stderr: "", usage, durationMs: 10 };
+  const evaluated = traceSummaryAttributes("evaluate", { evaluate: {} }, { content: [{ type: "text", text: "Flow evaluate: PASS after 1 iteration via redteam." }], details: { results: [result] } } as any);
+  assert.equal(evaluated["flow.outcome_verified"], true);
+  assert.equal(evaluated["flow.outcome_success"], true);
+  const unverified = traceSummaryAttributes("parallel", { tasks: [{}] }, { content: [{ type: "text", text: "Flow parallel: 1/1 succeeded" }], details: { results: [result] } } as any);
+  assert.equal(unverified["flow.outcome_verified"], false);
+  assert.equal(unverified["flow.outcome_success"], undefined);
+});
+
+test("trace reports distinguish execution from verified outcomes and label legacy duration compatibility", () => {
+  const spans = [
+    {
+      trace_id: "legacy",
+      span_id: "legacy-root",
+      parent_span_id: null,
+      name: "flow.parallel",
+      start_time_unix_ms: 100,
+      end_time_unix_ms: 200,
+      status: { code: "OK" },
+      attributes: { "flow.mode": "parallel", "flow.duration_ms_total": 180 },
+    },
+    {
+      trace_id: "verified",
+      span_id: "verified-root",
+      parent_span_id: null,
+      name: "flow.evaluate",
+      start_time_unix_ms: 300,
+      end_time_unix_ms: 500,
+      status: { code: "OK" },
+      attributes: {
+        "flow.mode": "evaluate",
+        "flow.elapsed_time_ms": 200,
+        "flow.worker_time_ms": 190,
+        "flow.outcome_verified": true,
+        "flow.outcome_success": false,
+      },
+    },
+  ];
+
+  const report = __test.summarizeTraceSpans(spans);
+  assert.equal(report.executionSuccesses, 2);
+  assert.equal(report.verifiedOutcomes, 1);
+  assert.equal(report.outcomeSuccesses, 0);
+  assert.equal(report.legacyDurationTraces, 1);
+  assert.equal(report.workerTimeMs, 370);
+  assert.match(__test.formatTraceReport(report), /Execution success: 2\/2/);
+  assert.match(__test.formatTraceReport(report), /Verified outcome success: 0\/1/);
+  assert.match(__test.formatTraceReport(report), /legacy `flow\.duration_ms_total` compatibility: 1 trace/);
 });
 
 test("flow status helpers summarize live and completed runs", () => {

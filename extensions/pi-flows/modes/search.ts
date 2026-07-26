@@ -1,9 +1,10 @@
-import { DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_SEARCH_BEAM_WIDTH, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { searchTopology, successfulRuns } from "../topology.ts";
 
 export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, makeDetails } = deps;
@@ -16,9 +17,8 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const generatorRef: FlowAgentRefInput = spec.generator ?? { agent: "strategist" };
 	const scorerRef: FlowAgentRefInput = spec.scorer ?? { agent: "redteam", tools: "none" };
 	const debriefRef: FlowAgentRefInput = spec.debrief ?? { agent: "debrief" };
-	const candidateCount = Number.isFinite(spec.candidates) ? Math.max(1, Math.min(MAX_PARALLEL_TASKS, Math.floor(spec.candidates))) : DEFAULT_SEARCH_CANDIDATES;
+	const { candidateCount, rounds } = searchTopology(spec);
 	const beamWidth = Number.isFinite(spec.beamWidth) ? Math.max(1, Math.min(candidateCount, Math.floor(spec.beamWidth))) : DEFAULT_SEARCH_BEAM_WIDTH;
-	const rounds = Number.isFinite(spec.maxRounds) ? Math.max(1, Math.min(4, Math.floor(spec.maxRounds))) : DEFAULT_SEARCH_ROUNDS;
 	const { concurrency } = deps;
 	const repeatedGenerators = Array.from({ length: candidateCount }, () => generatorRef);
 	const generatorWriteError = validateSharedWriteCwd(discovery, defaultCwd, repeatedGenerators, params.allowSharedWriteCwd, concurrency);
@@ -55,7 +55,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			(done, total) => `Flow search: round ${round} generated ${done}/${total}`,
 		);
 		results.push(...generated);
-		const candidates = generated.filter((result) => !isFailed(result)).map((result) => handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text);
+		const candidates = successfulRuns(generated).map((result) => handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text);
 		if (candidates.length === 0) {
 			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");
 			return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("search")(results, error) };

@@ -50,5 +50,13 @@ export function createFlagReader(argv, { onInvalid = exitOnInvalid } = {}) {
 		}
 		return value;
 	};
-	return { argv, flag, has, bool, flags, positiveNumberFlag };
+	const positiveIntegerFlag = (name, fallback, maximum) => {
+		if (!has(name)) return fallback;
+		const value = Number(flag(name, "0"));
+		if (!Number.isInteger(value) || value < 1 || value > maximum) {
+			return onInvalid(`--${name} must be an integer from 1 to ${maximum}`);
+		}
+		return value;
+	};
+	return { argv, flag, has, bool, flags, positiveNumberFlag, positiveIntegerFlag };
 }

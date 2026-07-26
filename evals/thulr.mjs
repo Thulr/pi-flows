@@ -44,7 +44,7 @@ const spanId = () => randomUUID().replace(/-/g, "");
  * @param {{name: string, answer: string, criterion: string, criteria?: Record<string, string>, label?: boolean, labels?: Record<string, boolean>, judgeOnlyDimensions?: string[], journeyStage?: string, endMs: number, model?: string, task?: string, expectedBehavior?: string, failureModes?: string[], costUsd?: number, tokensTotal?: number, promptVersion?: string, configVersion?: string}} input
  * @returns {object[]}
  */
-export function traceSpansForCase({ name, answer, criterion, criteria, label, labels, judgeOnlyDimensions, journeyStage, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion }) {
+export function traceSpansForCase({ name, baseCaseId, trialId, trialIndex, answer, criterion, criteria, label, labels, judgeOnlyDimensions, journeyStage, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion }) {
 	const traceId = spanId();
 	const rootSpanId = spanId();
 	const answerSpanId = spanId();
@@ -56,6 +56,9 @@ export function traceSpansForCase({ name, answer, criterion, criteria, label, la
 		"input.value": task || name,
 		"thulr.task.input": task || name,
 	};
+	if (baseCaseId) commonAttributes["thulr.base_case_id"] = baseCaseId;
+	if (trialId) commonAttributes["thulr.trial_id"] = trialId;
+	if (trialIndex !== undefined) commonAttributes["thulr.trial_index"] = trialIndex;
 	for (const [dimension, text] of Object.entries(criteria ?? {})) {
 		if (text) commonAttributes[`thulr.criteria.${dimension}`] = text;
 	}

@@ -57,6 +57,23 @@ test("traceSpansForCase carries task, cost, tokens, and prompt version when give
 	assert.equal("thulr.cost_usd" in root.attributes, false, "cost belongs to the final-answer span only");
 });
 
+test("traceSpansForCase carries stable base-case and unique trial identifiers", () => {
+	const spans = traceSpansForCase({
+		name: "case-a::trial-002",
+		baseCaseId: "case-a",
+		trialId: "case-a::trial-002",
+		trialIndex: 2,
+		answer: "answer",
+		criterion: "correct",
+		endMs: 5,
+	});
+	const graded = spans.find((span) => span.attributes["output.value"] !== undefined);
+	assert.equal(graded.attributes["thulr.case_id"], "case-a::trial-002");
+	assert.equal(graded.attributes["thulr.base_case_id"], "case-a");
+	assert.equal(graded.attributes["thulr.trial_id"], "case-a::trial-002");
+	assert.equal(graded.attributes["thulr.trial_index"], 2);
+});
+
 test("traceSpansForCase carries thulr 0.3 named criteria, dimension labels, and judge-only flags", () => {
 	const span = traceSpansForCase({
 		name: "review-case",
