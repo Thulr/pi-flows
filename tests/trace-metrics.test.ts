@@ -23,3 +23,7 @@ test("search critical path sums generator/scorer fanout waves and the debrief ta
 	assert.equal(criticalPathForMode("search", { search: { candidates: 2, maxRounds: 2 } }, results), 475);
 	assert.equal(criticalPathForMode("search", { search: { candidates: 2, maxRounds: 2 } }, results.slice(0, -1)), undefined);
 });
+
+test("evaluate critical path is unavailable when an unmeasured deterministic gate runs", () => {
+	assert.equal(criticalPathForMode("evaluate", { evaluate: { checkCommand: "npm test" } }, [result("operator", 100), result("critic", 50)] as any[]), undefined);
+});

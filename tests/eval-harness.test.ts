@@ -17,7 +17,11 @@ import { createFlagReader } from "../evals/cli-flags.mjs";
 import { calibrationSpanFields, caseSpanFields, harnessExitCode, selectMeasurementCases } from "../evals/pipeline.mjs";
 import { runPreflight, thulrDoctorReason } from "../evals/preflight.mjs";
 import { buildReliabilityReport, trialIdentity } from "../evals/reliability.mjs";
-import { headerLine } from "../evals/run-report.mjs";
+import { headerLine, portfolioExcludedCaseIds } from "../evals/run-report.mjs";
+
+test("portfolio exclusions collapse repeated trials onto stable base case ids", () => {
+	assert.deepEqual(portfolioExcludedCaseIds([{ caseId: "case-a", name: "case-a::trial-001", excludedReason: "infra" }, { caseId: "case-a", name: "case-a::trial-002", excludedReason: "infra" }, { caseId: "case-b", name: "case-b::trial-001", excludedReason: null }]), ["case-a"]);
+});
 
 test("Codex baseline maps the Pi model id and parses JSONL without putting the task in argv", async () => {
 	assert.equal(codexModelFromPi("openai-codex/gpt-5.4-mini"), "gpt-5.4-mini");

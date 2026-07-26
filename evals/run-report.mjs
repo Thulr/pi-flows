@@ -52,6 +52,9 @@ export const calibrationLines = ({ name, objective }) => [
 const excludedSuffix = (excluded) => (excluded ? `  ·  ${excluded} inconclusive/excluded` : "");
 const calibrationSuffix = (calibration) => (calibration ? `  ·  ${calibration} calibration canar${calibration === 1 ? "y" : "ies"}` : "");
 
+export const portfolioExcludedCaseIds = (summaries) =>
+	[...new Set(summaries.filter((summary) => summary.excludedReason).map((summary) => summary.caseId ?? summary.name))];
+
 /** Phase-1 scoreboard: the objective axis alone, before the judge has spoken. */
 export const behaviourCountsLine = ({ passed, measured, excluded, hard, calibration, totalCost, dryRun }) =>
 	`\n${passed}/${measured} behaviour checks passed${excludedSuffix(excluded)}${hard ? `  ·  ${hard} hard case${hard === 1 ? "" : "s"} score-tracked` : ""}${calibrationSuffix(calibration)}  ·  total $${totalCost.toFixed(4)}${dryRun ? "  (dry-run, no model)" : ""}`;

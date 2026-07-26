@@ -414,7 +414,10 @@ export function criticalPathForMode(mode: FlowMode, params: any, results: FlowRu
 	if (results.length === 0) return undefined;
 	if (mode === "parallel") return Math.max(...results.map(runDuration));
 	if (["single", "chain", "route", "loop", "workflow"].includes(mode)) return results.reduce((sum, result) => sum + runDuration(result), 0);
-	if (mode === "evaluate") return !Array.isArray(params.evaluate?.redteam) || params.evaluate.redteam.length <= 1 ? results.reduce((sum, result) => sum + runDuration(result), 0) : undefined;
+	if (mode === "evaluate") {
+		if (typeof params.evaluate?.checkCommand === "string" && params.evaluate.checkCommand.trim()) return undefined;
+		return !Array.isArray(params.evaluate?.redteam) || params.evaluate.redteam.length <= 1 ? results.reduce((sum, result) => sum + runDuration(result), 0) : undefined;
+	}
 	if (mode === "graph") return graphCriticalPath(params, results);
 	if (mode === "debate") return debateCriticalPath(params, results);
 	if (mode === "search") return searchCriticalPath(params, results);

@@ -65,7 +65,7 @@ import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjecti
 import { injectModel } from "./model-injection.mjs";
 import { calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
-import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, verdictLine, INFRA_WARNING } from "./run-report.mjs";
+import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
 import { buildReliabilityReport, formatReliabilitySummary, MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
 import * as thulr from "./thulr.mjs";
 
@@ -409,7 +409,7 @@ async function main() {
 		totalCost,
 		dryRun,
 	}));
-	const excludedIds = summaries.filter((summary) => summary.excludedReason).map((summary) => summary.name);
+	const excludedIds = portfolioExcludedCaseIds(summaries);
 	console.log(formatPortfolioReport(portfolioReport([...selected, ...selectedCalibration], { excluded: excludedIds })));
 
 	const verdicts = new Map();
