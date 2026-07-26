@@ -205,6 +205,11 @@ function directoryDigest(directory) {
 	return digest.digest("hex");
 }
 
+function sourceDigest(path) {
+	if (statSync(path).isDirectory()) return directoryDigest(path);
+	return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
 function sourceSnapshotIssues(snapshots, repoRoot) {
 	if (snapshots === undefined) return [];
 	if (!Array.isArray(snapshots)) return ["corpus.sourceSnapshots must be an array"];
@@ -221,7 +226,7 @@ function sourceSnapshotIssues(snapshots, repoRoot) {
 			continue;
 		}
 		try {
-			const actual = directoryDigest(sourcePath);
+			const actual = sourceDigest(sourcePath);
 			if (actual !== snapshot.sha256) {
 				issues.push(`${label} is stale: ${snapshot.path} digest is ${actual}, expected ${snapshot.sha256}`);
 			}
