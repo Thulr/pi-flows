@@ -266,14 +266,15 @@ the baseline and Pi Flows as the candidate:
   `pi --no-extensions` call instead, for comparison with the parent runtime.
 
 ```bash
-npm run eval:compare                    # all cases, both arms, thulr judged
+npm run eval:compare -- --trials=5 --constraint=deadline:600000 # repeated pairs under one wall-clock constraint
+npm run eval:compare -- --constraint=cost:2 --non-inferiority-margin=0.02 # cost-bound non-inferiority
+npm run eval:compare -- --constraint=generated_tokens:20000 --improvement-margin=0.03 # token-bound improvement
 npm run eval:compare -- --filter=pattern- # only workflow/worktree/debate/dossier/monitor A/B cases
 npm run eval:compare -- --baseline=pi   # compare against plain headless Pi instead of direct Codex
 npm run eval:compare -- --include-controls # also run simple threshold/control cases
 npm run eval:compare -- --duel          # add native thulr head-to-head quality judging
 npm run eval:compare -- --filter=vote   # scope to keep cost down (runs both arms per case)
 npm run eval:compare -- --infra-retries=1 --infra-retry-delay=15000 # retry zero-token startup infra only
-npm run eval:compare -- --arm-timeout=30000 --filter=review   # smoke/debug loop; not measurement evidence
 npm run eval:compare -- --write=evals/compare.json
 npm run eval:compare -- --dry-run       # wiring smoke, no model
 
@@ -287,25 +288,43 @@ The fair A/B contract is enforced rather than inferred:
 
 - Both arms get the same underlying subject model. A reported model mismatch marks
   the pair as infra/inconclusive instead of allowing a cross-model comparison.
-- Every case gives both arms the exact same top-level `params.task` and an
-  equivalent workspace fixture. Flow-only coordination parameters may change how
-  that task is executed, never what the direct arm is asked to do.
+- Every case/trial creates one immutable workspace snapshot, clones it into
+  independently mutable arm directories, and gives both arms the exact same
+  top-level `params.task`, model, snapshot id, and trial index. Flow-only
+  coordination parameters may change how that task is executed, never what the
+  direct arm is asked to do.
 - Unrelated user extensions are disabled. Artifact-producing cases expose only
   explicitly bounded workspace files to the judge, so the final answer and the
   tested artifact are graded together without leaking arbitrary repo state.
-- Both arms use the same case timeout. Supplying `--arm-timeout` makes the whole
-  run a smoke/debug run, regardless of whether that clock is shorter or longer
-  than the case budget; those rows never enter measurement evidence.
+- Exactly one resource is binding. `--constraint=deadline:<ms>` enforces the same
+  wall-clock deadline on both arms; `cost:<USD>` and
+  `generated_tokens:<count>` apply the same completed-arm eligibility threshold
+  to both sides. An arm with unknown or over-limit usage makes its pair
+  inconclusive. With no flag, the declared constraint defaults to
+  `deadline:<--timeout>`. Legacy `--cap=<USD>` and `--arm-timeout=<ms>` are
+  aliases for cost and deadline declarations and cannot be combined with
+  `--constraint`. Non-binding resources remain observed outcomes; `--timeout`
+  is only a process-safety ceiling when cost or tokens is binding.
 - Only pairs where both arms complete without exclusion enter thulr traces and
-  quality-lift summaries. Timeout, provider/infra, debug-budget, and model-parity
-  failures make the whole pair inconclusive; artifacts still retain cost,
-  wall-clock, attempts, and exclusion reasons.
+  quality-lift summaries. Timeout, provider/infra, constraint, and model-parity
+  failures make the whole pair inconclusive; artifacts still retain quality,
+  reliability, cost, generated and total tokens, end-to-end latency, accumulated
+  worker time, attempts, and exclusion reasons.
 - The default infra retry applies only to zero-token, zero-cost startup failures.
   It does not retry timeouts or completed answers and therefore cannot cherry-pick
   a better response.
 
 `eval:compare` adds the same calibration canaries to both arm traces, filters them
 out of the comparison artifacts, and prints per-dimension baseline -> flows deltas.
+Its paired report first averages repeated trials within each case, then estimates
+the across-case mean delta and 95% t interval so repeated trials do not masquerade
+as independent cases. Reliability also reports the exact paired McNemar test.
+Every metric is repeated by portfolio suite and task family. `--write` preserves
+the raw per-trial rows for independent reanalysis, including invalid pairs.
+`--improvement-margin=<delta>` promotes only when the quality interval clears a
+positive margin; `--non-inferiority-margin=<delta>` instead requires its lower
+bound to clear the negative margin. These predeclared decisions are separate from
+thulr's legacy aggregate `--noise-band`.
 With `--duel`, thulr also runs an **order-controlled head-to-head** judge over
 shared cases and reports flows wins, baseline wins, ties, position-bias flips, and
 skipped one-sided cases. `--pairwise` remains an alias for `--duel`. The duel is

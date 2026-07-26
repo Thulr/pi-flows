@@ -108,13 +108,18 @@ export const pickArm = (a) => ({
 	cost: a.cost,
 	costKnown: a.costKnown ?? true,
 	tokens: a.tokenUsage,
+	generatedTokens: a.tokenUsage?.known ? a.tokenUsage.output : null,
 	durationMs: a.durationMs,
+	workerTimeMs: a.workerTimeMs,
 	infra: a.reachedModel ?? null,
 	excluded: a.exclusion ?? null,
 	debugBudget: a.timeoutPlan?.debugBudget ?? false,
 	timeoutMs: a.timeoutPlan?.effectiveTimeoutMs ?? null,
 	caseBudgetMs: a.timeoutPlan?.caseTimeoutMs ?? null,
 	attempts: a.attempts ?? 1,
+	task: a.task,
+	model: a.modelName,
+	workspaceSnapshotId: a.workspaceSnapshotId,
 	answer: a.exclusion ? "" : (a.answer ?? "").slice(0, 1000),
 });
 

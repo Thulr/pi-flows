@@ -16,6 +16,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   artifact with stable case/unique trial ids, per-trial outcomes and telemetry,
   pass@1/pass@k/pass^k, Wilson intervals, supported p50/p95 latency and cost, and
   an infrastructure-invalid-as-failure sensitivity view.
+- `eval:compare` now runs paired repeated trials from one immutable workspace
+  snapshot per case/trial and declares exactly one binding cost, generated-token,
+  or deadline constraint. Its raw JSON artifact retains every arm outcome and
+  suite/task-family slice, while the terminal and artifact report case-clustered
+  paired deltas with 95% intervals, exact McNemar reliability analysis, separate
+  cost/token/end-to-end/worker-time/invalid-run metrics, and predeclared
+  improvement or non-inferiority promotion margins.
 
 ### Changed
 
