@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -172,17 +173,14 @@ function oneSourceExpectationIssues(testCase, expectation, repoRoot, label) {
 	if (typeof expectation?.path !== "string") return [`${label} must declare path`];
 	const sourcePath = pathInsideRoot(repoRoot, expectation.path);
 	if (!sourcePath) return [`${label}.path must stay inside the repository`];
-	if (expectation.format === "directory-count") {
+	if (expectation.format === "node-script") {
 		try {
-			const files = directoryFiles(sourcePath).filter((path) => !expectation.suffix || path.endsWith(expectation.suffix));
-			return files.length === expectation.expected
-				? []
-				: [`${label} is stale: ${expectation.path} contains ${files.length} matching files, expected ${expectation.expected}`];
+			const output = execFileSync(process.execPath, [sourcePath], { cwd: repoRoot, encoding: "utf8" });
+			return patternIssues(label, output, expectation.patterns);
 		} catch (error) {
-			return [`${label} could not read ${expectation.path}: ${error.message}`];
+			return [`${label} failed: ${error.stderr?.toString().trim() || error.message}`];
 		}
 	}
-
 	let raw;
 	try {
 		raw = readFileSync(sourcePath, "utf8");

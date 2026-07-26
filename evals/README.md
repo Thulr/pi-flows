@@ -504,12 +504,12 @@ sourceExpectation: {
 
 The preflight verifies that both the mock answer and answer pattern accept the
 current source value. Workspace-backed cases use case-local semantic assertions
-(`format:"text"`, JSON relationships, or directory counts) so unrelated edits do
-not churn the corpus contract. `corpus.mjs` pins one digest for the immutable
-`evals/fixtures` tree. A relevant source edit stops every entrypoint until its
-expectations are reviewed. Terminal reports count selected cases and exclusions
-by portfolio suite and task family, so a green aggregate cannot hide which
-evidence families were absent.
+(`format:"text"`, JSON relationships, or a deterministic Node validator) so
+unrelated edits do not churn the corpus contract. `corpus.mjs` pins one digest for
+the immutable `evals/fixtures` tree. A relevant source edit stops every entrypoint
+until its expectations are reviewed. Terminal reports count selected cases and
+exclusions by portfolio suite and task family, so a green aggregate cannot hide
+which evidence families were absent.
 
 Keep `score` **objective** (a known answer, the chosen route, a passing gate) — it
 gates behaviour *and* becomes thulr's calibration label. Write `criterion` as the

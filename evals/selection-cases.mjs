@@ -155,10 +155,9 @@ export const SELECTION_CASES = defineCases([
 		answerPattern: "ok|pass|valid",
 		mock: { flowCalls: 0, answer: "agents ok: 9 bundled agents — validation passes." },
 		sourceExpectation: {
-			format: "directory-count",
-			path: "agents",
-			suffix: ".md",
-			expected: 9,
+			format: "node-script",
+			path: "scripts/validate-agents.mjs",
+			patterns: ["agents ok: 9 bundled agents"],
 		},
 	},
 	{
