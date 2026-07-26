@@ -184,8 +184,9 @@ Auth is pi's own (thulr also judges via `pi`):
   ```
 
 Override the subject with `--model=<provider/id>` (OAuth providers like `openai-codex`
-need the provider prefix), or `--model=agent` to run each agent on its own
-frontmatter model. Cases that can't complete (auth, credits, network, timeout) are
+need the provider prefix). The single-arm harness also accepts `--model=agent`;
+paired comparison requires one explicit model shared by both arms. Cases that
+can't complete (auth, credits, network, timeout) are
 flagged `⚠`, excluded from judging, and reported separately from real eval failures.
 If installed user pi extensions break child-agent startup, run evals with
 `PI_FLOWS_CHILD_NO_EXTENSIONS=1`; do not use that isolation when your selected
@@ -267,8 +268,8 @@ the baseline and Pi Flows as the candidate:
 
 ```bash
 npm run eval:compare -- --trials=5 --constraint=deadline:600000 # repeated pairs under one wall-clock constraint
-npm run eval:compare -- --constraint=cost:2 --non-inferiority-margin=0.02 # cost-bound non-inferiority
-npm run eval:compare -- --constraint=generated_tokens:20000 --improvement-margin=0.03 # token-bound improvement
+npm run eval:compare -- --baseline=pi --constraint=cost:2 --non-inferiority-margin=0.02 # cost-bound non-inferiority
+npm run eval:compare -- --baseline=pi --constraint=generated_tokens:20000 --improvement-margin=0.03 # token-bound improvement
 npm run eval:compare -- --filter=pattern- # only workflow/worktree/debate/dossier/monitor A/B cases
 npm run eval:compare -- --baseline=pi   # compare against plain headless Pi instead of direct Codex
 npm run eval:compare -- --include-controls # also run simple threshold/control cases
@@ -297,10 +298,12 @@ The fair A/B contract is enforced rather than inferred:
   explicitly bounded workspace files to the judge, so the final answer and the
   tested artifact are graded together without leaking arbitrary repo state.
 - Exactly one resource is binding. `--constraint=deadline:<ms>` enforces the same
-  wall-clock deadline on both arms; `cost:<USD>` and
-  `generated_tokens:<count>` apply the same completed-arm eligibility threshold
-  to both sides. An arm with unknown or over-limit usage makes its pair
-  inconclusive. With no flag, the declared constraint defaults to
+  wall-clock deadline on both arms. With `--baseline=pi`, `cost:<USD>` and
+  `generated_tokens:<count>` stop each arm at the first completed model-response
+  accounting boundary that reaches its ceiling. The Codex CLI cannot enforce
+  those two resource ceilings mid-execution, so they fail preflight unless the
+  plain Pi baseline is selected. An arm with unknown or over-limit usage makes
+  its pair inconclusive. With no flag, the declared constraint defaults to
   `deadline:<--timeout>`. Legacy `--cap=<USD>` and `--arm-timeout=<ms>` are
   aliases for cost and deadline declarations and cannot be combined with
   `--constraint`. Non-binding resources remain observed outcomes; `--timeout`
@@ -318,7 +321,8 @@ The fair A/B contract is enforced rather than inferred:
 out of the comparison artifacts, and prints per-dimension baseline -> flows deltas.
 Its paired report first averages repeated trials within each case, then estimates
 the across-case mean delta and 95% t interval so repeated trials do not masquerade
-as independent cases. Reliability also reports the exact paired McNemar test.
+as independent cases. Reliability uses an exact sign test over case-level paired
+pass-rate deltas, so repeated trials are not counted as independent binary pairs.
 Every metric is repeated by portfolio suite and task family. `--write` preserves
 the raw per-trial rows for independent reanalysis, including invalid pairs.
 `--improvement-margin=<delta>` promotes only when the quality interval clears a

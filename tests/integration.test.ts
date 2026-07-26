@@ -25,6 +25,19 @@ test("single: spawns the stub child, returns its text, and accumulates usage", a
 	assert.ok(result.details.results[0].usage.cost > 0, "usage.cost should be accumulated from the child JSONL");
 });
 
+test("single: generated-token budget stops the active child at a response boundary", async () => {
+	const startedAt = Date.now();
+	const { result } = await runFlow(
+		{ agent: "recon", task: "return a bounded answer", maxGeneratedTokens: 4, timeoutMs: 2_000 },
+		{ recon: { reply: "partial answer", holdOpenMs: 5_000 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.usage.output, 8);
+	assert.equal(child.stopReason, "budget_exceeded");
+	assert.equal(child.exitCode, 0);
+	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
+});
+
 test("single: appends return contracts, updates UI status, and writes a session summary entry", async () => {
 	const statuses: string[] = [];
 	const widgets: string[][] = [];
@@ -752,4 +765,3 @@ test("worktree: retains worker state when committing generated changes fails", a
 	}
 	await rm(path.dirname(retained), { recursive: true, force: true });
 });
-

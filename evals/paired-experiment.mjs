@@ -99,13 +99,13 @@ function binomialCoefficient(n, k) {
 	return value;
 }
 
-function exactMcNemar(flowsOnly, baselineOnly) {
-	const discordant = flowsOnly + baselineOnly;
-	if (discordant === 0) return 1;
-	const tail = Math.min(flowsOnly, baselineOnly);
+function exactSignP(positive, negative) {
+	const nonTies = positive + negative;
+	if (nonTies === 0) return 1;
+	const tail = Math.min(positive, negative);
 	let probability = 0;
 	for (let successes = 0; successes <= tail; successes += 1) {
-		probability += binomialCoefficient(discordant, successes) * (0.5 ** discordant);
+		probability += binomialCoefficient(nonTies, successes) * (0.5 ** nonTies);
 	}
 	return round(Math.min(1, probability * 2));
 }
@@ -113,16 +113,24 @@ function exactMcNemar(flowsOnly, baselineOnly) {
 function pairedReliability(rows) {
 	const valid = rows.filter((row) => row.comparable && typeof row.flows.judgePass === "boolean" && typeof row.baseline.judgePass === "boolean");
 	const passed = (arm) => arm.judgePass === true && arm.objPass === true;
-	const flowsOnlyPass = valid.filter((row) => passed(row.flows) && !passed(row.baseline)).length;
-	const baselineOnlyPass = valid.filter((row) => !passed(row.flows) && passed(row.baseline)).length;
+	const byCase = new Map();
+	for (const row of valid) {
+		const delta = Number(passed(row.flows)) - Number(passed(row.baseline));
+		byCase.set(row.caseId, [...(byCase.get(row.caseId) ?? []), delta]);
+	}
+	const caseDeltas = [...byCase.values()].map(average);
+	const flowsFavoredCases = caseDeltas.filter((delta) => delta > 0).length;
+	const baselineFavoredCases = caseDeltas.filter((delta) => delta < 0).length;
+	const tiedCases = caseDeltas.length - flowsFavoredCases - baselineFavoredCases;
 	return {
 		...clusteredPairedDelta(valid, (arm) => passed(arm) ? 1 : 0, "pass-rate"),
-		analysis: "paired binary outcomes with exact McNemar test; interval is clustered by case",
-		mcnemar: {
-			flowsOnlyPass,
-			baselineOnlyPass,
-			discordantPairs: flowsOnlyPass + baselineOnlyPass,
-			exactTwoSidedP: exactMcNemar(flowsOnlyPass, baselineOnlyPass),
+		analysis: "case-clustered paired binary sign test",
+		caseSignTest: {
+			flowsFavoredCases,
+			baselineFavoredCases,
+			tiedCases,
+			nonTiedCases: flowsFavoredCases + baselineFavoredCases,
+			exactTwoSidedP: exactSignP(flowsFavoredCases, baselineFavoredCases),
 		},
 	};
 }
@@ -195,7 +203,7 @@ export function formatPairedAnalysis(analysis) {
 		"Paired case-clustered analysis",
 		formatDelta("quality", overall.quality),
 		formatDelta("reliability", overall.reliability),
-		`  reliability McNemar: flows-only ${overall.reliability.mcnemar.flowsOnlyPass}, baseline-only ${overall.reliability.mcnemar.baselineOnlyPass}, exact p ${overall.reliability.mcnemar.exactTwoSidedP}`,
+		`  reliability case sign test: flows-favored ${overall.reliability.caseSignTest.flowsFavoredCases}, baseline-favored ${overall.reliability.caseSignTest.baselineFavoredCases}, ties ${overall.reliability.caseSignTest.tiedCases}, exact p ${overall.reliability.caseSignTest.exactTwoSidedP}`,
 		formatDelta("cost", overall.costUsd),
 		formatDelta("generated tokens", overall.generatedTokens),
 		formatDelta("total tokens", overall.totalTokens),

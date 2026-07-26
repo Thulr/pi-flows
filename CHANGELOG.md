@@ -20,9 +20,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   snapshot per case/trial and declares exactly one binding cost, generated-token,
   or deadline constraint. Its raw JSON artifact retains every arm outcome and
   suite/task-family slice, while the terminal and artifact report case-clustered
-  paired deltas with 95% intervals, exact McNemar reliability analysis, separate
+  paired deltas with 95% intervals, a case-clustered exact reliability sign test, separate
   cost/token/end-to-end/worker-time/invalid-run metrics, and predeclared
   improvement or non-inferiority promotion margins.
+- Flow budgets now accept `maxGeneratedTokens` for an output-only ceiling.
+  Cost and token budgets stop children at completed model-response accounting
+  boundaries, which lets paired evaluations apply the same active resource
+  constraint to treatment and plain-Pi control arms.
 
 ### Changed
 

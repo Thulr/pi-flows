@@ -302,8 +302,8 @@ export default function (pi: ExtensionAPI) {
 			// Cost ceiling (bounds the one "uncontrolled recursion" dimension iteration/time
 			// caps miss) and optional trace export (OpenInference JSONL) for the flow tree.
 			const budget: FlowBudget | undefined =
-				params.maxCostUsd !== undefined || params.maxTokens !== undefined
-					? { maxCostUsd: params.maxCostUsd, maxTokens: params.maxTokens, spentCost: 0, spentTokens: 0 }
+				params.maxCostUsd !== undefined || params.maxTokens !== undefined || params.maxGeneratedTokens !== undefined
+					? { maxCostUsd: params.maxCostUsd, maxTokens: params.maxTokens, maxGeneratedTokens: params.maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 }
 					: undefined;
 			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
 			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel) : undefined;

@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { runPlainPi } from "../evals/baseline-pi.mjs";
 import { buildPairedAnalysis } from "../evals/paired-experiment.mjs";
 import { pairedCaseWorkspaces } from "../evals/paired-workspace.mjs";
 
@@ -32,6 +33,16 @@ test("comparison CLI requires a positive binding constraint and one promotion ru
 	assert.match(conflictingConstraints.stderr, /choose exactly one binding constraint/);
 });
 
+test("comparison CLI requires an explicit shared model and a baseline that can enforce the constraint", () => {
+	const agentModel = runCompare("--model=agent");
+	assert.equal(agentModel.status, 2);
+	assert.match(agentModel.stderr, /requires an explicit model/);
+
+	const unsupportedCodexBudget = runCompare("--constraint=generated_tokens:100");
+	assert.equal(unsupportedCodexBudget.status, 2);
+	assert.match(unsupportedCodexBudget.stderr, /requires --baseline=pi/);
+});
+
 test("comparison CLI writes paired repeated trials with stable identities and snapshots", () => {
 	const outputDir = mkdtempSync(path.join(tmpdir(), "pi-flow-paired-compare-"));
 	const artifactPath = path.join(outputDir, "comparison.json");
@@ -48,7 +59,7 @@ test("comparison CLI writes paired repeated trials with stable identities and sn
 	assert.equal(artifact.subjectTrials, 2);
 	assert.equal(artifact.rawRows.length, 2);
 	assert.equal(artifact.analysis.overall.quality.method, "case-clustered paired mean with 95% t interval");
-	assert.equal(artifact.analysis.overall.reliability.analysis, "paired binary outcomes with exact McNemar test; interval is clustered by case");
+	assert.equal(artifact.analysis.overall.reliability.analysis, "case-clustered paired binary sign test");
 	assert.equal(artifact.analysis.slices.bySuite.regression.quality.pairedRows, 2);
 	assert.equal(artifact.analysis.slices.byTaskFamily.routing.quality.pairedRows, 2);
 	assert.equal(artifact.analysis.promotion.decision, "not_requested");
@@ -68,6 +79,7 @@ test("comparison CLI binds eligibility to the declared constraint and retains ot
 	const outputDir = mkdtempSync(path.join(tmpdir(), "pi-flow-paired-constraint-"));
 	const artifactPath = path.join(outputDir, "comparison.json");
 	const run = runCompare(
+		"--baseline=pi",
 		"--constraint=generated_tokens:100",
 		`--write=${artifactPath}`,
 	);
@@ -101,10 +113,11 @@ test("paired analysis clusters trials by case, slices results, and applies prede
 	assert.equal(improvement.overall.quality.pairedRows, 4);
 	assert.equal(improvement.overall.quality.meanDelta, 0.175);
 	assert.ok(Number.isFinite(improvement.overall.quality.confidence95.lower));
-	assert.deepEqual(improvement.overall.reliability.mcnemar, {
-		flowsOnlyPass: 1,
-		baselineOnlyPass: 1,
-		discordantPairs: 2,
+	assert.deepEqual(improvement.overall.reliability.caseSignTest, {
+		flowsFavoredCases: 1,
+		baselineFavoredCases: 1,
+		tiedCases: 0,
+		nonTiedCases: 2,
 		exactTwoSidedP: 1,
 	});
 	assert.equal(improvement.slices.bySuite.representative.quality.pairedRows, 2);
@@ -115,6 +128,45 @@ test("paired analysis clusters trials by case, slices results, and applies prede
 
 	const nonInferiority = buildPairedAnalysis(rawRows, { kind: "non_inferiority", margin: 0.1 });
 	assert.equal(nonInferiority.promotion.threshold, -0.1);
+});
+
+test("paired binary inference counts cases rather than repeated trials", () => {
+	const repeated = [
+		...Array.from({ length: 20 }, (_, index) => pairedRow("case-a", index + 1, {
+			suite: "representative", taskFamily: "lookup", flowsScore: 1, baselineScore: 0, flowsPass: true, baselinePass: false,
+		})),
+		pairedRow("case-b", 1, {
+			suite: "representative", taskFamily: "lookup", flowsScore: 0, baselineScore: 1, flowsPass: false, baselinePass: true,
+		}),
+	];
+	const reliability = buildPairedAnalysis(repeated).overall.reliability;
+	assert.equal(reliability.caseSignTest.nonTiedCases, 2);
+	assert.equal(reliability.caseSignTest.exactTwoSidedP, 1);
+});
+
+test("plain Pi resource budgets terminate execution at a completed response boundary", async () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "pi-flow-budget-baseline-"));
+	const command = path.join(dir, "pi-stub.mjs");
+	writeFileSync(command, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({type:"message_end",message:{role:"assistant",content:[{type:"text",text:"partial"}],usage:{input:12,output:8,cost:{total:0.25},totalTokens:20},model:"stub"}})+"\\n");
+await new Promise(resolve => setTimeout(resolve, 5000));
+`);
+	chmodSync(command, 0o700);
+	const startedAt = Date.now();
+	const result = await runPlainPi({
+		task: "bounded task",
+		cwd: dir,
+		model: "stub",
+		command,
+		maxGeneratedTokens: 4,
+		timeoutMs: 2000,
+		killGraceMs: 10,
+	});
+	const child = result.details.results[0];
+	assert.equal(child.stopReason, "budget_exceeded");
+	assert.equal(child.exitCode, 0);
+	assert.equal(child.usage.output, 8);
+	assert.ok(Date.now() - startedAt < 1500, "budget should stop the held-open process before timeout");
 });
 
 test("paired workspaces clone one immutable snapshot for both arms", () => {

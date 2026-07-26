@@ -23,7 +23,7 @@ pi-flows starts child `pi` processes. It does not add a separate analytics SDK, 
 - `redactSecrets:true` (default): redacts secret-shaped strings, emails, and home paths.
 - `recordContent:true` (default): returns child content after redaction. Set `false` for structural-only details (also omits trace `input.value`/`output.value`).
 - `timeoutMs`: bounds child runtime.
-- `maxCostUsd` / `maxTokens`: bound cumulative spend across the flow tree.
+- `maxCostUsd` / `maxTokens` / `maxGeneratedTokens`: bound cumulative spend across the flow tree at completed model-response accounting boundaries.
 - `traceFile` / `PI_FLOWS_TRACE_FILE`: opt-in trace export. Unset = no trace file is written.
 - `/flows report [trace-file]` and `npm run trace:report -- <trace-file>`: local summaries of trace JSONL. They read the file you point at; they do not upload it.
 - `confirmProjectAgents:true` (default): prompts in UI and fails closed in headless contexts.

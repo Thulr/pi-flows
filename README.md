@@ -144,7 +144,7 @@ Project-local agents are repo-controlled prompts. In interactive pi sessions, pi
 
 pi-flows also redacts secret-shaped content and home paths from returned content/details by default. Inter-agent **handoffs** — where one child's output becomes another child's prompt (`{previous}` in chain, the evaluate artifact, vote ballots, orchestrate findings) — are an indirect prompt-injection surface, so pi-flows strips invisible/bidi characters and flags instruction-override markers in that content before reuse, surfacing a warning rather than silently trusting it. See [Privacy & telemetry](./docs/privacy-telemetry.md).
 
-Cost is bounded as well as count and time: pass `maxCostUsd` / `maxTokens` to cap cumulative spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Concurrent fan-out also refuses multiple write-capable agents in the same `cwd` (`SHARED_WRITE_CWD`) unless `allowSharedWriteCwd:true` is explicit. Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
+Cost is bounded as well as count and time: pass `maxCostUsd`, `maxTokens`, or `maxGeneratedTokens` to cap cumulative spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Concurrent fan-out also refuses multiple write-capable agents in the same `cwd` (`SHARED_WRITE_CWD`) unless `allowSharedWriteCwd:true` is explicit. Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
 
 ## `flow` tool quick reference
 
@@ -418,7 +418,7 @@ Any mode accepts a cumulative spend ceiling and a trace sink:
 { "task": "...", "orchestrate": {}, "why": "...", "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
 ```
 
-`maxCostUsd` / `maxTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Usage is enforced at completed model-response boundaries. `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
 
 ### Human checkpoints and Reflexion
 

@@ -143,6 +143,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
 	let wasAborted = false;
 	let timedOut = false;
+	let budgetTerminated = false;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -172,7 +173,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				if (event.type === "message_end" && event.message) {
 					const message = event.message as Message;
 					if (message.role === "assistant") {
+						const turnUsage = emptyUsage();
+						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
+						chargeBudget(options.budget, turnUsage);
+						if (!message.errorMessage && budgetExceeded(options.budget)) {
+							budgetTerminated = true;
+							controls.terminate();
+						}
 						if (!result.model && message.model) result.model = message.model;
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
@@ -220,8 +228,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		timedOut = run.timedOut;
 		wasAborted = run.aborted;
 
-		result.exitCode = run.exitCode;
-		if (timedOut) {
+		result.exitCode = budgetTerminated ? 0 : run.exitCode;
+		if (budgetTerminated) {
+			result.stopReason = "budget_exceeded";
+		} else if (timedOut) {
 			result.stopReason = "timeout";
 			result.error = flowError(
 				"CHILD_TIMEOUT",
@@ -299,7 +309,6 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		return result;
 	} finally {
 		result.durationMs = Date.now() - started;
-		chargeBudget(options.budget, result.usage);
 		options.recordSpan?.(result);
 		await Promise.all(tempFiles.map((tmp) => fs.rm(tmp.dir, { recursive: true, force: true }).catch(() => undefined)));
 	}

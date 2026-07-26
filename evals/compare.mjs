@@ -5,23 +5,14 @@
 //   flows : the case's flow params — pi-flows' specialist agents + orchestration
 //   baseline : direct Codex by default; optionally plain `pi --no-extensions`
 //
-// Both arms emit self-contained thulr traces and are judged by the same calibrated
-// thulr judge, then `thulr compare` reports per-dimension deltas with the control as
-// the baseline and pi-flows as the candidate. Optional --duel runs thulr's native
-// order-controlled head-to-head quality judge for saturated criteria.
-//
 //   npm run eval:compare -- --trials=5 --constraint=deadline:600000
-//   npm run eval:compare -- --constraint=cost:2 --non-inferiority-margin=0.02
-//   npm run eval:compare -- --constraint=generated_tokens:20000 --improvement-margin=0.03
+//   npm run eval:compare -- --baseline=pi --constraint=cost:2 --non-inferiority-margin=0.02
+//   npm run eval:compare -- --baseline=pi --constraint=generated_tokens:20000 --improvement-margin=0.03
 //   npm run eval:compare -- --duel              # add native thulr pairwise quality judging
 //   npm run eval:compare -- --filter=vote       # scope to keep cost down
 //   npm run eval:compare -- --model=openai-codex/gpt-5.5 --judge-model=anthropic/claude-sonnet-4-6
 //   npm run eval:compare -- --write=evals/compare.json  # raw rows + paired analysis
 //   npm run eval:compare -- --dry-run           # wiring smoke (canned results, no model)
-//
-// Set PI_FLOWS_TRACE_FILE=<path> to also capture per-child OpenInference spans for
-// the flows arm (diagnose WHY an arm scored as it did) — the flow tool honors that
-// env var, no flag needed.
 //
 // The shared phases (argv, preflight, case->span projection, judge) live in
 // evals/pipeline.mjs; the report arithmetic and per-arm lines in
@@ -59,8 +50,8 @@ if (!new Set(["codex", "pi"]).has(baselineKind)) {
 	console.error("--baseline must be codex or pi");
 	process.exit(2);
 }
-if (baselineKind === "codex" && useAgentModels) {
-	console.error("--baseline=codex requires an explicit openai-codex/<model> so arm parity can be verified");
+if (useAgentModels) {
+	console.error("paired comparison requires an explicit model shared by both arms; --model=agent/default is not supported");
 	process.exit(2);
 }
 const codexModel = baselineKind === "codex" ? codexModelFromPi(model) : null;
@@ -83,6 +74,10 @@ try {
 	promotionRule = parsePromotionRule(flag("improvement-margin", null), flag("non-inferiority-margin", null));
 } catch (error) {
 	console.error(error.message);
+	process.exit(2);
+}
+if (baselineKind === "codex" && bindingConstraint.kind !== "deadline") {
+	console.error(`--constraint=${bindingConstraint.kind}:... requires --baseline=pi because Codex CLI cannot enforce that resource ceiling during execution`);
 	process.exit(2);
 }
 const dryRun = bool("dry-run");
@@ -128,7 +123,7 @@ function preflight() {
 const normalizedModel = (value) => String(value ?? "").split("/").at(-1)?.trim() ?? "";
 
 function enforceModelParity(flows, baseline) {
-	if (dryRun || useAgentModels || flows.exclusion || baseline.exclusion) return;
+	if (dryRun || flows.exclusion || baseline.exclusion) return;
 	const expected = normalizedModel(model);
 	const wrong = (arm) => arm.reportedModels.length === 0 || arm.reportedModels.some((reported) => normalizedModel(reported) !== expected);
 	if (!wrong(flows) && !wrong(baseline)) return;
@@ -160,7 +155,10 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 	if (dryRun) {
 		result = testCase.mock;
 	} else if (kind === "flows") {
-		const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: identity.traceCaseId, timeoutMs: effectiveTimeoutMs };
+		const constraintBudget = bindingConstraint.kind === "cost"
+			? { maxCostUsd: bindingConstraint.value }
+			: bindingConstraint.kind === "generated_tokens" ? { maxGeneratedTokens: bindingConstraint.value } : {};
+		const params = { ...injectModel(testCase.params, model), ...constraintBudget, traceLabel: identity.traceCaseId, timeoutMs: effectiveTimeoutMs };
 		try {
 			result = await flow.execute(`cmp:flows:${identity.trialId}`, params, armBudget.signal, (partial) => progress(partial?.content?.[0]?.text), flowCtx);
 		} catch (error) {
@@ -171,7 +169,9 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 			progress(`starting ${baselineLabel} process...`);
 			result = baselineKind === "codex"
 				? await runCodex({ task, cwd, model: codexModel, reportedModel: subjectModel, timeoutMs: effectiveTimeoutMs, signal: armBudget.signal })
-				: await runPlainPi({ task, cwd, model: subjectModel, timeoutMs: effectiveTimeoutMs, signal: armBudget.signal });
+				: await runPlainPi({ task, cwd, model: subjectModel, timeoutMs: effectiveTimeoutMs, signal: armBudget.signal,
+					...(bindingConstraint.kind === "cost" ? { maxCostUsd: bindingConstraint.value } : {}),
+					...(bindingConstraint.kind === "generated_tokens" ? { maxGeneratedTokens: bindingConstraint.value } : {}) });
 		} catch (error) {
 			thrown = error;
 		}
