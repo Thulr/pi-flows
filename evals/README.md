@@ -303,7 +303,10 @@ Each arm inherits the declared binding constraint. The artifact records its
 topology and configuration identity, attributes measured lift to the ablated
 component, and retains bounded per-case answer/objective evidence. An arm that
 does not apply to a case is excluded as `inapplicable` with a durable reason,
-never silently scored.
+never silently scored. `compute-matched-self-review` uses one repeated agent
+profile with the full case topology's planned model-call count and the same
+binding allocation; both the call count and binding are recorded in its
+configuration identity.
 
 The fair A/B contract is enforced rather than inferred:
 

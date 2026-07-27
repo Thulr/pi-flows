@@ -51,6 +51,16 @@ export const FlowReturnEnvelope = Type.Object({
 		afterMs: Type.Optional(Type.Number({ minimum: 0 })),
 	}),
 	data: Type.Any(),
+	usage: Type.Optional(Type.Object({
+		input: Type.Number({ minimum: 0 }),
+		output: Type.Number({ minimum: 0 }),
+		cacheRead: Type.Number({ minimum: 0 }),
+		cacheWrite: Type.Number({ minimum: 0 }),
+		cost: Type.Number({ minimum: 0 }),
+		costKnown: Type.Optional(Type.Boolean()),
+		contextTokens: Type.Number({ minimum: 0 }),
+		turns: Type.Number({ minimum: 0 }),
+	})),
 }, {
 	description: "Durable child return envelope used when a typed delegation contract is supplied. Runtime usage is attached to the validated envelope when available.",
 });

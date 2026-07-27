@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import Schema from "typebox/schema";
 import { extractLastJsonBlock } from "./protocol.ts";
@@ -110,13 +110,18 @@ function artifactFile(cwd: string, artifact: string): { file?: string; error?: F
 		return { error: envelopeError(`Artifact reference escapes the child cwd: ${artifact}.`) };
 	}
 	if (!existsSync(resolved)) return { error: envelopeError(`Artifact reference does not exist: ${artifact}.`) };
-	const realCwd = realpathSync(cwd);
-	const realFile = realpathSync(resolved);
-	const realRelative = path.relative(realCwd, realFile);
-	if (path.isAbsolute(realRelative) || realRelative.startsWith("..")) {
-		return { error: envelopeError(`Artifact reference resolves outside the child cwd: ${artifact}.`) };
+	try {
+		const realCwd = realpathSync(cwd);
+		const realFile = realpathSync(resolved);
+		const realRelative = path.relative(realCwd, realFile);
+		if (path.isAbsolute(realRelative) || realRelative.startsWith("..")) {
+			return { error: envelopeError(`Artifact reference resolves outside the child cwd: ${artifact}.`) };
+		}
+		if (!statSync(realFile).isFile()) return { error: envelopeError(`Artifact reference is not a regular file: ${artifact}.`) };
+		return { file: realFile };
+	} catch (error) {
+		return { error: envelopeError(`Artifact reference could not be inspected: ${artifact} (${error instanceof Error ? error.message : String(error)}).`) };
 	}
-	return { file: realFile };
 }
 
 function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowError | null {
@@ -129,7 +134,12 @@ function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowE
 		if (!referenced.has(digest.artifact)) return envelopeError(`Digest target is not declared in artifactReferences: ${digest.artifact}.`);
 		const artifact = artifactFile(cwd, digest.artifact);
 		if (artifact.error) return artifact.error;
-		const actual = createHash("sha256").update(readFileSync(artifact.file!)).digest("hex");
+		let actual;
+		try {
+			actual = createHash("sha256").update(readFileSync(artifact.file!)).digest("hex");
+		} catch (error) {
+			return envelopeError(`Artifact could not be read for digest verification: ${digest.artifact} (${error instanceof Error ? error.message : String(error)}).`);
+		}
 		if (actual !== digest.value.toLowerCase()) {
 			return flowError(
 				"RETURN_DIGEST_MISMATCH",

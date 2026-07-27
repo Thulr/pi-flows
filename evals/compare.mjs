@@ -173,7 +173,7 @@ function inapplicableMeasurement(plan, testCase, workspace) {
 		cost: 0,
 		costKnown: false,
 		deadlineExcludedMs: 0,
-		arm: { name: plan.name, component: plan.component, topology: plan.topology, configurationIdentity: plan.configurationIdentity },
+		arm: { name: plan.name, component: plan.component, topology: plan.topology, configurationIdentity: plan.configurationIdentity, computeAllocation: plan.computeAllocation ?? null },
 	};
 }
 
@@ -249,7 +249,7 @@ async function runArm(kind, plan, testCase, flow, signal, workspace, identity, r
 		tokenUsage,
 		costKnown: children.length > 0 && children.every((child) => child?.usage?.costKnown === true),
 		deadlineExcludedMs: performance.now() - postExecutionStartedAt,
-		arm: { name: plan.name, component: plan.component, topology: plan.topology, configurationIdentity: plan.configurationIdentity },
+		arm: { name: plan.name, component: plan.component, topology: plan.topology, configurationIdentity: plan.configurationIdentity, computeAllocation: plan.computeAllocation ?? null },
 	};
 }
 

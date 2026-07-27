@@ -107,7 +107,7 @@ test("comparison CLI excludes inapplicable named arms with a durable reason", ()
 	const artifactPath = path.join(outputDir, "comparison.json");
 	const run = runCompare(
 		"--constraint=deadline:90000",
-		"--arms=oracle-routing,no-integrator",
+		"--arms=full,no-integrator",
 		`--write=${artifactPath}`,
 	);
 

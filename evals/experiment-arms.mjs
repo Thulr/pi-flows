@@ -54,6 +54,28 @@ function primaryAgent(params) {
 		?? "operator";
 }
 
+function expectedModelCalls(params) {
+	if (params.agent) return 1;
+	if (params.tasks) return params.tasks.length;
+	if (params.chain) return params.chain.length;
+	if (params.evaluate) {
+		const critics = Array.isArray(params.evaluate.redteam) ? params.evaluate.redteam.length : 1;
+		return (params.evaluate.maxIterations ?? 3) * (1 + critics);
+	}
+	if (params.vote) return (params.vote.voters?.length ?? params.vote.count ?? 3) + (params.vote.debrief ? 1 : 0);
+	if (params.route) return 2;
+	if (params.orchestrate) return 1 + (params.orchestrate.maxSubtasks ?? 4) + 1 + (params.orchestrate.verify ? params.orchestrate.verifyPolicy === "revise" ? params.orchestrate.verifyMaxIterations ?? 2 : 1 : 0);
+	if (params.graph) return params.graph.nodes.length + (params.graph.debrief ? 1 : 0);
+	if (params.loop) return (params.loop.maxIterations ?? 3) * (params.loop.judge ? 2 : 1);
+	if (params.search) return (params.search.maxRounds ?? 2) * (params.search.candidates ?? 3) * 2 + 1;
+	if (params.workflow) return params.workflow.phases.filter((phase) => phase.agent).length + (params.workflow.debrief ? 1 : 0);
+	if (params.worktree) return params.worktree.tasks.length + 1;
+	if (params.debate) return params.debate.participants.length * (params.debate.rounds ?? 2) + 1;
+	if (params.dossier) return params.dossier.sections.length + 1;
+	if (params.monitor) return 1;
+	return 1;
+}
+
 function baseParams(testCase) {
 	const params = testCase.params;
 	return {
@@ -90,11 +112,6 @@ function removeIntegrator(params) {
 	if (params.graph?.debrief) {
 		const next = clone(params);
 		delete next.graph.debrief;
-		return next;
-	}
-	if (params.worktree?.integrator) {
-		const next = clone(params);
-		delete next.worktree.integrator;
 		return next;
 	}
 	return null;
@@ -144,14 +161,26 @@ function supportsConcurrency(params) {
 	return Boolean(params.tasks || params.vote || params.orchestrate || params.graph || params.worktree || params.debate || params.dossier);
 }
 
-function armTransform(name, testCase, seed) {
+function armTransform(name, testCase, seed, bindingConstraint) {
 	const params = clone(testCase.params);
 	const task = params.task;
 	const agent = primaryAgent(params);
 	if (name === "direct") return { runner: "baseline", task, topology: "single-context-direct" };
 	if (name === "full") return { runner: "flow", params, topology: `flow-${modeName(params)}` };
 	if (name === "compute-matched-self-review") {
-		return { runner: "baseline", task: `${task}\n\nBefore returning, review and revise your own result against the task. Fix any defects you find, then return only the revised result.`, topology: "single-context-self-review" };
+		const modelCalls = expectedModelCalls(params);
+		const chain = Array.from({ length: modelCalls }, (_, index) => ({
+			agent,
+			task: index === 0
+				? "Complete the original task directly. Return your best concrete result.\n\n{task}"
+				: "Review and revise the previous result against the original task. Fix defects, preserve correct evidence, and return only the improved result.\n\n{previous}",
+		}));
+		return {
+			runner: "flow",
+			params: { ...baseParams(testCase), chain, concurrency: 1 },
+			topology: "single-agent-self-review",
+			computeAllocation: { modelCalls, binding: `${bindingConstraint.kind}:${bindingConstraint.value}` },
+		};
 	}
 	if (name === "deterministic-workflow") {
 		return {
@@ -203,22 +232,30 @@ export function parseArmSelection(raw) {
 	for (const name of names) {
 		if (!EXPERIMENT_ARM_NAMES.includes(name)) throw new Error(`unknown experiment arm "${name}"; choose from ${EXPERIMENT_ARM_NAMES.join(", ")}`);
 	}
+	const components = names.map((name) => COMPONENTS[name]);
+	if (components[0] !== components[1] && !names.includes("full")) {
+		throw new Error("--arms must compare two arms of one component or compare a control with full");
+	}
 	return names;
 }
 
 export function experimentArmInfo(name) {
 	if (!EXPERIMENT_ARM_NAMES.includes(name)) throw new Error(`unknown experiment arm: ${name}`);
-	return { name, component: COMPONENTS[name], runner: ["direct", "compute-matched-self-review"].includes(name) ? "baseline" : "flow" };
+	return { name, component: COMPONENTS[name], runner: name === "direct" ? "baseline" : "flow" };
 }
 
 export function planExperimentArm(name, testCase, { bindingConstraint, seed }) {
-	const transformed = armTransform(name, testCase, seed);
+	const transformed = armTransform(name, testCase, seed, bindingConstraint);
 	if (!transformed) return inapplicable(name, `${name} does not apply to case ${testCase.name} with topology ${modeName(testCase.params)}.`);
+	if (transformed.runner === "flow" && !transformed.params.why) {
+		transformed.params = { ...transformed.params, why: `controlled ${name} experiment arm requires isolated child execution` };
+	}
 	const configurationIdentity = [
 		"arm:v1",
 		name,
 		transformed.topology,
 		`${bindingConstraint.kind}:${bindingConstraint.value}`,
+		transformed.computeAllocation ? `calls:${transformed.computeAllocation.modelCalls}` : "calls:topology",
 		hash(transformed.params ?? transformed.task ?? ""),
 	].join(":");
 	return {
@@ -231,7 +268,9 @@ export function planExperimentArm(name, testCase, { bindingConstraint, seed }) {
 }
 
 export function ablationAttribution(analysis, arms) {
-	const component = arms.reference.component === arms.candidate.component ? arms.reference.component : arms.reference.component;
+	const component = arms.reference.component === arms.candidate.component
+		? arms.reference.component
+		: arms.reference.name === "full" ? arms.candidate.component : arms.reference.component;
 	return {
 		component,
 		referenceArm: arms.reference.name,

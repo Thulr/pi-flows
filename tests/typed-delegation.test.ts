@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { FlowParams, FlowReturnEnvelope } from "../extensions/pi-flows/schema.ts";
 import { freshDir, runFlow } from "./stub-harness.ts";
 
 const returnSchema = {
@@ -43,6 +44,11 @@ function envelope(overrides: Record<string, unknown> = {}) {
 		...overrides,
 	});
 }
+
+test("public schemas expose typed contracts and runtime-enriched envelopes", () => {
+	assert.ok(FlowParams.properties.contract);
+	assert.ok(FlowReturnEnvelope.properties.usage);
+});
 
 test("single accepts a typed contract as the task and retains a validated return envelope", async () => {
 	const { result, calls, text } = await runFlow(
@@ -99,6 +105,22 @@ test("single verifies artifact digests and fails closed on mismatch", async () =
 	assert.match(text, /answer\.txt/);
 });
 
+test("single converts non-file digest targets into a structured envelope error", async () => {
+	const cwd = await freshDir();
+	const { result, text } = await runFlow(
+		{ agent: "recon", cwd, contract },
+		{
+			recon: envelope({
+				artifactReferences: [{ path: "." }],
+				digests: [{ artifact: ".", algorithm: "sha256", value: "0".repeat(64) }],
+			}),
+		},
+	);
+
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.match(text, /not a regular file/);
+});
+
 test("chain validates each envelope before passing canonical data downstream", async () => {
 	const { result, calls } = await runFlow(
 		{
@@ -140,6 +162,29 @@ test("evaluate validates the generator envelope before the critic consumes it", 
 	assert.equal(result.details.error, undefined);
 	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam"]);
 	assert.match(calls[1].task, /"schemaVersion":"pi-flows\.return-envelope\.v1"/);
+});
+
+test("evaluate.operator contract overrides the top-level contract", async () => {
+	const operatorContract = {
+		...contract,
+		objective: "Return a value field.",
+		returnSchema: {
+			type: "object",
+			required: ["value"],
+			properties: { value: { type: "string" } },
+			additionalProperties: false,
+		},
+	};
+	const { result, calls } = await runFlow(
+		{
+			contract,
+			evaluate: { operator: { agent: "operator", contract: operatorContract }, redteam: { agent: "redteam" }, maxIterations: 1 },
+		},
+		{ operator: envelope({ data: { value: "operator-wins" } }), redteam: "VERDICT: PASS" },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam"]);
 });
 
 test("evaluate fails closed before critic dispatch when the generator envelope is invalid", async () => {

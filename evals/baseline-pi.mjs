@@ -49,11 +49,14 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	let errorMessage;
 	let budgetTerminated = false;
 	let budgetUnobservable = false;
+	const childEnv = { ...process.env };
+	delete childEnv.NODE_TEST_CONTEXT;
 
 	const run = await runJsonlProcess({
 		command,
 		args,
 		cwd: cwd ?? process.cwd(),
+		env: childEnv,
 		timeoutMs,
 		graceMs: killGraceMs,
 		signal,

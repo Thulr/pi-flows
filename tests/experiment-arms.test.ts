@@ -22,6 +22,7 @@ test("comparison arm selection is named, paired, and backwards compatible by def
 	assert.deepEqual(parseArmSelection("sequential,parallel"), ["sequential", "parallel"]);
 	assert.throws(() => parseArmSelection("full"), /exactly two/);
 	assert.throws(() => parseArmSelection("full,unknown"), /unknown experiment arm/);
+	assert.throws(() => parseArmSelection("direct,no-verifier"), /one component|control with full/);
 	assert.ok(EXPERIMENT_ARM_NAMES.includes("compute-matched-self-review"));
 	assert.ok(EXPERIMENT_ARM_NAMES.includes("oracle-routing"));
 });
@@ -33,6 +34,7 @@ test("arm planning derives alternatives without mutating the case definition", (
 	assert.equal(plan.applicable, true);
 	assert.equal(plan.runner, "flow");
 	assert.equal(plan.params.workflow.phases.length, 2);
+	assert.match(plan.params.why, /controlled deterministic-workflow experiment arm/);
 	assert.deepEqual(baseCase, before);
 	assert.equal(plan.topology, "sequential-static-workflow");
 	assert.match(plan.configurationIdentity, /generated_tokens:4000/);
@@ -40,8 +42,11 @@ test("arm planning derives alternatives without mutating the case definition", (
 
 test("supported controls separate compute, ensembling, and routing", () => {
 	const selfReview = planExperimentArm("compute-matched-self-review", baseCase, { bindingConstraint: binding, seed: "trial-1" });
-	assert.equal(selfReview.runner, "baseline");
-	assert.match(selfReview.task, /review and revise/i);
+	assert.equal(selfReview.runner, "flow");
+	assert.equal(selfReview.params.chain.length, 2, "route full arm has controller + selected specialist");
+	assert.deepEqual(selfReview.computeAllocation, { modelCalls: 2, binding: "generated_tokens:4000" });
+	assert.match(selfReview.configurationIdentity, /calls:2/);
+	assert.match(selfReview.params.chain[1].task, /review and revise/i);
 
 	const ensemble = planExperimentArm("no-communication-ensemble", baseCase, { bindingConstraint: binding, seed: "trial-1" });
 	assert.equal(ensemble.runner, "flow");
@@ -64,6 +69,11 @@ test("mode-specific ablations remove integration and verification", () => {
 	const noIntegrator = planExperimentArm("no-integrator", voteCase, { bindingConstraint: binding, seed: "trial-1" });
 	assert.equal(noIntegrator.applicable, true);
 	assert.equal(noIntegrator.params.vote.debrief, undefined);
+	const worktreeCase = {
+		name: "worktree",
+		params: { task: "Edit.", worktree: { tasks: [{ id: "a", agent: "operator", task: "Edit a." }], integrator: { agent: "debrief" } } },
+	};
+	assert.equal(planExperimentArm("no-integrator", worktreeCase, { bindingConstraint: binding, seed: "trial-1" }).exclusion.reason, "inapplicable");
 
 	const evaluateCase = {
 		name: "evaluate-case",
@@ -118,4 +128,9 @@ test("ablation attribution names the component and retains the measured lift", (
 		qualityLift: 0.125,
 		reliabilityLift: 0.25,
 	});
+	const reversed = ablationAttribution(
+		{ overall: { quality: { meanDelta: -0.125 }, reliability: { meanDelta: -0.25 } } },
+		{ reference: { name: "full", component: "coordination" }, candidate: { name: "no-verifier", component: "verification" } },
+	);
+	assert.equal(reversed.component, "verification");
 });
