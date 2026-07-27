@@ -167,6 +167,15 @@ Fix: raise the configured budget, narrow the task, or reduce fan-out (fewer
 voters, subtasks, or `maxIterations`). Omit all budget fields to run uncapped. The partial
 results produced before the ceiling was hit are still in `details`.
 
+### `BUDGET_UNOBSERVABLE`
+
+Cause: `maxCostUsd` was configured, but a completed model response omitted its
+numeric cost telemetry. The child stops at that response boundary because treating
+unknown spend as zero would silently make the cost ceiling non-binding.
+
+Fix: use a provider/model that reports cost telemetry, or bind execution with
+`maxTokens`, `maxGeneratedTokens`, or `timeoutMs` instead.
+
 ### `CHECK_COMMAND_FAILED`
 
 Cause: an `evaluate.checkCommand` (the deterministic gate) could **not be

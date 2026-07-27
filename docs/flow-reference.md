@@ -84,7 +84,7 @@ voters, subtasks, worktree writers, debate participants, and dossier sections --
 not a per-call input. It is enforced by the runtime and surfaced read-only in
 `details.config`.
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross the ceiling; at that accounting boundary its child is stopped, and queued or subsequent children are refused.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross the ceiling; at that accounting boundary its child is stopped, and queued or subsequent children are refused. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero.
 
 ### Trace export (observability)
 

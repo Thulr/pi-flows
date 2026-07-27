@@ -294,6 +294,8 @@ The fair A/B contract is enforced rather than inferred:
   top-level `params.task`, model, snapshot id, and trial index. Flow-only
   coordination parameters may change how that task is executed, never what the
   direct arm is asked to do.
+- Arm order is deterministically counterbalanced across case/trial pairs so
+  provider load, quota, and cache drift are not perfectly confounded with treatment.
 - Unrelated user extensions are disabled. Artifact-producing cases expose only
   explicitly bounded workspace files to the judge, so the final answer and the
   tested artifact are graded together without leaking arbitrary repo state.

@@ -165,6 +165,7 @@ const providerAuthError = new RegExp(String.raw`(?:${PROVIDER_CONTEXT}[^\n]{0,80
 const providerApiKeyError = new RegExp(String.raw`(?:${PROVIDER_CONTEXT}[^\n]{0,80}api[_ -]?key[^\n]{0,40}(?:missing|required|invalid|not found)|api[_ -]?key[^\n]{0,40}(?:missing|required|invalid|not found)[^\n]{0,80}${PROVIDER_CONTEXT})`, "i");
 const QUALITY_FLOW_ERROR_CODES = new Set([
 	"BUDGET_EXCEEDED",
+	"BUDGET_UNOBSERVABLE",
 	"CHECK_COMMAND_FAILED",
 	"ORCHESTRATE_VERIFY_FAILED",
 	"ROUTE_UNRESOLVED",

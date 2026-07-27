@@ -40,6 +40,18 @@ test("single: generated-token budget stops the active child at a response bounda
 	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
 });
 
+test("single: cost budget fails closed when provider cost telemetry is absent", async () => {
+	const { result } = await runFlow(
+		{ agent: "recon", task: "return a cost-bounded answer", maxCostUsd: 1, timeoutMs: 2_000 },
+		{ recon: { reply: "unpriced answer", omitCost: true, holdOpenMs: 5_000 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.usage.costKnown, false);
+	assert.equal(child.stopReason, "budget_unobservable");
+	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
+	assert.match(result.content[0].text, /Code: BUDGET_UNOBSERVABLE/);
+});
+
 test("single: appends return contracts, updates UI status, and writes a session summary entry", async () => {
 	const statuses: string[] = [];
 	const widgets: string[][] = [];

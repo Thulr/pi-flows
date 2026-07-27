@@ -5,7 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runPlainPi } from "../evals/baseline-pi.mjs";
-import { armExecutionTiming, buildPairedAnalysis } from "../evals/paired-experiment.mjs";
+import { armExecutionTiming, buildPairedAnalysis, pairedArmOrder, studentTCritical95 } from "../evals/paired-experiment.mjs";
 import { pairedCaseWorkspaces } from "../evals/paired-workspace.mjs";
 
 function runCompare(...args: string[]) {
@@ -66,6 +66,10 @@ test("comparison CLI writes paired repeated trials with stable identities and sn
 	assert.deepEqual(artifact.rawRows.map((row) => row.trialIndex), [1, 2]);
 	assert.deepEqual(artifact.rawRows.map((row) => row.caseId), ["route-classifies-bug-to-recon", "route-classifies-bug-to-recon"]);
 	assert.notEqual(artifact.rawRows[0].trialId, artifact.rawRows[1].trialId);
+	assert.deepEqual(artifact.rawRows.map((row) => row.armOrder), [
+		["flows", "baseline"],
+		["baseline", "flows"],
+	]);
 	for (const row of artifact.rawRows) {
 		assert.equal(row.flows.task, row.baseline.task);
 		assert.equal(row.flows.model, row.baseline.model);
@@ -144,6 +148,20 @@ test("paired binary inference counts cases rather than repeated trials", () => {
 	assert.equal(reliability.caseSignTest.exactTwoSidedP, 1);
 });
 
+test("paired arm order counterbalances treatment across cases and trials", () => {
+	assert.deepEqual(pairedArmOrder(0, 1), ["flows", "plain"]);
+	assert.deepEqual(pairedArmOrder(0, 2), ["plain", "flows"]);
+	assert.deepEqual(pairedArmOrder(1, 1), ["plain", "flows"]);
+	assert.deepEqual(pairedArmOrder(1, 2), ["flows", "plain"]);
+});
+
+test("95% intervals retain Student-t critical values above 30 case clusters", () => {
+	assert.equal(studentTCritical95(30), 2.045);
+	assert.ok(studentTCritical95(31) > 1.96);
+	assert.ok(Math.abs(studentTCritical95(31) - 2.042272) < 0.00001);
+	assert.ok(Math.abs(studentTCritical95(100) - 1.984217) < 0.00001);
+});
+
 test("arm timing uses the execution interval and child worker durations", () => {
 	assert.deepEqual(armExecutionTiming({ details: { results: [] } }, 125), {
 		durationMs: 125,
@@ -180,6 +198,21 @@ await new Promise(resolve => setTimeout(resolve, 5000));
 	assert.equal(child.usage.output, 8);
 	assert.ok(child.durationMs < 1500);
 	assert.ok(Date.now() - startedAt < 1500, "budget should stop the held-open process before timeout");
+});
+
+test("plain Pi cost budgets fail closed when cost telemetry is absent", async () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "pi-flow-unpriced-baseline-"));
+	const command = path.join(dir, "pi-stub.mjs");
+	writeFileSync(command, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({type:"message_end",message:{role:"assistant",content:[{type:"text",text:"unpriced"}],usage:{input:12,output:8,totalTokens:20},model:"stub"}})+"\\n");
+await new Promise(resolve => setTimeout(resolve, 5000));
+`);
+	chmodSync(command, 0o700);
+	const result = await runPlainPi({ task: "bounded task", cwd: dir, model: "stub", command, maxCostUsd: 1, timeoutMs: 2000, killGraceMs: 10 });
+	const child = result.details.results[0];
+	assert.equal(child.usage.costKnown, false);
+	assert.equal(child.stopReason, "budget_unobservable");
+	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
 });
 
 test("paired workspaces clone one immutable snapshot for both arms", () => {

@@ -27,7 +27,7 @@ import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { applyDuelRows, applyJudgedRows, armLine, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatDuration, formatTokenComparison, judgeDelta, markUnjudgedRows, pct, pickArm, scoreText, unjudgedArm } from "./compare-report.mjs";
 import { answerText, answerWithArtifacts, armBudgetSignal, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
-import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
+import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, pairedArmOrder, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
 import { pairedCaseWorkspaces } from "./paired-workspace.mjs";
 import { calibrationSpanFields, caseSpanFields, inspectTraceReport, judgeTraceRun, printScoreDeltas, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
@@ -293,14 +293,16 @@ async function runComparisonCases(selected, flow, signal) {
 	const rows = [];
 	let flowsJudged = 0;
 	let plainJudged = 0;
-	for (const testCase of selected) {
+	for (const [caseIndex, testCase] of selected.entries()) {
 		for (let trialIndex = 1; trialIndex <= subjectTrials; trialIndex += 1) {
 			const identity = trialIdentity(testCase.name, trialIndex, subjectTrials);
 			console.log(`${identity.trialId}`);
 			const workspaces = pairedCaseWorkspaces(testCase, { dryRun, trialId: identity.trialId });
 			try {
-				const flows = await runArmWithInfraRetry("flows", testCase, flow, signal, { ...workspaces.flows, snapshotId: workspaces.snapshotId }, identity);
-				const plain = await runArmWithInfraRetry("plain", testCase, flow, signal, { ...workspaces.plain, snapshotId: workspaces.snapshotId }, identity);
+				const armOrder = pairedArmOrder(caseIndex, trialIndex);
+				const arms = {};
+				for (const kind of armOrder) arms[kind] = await runArmWithInfraRetry(kind, testCase, flow, signal, { ...workspaces[kind], snapshotId: workspaces.snapshotId }, identity);
+				const { flows, plain } = arms;
 				enforceModelParity(flows, plain);
 				const constraint = evaluatePairConstraint(flows, plain, bindingConstraint);
 				let flowsTraceOk = false;
@@ -315,7 +317,7 @@ async function runComparisonCases(selected, flow, signal) {
 					if (plainTraceOk) plainJudged += 1;
 				}
 
-				rows.push({ ...identity, name: identity.traceCaseId, suite: testCase.suite, taskFamily: testCase.taskFamily, constraint, flows, plain, flowsTraceOk, plainTraceOk, duel: null });
+				rows.push({ ...identity, name: identity.traceCaseId, suite: testCase.suite, taskFamily: testCase.taskFamily, armOrder, constraint, flows, plain, flowsTraceOk, plainTraceOk, duel: null });
 				const pairExcluded = flows.exclusion || plain.exclusion;
 				const constraintInvalid = !constraint.pairEligible && !pairExcluded;
 				const suffix = pairExcluded ? `  inconclusive (${flows.exclusion ? `flows ${flows.exclusion.reason}` : ""}${flows.exclusion && plain.exclusion ? "; " : ""}${plain.exclusion ? `${baselineSlug} ${plain.exclusion.reason}` : ""})` : constraintInvalid ? `  inconclusive (${bindingConstraint.kind} constraint)` : "";
@@ -433,6 +435,7 @@ function rawArtifactRows(rows) {
 		trialIndex: row.trialIndex,
 		suite: row.suite,
 		taskFamily: row.taskFamily,
+		armOrder: row.armOrder.map((kind) => kind === "plain" ? "baseline" : kind),
 		constraint: row.constraint,
 		duel: row.duel,
 		comparable: row.flowsTraceOk && row.plainTraceOk,

@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accumulatePiUsage, runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
-import { budgetExceededError } from "../extensions/pi-flows/types.ts";
+import { budgetExceededError, budgetUnobservableError } from "../extensions/pi-flows/types.ts";
 
 function finalAssistantText(messages) {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -48,6 +48,7 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	let stopReason;
 	let errorMessage;
 	let budgetTerminated = false;
+	let budgetUnobservable = false;
 
 	const run = await runJsonlProcess({
 		command,
@@ -64,7 +65,11 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 					if (!modelOut && m.model) modelOut = m.model;
 					if (m.stopReason) stopReason = m.stopReason;
 					if (m.errorMessage) errorMessage = m.errorMessage;
-					if (!m.errorMessage && ((maxCostUsd !== undefined && usage.cost >= maxCostUsd)
+					if (!m.errorMessage && maxCostUsd !== undefined && usage.costKnown === false) {
+						budgetUnobservable = true;
+						stopReason = "budget_unobservable";
+						controls.terminate();
+					} else if (!m.errorMessage && ((maxCostUsd !== undefined && usage.cost >= maxCostUsd)
 						|| (maxGeneratedTokens !== undefined && usage.output >= maxGeneratedTokens))) {
 						budgetTerminated = true;
 						stopReason = "budget_exceeded";
@@ -85,10 +90,9 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	if (run.timedOut) stopReason = "timeout";
 	else if (run.aborted) stopReason = "aborted";
 	if (run.spawnErrorMessage) stderr += `spawn error: ${run.spawnErrorMessage}`;
-	const exitCode = budgetTerminated ? 1 : run.exitCode;
-	const budgetError = budgetTerminated
-		? budgetExceededError({ maxCostUsd, maxGeneratedTokens, spentCost: usage.cost, spentTokens: usage.input + usage.output, spentGeneratedTokens: usage.output })
-		: undefined;
+	const exitCode = budgetTerminated || budgetUnobservable ? 1 : run.exitCode;
+	const budgetError = budgetUnobservable ? budgetUnobservableError() : budgetTerminated
+		? budgetExceededError({ maxCostUsd, maxGeneratedTokens, spentCost: usage.cost, spentTokens: usage.input + usage.output, spentGeneratedTokens: usage.output }) : undefined;
 	if (budgetError) errorMessage = budgetError.message;
 
 	const protocolError = !run.sawJsonEvent && parseErrors > 0;

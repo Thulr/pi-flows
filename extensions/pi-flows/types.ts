@@ -72,6 +72,7 @@ export const FLOW_ERROR_CODES = [
 	"ORCHESTRATE_NO_SUBTASKS",
 	"FLOW_DEPTH_EXCEEDED",
 	"BUDGET_EXCEEDED",
+	"BUDGET_UNOBSERVABLE",
 	"CHECK_COMMAND_FAILED",
 	"ORCHESTRATE_VERIFY_FAILED",
 	"GRAPH_INVALID",
@@ -148,6 +149,7 @@ export interface UsageStats {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
+	costKnown?: boolean;
 	contextTokens: number;
 	turns: number;
 }
@@ -263,6 +265,15 @@ export function budgetExceededError(budget: FlowBudget): FlowError {
 		`Flow budget exhausted (${spent}).`,
 		"Cumulative child spend reached a configured cost or token ceiling, so no further child was spawned. This bounds the cost dimension of runaway delegation that iteration/time caps do not cover.",
 		"Raise the configured budget, narrow the task, or reduce fan-out (fewer voters/subtasks/iterations). Omit budget fields to run uncapped.",
+	);
+}
+
+export function budgetUnobservableError(): FlowError {
+	return flowError(
+		"BUDGET_UNOBSERVABLE",
+		"Flow cost budget cannot be enforced because the provider omitted cost telemetry.",
+		"The child completed a model response without a numeric usage.cost.total value, so treating its spend as zero would make maxCostUsd non-binding.",
+		"Use a provider/model that reports cost telemetry, or bind the run by maxTokens, maxGeneratedTokens, or timeoutMs instead.",
 	);
 }
 

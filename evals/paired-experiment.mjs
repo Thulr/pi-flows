@@ -62,6 +62,10 @@ export function armExecutionTiming(result, durationMs) {
 	};
 }
 
+export function pairedArmOrder(caseIndex, trialIndex) {
+	return (caseIndex + trialIndex) % 2 === 1 ? ["flows", "plain"] : ["plain", "flows"];
+}
+
 const T95 = [null, null, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.16, 2.145, 2.131, 2.12, 2.11, 2.101, 2.093, 2.086, 2.08, 2.074, 2.069, 2.064, 2.06, 2.056, 2.052, 2.048, 2.045];
 const round = (value) => value === null ? null : Number(value.toFixed(12));
 const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -70,9 +74,16 @@ function confidence95(values) {
 	if (values.length < 2) return null;
 	const mean = average(values);
 	const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
-	const critical = T95[values.length] ?? 1.96;
+	const critical = studentTCritical95(values.length);
 	const margin = critical * Math.sqrt(variance / values.length);
 	return { lower: round(mean - margin), upper: round(mean + margin) };
+}
+
+export function studentTCritical95(sampleSize) {
+	if (T95[sampleSize]) return T95[sampleSize];
+	const df = sampleSize - 1;
+	const z = 1.95996398454;
+	return z + ((z ** 3 + z) / (4 * df)) + ((5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2)) + ((3 * z ** 7 + 19 * z ** 5 + 17 * z ** 3 - 15 * z) / (384 * df ** 3));
 }
 
 function clusteredPairedDelta(rows, field, unit) {

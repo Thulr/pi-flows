@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, getFinalAssistantText, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
@@ -144,6 +144,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	let wasAborted = false;
 	let timedOut = false;
 	let budgetTerminated = false;
+	let budgetUnobservable = false;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -177,7 +178,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
 						chargeBudget(options.budget, turnUsage);
-						if (!message.errorMessage && budgetExceeded(options.budget)) {
+						if (!message.errorMessage && options.budget?.maxCostUsd !== undefined && turnUsage.costKnown === false) {
+							budgetUnobservable = true;
+							controls.terminate();
+						} else if (!message.errorMessage && budgetExceeded(options.budget)) {
 							budgetTerminated = true;
 							controls.terminate();
 						}
@@ -228,8 +232,12 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		timedOut = run.timedOut;
 		wasAborted = run.aborted;
 
-		result.exitCode = budgetTerminated ? 1 : run.exitCode;
-		if (budgetTerminated) {
+		result.exitCode = budgetTerminated || budgetUnobservable ? 1 : run.exitCode;
+		if (budgetUnobservable) {
+			result.stopReason = "budget_unobservable";
+			result.error = budgetUnobservableError();
+			result.errorMessage = result.error.message;
+		} else if (budgetTerminated) {
 			result.stopReason = "budget_exceeded";
 			result.error = budgetExceededError(options.budget as FlowBudget);
 			result.errorMessage = result.error.message;
