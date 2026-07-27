@@ -26,14 +26,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
   `flow.approval_consumed_count`, `flow.approval_blocked`) without exposing the
   approved parameters. Version-2 workflow state migrates to
-  `legacy-compatibility` receipts that still bind the gated action.
+  `legacy-compatibility` receipts that still bind the gated action. Every recorded
+  field is additionally covered by a `receiptDigest`, so a partial write or a tool
+  that rewrites one field is caught rather than honoured.
 - Judge calibration is now evidence a release decision can rest on. Every run
   writes a versioned `pi-flows.calibration.v1` report with per-dimension coverage,
   truth-class x decision confusion matrices, per-class precision/recall,
   false-positive and false-negative rates, and Wilson 95% bounds on each. A
-  dimension is authoritative only with three independent failed labels plus passed
-  and partial examples, an abstention rate under 25%, and no contested human
-  labels; `--critical-dimension` opts a dimension into blocking the release gate
+  dimension is authoritative only with three independent *decided* failed labels
+  plus passed and partial examples and an abstention rate under 25% — repeat
+  trials of one case count once, and an abstention never counts as coverage;
+  `--critical-dimension` opts a dimension into blocking the release gate
   and `--write-baseline` when it falls short. Judge verdicts within
   `--abstention-band` of the decision boundary abstain and escalate to human review
   instead of voting. Cases are versioned in separately-digested

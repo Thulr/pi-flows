@@ -70,10 +70,10 @@ import { injectModel } from "./model-injection.mjs";
 import { calibrationPreflightStep } from "./calibration.mjs";
 import { thresholdFingerprint } from "./calibration-key.mjs";
 import { COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
-import { assessCalibration, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
+import { assessCalibration, writeReliabilityArtifact, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
-import { writeReliabilityArtifact, MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
+import { MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
 import { defaultRuntimeTracePath, evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
 import * as thulr from "./thulr.mjs";
 

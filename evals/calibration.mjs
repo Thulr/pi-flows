@@ -15,10 +15,10 @@
 // is allowed to block. What is not optional is that an opted-in dimension which
 // fails its calibration requirements blocks the gate rather than quietly
 // degrading to a warning.
-import { authoritativeDimensions, caseSplit, dimensionCoverage, formatCoverageReport, groundTruthClass, splitVersions, CALIBRATION_CLASSES, CALIBRATION_SPLITS, COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
+import { authoritativeDimensions, caseSplit, dimensionCoverage, formatCoverageReport, groundTruthClass, splitVersions, CALIBRATION_CLASSES, CALIBRATION_SPLITS } from "./calibration-coverage.mjs";
 import { DEFAULT_ABSTENTION_BAND, abstentionEscalations, dimensionStatistics, formatDimensionStatistics, judgeDecision } from "./calibration-stats.mjs";
-import { calibrationKey, calibrationKeyDrift, formatCalibrationKeyDrift, rubricDigest, thresholdFingerprint, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
-import { buildReviewReport, formatReviewReport, reviewGroundTruth } from "./review-agreement.mjs";
+import { calibrationKeyDrift, formatCalibrationKeyDrift } from "./calibration-key.mjs";
+import { buildReviewReport, formatReviewReport } from "./review-agreement.mjs";
 
 export const CALIBRATION_SCHEMA_VERSION = "pi-flows.calibration.v1";
 

@@ -436,12 +436,15 @@ approval phase and the contiguous run of work phases it gates — to the exact
 parameters approved, plus the requesting and approving actors, the workflow
 digest, the state schema version, an issue time, and an expiry.
 
-An approval authorizes exactly one downstream action: the phase immediately
-after it, or `workflow.complete` when the approval is last. The receipt is
-re-verified against the live spec immediately before that action runs, and spent
-once the action has actually run. Re-entering the same action after a crash is a
-resume and is allowed; presenting the receipt for a different action is a replay
-and returns `APPROVAL_RECEIPT_CONSUMED`.
+An approval authorizes exactly one action, and that action spans every step
+between the approval and the next consent point: the work phases it gates, the
+approval that ends the run, and the workflow's own completion when nothing else
+follows. Each of those steps re-verifies the receipt against the live spec before
+running, so a resume landing in the middle of a gated run is checked rather than
+walking in behind a check it never reached. The receipt is spent once, by the
+action, at the first gated step that completes — so retrying a failed phase
+inside its own gated run is a resume, while presenting the receipt for a
+different action is a replay and returns `APPROVAL_RECEIPT_CONSUMED`.
 
 The binding covers what the workflow digest cannot see: the gated phases'
 effective definitions after flow-level fallbacks (`returnContract`,
@@ -449,6 +452,10 @@ effective definitions after flow-level fallbacks (`returnContract`,
 `incompleteHandoffPolicy`. Changing `agentScope` between approval and resume
 swaps which repo-controlled prompt runs, so it invalidates the approval with
 `APPROVAL_RECEIPT_STALE`.
+
+Every recorded field — actors, issue time, expiry, consumption — is additionally
+covered by a `receiptDigest`, so a partial write, a half-applied merge, or a tool
+that rewrites one field is caught rather than honoured.
 
 Receipts surface in `details.approvals`, in the final answer, and on the trace
 root span (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,

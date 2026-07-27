@@ -19,8 +19,10 @@
 // file, not authentication. Anyone who can write that file can write any receipt
 // into it, and there is no key to sign with that would not also live beside it.
 // What receipts do stop is the realistic failure: consent carried across an edit
-// it never covered, consent that outlived its window, consent spent twice, and a
-// crash-resume that silently re-uses spent consent.
+// it never covered, consent that outlived its window, consent spent twice, a
+// crash-resume that silently re-uses spent consent, and a state file whose
+// recorded approval facts were changed after the fact by a partial write, a
+// half-applied merge, or a tool that rewrites one field.
 import { createHash, randomUUID } from "node:crypto";
 import { canonicalJsonValue } from "./delegation.ts";
 import { flowError, type ApprovalReceiptSummary, type FlowError } from "./types.ts";
@@ -74,6 +76,8 @@ export interface ApprovalReceipt {
 	consumedAt: string | null;
 	consumedBy: string | null;
 	validation: "typed" | "legacy-compatibility";
+	/** Digest over every other field. Integrity against accidental edits, not authenticity — see the module header. */
+	receiptDigest: string;
 }
 
 export type { ApprovalReceiptSummary };
@@ -83,9 +87,10 @@ function isRecord(value: unknown): value is Record<string, any> {
 }
 
 /**
- * The binding digest. Canonical (recursively key-sorted) JSON so that reordering
- * object keys in a workflow spec does not read as a changed action, and so the
- * digest matches the canonicalization the delegation contract ids already use.
+ * The binding digest: what the approval AUTHORIZES. Canonical (recursively
+ * key-sorted) JSON so that reordering object keys in a workflow spec does not
+ * read as a changed action, and so the digest matches the canonicalization the
+ * delegation contract ids already use.
  */
 export function approvalBindingDigest(binding: ApprovalBinding): string {
 	const canonical = canonicalJsonValue({
@@ -98,6 +103,25 @@ export function approvalBindingDigest(binding: ApprovalBinding): string {
 	return `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
 }
 
+/**
+ * A digest over every recorded field of a receipt except itself — the actors, the
+ * issue time, the expiry, the consumption record. The binding digest covers what
+ * was authorized; this covers what was WRITTEN DOWN about the approval, so a
+ * truncated write, a half-applied merge, or a tool that rewrites one field is
+ * caught rather than honoured. It stops accidents, not an attacker: anyone
+ * editing the state file deliberately can recompute it.
+ */
+export function approvalReceiptDigest(receipt: Omit<ApprovalReceipt, "receiptDigest"> & { receiptDigest?: string }): string {
+	const { receiptDigest: _ignored, ...recorded } = receipt;
+	return `sha256:${createHash("sha256").update(JSON.stringify(canonicalJsonValue(recorded))).digest("hex")}`;
+}
+
+/** Re-stamp the integrity digest after a legitimate field change (consumption). */
+const sealed = (receipt: Omit<ApprovalReceipt, "receiptDigest"> & { receiptDigest?: string }): ApprovalReceipt => ({
+	...(receipt as ApprovalReceipt),
+	receiptDigest: approvalReceiptDigest(receipt),
+});
+
 /** Mint a receipt for a granted approval. The receipt starts unconsumed: it authorizes the action, it does not record that the action happened. */
 export function issueApprovalReceipt(
 	binding: ApprovalBinding,
@@ -105,7 +129,7 @@ export function issueApprovalReceipt(
 ): ApprovalReceipt {
 	const issuedAt = new Date(now).toISOString();
 	const bindingDigest = approvalBindingDigest(binding);
-	return {
+	return sealed({
 		schemaVersion: APPROVAL_RECEIPT_SCHEMA_VERSION,
 		receiptId: createHash("sha256").update(`${bindingDigest}:${issuedAt}:${randomUUID()}`).digest("hex").slice(0, 16),
 		action: binding.action,
@@ -119,7 +143,7 @@ export function issueApprovalReceipt(
 		consumedAt: null,
 		consumedBy: null,
 		validation: "typed",
-	};
+	});
 }
 
 /**
@@ -131,7 +155,7 @@ export function issueApprovalReceipt(
  */
 export function legacyApprovalReceipt(binding: ApprovalBinding, { issuedAt, consumedBy }: { issuedAt: string; consumedBy: string }): ApprovalReceipt {
 	const bindingDigest = approvalBindingDigest(binding);
-	return {
+	return sealed({
 		schemaVersion: APPROVAL_RECEIPT_SCHEMA_VERSION,
 		receiptId: createHash("sha256").update(`${bindingDigest}:legacy`).digest("hex").slice(0, 16),
 		action: binding.action,
@@ -145,7 +169,7 @@ export function legacyApprovalReceipt(binding: ApprovalBinding, { issuedAt, cons
 		consumedAt: issuedAt,
 		consumedBy,
 		validation: "legacy-compatibility",
-	};
+	});
 }
 
 function shapeIssue(value: unknown): string | null {
@@ -159,6 +183,10 @@ function shapeIssue(value: unknown): string | null {
 	if (value.consumedAt !== null && typeof value.consumedAt !== "string") return "receipt.consumedAt must be an ISO timestamp or null";
 	if (value.consumedBy !== null && typeof value.consumedBy !== "string") return "receipt.consumedBy must be an action id or null";
 	if (value.validation !== "typed" && value.validation !== "legacy-compatibility") return "receipt.validation must be typed or legacy-compatibility";
+	if (typeof value.receiptDigest !== "string") return "receipt.receiptDigest must be a string";
+	if (value.receiptDigest !== approvalReceiptDigest(value as ApprovalReceipt)) {
+		return "receipt.receiptDigest does not match the receipt's contents; a recorded field (actor, issue time, expiry, or consumption) was changed after it was written";
+	}
 	return null;
 }
 
@@ -229,7 +257,7 @@ export function verifyApprovalReceipt(
 /** Burn a receipt once its authorized action has begun. Re-consuming by the same action is a resume, not a second use. */
 export function consumeApprovalReceipt(receipt: ApprovalReceipt, consumer: string, now = Date.now()): ApprovalReceipt {
 	if (receipt.consumedAt !== null && receipt.consumedBy === consumer) return receipt;
-	return { ...receipt, consumedAt: new Date(now).toISOString(), consumedBy: consumer };
+	return sealed({ ...receipt, consumedAt: new Date(now).toISOString(), consumedBy: consumer });
 }
 
 /** Identifiers and status only — the bound parameters never leave the binding digest. */

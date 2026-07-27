@@ -13,6 +13,7 @@
 //   inspectTraceReport      both
 //   judgeTraceRun           both
 //   printScoreDeltas        both (run.mjs passes thulr.gate, compare.mjs thulr.compare)
+//   writeReliabilityArtifact  run.mjs only — the per-trial reliability artifact
 //   assessCalibration       run.mjs only — judge calibration + its gate rules
 //   gateAgainstBaseline     run.mjs only — the release gate + JUnit artifact
 //   harnessExitCode         run.mjs only — the two-axis exit policy
@@ -23,6 +24,7 @@ import { caseSplit } from "./calibration-coverage.mjs";
 import { buildCalibrationReport, calibrationGateIssues, calibrationRecords, formatCalibrationReport, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
 import { calibrationKey, rubricDigest, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
 import { buildReviewReport, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
+import { buildReliabilityReport, formatReliabilitySummary } from "./reliability.mjs";
 
 /** Absolute path for a repo-relative path. */
 export const repoPath = (relPath) => resolve(process.cwd(), relPath);
@@ -167,6 +169,45 @@ export function printScoreDeltas({ run, options, heading, unavailable, log = con
 	} catch (error) {
 		log(`${unavailable}: ${error?.message ?? error}`);
 	}
+}
+
+// --- Phase: reliability artifact -------------------------------------------
+/**
+ * Project the run's per-case summaries onto raw trials, build the reliability
+ * report, write it, and print its headline. Lives here rather than in the CLI so
+ * the trial projection stays next to the statistics that consume it.
+ *
+ * `judgeAvailable` is false in dry runs and in runs with nothing judgeable: with
+ * no judge verdict, a trial passes on its objective check alone rather than on a
+ * verdict that was never rendered.
+ */
+export function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable, out, subjectTrials, judgeSamples, runId, runtimeTraceFile, displayPath = out, log = console.log }) {
+	const rawTrials = summaries.map((summary) => {
+		const judge = verdicts.get(summary.traceCaseId) ?? null;
+		return {
+			caseId: summary.caseId,
+			trialId: summary.trialId,
+			traceCaseId: summary.traceCaseId,
+			trialIndex: summary.trialIndex,
+			pass: !summary.exclusion && summary.objective.pass && (!judgeAvailable || judge?.criterion?.verdict === true),
+			objective: summary.objective,
+			judge,
+			answer: summary.answer,
+			costUsd: summary.costUsd,
+			tokens: summary.tokens,
+			durationMs: summary.durationMs,
+			exclusion: summary.exclusion,
+			infraFailure: summary.infraFailure,
+			runtimeTrace: summary.runtimeTrace,
+			scoreFamilies: summary.scoreFamilies,
+		};
+	});
+	const report = buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, runId, runtimeTraceFile });
+	mkdirSync(dirname(out), { recursive: true });
+	writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+	for (const line of formatReliabilitySummary(report)) log(line);
+	log(`Raw trial reliability report: ${displayPath} (subject trials ${subjectTrials}; judge-noise samples ${judgeSamples})`);
+	return report;
 }
 
 // --- Phase: judge calibration ----------------------------------------------

@@ -275,10 +275,11 @@ then resume when the approval can be granted.
 
 ### `APPROVAL_RECEIPT_INVALID`
 
-Cause: the phase about to run is gated by an approval, but the resume state
+Cause: the step about to run is gated by an approval, but the resume state
 carries no usable receipt for it — the state file was truncated, hand-edited, or
-written by a tool that does not understand
-`pi-flows.approval-receipt.v1`.
+written by a tool that does not understand `pi-flows.approval-receipt.v1`. This
+also fires when a recorded field (approver, issue time, expiry, or consumption
+record) was changed without re-stamping the receipt's `receiptDigest`.
 
 Fix: re-run the workflow in an interactive Pi UI so the phase is approved again.
 A malformed receipt cannot be repaired in place; approvals are only minted by an
@@ -311,13 +312,13 @@ stamped into the receipt at issue time.
 ### `APPROVAL_RECEIPT_CONSUMED`
 
 Cause: a receipt that was already spent by one action was presented to authorize
-a different one. Approvals are single use: one approval phase authorizes exactly
-one downstream action (the phase immediately after it, or `workflow.complete`
-when the approval is last).
+a different one. Approvals are single use: one approval authorizes one action,
+spanning every step between it and the next consent point.
 
-Fix: give the second action its own approval phase. Re-running the same action
-after a crash is not a replay and is allowed — this error only fires when the
-consumer differs from the one recorded on the receipt.
+Fix: give the second action its own approval phase. Retrying a failed phase
+inside the gated run the approval already covers is not a replay and is allowed —
+this error only fires when the action differs from the one recorded on the
+receipt.
 
 ### `WORKTREE_NOT_GIT`
 

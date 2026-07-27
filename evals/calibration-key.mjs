@@ -50,8 +50,6 @@ function canonicalJsonValue(value) {
 /** One canonical digest for every calibration artifact, so two digests over the same content always agree. */
 export const canonicalDigest = (value, length = 16) => createHash("sha256").update(JSON.stringify(canonicalJsonValue(value))).digest("hex").slice(0, length);
 
-const digestOf = canonicalDigest;
-
 /**
  * A digest over every rubric the judge reads: the primary criterion, the named
  * per-dimension criteria, and the expected behaviour each case declares.
@@ -69,7 +67,7 @@ export function rubricDigest(cases) {
 			judgeOnlyDimensions: [...(testCase.judgeOnlyDimensions ?? [])].sort(),
 		};
 	}
-	return digestOf(rubrics);
+	return canonicalDigest(rubrics);
 }
 
 /**
@@ -82,7 +80,7 @@ export function traceAttributeDigest(spans) {
 	for (const span of spans ?? []) {
 		for (const key of Object.keys(span?.attributes ?? {})) keys.add(key);
 	}
-	return digestOf([...keys].sort());
+	return canonicalDigest([...keys].sort());
 }
 
 /** The threshold configuration a gate would apply. Loosening any of it changes what calibration means for the gate. */
@@ -105,7 +103,7 @@ export function thresholdFingerprint({ noiseBand, scoreGuardrails = [], efficien
  */
 export function calibrationKey(rawInputs) {
 	const inputs = Object.fromEntries(CALIBRATION_KEY_INPUTS.map((name) => [name, rawInputs?.[name] ?? null]));
-	return { schemaVersion: CALIBRATION_KEY_SCHEMA_VERSION, digest: digestOf(inputs), inputs };
+	return { schemaVersion: CALIBRATION_KEY_SCHEMA_VERSION, digest: canonicalDigest(inputs), inputs };
 }
 
 /**

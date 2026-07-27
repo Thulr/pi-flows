@@ -11,6 +11,7 @@ import {
 	MAX_APPROVAL_TTL_MS,
 	MIN_APPROVAL_TTL_MS,
 	approvalBindingDigest,
+	approvalReceiptDigest,
 	approvalReceiptSummary,
 	consumeApprovalReceipt,
 	formatApprovalReceipt,
@@ -32,6 +33,9 @@ const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => (
 });
 
 const NOW = Date.parse("2026-07-27T12:00:00.000Z");
+
+/** Re-stamp a hand-edited receipt so a test reaches the check it is actually about, not the integrity check in front of it. */
+const reseal = (receipt: any) => ({ ...receipt, receiptDigest: approvalReceiptDigest(receipt) });
 
 // --- The receipt contract --------------------------------------------------
 
@@ -92,8 +96,18 @@ test("verification rejects a changed action as stale", () => {
 
 test("verification recomputes the binding rather than trusting the stored digest", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
-	const forged = { ...receipt, action: "workflow.phase:something-else" };
+	const forged = reseal({ ...receipt, action: "workflow.phase:something-else" });
 	assert.equal(verifyApprovalReceipt(forged, binding({ action: "workflow.phase:something-else" }), { consumer: "ship", now: NOW })?.code, "APPROVAL_RECEIPT_STALE");
+});
+
+test("editing a recorded approval fact without re-sealing is caught", () => {
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS });
+	for (const [field, value] of [["expiresAt", "2099-01-01T00:00:00.000Z"], ["approvedBy", "someone-else"], ["issuedAt", "2000-01-01T00:00:00.000Z"], ["consumedBy", "another-action"]] as const) {
+		const edited = { ...receipt, [field]: value };
+		const error = verifyApprovalReceipt(edited, binding(), { consumer: "workflow.phase:approve", now: NOW });
+		assert.equal(error?.code, "APPROVAL_RECEIPT_INVALID", `editing ${field} must not be honoured`);
+		assert.match(error?.cause ?? "", /receiptDigest does not match/);
+	}
 });
 
 test("verification rejects an expired receipt", () => {
@@ -265,7 +279,7 @@ test("a receipt survives a crash between approval and the gated action", async (
 test("an expired receipt refuses to authorize the resume", async () => {
 	const cwd = await freshDir();
 	const { state, spent } = await receiptIssuedButUnspent(cwd);
-	state.receipts.approve.expiresAt = new Date(Date.now() - 1000).toISOString();
+	state.receipts.approve = reseal({ ...state.receipts.approve, expiresAt: new Date(Date.now() - 1000).toISOString() });
 	await writeState(cwd, state);
 
 	const expired = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
@@ -291,8 +305,7 @@ test("changing the gated action's effective parameters invalidates the approval"
 test("a receipt cannot be replayed onto an action it never authorized", async () => {
 	const cwd = await freshDir();
 	const { state, spent } = await receiptIssuedButUnspent(cwd);
-	state.receipts.approve.consumedAt = new Date().toISOString();
-	state.receipts.approve.consumedBy = "some-other-phase";
+	state.receipts.approve = reseal({ ...state.receipts.approve, consumedAt: new Date().toISOString(), consumedBy: "some-other-phase" });
 	await writeState(cwd, state);
 
 	const replayed = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });

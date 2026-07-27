@@ -504,13 +504,17 @@ A dimension is `authoritative` only when it has, in this run:
   reviewers agreeing on it, is one observation. Three failures and nothing else
   does not show a judge separates good from bad, only that it agrees with three
   data points.
+  Abstentions never count: a dimension that declined to call every defect has
+  demonstrated nothing about catching defects.
 - **no runaway abstention** — at most 25% of its labelled cases, so a judge
   cannot score perfectly by declining everything.
-- **no contested human labels** — reviewers who disagreed and were never
-  adjudicated leave the ground truth unsettled, not silently settled.
 
 Everything else is `provisional`: measured and reported, but not trusted to say
-no. Declare which dimensions may block with `--critical-dimension`:
+no. A critical dimension additionally blocks on **contested human labels** —
+reviewers who disagreed and were never adjudicated leave the ground truth
+unsettled, not silently settled — and on missed defects above
+`--critical-miss-rate`. Declare which dimensions may block with
+`--critical-dimension`:
 
 ```bash
 npm run eval -- --critical-dimension=criterion          # let it block once it is authoritative

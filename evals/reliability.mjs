@@ -1,6 +1,3 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-
 export const MAX_SUBJECT_TRIALS = 50;
 
 export function trialIdentity(caseId, trialIndex, subjectTrials) {
@@ -126,42 +123,4 @@ export function formatReliabilitySummary(report) {
 		`Sensitivity (infrastructure-invalid trials count as failures): pass@1 ${rate(sensitivity.passAt1.value)}; pass@${sensitivity.passAtK.k} ${rate(sensitivity.passAtK.value)}; pass^${sensitivity.passToK.k} ${rate(sensitivity.passToK.value)}`,
 		`Latency: p50 ${metric(latencyMs.p50, "ms")}  p95 ${metric(latencyMs.p95, "ms")}  Cost: p50 ${metric(costUsd.p50, " USD")}  p95 ${metric(costUsd.p95, " USD")}`,
 	];
-}
-
-/**
- * Project the run's per-case summaries onto raw trials, build the reliability
- * report, write it, and print its headline. Lives here rather than in the CLI so
- * the trial projection stays next to the statistics that consume it.
- *
- * `judgeAvailable` is false in dry runs and in runs with nothing judgeable: with
- * no judge verdict, a trial passes on its objective check alone rather than on a
- * verdict that was never rendered.
- */
-export function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable, out, subjectTrials, judgeSamples, runId, runtimeTraceFile, displayPath = out, log = console.log }) {
-	const rawTrials = summaries.map((summary) => {
-		const judge = verdicts.get(summary.traceCaseId) ?? null;
-		return {
-			caseId: summary.caseId,
-			trialId: summary.trialId,
-			traceCaseId: summary.traceCaseId,
-			trialIndex: summary.trialIndex,
-			pass: !summary.exclusion && summary.objective.pass && (!judgeAvailable || judge?.criterion?.verdict === true),
-			objective: summary.objective,
-			judge,
-			answer: summary.answer,
-			costUsd: summary.costUsd,
-			tokens: summary.tokens,
-			durationMs: summary.durationMs,
-			exclusion: summary.exclusion,
-			infraFailure: summary.infraFailure,
-			runtimeTrace: summary.runtimeTrace,
-			scoreFamilies: summary.scoreFamilies,
-		};
-	});
-	const report = buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, runId, runtimeTraceFile });
-	mkdirSync(dirname(out), { recursive: true });
-	writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-	for (const line of formatReliabilitySummary(report)) log(line);
-	log(`Raw trial reliability report: ${displayPath} (subject trials ${subjectTrials}; judge-noise samples ${judgeSamples})`);
-	return report;
 }

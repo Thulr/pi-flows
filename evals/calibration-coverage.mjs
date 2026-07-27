@@ -7,11 +7,14 @@
 // dimension is `provisional` until it has enough independent ground truth, and
 // only an `authoritative` dimension can be treated as a release signal.
 //
-// "Independent" means distinct cases, not distinct labels. The judge's error on
-// a case is one error however many times it is recorded, so five repeat trials of
-// one case, or three reviewers agreeing on it, is one observation. Reviewer
-// multiplicity buys confidence in the LABEL, and is reported as agreement in
-// review-agreement.mjs; it does not buy coverage.
+// "Independent" means distinct cases the judge actually DECIDED. Two rules follow
+// from that. The judge's error on a case is one error however many times it is
+// recorded, so five repeat trials of one case, or three reviewers agreeing on it,
+// is one observation — reviewer multiplicity buys confidence in the LABEL, and is
+// reported as agreement in review-agreement.mjs. And an abstention is not
+// evidence the judge can tell classes apart: a dimension that abstained on every
+// defect has demonstrated nothing about catching defects, so abstained labels are
+// counted and reported but never credited as coverage.
 //
 // The splits exist for the same reason as a train/test split anywhere else. A
 // rubric tuned until it agrees with the cases it was tuned on tells you nothing.
@@ -115,7 +118,7 @@ export function dimensionCoverage(records, { requirement = COVERAGE_REQUIREMENT,
 		if (record.abstained) entry.abstained += 1;
 		else entry.decided += 1;
 		if (!entry.independent.has(record.truth)) entry.independent.set(record.truth, new Set());
-		entry.independent.get(record.truth).add(record.caseId);
+		if (!record.abstained) entry.independent.get(record.truth).add(record.caseId);
 	}
 
 	const coverage = {};
