@@ -123,6 +123,11 @@ required; arrays and the budget object may be empty. A top-level contract applie
 to single/evaluate and is the fallback for chain steps; a chain step or
 `evaluate.operator` may override it.
 
+Contract budgets apply at dispatch: timeout tightens the top-level limit, while
+cost and token limits are independently enforced. Chain resets the contract
+budget per step; evaluate shares it across generator revisions. Top-level
+budgets remain flow-wide.
+
 ```json
 {
   "agent": "recon",

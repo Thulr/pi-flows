@@ -89,9 +89,11 @@ export async function writePromptToTempFile(agentName: string, prompt: string, l
 /** Production adapter for the child-run seam (ModeDeps.runChild): one real pi subprocess per call. */
 export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunResult> {
 	const policy: CapturePolicy = { recordContent: options.recordContent ?? true, redactSecrets: options.redactSecrets ?? true };
+	const budgets = [options.budget, options.contractBudget].filter((budget): budget is FlowBudget => Boolean(budget));
 	// Cost ceiling: refuse to spawn once the flow tree's cumulative spend is spent.
-	if (budgetExceeded(options.budget)) {
-		return makeEmptyRunResult(options.agentName, options.task, policy, budgetExceededError(options.budget as FlowBudget));
+	const exhaustedBudget = budgets.find((budget) => budgetExceeded(budget));
+	if (exhaustedBudget) {
+		return makeEmptyRunResult(options.agentName, options.task, policy, budgetExceededError(exhaustedBudget));
 	}
 	const agent = options.agents.find((candidate) => candidate.name === options.agentName);
 	if (!agent) {
@@ -145,6 +147,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	let timedOut = false;
 	let budgetTerminated = false;
 	let budgetUnobservable = false;
+	let terminatingBudget: FlowBudget | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -178,13 +181,17 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						const turnUsage = emptyUsage();
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
-						chargeBudget(options.budget, turnUsage);
-						if (!message.errorMessage && options.budget?.maxCostUsd !== undefined && turnUsage.costKnown === false) {
+						for (const budget of budgets) chargeBudget(budget, turnUsage);
+						if (!message.errorMessage && budgets.some((budget) => budget.maxCostUsd !== undefined) && turnUsage.costKnown === false) {
 							budgetUnobservable = true;
 							controls.terminate();
-						} else if (!message.errorMessage && activeBudgetExceeded(options.budget)) {
-							budgetTerminated = true;
-							controls.terminate();
+						} else if (!message.errorMessage) {
+							terminatingBudget = budgets.find((budget) => activeBudgetExceeded(budget))
+								?? (options.contractBudget && budgetExceeded(options.contractBudget) ? options.contractBudget : undefined);
+							if (terminatingBudget) {
+								budgetTerminated = true;
+								controls.terminate();
+							}
 						}
 						if (!result.model && message.model) result.model = message.model;
 						if (message.stopReason) result.stopReason = message.stopReason;
@@ -240,7 +247,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			result.errorMessage = result.error.message;
 		} else if (budgetTerminated) {
 			result.stopReason = "budget_exceeded";
-			result.error = budgetExceededError(options.budget as FlowBudget);
+			result.error = budgetExceededError(terminatingBudget as FlowBudget);
 			result.errorMessage = result.error.message;
 		} else if (timedOut) {
 			result.stopReason = "timeout";
@@ -353,8 +360,20 @@ export interface AgentFanoutItem {
 	placeholderTask?: string;
 }
 
+export interface AgentRunLimits {
+	captureRawOutput?: boolean;
+	timeoutMs?: number;
+	contractBudget?: FlowBudget;
+}
+
+function tighterTimeout(flowTimeoutMs: number | undefined, contractTimeoutMs: number | undefined): number | undefined {
+	if (contractTimeoutMs === undefined) return flowTimeoutMs;
+	const boundedContractTimeout = Math.max(1, Math.floor(contractTimeoutMs));
+	return flowTimeoutMs === undefined ? boundedContractTimeout : Math.min(flowTimeoutMs, boundedContractTimeout);
+}
+
 /** The standard per-run plumbing (everything except onUpdate), built in exactly one place. */
-function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, captureRawOutput = false): Omit<RunChildOptions, "onUpdate"> {
+function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, limits: AgentRunLimits = {}): Omit<RunChildOptions, "onUpdate"> {
 	return {
 		defaultCwd: deps.defaultCwd,
 		agents: deps.discovery.agents,
@@ -364,10 +383,11 @@ function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, m
 		model: ref.model ?? deps.params.model,
 		tier: ref.tier ?? deps.params.tier,
 		tools: ref.tools,
-		timeoutMs: deps.params.timeoutMs,
+		timeoutMs: tighterTimeout(deps.params.timeoutMs, limits.timeoutMs),
 		recordContent: deps.params.recordContent,
 		redactSecrets: deps.params.redactSecrets,
-		captureRawOutput,
+		captureRawOutput: limits.captureRawOutput,
+		contractBudget: limits.contractBudget,
 		step,
 		signal: deps.signal,
 		budget: deps.budget,
@@ -410,9 +430,9 @@ export async function runAgentFanout(
 }
 
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
-export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], captureRawOutput = false): Promise<FlowRunResult> {
+export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], limits: AgentRunLimits = {}): Promise<FlowRunResult> {
 	return deps.runChild({
-		...childRunOptions(deps, ref, task, mode, step, captureRawOutput),
+		...childRunOptions(deps, ref, task, mode, step, limits),
 		onUpdate: (partial) => {
 			const current = partial.details.results[0];
 			deps.onUpdate?.({ content: partial.content, details: deps.makeDetails(mode)([...priorResults, ...(current ? [current] : [])]) });

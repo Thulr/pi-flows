@@ -145,9 +145,9 @@ function removeVerifier(params) {
 		delete next.orchestrate.verifyMaxIterations;
 		return next;
 	}
-	if (params.worktree?.verifyCommand) {
+	if (params.worktree?.checkCommand) {
 		const next = clone(params);
-		delete next.worktree.verifyCommand;
+		delete next.worktree.checkCommand;
 		return next;
 	}
 	return null;

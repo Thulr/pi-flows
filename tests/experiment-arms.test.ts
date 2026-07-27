@@ -106,6 +106,20 @@ test("mode-specific ablations remove integration and verification", () => {
 	assert.equal(noVerifier.applicable, true);
 	assert.equal(noVerifier.params.agent, "operator");
 	assert.equal(noVerifier.params.evaluate, undefined);
+
+	const verifiedWorktree = {
+		name: "verified-worktree",
+		params: {
+			task: "Edit.",
+			worktree: {
+				tasks: [{ id: "a", agent: "operator", task: "Edit a." }],
+				checkCommand: "npm test",
+			},
+		},
+	};
+	const worktreeWithoutVerifier = planExperimentArm("no-verifier", verifiedWorktree, { bindingConstraint: binding, seed: "trial-1" });
+	assert.equal(worktreeWithoutVerifier.applicable, true);
+	assert.equal(worktreeWithoutVerifier.params.worktree.checkCommand, undefined);
 });
 
 test("no-verifier preserves evaluate aliases and the effective typed contract", () => {

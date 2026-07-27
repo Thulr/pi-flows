@@ -2,7 +2,7 @@ import type { ModeDeps, ModeOutput } from "../types.ts";
 import { formatFlowError } from "../types.ts";
 import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnContract, resolvedCwd } from "../validate.ts";
-import { renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
+import { createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
 
 export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
@@ -21,7 +21,9 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 		"single",
 		undefined,
 		[],
-		Boolean(params.contract),
+		params.contract
+			? { captureRawOutput: true, timeoutMs: params.contract.budget.timeoutMs, contractBudget: createDelegationBudget(params.contract) }
+			: {},
 	);
 	if (params.contract && !isFailed(result)) {
 		const validated = validateReturnEnvelope(result, params.contract, resolvedCwd(defaultCwd, params.cwd), policy);

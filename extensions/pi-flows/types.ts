@@ -364,6 +364,7 @@ export interface RunChildOptions {
 	recordContent?: boolean;
 	redactSecrets?: boolean;
 	captureRawOutput?: boolean;
+	contractBudget?: FlowBudget;
 	step?: number;
 	signal?: AbortSignal;
 	onUpdate?: Update;

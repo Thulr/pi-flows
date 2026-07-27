@@ -2,7 +2,7 @@ import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, format
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff, prepareTextHandoff } from "../handoff.ts";
 import { appendReturnContract, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
-import { canonicalEnvelope, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
+import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
@@ -64,6 +64,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	let passed = false;
 	let rounds = 0;
 	let lastCheckOk: boolean | null = null;
+	const contractBudget = contract ? createDelegationBudget(contract) : undefined;
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
 		rounds = iteration;
@@ -81,7 +82,15 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 						"\n## Reviewer feedback on that attempt (address every point)",
 						critique,
 					].join("\n");
-		const generated = await runAgentRef(deps, generatorRef, generatorTask, "evaluate", results.length + 1, results, Boolean(contract));
+		const generated = await runAgentRef(
+			deps,
+			generatorRef,
+			generatorTask,
+			"evaluate",
+			results.length + 1,
+			results,
+			contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget } : {},
+		);
 		results.push(generated);
 		lastGenerator = generated;
 		emitLive();

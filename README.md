@@ -201,6 +201,8 @@ evidence, artifact references/digests, changed state, unresolved questions,
 retry information, schema-checked `data`, and runtime usage when available.
 Schema or digest failures stop before downstream consumption. Existing
 `task`, `returnContract`, and `requireEvidence` calls keep their prose behavior.
+Contract budgets tighten child timeouts and enforce cost/token limits separately
+from flow-wide budgets.
 See [Return contracts](./docs/flow-reference.md#return-contracts-and-write-isolation).
 
 ### Parallel

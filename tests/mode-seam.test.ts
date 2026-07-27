@@ -6,6 +6,7 @@ import test from "node:test";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { handleGraph } from "../extensions/pi-flows/modes/graph.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
+import { handleSingle } from "../extensions/pi-flows/modes/single.ts";
 import { emptyUsage, type FlowDiscovery, type FlowRunResult, type ModeDeps, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
 const discovery: FlowDiscovery = {
@@ -61,6 +62,48 @@ test("parallel coordination runs in-process through the runChild seam", async ()
 	assert.equal(output.details.results.length, 2);
 	assert.equal(output.details.error, undefined);
 	assert.match(output.content[0].text, /done: inspect A/);
+});
+
+test("typed single dispatch enforces every contract budget field", async () => {
+	const calls: RunChildOptions[] = [];
+	const contract = {
+		objective: "Return a bounded result.",
+		constraints: [],
+		nonGoals: [],
+		dependencies: [],
+		authority: { may: [], mustNot: [], requiresApproval: [] },
+		sideEffectClass: "read-only",
+		budget: { timeoutMs: 1_200, maxCostUsd: 0.25, maxTokens: 300, maxGeneratedTokens: 100 },
+		acceptanceChecks: [],
+		returnSchema: { type: "object" },
+		owner: "parent",
+	};
+	const deps = makeDeps({ agent: "recon", contract, timeoutMs: 5_000 }, async (options) => {
+		calls.push(options);
+		return fakeResult(options, JSON.stringify({
+			schemaVersion: "pi-flows.return-envelope.v1",
+			status: "completed",
+			summary: "Done.",
+			evidence: [],
+			artifactReferences: [],
+			digests: [],
+			changedState: [],
+			unresolvedQuestions: [],
+			retry: { retryable: false },
+			data: {},
+		}));
+	});
+	const output = await handleSingle(deps);
+	assert.equal(output.details.error, undefined);
+	assert.equal(calls[0].timeoutMs, 1_200);
+	assert.deepEqual(calls[0].contractBudget, {
+		maxCostUsd: 0.25,
+		maxTokens: 300,
+		maxGeneratedTokens: 100,
+		spentCost: 0,
+		spentTokens: 0,
+		spentGeneratedTokens: 0,
+	});
 });
 
 test("graph wave scheduler orders dependent nodes and renders node outputs", async () => {

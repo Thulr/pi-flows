@@ -4,7 +4,7 @@ import * as path from "node:path";
 import Schema from "typebox/schema";
 import { extractLastJsonBlock } from "./protocol.ts";
 import { redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
-import { flowError, type CapturePolicy, type DelegationContract, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
+import { flowError, type CapturePolicy, type DelegationContract, type DelegationReturnEnvelope, type FlowBudget, type FlowError, type FlowRunResult } from "./types.ts";
 import { appendReturnContract } from "./validate.ts";
 
 const ENVELOPE_VERSION = "pi-flows.return-envelope.v1";
@@ -88,6 +88,12 @@ export function renderDelegationTask(
 		"`data` must satisfy contract.returnSchema. Evidence items use {claim, source}. Artifact references use {path}. Digests use {artifact, algorithm:\"sha256\", value}.",
 		"Use empty arrays when no evidence, artifacts, digests, changed state, or unresolved questions exist. Do not report success as prose outside the envelope.",
 	].join("\n");
+}
+
+export function createDelegationBudget(contract: DelegationContract): FlowBudget | undefined {
+	const { maxCostUsd, maxTokens, maxGeneratedTokens } = contract.budget;
+	if (maxCostUsd === undefined && maxTokens === undefined && maxGeneratedTokens === undefined) return undefined;
+	return { maxCostUsd, maxTokens, maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
 }
 
 function envelopeError(reason: string): FlowError {

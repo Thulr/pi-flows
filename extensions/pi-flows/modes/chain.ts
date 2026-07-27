@@ -3,7 +3,7 @@ import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, prepareTextHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnContract, resolvedCwd } from "../validate.ts";
 import { renderTaskTemplate } from "../parse.ts";
-import { canonicalEnvelope, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
+import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
 
 export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
@@ -30,7 +30,9 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			"chain",
 			index + 1,
 			results,
-			Boolean(contract),
+			contract
+				? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget: createDelegationBudget(contract) }
+				: {},
 		);
 		results.push(result);
 
