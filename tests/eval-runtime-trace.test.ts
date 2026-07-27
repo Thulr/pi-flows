@@ -45,6 +45,30 @@ test("trace summaries parse typed verifier verdicts from handoff data", () => {
 	assert.equal(attrs["flow.verify_verdict"], "pass");
 });
 
+test("trace summaries exclude rejected verifier handoffs from verified outcomes", () => {
+	const verifier = {
+		agent: "overwatch",
+		agentSource: "package",
+		task: "verify",
+		exitCode: 0,
+		messages: [{ role: "assistant", content: [{ type: "text", text: '{"data":{"verdict":"pass"}}' }] }],
+		stderr: "",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+		durationMs: 10,
+	};
+	const attrs = traceSummaryAttributes(
+		"orchestrate",
+		{ orchestrate: { verify: { agent: "overwatch" } } },
+		{
+			content: [{ type: "text", text: "RETURN_ENVELOPE_INCOMPLETE" }],
+			details: { results: [verifier], error: { code: "RETURN_ENVELOPE_INCOMPLETE" } },
+		} as any,
+	);
+	assert.equal(attrs["flow.outcome_verified"], false);
+	assert.equal(attrs["flow.outcome_success"], undefined);
+	assert.equal(attrs["flow.verify_verdict"], undefined);
+});
+
 test("runtime trace ids are stable across file ordering and distinct across paired arms", () => {
 	const flows = runtimeTraceContext("run-abc", {
 		caseId: "case-a",

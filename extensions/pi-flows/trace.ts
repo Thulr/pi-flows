@@ -356,6 +356,17 @@ export function criticalPathForMode(mode: FlowMode, params: any, results: FlowRu
 	return undefined;
 }
 
+function acceptedVerifierResult(params: any, output: ModeOutput): FlowRunResult | undefined {
+	if (!params.orchestrate?.verify?.agent) return undefined;
+	const verifier = output.details.results.at(-1);
+	return verifier
+		&& verifier.agent === params.orchestrate.verify.agent
+		&& !isFailed(verifier)
+		&& verifier.handoff
+		? verifier
+		: undefined;
+}
+
 function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { verified: boolean; success?: boolean } {
 	const text = output.content[0]?.type === "text" ? output.content[0].text : "";
 	if (mode === "evaluate") {
@@ -363,8 +374,8 @@ function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { ver
 		if (/^Flow evaluate: did not pass\b/.test(text)) return { verified: true, success: false };
 	}
 	if (mode === "orchestrate" && params.orchestrate?.verify?.agent) {
-		const verifier = output.details.results.at(-1);
-		if (verifier && verifier.agent === params.orchestrate.verify.agent && !isFailed(verifier)) {
+		const verifier = acceptedVerifierResult(params, output);
+		if (verifier) {
 			return { verified: true, success: parseVerdict(integrationControlText(verifier)) === "pass" };
 		}
 	}
@@ -401,7 +412,7 @@ export function traceSummaryAttributes(mode: FlowMode, params: any, output: Mode
 		if (routeChoice) attrs["flow.route_choice"] = routeChoice;
 	}
 	if (mode === "orchestrate" && params.orchestrate?.verify) {
-		const verifier = results.at(-1);
+		const verifier = acceptedVerifierResult(params, output);
 		if (verifier) attrs["flow.verify_verdict"] = parseVerdict(integrationControlText(verifier));
 	}
 	return attrs;

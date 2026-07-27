@@ -410,10 +410,10 @@ export function prepareIntegrationHandoff(
 	} else {
 		handoff = compatibilityHandoff(result, options.policy);
 	}
-	result.handoff = handoff;
 	if (handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
 		return { error: storedError(incompleteEnvelopeError(handoff), options.policy) };
 	}
+	result.handoff = handoff;
 	return { handoff };
 }
 

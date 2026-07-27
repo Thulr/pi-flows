@@ -118,12 +118,14 @@ test("integration handoffs reject digest-mismatched artifacts", async () => {
 
 test("partial and blocked typed handoffs fail closed unless inclusion is explicit", () => {
 	for (const status of ["partial", "blocked"] as const) {
-		const rejected = prepareIntegrationHandoff(result(typedEnvelope({ status })), {
+		const rejectedResult = result(typedEnvelope({ status }));
+		const rejected = prepareIntegrationHandoff(rejectedResult, {
 			contract,
 			cwd: "/tmp",
 			policy,
 		});
 		assert.equal(rejected.error?.code, "RETURN_ENVELOPE_INCOMPLETE");
+		assert.equal(rejectedResult.handoff, undefined);
 
 		const included = prepareIntegrationHandoff(result(typedEnvelope({ status })), {
 			contract,
