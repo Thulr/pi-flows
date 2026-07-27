@@ -37,9 +37,15 @@ function constraintObservation(arm, constraint) {
 	return { known: Number.isFinite(arm.durationMs), value: arm.durationMs };
 }
 
+function stoppedOnBudget(arm) {
+	const details = arm.result?.details;
+	return details?.error?.code === "BUDGET_EXCEEDED"
+		|| (details?.results ?? []).some((child) => child?.error?.code === "BUDGET_EXCEEDED" || child?.stopReason === "budget_exceeded");
+}
+
 export function evaluateBindingConstraint(arm, constraint) {
 	const observed = constraintObservation(arm, constraint);
-	const status = !observed.known ? "unknown" : observed.value <= constraint.value ? "within" : "exceeded";
+	const status = stoppedOnBudget(arm) ? "stopped" : !observed.known ? "unknown" : observed.value <= constraint.value ? "within" : "exceeded";
 	return { status, observed: observed.known ? observed.value : null, limit: constraint.value, unit: constraint.unit };
 }
 
@@ -86,9 +92,9 @@ export function studentTCritical95(sampleSize) {
 	return z + ((z ** 3 + z) / (4 * df)) + ((5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2)) + ((3 * z ** 7 + 19 * z ** 5 + 17 * z ** 3 - 15 * z) / (384 * df ** 3));
 }
 
-function clusteredPairedDelta(rows, field, unit) {
+function clusteredPairedDelta(rows, field, unit, { comparableOnly = true } = {}) {
 	const pairs = rows.flatMap((row) => {
-		if (!row.comparable) return [];
+		if (comparableOnly && !row.comparable) return [];
 		const flows = field(row.flows);
 		const baseline = field(row.baseline);
 		return Number.isFinite(flows) && Number.isFinite(baseline) ? [{ caseId: row.caseId, flows, baseline, delta: flows - baseline }] : [];
@@ -155,14 +161,15 @@ function pairedReliability(rows) {
 }
 
 function metricSet(rows) {
+	const resourceDelta = (field, unit) => clusteredPairedDelta(rows, field, unit, { comparableOnly: false });
 	return {
 		quality: clusteredPairedDelta(rows, (arm) => arm.judgeScore, "judge-score"),
 		reliability: pairedReliability(rows),
-		costUsd: clusteredPairedDelta(rows, (arm) => arm.costKnown === false ? null : arm.cost, "USD"),
-		generatedTokens: clusteredPairedDelta(rows, (arm) => arm.generatedTokens, "tokens"),
-		totalTokens: clusteredPairedDelta(rows, (arm) => arm.tokens?.known === true ? arm.tokens.total : null, "tokens"),
-		endToEndLatencyMs: clusteredPairedDelta(rows, (arm) => arm.durationMs, "ms"),
-		workerTimeMs: clusteredPairedDelta(rows, (arm) => arm.workerTimeMs, "ms"),
+		costUsd: resourceDelta((arm) => arm.costKnown === false ? null : arm.cost, "USD"),
+		generatedTokens: resourceDelta((arm) => arm.generatedTokens, "tokens"),
+		totalTokens: resourceDelta((arm) => arm.tokens?.known === true ? arm.tokens.total : null, "tokens"),
+		endToEndLatencyMs: resourceDelta((arm) => arm.durationMs, "ms"),
+		workerTimeMs: resourceDelta((arm) => arm.workerTimeMs, "ms"),
 	};
 }
 

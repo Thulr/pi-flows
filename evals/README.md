@@ -304,17 +304,20 @@ The fair A/B contract is enforced rather than inferred:
   `generated_tokens:<count>` stop each arm at the first completed model-response
   accounting boundary that reaches its ceiling. The Codex CLI cannot enforce
   those two resource ceilings mid-execution, so they fail preflight unless the
-  plain Pi baseline is selected. An arm with unknown or over-limit usage makes
-  its pair inconclusive. With no flag, the declared constraint defaults to
-  `deadline:<--timeout>`. Legacy `--cap=<USD>` and `--arm-timeout=<ms>` are
-  aliases for cost and deadline declarations and cannot be combined with
-  `--constraint`. Non-binding resources remain observed outcomes; `--timeout`
-  is only a process-safety ceiling when cost or tokens is binding.
+  plain Pi baseline is selected. An arm with unknown or over-limit usage, or
+  whose runtime stops at the exact budget ceiling, makes its pair inconclusive.
+  With no flag, the declared constraint defaults to `deadline:<--timeout>`.
+  Legacy `--cap=<USD>` and `--arm-timeout=<ms>` are aliases for cost and
+  deadline declarations and cannot be combined with `--constraint`.
+  Non-binding resources remain observed outcomes; `--timeout` is only a
+  process-safety ceiling when cost or tokens is binding.
 - Only pairs where both arms complete without exclusion enter thulr traces and
   quality-lift summaries. Timeout, provider/infra, constraint, and model-parity
   failures make the whole pair inconclusive; artifacts still retain quality,
   reliability, cost, generated and total tokens, end-to-end latency, accumulated
-  worker time, attempts, and exclusion reasons.
+  worker time, attempts, and exclusion reasons. Resource deltas retain invalid
+  pairs whenever both finite observations are available, preventing failed or
+  budget-stopped executions from disappearing from efficiency results.
 - The default infra retry applies only to zero-token, zero-cost startup failures.
   It does not retry timeouts or completed answers and therefore cannot cherry-pick
   a better response.

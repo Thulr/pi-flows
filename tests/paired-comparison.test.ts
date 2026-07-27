@@ -5,7 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runPlainPi } from "../evals/baseline-pi.mjs";
-import { armExecutionTiming, buildPairedAnalysis, pairedArmOrder, studentTCritical95 } from "../evals/paired-experiment.mjs";
+import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, pairedArmOrder, studentTCritical95 } from "../evals/paired-experiment.mjs";
 import { pairedCaseWorkspaces } from "../evals/paired-workspace.mjs";
 
 function runCompare(...args: string[]) {
@@ -132,6 +132,56 @@ test("paired analysis clusters trials by case, slices results, and applies prede
 
 	const nonInferiority = buildPairedAnalysis(rawRows, { kind: "non_inferiority", margin: 0.1 });
 	assert.equal(nonInferiority.promotion.threshold, -0.1);
+});
+
+test("paired analysis retains invalid executions for finite resource deltas only", () => {
+	const infraBase = pairedRow("case-b", 1, { suite: "hard", taskFamily: "coding", flowsScore: 1, baselineScore: 0 });
+	const constraintInvalid = {
+		...pairedRow("case-a", 1, { suite: "hard", taskFamily: "coding", flowsScore: 1, baselineScore: 0 }),
+		comparable: false,
+		constraint: {
+			pairEligible: false,
+			flows: { status: "exceeded" },
+			baseline: { status: "within" },
+		},
+	};
+	const infraInvalid = {
+		...infraBase,
+		comparable: false,
+		flows: {
+			...infraBase.flows,
+			excluded: { reason: "infra", detail: "provider failed after reporting usage" },
+		},
+	};
+
+	const analysis = buildPairedAnalysis([constraintInvalid, infraInvalid]);
+	assert.equal(analysis.overall.quality.pairedRows, 0);
+	assert.equal(analysis.overall.reliability.pairedRows, 0);
+	assert.equal(analysis.overall.costUsd.pairedRows, 2);
+	assert.equal(analysis.overall.generatedTokens.pairedRows, 2);
+	assert.equal(analysis.overall.totalTokens.pairedRows, 2);
+	assert.equal(analysis.overall.endToEndLatencyMs.pairedRows, 2);
+	assert.equal(analysis.overall.workerTimeMs.pairedRows, 2);
+});
+
+test("budget-stopped arms are ineligible at the exact declared ceiling", () => {
+	const flows = {
+		cost: 1,
+		costKnown: true,
+		exclusion: null,
+		result: {
+			details: {
+				results: [{ stopReason: "budget_exceeded", error: { code: "BUDGET_EXCEEDED" } }],
+			},
+		},
+	};
+	const baseline = { cost: 0.5, costKnown: true, exclusion: null, result: { details: { results: [] } } };
+
+	const evaluated = evaluatePairConstraint(flows, baseline, { kind: "cost", value: 1, unit: "USD" });
+	assert.equal(evaluated.flows.observed, 1);
+	assert.equal(evaluated.flows.status, "stopped");
+	assert.equal(evaluated.baseline.status, "within");
+	assert.equal(evaluated.pairEligible, false);
 });
 
 test("paired binary inference counts cases rather than repeated trials", () => {

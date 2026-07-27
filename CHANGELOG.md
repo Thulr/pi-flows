@@ -41,6 +41,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- Paired evaluation now excludes arms stopped at an exact cost or generated-token
+  ceiling from quality judging, while retaining finite resource observations
+  from constraint-invalid and infrastructure-invalid pairs in efficiency deltas.
 - Eval, comparison, selection, and dry-run commands now reject malformed corpus
   metadata and stale source-backed expectations before model invocation. Every
   case declares a portfolio suite, task family, and task structure; reports show
