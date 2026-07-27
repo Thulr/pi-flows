@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { FlowContractTask, FlowParams, FlowReturnEnvelope, FlowTask } from "../extensions/pi-flows/schema.ts";
+import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { freshDir, runFlow } from "./stub-harness.ts";
 
 const returnSchema = {
@@ -33,6 +34,7 @@ const contract = {
 function envelope(overrides: Record<string, unknown> = {}) {
 	return JSON.stringify({
 		schemaVersion: "pi-flows.return-envelope.v1",
+		contractId: delegationContractId(contract),
 		status: "completed",
 		summary: "Found the identifier.",
 		evidence: [{ claim: "The identifier is xyzzy-42.", source: "settings.txt:1" }],
@@ -49,7 +51,8 @@ function envelope(overrides: Record<string, unknown> = {}) {
 test("public schemas expose typed contracts and runtime-enriched envelopes", () => {
 	assert.ok(FlowParams.properties.contract);
 	assert.ok(FlowContractTask.properties.contract);
-	assert.equal("contract" in FlowTask.properties, false);
+	assert.ok(FlowTask.properties.contract);
+	assert.ok(FlowReturnEnvelope.properties.contractId);
 	assert.ok(FlowReturnEnvelope.properties.usage);
 });
 

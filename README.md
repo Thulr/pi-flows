@@ -170,8 +170,10 @@ Every spawning call also requires `"why"` — one sentence naming the reason del
 { "agent": "recon", "task": "Find the API routes for billing", "why": "user asked for a delegated read-only scout" }
 ```
 
-For machine-checked single, chain, or evaluate handoffs, use a typed `contract`
-instead of (or alongside) prose `task`:
+For machine-checked handoffs, use a typed `contract` instead of (or alongside)
+prose `task`. Contracts work in single/chain/evaluate and on integration-mode
+tasks, nodes, phases, writers, voters, advocates, evidence sections, and final
+debrief/integrator roles:
 
 ```json
 {
@@ -196,11 +198,15 @@ instead of (or alongside) prose `task`:
 }
 ```
 
-The child returns a validated `pi-flows.return-envelope.v1` containing status,
+The child returns a validated `pi-flows.return-envelope.v1` containing a stable
+`contractId`, status,
 evidence, artifact references/digests, changed state, unresolved questions,
 retry information, schema-checked `data`, and runtime usage when available.
-Schema or digest failures stop before downstream consumption. Existing
-`task`, `returnContract`, and `requireEvidence` calls keep their prose behavior.
+Missing/stale identity, schema, artifact, or digest failures stop before downstream
+dispatch, synthesis, persistence, or merge. Existing prose results remain
+supported through an explicit `pi-flows.handoff-envelope.v1` compatibility
+envelope with source provenance. Typed `partial`/`blocked` handoffs fail closed
+unless `incompleteHandoffPolicy:"include"` records an explicit policy decision.
 Contract budgets tighten child timeouts and enforce cost/token limits separately
 from flow-wide budgets.
 See [Return contracts](./docs/flow-reference.md#return-contracts-and-write-isolation).
@@ -354,9 +360,12 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
 }
 ```
 
-Each work phase persists its redacted output before the next phase. Approval nodes
-prompt in the interactive UI and pause safely in headless runs; repeat the same
-call with `workflow.resume:true` to continue from the persisted state.
+Each work phase persists its redacted output and validated handoff envelope
+before the next phase. Approval nodes prompt in the interactive UI and pause
+safely in headless runs; repeat the same call with `workflow.resume:true` to
+continue after each sanitized envelope is verified against its content-free
+validation attestation and current contract identity. Existing version-1 state
+files migrate to legacy compatibility envelopes automatically.
 
 ### Worktree (isolated writers and integration)
 
@@ -453,7 +462,7 @@ Any mode accepts a cumulative spend ceiling and a trace sink:
 { "task": "...", "orchestrate": {}, "why": "...", "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
 ```
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling prevents subsequent child spawns after the completed response. `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling prevents subsequent child spawns after the completed response. `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends one OpenInference-shaped JSON span per child plus a root span — JSONL any OpenTelemetry backend, or a coding agent, can read. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Eval harnesses also set `traceContext` so `details.trace` and eval artifacts link stable run/case/trial/arm ids to the exact runtime trace and root span without weakening redaction. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
 
 ### Human checkpoints and Reflexion
 

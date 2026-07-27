@@ -1,8 +1,10 @@
-import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
-import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
+import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { incompleteHandoffSummary } from "../delegation.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 
 const VOTER_STANCES = [
 	"Primary solver: answer the task directly and state the strongest evidence for your conclusion.",
@@ -46,7 +48,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		);
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("vote")([], error) };
 	}
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = goal;
 
 	// Build voters: explicit heterogeneous list (vendor-diverse) or one agent repeated `count` times.
 	let voters: FlowAgentRefInput[];
@@ -91,18 +93,29 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	const diversifyVoters = shouldDiversifyVoterPrompts(voters);
+	const voterPlans: IntegrationRunPlan[] = [];
+	for (const [index, voter] of voters.entries()) {
+		const planned = integrationRunPlan(deps, voter, voterTask(contractedGoal, index, voters.length, diversifyVoters), {
+			fallbackContract: params.contract as DelegationContract | undefined,
+			returnContract: params.returnContract,
+			requireEvidence: params.requireEvidence,
+			placeholderTask: goal,
+		});
+		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")([], planned.error) };
+		voterPlans.push(planned.plan!);
+	}
 	const voterResults = await runAgentFanout(
 		deps,
 		"vote",
-		voters.map((voter, index) => ({
-			ref: voter,
-			task: voterTask(contractedGoal, index, voters.length, diversifyVoters),
-			placeholderTask: goal,
-		})),
+		voterPlans,
 		concurrency,
 		[],
 		(done, total) => `Flow vote: ${done}/${total} voters done`,
 	);
+	const voterHandoffError = acceptIntegrationResults(deps, voterPlans, voterResults);
+	if (voterHandoffError) {
+		return { content: [{ type: "text", text: formatFlowError(voterHandoffError) }], details: makeDetails("vote")(voterResults, voterHandoffError) };
+	}
 
 	// Vendor-diversity check: same-model voters share training-data blind spots, so
 	// they can agree *wrongly* (effective-agent-patterns §Parallelization). Warn when
@@ -139,19 +152,27 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			"Determine the consensus answer. Note where the voters agree and disagree, weight by reasoning quality, and return the single best answer. If there is no majority, say so and give your best judgment.",
 		].join("\n");
-		const aggregated = await runAgentRef(deps, aggregatorRef, aggregatorTask, "vote", results.length + 1, results);
+		const planned = integrationRunPlan(deps, aggregatorRef, aggregatorTask, {
+			fallbackContract: params.contract as DelegationContract | undefined,
+			returnContract: params.returnContract,
+			requireEvidence: params.requireEvidence,
+		});
+		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")(results, planned.error) };
+		const aggregated = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "vote", results.length + 1, results, planned.plan!.limits);
 		results.push(aggregated);
 		if (isFailed(aggregated)) {
 			return { content: [{ type: "text", text: sanitizeText(`Flow vote: aggregator "${aggregatorRef.agent}" failed.\n\n${resultText(aggregated)}`, policy) }], details: makeDetails("vote")(results) };
 		}
+		const aggregatorHandoffError = acceptIntegrationResult(deps, planned.plan!, aggregated);
+		if (aggregatorHandoffError) return { content: [{ type: "text", text: formatFlowError(aggregatorHandoffError) }], details: makeDetails("vote")(results, aggregatorHandoffError) };
 		return {
-			content: [{ type: "text", text: capModelVisibleText(`${diversityWarning}${ballotWarningNote}Flow vote: ${succeeded.length}/${voterResults.length} voters succeeded; aggregated by ${aggregatorRef.agent}.\n\n${sanitizeText(resultText(aggregated), policy)}`) }],
+			content: [{ type: "text", text: capModelVisibleText(`${diversityWarning}${ballotWarningNote}Flow vote: ${succeeded.length}/${voterResults.length} voters succeeded; aggregated by ${aggregatorRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(aggregated), policy)}`) }],
 			details: makeDetails("vote")(results),
 		};
 	}
 
 	return {
-		content: [{ type: "text", text: capModelVisibleText(`${diversityWarning}${ballotWarningNote}Flow vote: ${succeeded.length}/${voterResults.length} voters succeeded. No aggregator set — review the ${succeeded.length} answers below.\n\n${ballots}`) }],
+		content: [{ type: "text", text: capModelVisibleText(`${diversityWarning}${ballotWarningNote}Flow vote: ${succeeded.length}/${voterResults.length} voters succeeded.${incompleteHandoffSummary(results)} No aggregator set — review the ${succeeded.length} answers below.\n\n${ballots}`) }],
 		details: makeDetails("vote")(results),
 	};
 }

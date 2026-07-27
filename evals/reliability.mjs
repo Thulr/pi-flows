@@ -89,7 +89,7 @@ function portfolioReliability(cases, field, pooledTrials, k) {
 	return { ...pooled, passAtK: averageCaseMetric("passAtK"), passToK: averageCaseMetric("passToK") };
 }
 
-export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, generatedAt = new Date().toISOString() }) {
+export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, generatedAt = new Date().toISOString(), runId, runtimeTraceFile }) {
 	const byCase = new Map();
 	for (const trial of rawTrials) byCase.set(trial.caseId, [...(byCase.get(trial.caseId) ?? []), trial]);
 	const cases = [...byCase.entries()].map(([caseId, trials]) => caseReliability(caseId, trials, subjectTrials));
@@ -98,6 +98,8 @@ export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples,
 	return {
 		schemaVersion: "pi-flows.reliability.v1",
 		generatedAt,
+		runId: runId ?? null,
+		runtimeTraceFile: runtimeTraceFile ?? null,
 		subjectTrials,
 		judgeSamples,
 		cases,

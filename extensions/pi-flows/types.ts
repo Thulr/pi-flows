@@ -100,6 +100,8 @@ export const FLOW_ERROR_CODES = [
 	"PROJECT_AGENT_APPROVAL_DENIED",
 	"INVALID_DELEGATION_CONTRACT",
 	"RETURN_ENVELOPE_INVALID",
+	"RETURN_CONTRACT_MISMATCH",
+	"RETURN_ENVELOPE_INCOMPLETE",
 	"RETURN_DIGEST_MISMATCH",
 	"CHILD_PROTOCOL_ERROR",
 	"CHILD_EXIT_NONZERO",
@@ -175,6 +177,7 @@ export interface FlowRunResult {
 	stdoutParseErrors?: number;
 	stdoutSample?: string;
 	envelope?: DelegationReturnEnvelope;
+	handoff?: DelegationHandoffEnvelope;
 }
 
 export interface FlowDetails {
@@ -198,6 +201,7 @@ export interface FlowDetails {
 	agents?: Array<Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "tools">>;
 	discoveryIssues?: DiscoveryIssue[];
 	error?: FlowError;
+	trace?: FlowTraceLink;
 }
 
 export interface FlowTaskInput {
@@ -209,6 +213,7 @@ export interface FlowTaskInput {
 	tools?: string;
 	returnContract?: string;
 	requireEvidence?: boolean;
+	contract?: DelegationContract;
 }
 
 export interface DelegationContract {
@@ -235,6 +240,7 @@ export interface DelegationContract {
 
 export interface DelegationReturnEnvelope {
 	schemaVersion: "pi-flows.return-envelope.v1";
+	contractId?: string;
 	status: "completed" | "partial" | "blocked" | "failed";
 	summary: string;
 	evidence: Array<{ claim: string; source: string }>;
@@ -253,6 +259,47 @@ export interface FlowAgentRefInput {
 	tier?: string;
 	tools?: string;
 	cwd?: string;
+	contract?: DelegationContract;
+}
+
+export type IncompleteHandoffPolicy = "fail" | "include";
+
+export interface DelegationHandoffEnvelope {
+	schemaVersion: "pi-flows.handoff-envelope.v1";
+	contractId: string | null;
+	compatibility: "typed" | "legacy-prose";
+	status: "completed" | "partial" | "blocked" | "failed";
+	summary: string;
+	evidence: Array<{ claim: string; source: string }>;
+	artifactReferences: Array<{ path: string }>;
+	digests: Array<{ artifact: string; algorithm: "sha256"; value: string }>;
+	changedState: string[];
+	unresolvedQuestions: string[];
+	retry: { retryable: boolean; reason?: string; afterMs?: number };
+	data: unknown;
+	provenance: {
+		agent: string;
+		step?: number;
+	};
+	usage?: UsageStats;
+}
+
+export interface FlowTraceContext {
+	runId: string;
+	caseId: string;
+	trialId: string;
+	trialIndex?: number;
+	arm?: string;
+	attempt?: number;
+}
+
+export interface FlowTraceLink {
+	health: "recorded" | "missing";
+	traceFile: string;
+	traceId: string;
+	rootSpanId: string;
+	context?: FlowTraceContext;
+	error?: string;
 }
 
 export interface CapturePolicy {

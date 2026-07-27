@@ -40,8 +40,8 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
   }
 }
 
-// 0.2 adds five runtime modes and their public contracts, and the seam refactor
-// adds the shared child-process protocol module; keep explicit headroom without
-// excluding the documentation users need to invoke them correctly.
-assert.ok(pack.unpackedSize < 450_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Typed integration handoffs and runtime/eval trace linkage add public runtime
+// modules and documentation; retain explicit headroom without excluding the
+// reference material users need to invoke those contracts correctly.
+assert.ok(pack.unpackedSize < 500_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

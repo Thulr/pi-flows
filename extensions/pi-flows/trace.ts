@@ -1,10 +1,9 @@
-import { randomUUID } from "node:crypto";
-import * as fs from "node:fs/promises";
-import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { emptyUsage, type CapturePolicy, type FlowMode, type FlowRunResult, type ModeOutput, type RecordSpan, type UsageStats } from "./types.ts";
-import { capModelVisibleText, isFailed, resultText, safePath } from "./sanitize.ts";
+import { emptyUsage, type FlowMode, type FlowRunResult, type ModeOutput, type UsageStats } from "./types.ts";
+import { isFailed, safePath } from "./sanitize.ts";
 import { parseVerdict } from "./parse.ts";
 import { debateRounds, searchTopology, successfulRuns } from "./topology.ts";
+import { integrationControlText } from "./delegation.ts";
+export { makeTraceSink, stableTraceIds, type TraceSink } from "./trace-sink.ts";
 
 export function formatTokens(count: number): string {
 	if (count < 1000) return String(count);
@@ -25,85 +24,6 @@ export function formatUsage(usage: UsageStats, model?: string, durationMs?: numb
 	if (durationMs !== undefined) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
 	if (model) parts.push(model);
 	return parts.join(" ");
-}
-
-export interface TraceSink {
-	record: RecordSpan;
-	finalize: (status: { ok: boolean }, attributes?: Record<string, unknown>) => Promise<void>;
-}
-
-/** Emit redacted OpenInference-shaped child and root spans to JSONL. */
-export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, traceLabel?: string): TraceSink {
-	const traceId = randomUUID().replace(/-/g, "");
-	const rootSpanId = randomUUID().replace(/-/g, "");
-	const rootStart = Date.now();
-
-	const append = (obj: unknown): Promise<void> =>
-		withFileMutationQueue(traceFile, async () => {
-			try {
-				await fs.appendFile(traceFile, `${JSON.stringify(obj)}\n`, "utf8");
-			} catch {
-				// Tracing is best-effort; never let an export failure break a flow.
-			}
-		});
-
-	return {
-		record(result) {
-			const end = Date.now();
-			const start = result.durationMs !== undefined ? end - result.durationMs : end;
-			const attributes: Record<string, unknown> = {
-				"openinference.span.kind": "AGENT",
-				"flow.mode": mode,
-				"flow.trace_label": traceLabel,
-				"flow.agent": result.agent,
-				"flow.agent_source": result.agentSource,
-				"flow.step": result.step,
-				"flow.cost_usd": result.usage.cost,
-				"flow.turns": result.usage.turns,
-				"flow.duration_ms": result.durationMs,
-				"flow.stop_reason": result.stopReason,
-				"flow.error_code": result.error?.code,
-				"llm.model_name": result.model,
-				"llm.token_count.prompt": result.usage.input,
-				"llm.token_count.completion": result.usage.output,
-				"llm.token_count.total": result.usage.contextTokens || result.usage.input + result.usage.output,
-			};
-			if (policy.recordContent) {
-				attributes["input.value"] = result.task;
-				attributes["output.value"] = capModelVisibleText(resultText(result));
-			}
-			void append({
-				trace_id: traceId,
-				span_id: randomUUID().replace(/-/g, ""),
-				parent_span_id: rootSpanId,
-				name: `flow.${mode}.${result.agent}`,
-				start_time_unix_ms: start,
-				end_time_unix_ms: end,
-				status: { code: isFailed(result) ? "ERROR" : "OK", message: result.error?.code },
-				attributes,
-			});
-		},
-		async finalize(status, attributes = {}) {
-			const end = Date.now();
-			await append({
-				trace_id: traceId,
-				span_id: rootSpanId,
-				parent_span_id: null,
-				name: `flow.${mode}`,
-				start_time_unix_ms: rootStart,
-				end_time_unix_ms: end,
-				status: { code: status.ok ? "OK" : "ERROR" },
-				attributes: {
-					"openinference.span.kind": "CHAIN",
-					"flow.mode": mode,
-					"flow.trace_label": traceLabel,
-					...attributes,
-					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
-					"flow.execution_success": status.ok,
-				},
-			});
-		},
-	};
 }
 
 export interface TraceSpanRecord {
@@ -436,6 +356,17 @@ export function criticalPathForMode(mode: FlowMode, params: any, results: FlowRu
 	return undefined;
 }
 
+function acceptedVerifierResult(params: any, output: ModeOutput): FlowRunResult | undefined {
+	if (!params.orchestrate?.verify?.agent) return undefined;
+	const verifier = output.details.results.at(-1);
+	return verifier
+		&& verifier.agent === params.orchestrate.verify.agent
+		&& !isFailed(verifier)
+		&& verifier.handoff
+		? verifier
+		: undefined;
+}
+
 function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { verified: boolean; success?: boolean } {
 	const text = output.content[0]?.type === "text" ? output.content[0].text : "";
 	if (mode === "evaluate") {
@@ -443,9 +374,9 @@ function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { ver
 		if (/^Flow evaluate: did not pass\b/.test(text)) return { verified: true, success: false };
 	}
 	if (mode === "orchestrate" && params.orchestrate?.verify?.agent) {
-		const verifier = output.details.results.at(-1);
-		if (verifier && verifier.agent === params.orchestrate.verify.agent && !isFailed(verifier)) {
-			return { verified: true, success: parseVerdict(resultText(verifier)) === "pass" };
+		const verifier = acceptedVerifierResult(params, output);
+		if (verifier) {
+			return { verified: true, success: parseVerdict(integrationControlText(verifier)) === "pass" };
 		}
 	}
 	return { verified: false };
@@ -481,8 +412,8 @@ export function traceSummaryAttributes(mode: FlowMode, params: any, output: Mode
 		if (routeChoice) attrs["flow.route_choice"] = routeChoice;
 	}
 	if (mode === "orchestrate" && params.orchestrate?.verify) {
-		const verifier = results.at(-1);
-		if (verifier) attrs["flow.verify_verdict"] = parseVerdict(resultText(verifier));
+		const verifier = acceptedVerifierResult(params, output);
+		if (verifier) attrs["flow.verify_verdict"] = parseVerdict(integrationControlText(verifier));
 	}
 	return attrs;
 }

@@ -128,6 +128,8 @@ export const pickArm = (a) => ({
 	task: a.task,
 	model: a.modelName,
 	workspaceSnapshotId: a.workspaceSnapshotId,
+	runtimeTrace: a.runtimeTrace ?? null,
+	scoreFamilies: a.scoreFamilies ?? null,
 	answer: a.exclusion ? "" : (a.answer ?? "").slice(0, 1000),
 	evidence: {
 		objective: a.objective?.notes ?? null,

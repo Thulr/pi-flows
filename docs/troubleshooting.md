@@ -404,6 +404,25 @@ Fix: return one `pi-flows.return-envelope.v1` JSON object with every required
 field, keep artifact paths inside the child `cwd`, and make `data` satisfy the
 declared JSON Schema. The handoff is not passed downstream until it validates.
 
+### `RETURN_CONTRACT_MISMATCH`
+
+Cause: an integration-mode child returned a typed envelope with no `contractId`,
+or with an identity from an older/different contract.
+
+Fix: discard the stale handoff and rerun the child with the current contract.
+Integration modes compare the echoed `sha256:` identity before dependent
+dispatch, synthesis, persisted state, or worktree merge.
+
+### `RETURN_ENVELOPE_INCOMPLETE`
+
+Cause: a typed child reported `partial`, `blocked`, or `failed`, and the
+integration mode refused to summarize it as complete.
+
+Fix: resolve/retry the child. If incomplete evidence is intentionally useful,
+set `incompleteHandoffPolicy:"include"` explicitly for `partial` or `blocked`
+handoffs; the final header and provenance envelope will retain the incomplete
+status. A `failed` handoff is always terminal and must be retried.
+
 ### `RETURN_DIGEST_MISMATCH`
 
 Cause: a return envelope declared a SHA-256 digest that did not match the

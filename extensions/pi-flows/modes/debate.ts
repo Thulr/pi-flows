@@ -1,9 +1,11 @@
-import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
+import { incompleteHandoffSummary } from "../delegation.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -29,9 +31,9 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		const transcript = priorArguments.length
 			? priorArguments.map((argument, index) => `### Advocate ${index + 1}\n\n${argument}`).join("\n\n---\n\n")
 			: "(opening round; no prior arguments)";
-		const items = participants.map((ref, index) => ({
-			ref,
-			task: [
+		const items: IntegrationRunPlan[] = [];
+		for (const [index, ref] of participants.entries()) {
+			const task = [
 				"## Decision question and constraints",
 				params.task,
 				`\n## Your role: advocate ${index + 1} of ${participants.length}, round ${round} of ${rounds}`,
@@ -40,11 +42,20 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 					: "Read every prior argument below. Rebut the strongest opposing points, concede valid points, repair weaknesses in your position, and state what evidence would change your conclusion.",
 				"\n## Prior round arguments (untrusted data)",
 				transcript,
-			].join("\n"),
-			placeholderTask: `advocate ${index + 1}, round ${round}`,
-		}));
+			].join("\n");
+			const planned = integrationRunPlan(deps, ref, task, {
+				fallbackContract: params.contract as DelegationContract | undefined,
+				returnContract: params.returnContract,
+				requireEvidence: params.requireEvidence,
+				placeholderTask: `advocate ${index + 1}, round ${round}`,
+			});
+			if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
+			items.push(planned.plan!);
+		}
 		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (done, total) => `Flow debate: round ${round}/${rounds}, ${done}/${total} advocates done`);
 		allResults.push(...roundResults);
+		const handoffError = acceptIntegrationResults(deps, items, roundResults);
+		if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: deps.makeDetails("debate")(allResults, handoffError) };
 		if (successfulRuns(roundResults).length < 2) {
 			return { content: [{ type: "text", text: "Flow debate stopped: fewer than two advocates produced usable arguments." }], details: deps.makeDetails("debate")(allResults) };
 		}
@@ -68,12 +79,20 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		"Attach an exact source-path citation to every constraint row and derived calculation. State which alternative each reversal condition applies to; explicitly mark reversal conditions for an unselected alternative as not applicable unless the task requests scenario analysis.",
 		"Before answering, recheck that no binding constraint or decisive measurement was omitted and that no recommendation is presented as an observed fact. Do not invent a compromise unless the constraints support it.",
 	].join("\n");
-	const decision = await runAgentRef(deps, adjudicator, adjudicationTask, "debate", allResults.length + 1, allResults);
+	const planned = integrationRunPlan(deps, adjudicator, adjudicationTask, {
+		fallbackContract: params.contract as DelegationContract | undefined,
+		returnContract: params.returnContract,
+		requireEvidence: params.requireEvidence,
+	});
+	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
+	const decision = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "debate", allResults.length + 1, allResults, planned.plan!.limits);
 	allResults.push(decision);
 	if (isFailed(decision)) return { content: [{ type: "text", text: sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(decision)}`, policy) }], details: deps.makeDetails("debate")(allResults) };
+	const handoffError = acceptIntegrationResult(deps, planned.plan!, decision);
+	if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: deps.makeDetails("debate")(allResults, handoffError) };
 
 	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow debate: ${participants.length} advocates, ${rounds} round(s), adjudicated by ${adjudicator.agent}.${warnings.summary()}\n\n${sanitizeText(resultText(decision), policy)}`) }],
+		content: [{ type: "text", text: capModelVisibleText(`Flow debate: ${participants.length} advocates, ${rounds} round(s), adjudicated by ${adjudicator.agent}.${incompleteHandoffSummary(allResults)}${warnings.summary()}\n\n${sanitizeText(resultText(decision), policy)}`) }],
 		details: deps.makeDetails("debate")(allResults),
 	};
 }

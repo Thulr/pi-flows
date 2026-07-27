@@ -74,6 +74,48 @@ test("traceSpansForCase carries stable base-case and unique trial identifiers", 
 	assert.equal(graded.attributes["thulr.trial_index"], 2);
 });
 
+test("traceSpansForCase links the exact runtime trace and separates score families", () => {
+	const spans = traceSpansForCase({
+		name: "case-a::trial-002",
+		baseCaseId: "case-a",
+		trialId: "case-a::trial-002",
+		trialIndex: 2,
+		evalRunId: "run-abc",
+		answer: "42",
+		criterion: "answer is correct",
+		endMs: 10,
+		runtimeTrace: {
+			health: "recorded",
+			traceFile: ".thulr/runs/runtime.jsonl",
+			traceId: "a".repeat(32),
+			rootSpanId: "b".repeat(32),
+			context: {
+				runId: "run-abc",
+				caseId: "case-a",
+				trialId: "case-a::trial-002",
+				trialIndex: 2,
+				arm: "flows",
+			},
+		},
+		scoreFamilies: {
+			execution: { available: true, pass: true, reason: null },
+			verifiedOutcome: { available: true, pass: false, score: 0.5 },
+			policyCompliance: { available: true, pass: true, reasons: [] },
+			traceHealth: { available: true, pass: true, status: "recorded", reason: null },
+		},
+	});
+	const answer = spans.find((span) => span.attributes["output.value"] !== undefined);
+	assert.equal(answer.attributes["pi_flows.eval_run_id"], "run-abc");
+	assert.equal(answer.attributes["pi_flows.runtime_trace.file"], ".thulr/runs/runtime.jsonl");
+	assert.equal(answer.attributes["pi_flows.runtime_trace.trace_id"], "a".repeat(32));
+	assert.equal(answer.attributes["pi_flows.runtime_trace.root_span_id"], "b".repeat(32));
+	assert.equal(answer.attributes["pi_flows.runtime_trace.health"], "recorded");
+	assert.equal(answer.attributes["pi_flows.score.execution.pass"], true);
+	assert.equal(answer.attributes["pi_flows.score.verified_outcome.pass"], false);
+	assert.equal(answer.attributes["pi_flows.score.verified_outcome.score"], 0.5);
+	assert.equal(answer.attributes["pi_flows.score.policy_compliance.pass"], true);
+});
+
 test("traceSpansForCase carries thulr 0.3 named criteria, dimension labels, and judge-only flags", () => {
 	const span = traceSpansForCase({
 		name: "review-case",

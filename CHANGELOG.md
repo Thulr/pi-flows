@@ -10,6 +10,28 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Parallel, orchestrate, graph, workflow, worktree, vote, debate, and dossier
+  now validate typed return envelopes before every dependent dispatch,
+  synthesis, persistence, or merge. Stable contract identities reject missing
+  and stale returns; partial/blocked statuses fail closed unless explicitly
+  included, while failed handoffs remain terminal; provenance-bearing
+  compatibility envelopes keep legacy prose callers working. Typed verifier
+  verdicts are read from validated envelope data. Worktree conflict resolution
+  receives the validated evidence/artifact provenance from both sides of the
+  merge, and rejected worker handoffs return the retained branch/worktree
+  recovery locations. Workflow resume verifies policy-safe handoff attestations
+  before downstream reuse while retaining included incomplete provenance in
+  its final header. Version-1 workflow state migrates to version-2 compatibility
+  envelopes.
+- Eval outputs now link stable run/case/trial/arm identities to the exact
+  runtime trace and root span. Single-arm reliability and paired-comparison
+  artifacts retain trace-health evidence plus separate execution,
+  verified-outcome, and policy-compliance score families; missing trace
+  telemetry no longer masquerades as an agent failure. Dry runs use separate
+  runtime trace files so mock spans cannot truncate real-run diagnostics, and
+  typed verifier verdicts remain consistent between results and root trace
+  summaries. Trace context, paths, and write failures follow the same redaction
+  and bounding policy as other returned details.
 - `flow` now accepts a typed delegation `contract` in single, chain, and
   evaluate paths. Children return a validated, usage-enriched
   `pi-flows.return-envelope.v1`; JSON Schema, artifact path, and SHA-256 digest

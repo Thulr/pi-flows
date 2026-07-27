@@ -1,5 +1,6 @@
 import { MODEL_VISIBLE_OUTPUT_CAP, type CapturePolicy, type FlowRunResult } from "./types.ts";
 import { capBytes, resultText, sanitizeText, scanForInjection, stripControlChars } from "./sanitize.ts";
+import { canonicalHandoff } from "./delegation.ts";
 
 export interface PreparedHandoff {
 	text: string;
@@ -46,7 +47,7 @@ export function prepareTextHandoff(text: string, policy: CapturePolicy, cap = MO
 }
 
 export function prepareResultHandoff(result: FlowRunResult, policy: CapturePolicy, cap = MODEL_VISIBLE_OUTPUT_CAP): PreparedHandoff {
-	return prepareTextHandoff(resultText(result), policy, cap);
+	return prepareTextHandoff(result.handoff ? canonicalHandoff(result.handoff) : resultText(result), policy, cap);
 }
 
 export function injectionNotice(label: string, warnings: Iterable<string>): string {

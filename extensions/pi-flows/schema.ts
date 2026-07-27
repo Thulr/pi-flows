@@ -34,6 +34,7 @@ export const FlowDelegationContract = Type.Object({
 
 export const FlowReturnEnvelope = Type.Object({
 	schemaVersion: Type.Literal("pi-flows.return-envelope.v1"),
+	contractId: Type.Optional(Type.String({ pattern: "^sha256:[a-fA-F0-9]{64}$", description: "Stable digest of the dispatched typed contract. Required when an integration mode consumes the envelope." })),
 	status: StringEnum(["completed", "partial", "blocked", "failed"] as const),
 	summary: Type.String({ minLength: 1 }),
 	evidence: Type.Array(Type.Object({ claim: Type.String({ minLength: 1 }), source: Type.String({ minLength: 1 }) })),
@@ -76,14 +77,12 @@ const FlowTaskProperties = {
 	),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this agent's task. Use it to specify summary shape, required fields, or max length." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return.", default: false })),
+	contract: Type.Optional(FlowDelegationContract),
 };
 
 export const FlowTask = Type.Object(FlowTaskProperties);
 
-export const FlowContractTask = Type.Object({
-	...FlowTaskProperties,
-	contract: Type.Optional(FlowDelegationContract),
-});
+export const FlowContractTask = Type.Object(FlowTaskProperties);
 
 export const FlowAgentRef = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run for this role. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
@@ -91,6 +90,7 @@ export const FlowAgentRef = Type.Object({
 	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this role's process" })),
+	contract: Type.Optional(FlowDelegationContract),
 });
 
 export const FlowEvaluateOperatorRef = Type.Object({
@@ -176,6 +176,7 @@ export const FlowGraphNode = Type.Object({
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this node's task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this node's return.", default: false })),
+	contract: Type.Optional(FlowDelegationContract),
 });
 
 export const FlowGraph = Type.Object({
@@ -218,6 +219,7 @@ export const FlowWorkflowPhase = Type.Object({
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this phase task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this phase output.", default: false })),
+	contract: Type.Optional(FlowDelegationContract),
 });
 
 export const FlowWorkflow = Type.Object({
@@ -238,6 +240,7 @@ export const FlowWorktreeTask = Type.Object({
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this worker task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require evidence in this worker output.", default: true })),
+	contract: Type.Optional(FlowDelegationContract),
 });
 
 export const FlowWorktree = Type.Object({
@@ -338,6 +341,18 @@ export const FlowParams = Type.Object({
 	maxGeneratedTokens: Type.Optional(Type.Number({ description: "Cumulative generated/output token ceiling across every child in this flow tree. Once reached at a completed model-response boundary, the active child stops and no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
 	traceFile: Type.Optional(Type.String({ description: "Append an OpenInference-shaped JSON span per child run to this file (JSONL any OpenTelemetry pipeline can ingest). One span per delegated agent plus a root span for the flow call, with redacted token/cost/model/status attributes. Also settable via PI_FLOWS_TRACE_FILE. Relative paths resolve against cwd." })),
 	traceLabel: Type.Optional(Type.String({ description: "Use-case label attached to trace spans so reports can group TPSO and success rate by journey." })),
+	traceContext: Type.Optional(Type.Object({
+		runId: Type.String({ minLength: 1, description: "Stable identifier for the enclosing eval or runtime run." }),
+		caseId: Type.String({ minLength: 1, description: "Stable case identifier." }),
+		trialId: Type.String({ minLength: 1, description: "Unique trial identifier within the run." }),
+		trialIndex: Type.Optional(Type.Number({ minimum: 1 })),
+		arm: Type.Optional(Type.String({ minLength: 1, description: "Paired-comparison or experiment arm identity." })),
+		attempt: Type.Optional(Type.Number({ minimum: 1, description: "Execution attempt within a retried trial arm." })),
+	}, { description: "Stable runtime trace linkage supplied by eval harnesses. Identifiers are copied to every span and returned with the exact root span reference." })),
+	incompleteHandoffPolicy: Type.Optional(StringEnum(["fail", "include"] as const, {
+		description: 'How integration modes handle typed child envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
+		default: "fail",
+	})),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to delegated agent prompts and synthesis prompts. Use it to prevent summary loss on handoffs." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in delegated outputs when a return contract is appended.", default: false })),
 	allowSharedWriteCwd: Type.Optional(Type.Boolean({ description: "Allow concurrent write-capable agents to share a cwd. Default false; prefer distinct cwd/worktrees.", default: false })),

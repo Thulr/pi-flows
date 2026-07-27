@@ -1,22 +1,10 @@
-// Flows-vs-baseline A/B: does pi-flows improve quality on the same Codex model?
-//
-// For each case/trial it runs TWO paired arms on the SAME subject model, task,
-// trial index, and immutable workspace snapshot:
-//   flows : the case's flow params — pi-flows' specialist agents + orchestration
-//   baseline : direct Codex by default; optionally plain `pi --no-extensions`
-//
-//   npm run eval:compare -- --trials=5 --constraint=deadline:600000
-//   npm run eval:compare -- --baseline=pi --constraint=cost:2 --non-inferiority-margin=0.02
-//   npm run eval:compare -- --baseline=pi --constraint=generated_tokens:20000 --improvement-margin=0.03
-//   npm run eval:compare -- --duel              # add native thulr pairwise quality judging
-//   npm run eval:compare -- --filter=vote       # scope to keep cost down
-//   npm run eval:compare -- --model=openai-codex/gpt-5.5 --judge-model=anthropic/claude-sonnet-4-6
-//   npm run eval:compare -- --write=evals/compare.json  # raw rows + paired analysis
-//   npm run eval:compare -- --dry-run           # wiring smoke (canned results, no model)
-//
-// The shared phases (argv, preflight, case->span projection, judge) live in
-// evals/pipeline.mjs; the report arithmetic and per-arm lines in
-// evals/compare-report.mjs. This file wires them and owns the A/B layout.
+// Paired A/B harness: runs two named arms on the same subject model, task,
+// trial identity, binding constraint, and immutable workspace snapshot.
+// The default compares full Pi Flows against direct Codex; `--baseline=pi`
+// selects plain headless Pi. Repeated trials, named ablations, promotion rules,
+// trace linkage, and output flags are documented in evals/README.md.
+// Shared phases live in evals/pipeline.mjs; report arithmetic and per-arm
+// lines live in evals/compare-report.mjs. This file owns the A/B layout.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { codexModelFromPi, runCodex } from "./baseline-codex.mjs";
@@ -35,6 +23,7 @@ import { pairedCaseWorkspaces } from "./paired-workspace.mjs";
 import { calibrationSpanFields, caseSpanFields, inspectTraceReport, judgeTraceRun, printScoreDeltas, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
+import { defaultRuntimeTracePath, evalRunId, measurementRuntimeEvidence, runtimeTraceContext } from "./runtime-trace.mjs";
 import * as thulr from "./thulr.mjs";
 
 loadDotenv();
@@ -113,6 +102,8 @@ process.env.PI_FLOWS_JUDGE_MODEL = judgeModel;
 const TRACE_DIR = p(flag("trace-dir", ".thulr/runs"));
 const FLOWS_TRACE = p(flag("flows-trace", ".thulr/runs/ab-flows.trace.jsonl"));
 const PLAIN_TRACE = p(flag("baseline-trace", flag("plain-trace", `.thulr/runs/ab-${baselineSlug}.trace.jsonl`)));
+const EVAL_RUN_ID = evalRunId(flag("run-id", null));
+const RUNTIME_TRACE = p(flag("runtime-trace", defaultRuntimeTracePath({ dryRun, comparison: true })));
 const FLOWS_RUN = p(".thulr/runs/ab-flows.json");
 const PLAIN_RUN = p(`.thulr/runs/ab-${baselineSlug}.json`);
 const FLOWS_COMPARE = p(".thulr/runs/ab-flows.compare.json");
@@ -177,12 +168,13 @@ function inapplicableMeasurement(plan, testCase, workspace) {
 	};
 }
 
-async function runArm(kind, plan, testCase, flow, signal, workspace, identity, remainingTimeoutMs) {
+async function runArm(kind, plan, testCase, flow, signal, workspace, identity, remainingTimeoutMs, attempt = 1) {
 	if (!plan.applicable) return inapplicableMeasurement(plan, testCase, workspace);
 	const cwd = workspace.cwd;
 	const flowCtx = { cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 	const ctx = { flow, model: subjectModel, dryRun, flowCtx };
 	const startedAt = Date.now();
+	const traceContext = runtimeTraceContext(EVAL_RUN_ID, { ...identity, arm: plan.name, attempt });
 	const task = plan.task ?? plan.params?.task ?? testCase.params.task;
 	const timeoutPlan = comparisonTimeoutPlan(testCase);
 	const effectiveTimeoutMs = timeoutPlan.effectiveTimeoutMs;
@@ -201,7 +193,14 @@ async function runArm(kind, plan, testCase, flow, signal, workspace, identity, r
 		const constraintBudget = bindingConstraint.kind === "cost"
 			? { maxCostUsd: bindingConstraint.value }
 			: bindingConstraint.kind === "generated_tokens" ? { maxGeneratedTokens: bindingConstraint.value } : {};
-		const params = { ...injectModel(plan.params, model), ...constraintBudget, traceLabel: identity.traceCaseId, timeoutMs: executionTimeoutMs };
+		const params = {
+			...injectModel(plan.params, model),
+			...constraintBudget,
+			traceFile: RUNTIME_TRACE,
+			traceLabel: identity.traceCaseId,
+			traceContext,
+			timeoutMs: executionTimeoutMs,
+		};
 		try {
 			result = await flow.execute(`cmp:${plan.name}:${identity.trialId}`, params, armBudget.signal, (partial) => progress(partial?.content?.[0]?.text), flowCtx);
 		} catch (error) {
@@ -220,8 +219,9 @@ async function runArm(kind, plan, testCase, flow, signal, workspace, identity, r
 		}
 	}
 	armBudget.dispose();
+	const executionEndedAt = Date.now();
 	const postExecutionStartedAt = performance.now();
-	const timing = armExecutionTiming(result, Date.now() - startedAt);
+	const timing = armExecutionTiming(result, executionEndedAt - startedAt);
 	const objective = await scoreObjective({ result, thrown, testCase, ctx });
 	const exclusion = armBudget.timedOut
 		? {
@@ -231,6 +231,12 @@ async function runArm(kind, plan, testCase, flow, signal, workspace, identity, r
 		: exclusionForRun({ reachedModel: objective.reachedModel, timeoutPlan });
 	const children = result?.details?.results ?? [];
 	const tokenUsage = sumTokenUsage(result);
+	const { runtimeTrace, scoreFamilies } = measurementRuntimeEvidence({
+		dryRun, runner: plan.runner, result, thrown, objective: objective.objective,
+		traceFile: RUNTIME_TRACE, displayTraceFile: rel(RUNTIME_TRACE), context: traceContext,
+		baselineMode: `baseline.${baselineKind}`, startMs: startedAt, endMs: executionEndedAt,
+		model: subjectModelName(result, model),
+	});
 	return {
 		// Judged fields start explicitly empty; exactly one of applyJudgedRows /
 		// dryRunJudgements / markUnjudgedRows fills them in before anything reads them.
@@ -250,6 +256,8 @@ async function runArm(kind, plan, testCase, flow, signal, workspace, identity, r
 		costKnown: children.length > 0 && children.every((child) => child?.usage?.costKnown === true),
 		deadlineExcludedMs: performance.now() - postExecutionStartedAt,
 		arm: { name: plan.name, component: plan.component, topology: plan.topology, configurationIdentity: plan.configurationIdentity, computeAllocation: plan.computeAllocation ?? null },
+		runtimeTrace,
+		scoreFamilies,
 	};
 }
 
@@ -260,7 +268,7 @@ async function runArmWithInfraRetry(kind, plan, testCase, flow, signal, workspac
 		retryDelayMs: infraRetryDelayMs,
 		timeoutMs: comparisonTimeoutPlan(testCase).effectiveTimeoutMs,
 		freshWorkspace: (attempt) => attempt === 1 ? workspaces[kind] : workspaces.freshArm(kind),
-		runAttempt: ({ timeoutMs: remainingTimeoutMs, workspace }) => runArm(kind, plan, testCase, flow, signal, workspace, identity, remainingTimeoutMs),
+		runAttempt: ({ attempt, timeoutMs: remainingTimeoutMs, workspace }) => runArm(kind, plan, testCase, flow, signal, workspace, identity, remainingTimeoutMs, attempt),
 		onRetry: ({ arm, attempt, maxRetries }) => console.log(`   ${plan.name} infra retry ${attempt}/${maxRetries} after zero-token failure: ${String(arm.exclusion.detail).replace(/\s+/g, " ").slice(0, 240)}`),
 		onDeadline: ({ arm }) => deadlineExpiredArm(arm, { timeoutPlan: comparisonTimeoutPlan(testCase), task: testCase.params.task, modelName: model, snapshotId: workspaces.snapshotId }),
 	});
@@ -278,6 +286,9 @@ function appendArmTrace(trace, arm, testCase, identity) {
 		journeyStage: testCase.journeyStage,
 		promptVersion: PROMPT_VERSION,
 		configVersion: `${CONFIG_VERSION}:${arm.arm.configurationIdentity}`,
+		evalRunId: EVAL_RUN_ID,
+		runtimeTrace: arm.runtimeTrace,
+		scoreFamilies: arm.scoreFamilies,
 		...identity,
 	}));
 	return true;
@@ -441,8 +452,10 @@ async function main() {
 	mkdirSync(TRACE_DIR, { recursive: true });
 	mkdirSync(dirname(FLOWS_TRACE), { recursive: true });
 	mkdirSync(dirname(PLAIN_TRACE), { recursive: true });
+	mkdirSync(dirname(RUNTIME_TRACE), { recursive: true });
 	thulr.startTrace(FLOWS_TRACE);
 	thulr.startTrace(PLAIN_TRACE);
+	writeFileSync(RUNTIME_TRACE, "", "utf8");
 
 	const flow = flowTool();
 	const signal = new AbortController().signal;
@@ -472,7 +485,7 @@ async function main() {
 
 	if (writeArtifact) {
 		const out = resolve(process.cwd(), writeArtifact);
-			writeFileSync(out, `${JSON.stringify({ schemaVersion: "pi-flows.paired-comparison.v1", model: useAgentModels ? "agent" : model, baseline: { kind: baselineKind, label: baselineLabel }, arms: armPair, judgeModel, subjectTrials, constraint: bindingConstraint, promotionRule, costBasis: "model-price-estimate", duel: duelEnabled, qualityRows: totals.qualityRows.length, exclusions, thulr: { flows: flowsRun ? rel(flowsRun.comparePath) : null, baseline: plainRun ? rel(plainRun.comparePath) : null, duel: duelEnabled && flowsRun && plainRun ? rel(DUEL_REPORT) : null }, analysis, rawRows }, null, 2)}\n`, "utf8");
+			writeFileSync(out, `${JSON.stringify({ schemaVersion: "pi-flows.paired-comparison.v1", runId: EVAL_RUN_ID, runtimeTraceFile: rel(RUNTIME_TRACE), model: useAgentModels ? "agent" : model, baseline: { kind: baselineKind, label: baselineLabel }, arms: armPair, judgeModel, subjectTrials, constraint: bindingConstraint, promotionRule, costBasis: "model-price-estimate", duel: duelEnabled, qualityRows: totals.qualityRows.length, exclusions, thulr: { flows: flowsRun ? rel(flowsRun.comparePath) : null, baseline: plainRun ? rel(plainRun.comparePath) : null, duel: duelEnabled && flowsRun && plainRun ? rel(DUEL_REPORT) : null }, analysis, rawRows }, null, 2)}\n`, "utf8");
 		console.log(`\nWrote comparison: ${out}`);
 	}
 

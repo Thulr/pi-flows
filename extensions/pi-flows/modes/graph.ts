@@ -1,8 +1,10 @@
-import { MAX_GRAPH_NODES, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_GRAPH_NODES, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
-import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
+import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { incompleteHandoffSummary } from "../delegation.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
 	let rendered = template.replace(/\{task\}/g, task ?? "");
@@ -46,7 +48,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 	const outputs = new Map<string, string>();
 	const completed = new Set<string>();
 	const remaining = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
-	const contractedTask = params.task ? appendReturnContract(params.task, params.returnContract, params.requireEvidence) : undefined;
+	const contractedTask = params.task;
 	let wave = 0;
 
 	while (remaining.size > 0) {
@@ -59,11 +61,19 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, ready, params.allowSharedWriteCwd, concurrency);
 		if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: makeDetails("graph")(results, sharedWriteError) };
 
-		const waveItems = ready.map((node) => {
+		const waveItems: IntegrationRunPlan[] = [];
+		for (const node of ready) {
 			const depOutputs = new Map(outputs);
-			const task = appendReturnContract(renderGraphTask(node.task, contractedTask, depOutputs), node.returnContract ?? params.returnContract, node.requireEvidence ?? params.requireEvidence);
-			return { ref: node, task, placeholderTask: node.task };
-		});
+			const planned = integrationRunPlan(deps, node, renderGraphTask(node.task, contractedTask, depOutputs), {
+				returnContract: node.returnContract ?? params.returnContract,
+				requireEvidence: node.requireEvidence ?? params.requireEvidence,
+				placeholderTask: node.task,
+			});
+			if (planned.error) {
+				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
+			}
+			waveItems.push(planned.plan!);
+		}
 		const waveRunResults = await runAgentFanout(
 			deps,
 			"graph",
@@ -72,6 +82,11 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			results,
 			(done) => `Flow graph: ${completed.size + done}/${nodes.length} nodes done`,
 		);
+		const handoffError = acceptIntegrationResults(deps, waveItems, waveRunResults);
+		if (handoffError) {
+			results.push(...waveRunResults);
+			return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("graph")(results, handoffError) };
+		}
 		const waveResults = waveRunResults.map((result, index) => ({ node: ready[index], result }));
 		for (const { node, result } of waveResults) {
 			results.push(result);
@@ -97,11 +112,19 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			"Synthesize the terminal graph outputs into the final answer. Preserve evidence and note unresolved gaps.",
 		].join("\n");
-		const debriefed = await runAgentRef(deps, debriefRef, debriefTask, "graph", results.length + 1, results);
+		const planned = integrationRunPlan(deps, debriefRef, debriefTask, {
+			fallbackContract: params.contract as DelegationContract | undefined,
+			returnContract: params.returnContract,
+			requireEvidence: params.requireEvidence,
+		});
+		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
+		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "graph", results.length + 1, results, planned.plan!.limits);
 		results.push(debriefed);
 		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
-		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
+		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);
+		if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("graph")(results, handoffError) };
+		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
 	}
 
-	return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed.\n\n${terminalOutputs}`) }], details: makeDetails("graph")(results) };
+	return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed.${incompleteHandoffSummary(results)}\n\n${terminalOutputs}`) }], details: makeDetails("graph")(results) };
 }

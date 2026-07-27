@@ -44,7 +44,7 @@ const spanId = () => randomUUID().replace(/-/g, "");
  * @param {{name: string, answer: string, criterion: string, criteria?: Record<string, string>, label?: boolean, labels?: Record<string, boolean>, judgeOnlyDimensions?: string[], journeyStage?: string, endMs: number, model?: string, task?: string, expectedBehavior?: string, failureModes?: string[], costUsd?: number, tokensTotal?: number, promptVersion?: string, configVersion?: string}} input
  * @returns {object[]}
  */
-export function traceSpansForCase({ name, baseCaseId, trialId, trialIndex, answer, criterion, criteria, label, labels, judgeOnlyDimensions, journeyStage, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion }) {
+export function traceSpansForCase({ name, baseCaseId, trialId, trialIndex, evalRunId, answer, criterion, criteria, label, labels, judgeOnlyDimensions, journeyStage, endMs, model, task, expectedBehavior, failureModes, costUsd, tokensTotal, promptVersion, configVersion, runtimeTrace, scoreFamilies }) {
 	const traceId = spanId();
 	const rootSpanId = spanId();
 	const answerSpanId = spanId();
@@ -59,6 +59,23 @@ export function traceSpansForCase({ name, baseCaseId, trialId, trialIndex, answe
 	if (baseCaseId) commonAttributes["thulr.base_case_id"] = baseCaseId;
 	if (trialId) commonAttributes["thulr.trial_id"] = trialId;
 	if (trialIndex !== undefined) commonAttributes["thulr.trial_index"] = trialIndex;
+	if (evalRunId) commonAttributes["pi_flows.eval_run_id"] = evalRunId;
+	if (runtimeTrace) {
+		commonAttributes["pi_flows.runtime_trace.health"] = runtimeTrace.health;
+		commonAttributes["pi_flows.runtime_trace.file"] = runtimeTrace.traceFile;
+		if (runtimeTrace.traceId) commonAttributes["pi_flows.runtime_trace.trace_id"] = runtimeTrace.traceId;
+		if (runtimeTrace.rootSpanId) commonAttributes["pi_flows.runtime_trace.root_span_id"] = runtimeTrace.rootSpanId;
+		if (runtimeTrace.context?.arm) commonAttributes["pi_flows.runtime_trace.arm"] = runtimeTrace.context.arm;
+		if (runtimeTrace.context?.attempt !== undefined) commonAttributes["pi_flows.runtime_trace.attempt"] = runtimeTrace.context.attempt;
+		if (runtimeTrace.error) commonAttributes["pi_flows.runtime_trace.error"] = runtimeTrace.error;
+	}
+	for (const [family, values] of Object.entries(scoreFamilies ?? {})) {
+		const familyName = family.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+		for (const [field, value] of Object.entries(values ?? {})) {
+			if (value === undefined || value === null || Array.isArray(value) || typeof value === "object") continue;
+			commonAttributes[`pi_flows.score.${familyName}.${field}`] = value;
+		}
+	}
 	for (const [dimension, text] of Object.entries(criteria ?? {})) {
 		if (text) commonAttributes[`thulr.criteria.${dimension}`] = text;
 	}
