@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { FlowContractTask, FlowParams, FlowReturnEnvelope, FlowTask } from "../extensions/pi-flows/schema.ts";
 import { freshDir, runFlow } from "./stub-harness.ts";
 
@@ -121,6 +122,29 @@ test("single converts non-file digest targets into a structured envelope error",
 
 	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
 	assert.match(text, /not a regular file/);
+});
+
+test("artifact validation errors obey redaction and content-omission policy", async () => {
+	const cwd = await freshDir();
+	await writeFile(`${cwd}/answer.txt`, "actual\n", "utf8");
+	const homePath = `${homedir()}/secret=private-value/answer.txt`;
+	const escaping = await runFlow({ agent: "recon", cwd, contract }, {
+		recon: envelope({ artifactReferences: [{ path: homePath }], digests: [] }),
+	});
+	assert.doesNotMatch(JSON.stringify(escaping.result), new RegExp(homedir()));
+	const secretPath = "secret=private-value/missing.txt";
+	const missing = await runFlow({ agent: "recon", cwd, contract }, {
+		recon: envelope({ artifactReferences: [{ path: secretPath }], digests: [] }),
+	});
+	assert.doesNotMatch(JSON.stringify(missing.result), /private-value/);
+	const wrongDigest = "a".repeat(64);
+	const mismatch = await runFlow({ agent: "recon", cwd, contract, recordContent: false }, {
+		recon: envelope({
+			artifactReferences: [{ path: "answer.txt" }],
+			digests: [{ artifact: "answer.txt", algorithm: "sha256", value: wrongDigest }],
+		}),
+	});
+	assert.doesNotMatch(JSON.stringify(mismatch.result), new RegExp(wrongDigest));
 });
 
 test("chain validates each envelope before passing canonical data downstream", async () => {

@@ -167,6 +167,10 @@ function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolic
 	};
 }
 
+function storedError(error: FlowError, policy: CapturePolicy): FlowError {
+	return { ...error, cause: redactValue(error.cause, policy) as string };
+}
+
 export function validateReturnEnvelope(
 	result: FlowRunResult,
 	contract: DelegationContract,
@@ -174,16 +178,16 @@ export function validateReturnEnvelope(
 	policy: CapturePolicy,
 ): { envelope?: DelegationReturnEnvelope; error?: FlowError } {
 	const parsed = extractLastJsonBlock(takeRawFinalAssistantText(result) ?? resultText(result));
-	if (!validateEnvelopeShape(parsed)) return { error: envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object.") };
+	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
 	let validator;
 	try {
 		validator = Schema.Compile(contract.returnSchema);
 	} catch (error) {
-		return { error: contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`) };
+		return { error: storedError(contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`), policy) };
 	}
-	if (!validator.Check(parsed.data)) return { error: envelopeError("Envelope `data` does not satisfy contract.returnSchema.") };
+	if (!validator.Check(parsed.data)) return { error: storedError(envelopeError("Envelope `data` does not satisfy contract.returnSchema."), policy) };
 	const digestError = validateDigests(parsed, cwd);
-	if (digestError) return { error: digestError };
+	if (digestError) return { error: storedError(digestError, policy) };
 	const envelope = storedEnvelope({ ...parsed, usage: result.usage }, policy);
 	result.envelope = envelope;
 	return { envelope };
