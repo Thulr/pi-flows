@@ -16,6 +16,20 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   artifact with stable case/unique trial ids, per-trial outcomes and telemetry,
   pass@1/pass@k/pass^k, Wilson intervals, supported p50/p95 latency and cost, and
   an infrastructure-invalid-as-failure sensitivity view.
+- `eval:compare` now runs paired repeated trials from one immutable workspace
+  snapshot per case/trial and declares exactly one binding cost, generated-token,
+  or deadline constraint. Its raw JSON artifact retains every arm outcome and
+  suite/task-family slice, while the terminal and artifact report case-clustered
+  paired deltas with 95% Student-t intervals, a case-clustered exact reliability
+  sign test, separate cost/token/end-to-end/worker-time/invalid-run metrics, and
+  predeclared improvement or non-inferiority promotion margins. Arm order is
+  counterbalanced across case/trial pairs.
+- Flow budgets now accept `maxGeneratedTokens` for an output-only ceiling.
+  Cost and generated-token budgets stop children at completed model-response
+  accounting boundaries, which lets paired evaluations apply the same active
+  resource constraint to treatment and plain-Pi control arms. The existing
+  total-token budget remains a between-child spawn gate. Cost ceilings fail
+  closed with `BUDGET_UNOBSERVABLE` when a provider omits cost telemetry.
 
 ### Changed
 
@@ -28,6 +42,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- Paired evaluation now excludes arms stopped at an exact cost or generated-token
+  ceiling from quality judging, while retaining finite resource observations
+  from constraint-invalid and infrastructure-invalid pairs in efficiency deltas.
+- Paired infrastructure retries now restore the immutable arm workspace, remain
+  inside one outer deadline, and include every attempt in latency/worker totals.
+  Aggregate cost output also suppresses treatment or baseline values whose price
+  telemetry is unknown.
 - Eval, comparison, selection, and dry-run commands now reject malformed corpus
   metadata and stale source-backed expectations before model invocation. Every
   case declares a portfolio suite, task family, and task structure; reports show

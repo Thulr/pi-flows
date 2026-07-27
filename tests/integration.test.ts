@@ -752,4 +752,3 @@ test("worktree: retains worker state when committing generated changes fails", a
 	}
 	await rm(path.dirname(retained), { recursive: true, force: true });
 });
-

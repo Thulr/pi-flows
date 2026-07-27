@@ -72,6 +72,7 @@ export const FLOW_ERROR_CODES = [
 	"ORCHESTRATE_NO_SUBTASKS",
 	"FLOW_DEPTH_EXCEEDED",
 	"BUDGET_EXCEEDED",
+	"BUDGET_UNOBSERVABLE",
 	"CHECK_COMMAND_FAILED",
 	"ORCHESTRATE_VERIFY_FAILED",
 	"GRAPH_INVALID",
@@ -148,6 +149,7 @@ export interface UsageStats {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
+	costKnown?: boolean;
 	contextTokens: number;
 	turns: number;
 }
@@ -228,17 +230,26 @@ export interface CapturePolicy {
 export interface FlowBudget {
 	maxCostUsd?: number;
 	maxTokens?: number;
+	maxGeneratedTokens?: number;
 	spentCost: number;
 	spentTokens: number;
+	spentGeneratedTokens: number;
 }
 
 /** Records one completed child run as a trace span. See makeTraceSink. */
 export type RecordSpan = (result: FlowRunResult) => void;
 
 export function budgetExceeded(budget: FlowBudget | undefined): boolean {
+	if (activeBudgetExceeded(budget)) return true;
+	if (!budget) return false;
+	if (budget.maxTokens !== undefined && budget.spentTokens >= budget.maxTokens) return true;
+	return false;
+}
+
+export function activeBudgetExceeded(budget: FlowBudget | undefined): boolean {
 	if (!budget) return false;
 	if (budget.maxCostUsd !== undefined && budget.spentCost >= budget.maxCostUsd) return true;
-	if (budget.maxTokens !== undefined && budget.spentTokens >= budget.maxTokens) return true;
+	if (budget.maxGeneratedTokens !== undefined && budget.spentGeneratedTokens >= budget.maxGeneratedTokens) return true;
 	return false;
 }
 
@@ -246,15 +257,37 @@ export function chargeBudget(budget: FlowBudget | undefined, usage: UsageStats):
 	if (!budget) return;
 	budget.spentCost += usage.cost || 0;
 	budget.spentTokens += (usage.input || 0) + (usage.output || 0);
+	budget.spentGeneratedTokens += usage.output || 0;
 }
 
 export function budgetExceededError(budget: FlowBudget): FlowError {
-	const spent = budget.maxCostUsd !== undefined ? `$${budget.spentCost.toFixed(4)} of $${budget.maxCostUsd.toFixed(4)}` : `${budget.spentTokens} of ${budget.maxTokens} tokens`;
+	const costLimit = budget.maxCostUsd;
+	const generatedLimit = budget.maxGeneratedTokens;
+	const totalLimit = budget.maxTokens;
+	const costExceeded = costLimit !== undefined && budget.spentCost >= costLimit;
+	const generatedExceeded = generatedLimit !== undefined && budget.spentGeneratedTokens >= generatedLimit;
+	const totalExceeded = totalLimit !== undefined && budget.spentTokens >= totalLimit;
+	const spent = costExceeded
+		? `$${budget.spentCost.toFixed(4)} of $${costLimit.toFixed(4)}`
+		: generatedExceeded
+			? `${budget.spentGeneratedTokens} of ${generatedLimit} generated tokens`
+			: totalExceeded
+				? `${budget.spentTokens} of ${totalLimit} total tokens`
+				: "configured ceiling (usage unavailable)";
 	return flowError(
 		"BUDGET_EXCEEDED",
 		`Flow budget exhausted (${spent}).`,
-		"Cumulative child spend reached the maxCostUsd/maxTokens ceiling, so no further child was spawned. This bounds the cost dimension of runaway delegation that iteration/time caps do not cover.",
-		"Raise maxCostUsd/maxTokens, narrow the task, or reduce fan-out (fewer voters/subtasks/iterations). Omit both to run uncapped.",
+		"Cumulative child spend reached a configured cost or token ceiling, so no further child was spawned. This bounds the cost dimension of runaway delegation that iteration/time caps do not cover.",
+		"Raise the configured budget, narrow the task, or reduce fan-out (fewer voters/subtasks/iterations). Omit budget fields to run uncapped.",
+	);
+}
+
+export function budgetUnobservableError(): FlowError {
+	return flowError(
+		"BUDGET_UNOBSERVABLE",
+		"Flow cost budget cannot be enforced because the provider omitted cost telemetry.",
+		"The child completed a model response without a numeric usage.cost.total value, so treating its spend as zero would make maxCostUsd non-binding.",
+		"Use a provider/model that reports cost telemetry, or bind the run by maxTokens, maxGeneratedTokens, or timeoutMs instead.",
 	);
 }
 

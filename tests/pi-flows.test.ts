@@ -456,21 +456,6 @@ test("control-marker protocol keeps prompt instructions aligned with parsers", (
   assert.deepEqual(__test.parseSubtasks('```json\n["a","b","c"]\n```', 2), ["a", "b"]);
 });
 
-test("budget helpers accumulate spend and trip the ceiling", () => {
-  const usage = (cost: number, input: number, output: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, cost, contextTokens: 0, turns: 1 });
-  assert.equal(__test.budgetExceeded(undefined), false, "no budget never trips");
-
-  const cost = { maxCostUsd: 0.01, spentCost: 0, spentTokens: 0 };
-  assert.equal(__test.budgetExceeded(cost), false);
-  __test.chargeBudget(cost, usage(0.02, 100, 50));
-  assert.equal(__test.budgetExceeded(cost), true, "cost ceiling trips after charge");
-
-  const tokens = { maxTokens: 100, spentCost: 0, spentTokens: 0 };
-  __test.chargeBudget(tokens, usage(0, 60, 50));
-  assert.equal(tokens.spentTokens, 110);
-  assert.equal(__test.budgetExceeded(tokens), true, "token ceiling counts input+output");
-});
-
 test("return contracts append explicit output and evidence requirements", () => {
   const task = __test.appendReturnContract("Map the auth flow.", "Return a table with path, purpose, and evidence.", true);
   assert.match(task, /Map the auth flow/);

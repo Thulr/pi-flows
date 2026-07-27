@@ -64,8 +64,9 @@ if no justification can be stated, the task belongs in the parent context.
 | `timeoutMs` | `36000000` | Per child process timeout (10 hours). Independently of it, a child that reports a terminal provider error and then stalls is terminated after a short grace (`PI_FLOWS_ERROR_GRACE_MS`, default 30000ms) with `CHILD_PROVIDER_ERROR`. |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
-| `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached, no further child spawns (`BUDGET_EXCEEDED`). Omit to run uncapped. |
-| `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached, no further child spawns (`BUDGET_EXCEEDED`). Omit to run uncapped. |
+| `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached at a completed model-response boundary, the active child stops and no further child spawns. |
+| `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached, no further child spawns. |
+| `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across the flow tree. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
 | `traceFile` | (none) | Append an OpenInference-shaped JSON span per child (plus a root span) to this JSONL file — trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
 | `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
@@ -83,7 +84,7 @@ voters, subtasks, worktree writers, debate participants, and dossier sections --
 not a per-call input. It is enforced by the runtime and surfaced read-only in
 `details.config`.
 
-`maxCostUsd` / `maxTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. The ceiling is best-effort — children already in flight finish — but once it trips, queued and subsequent children are refused, so an evaluate loop or large fan-out cannot run away on cost.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero.
 
 ### Trace export (observability)
 

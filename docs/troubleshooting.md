@@ -157,14 +157,25 @@ discipline against runaway nested delegation, not a bug.
 
 ### `BUDGET_EXCEEDED`
 
-Cause: the flow tree's cumulative child spend reached the `maxCostUsd` or
-`maxTokens` ceiling, so no further child was spawned. This bounds the **cost**
-dimension of runaway delegation that the iteration, fan-out, and time caps do not
-cover.
+Cause: the flow tree's cumulative child spend reached the `maxCostUsd`,
+`maxTokens`, or `maxGeneratedTokens` ceiling. Cost and generated-output ceilings
+stop the active child after its completed model response; the legacy total-token
+ceiling preserves that response. All three prevent further child spawns. This
+bounds the **cost** dimension of runaway delegation that the iteration, fan-out,
+and time caps do not cover.
 
-Fix: raise `maxCostUsd` / `maxTokens`, narrow the task, or reduce fan-out (fewer
-voters, subtasks, or `maxIterations`). Omit both to run uncapped. The partial
+Fix: raise the configured budget, narrow the task, or reduce fan-out (fewer
+voters, subtasks, or `maxIterations`). Omit all budget fields to run uncapped. The partial
 results produced before the ceiling was hit are still in `details`.
+
+### `BUDGET_UNOBSERVABLE`
+
+Cause: `maxCostUsd` was configured, but a completed model response omitted its
+numeric cost telemetry. The child stops at that response boundary because treating
+unknown spend as zero would silently make the cost ceiling non-binding.
+
+Fix: use a provider/model that reports cost telemetry, or bind execution with
+`maxTokens`, `maxGeneratedTokens`, or `timeoutMs` instead.
 
 ### `CHECK_COMMAND_FAILED`
 

@@ -145,17 +145,21 @@ export function runJsonlProcess(options) {
  * usage tally. Shared by the extension runner and the evals baselines so the
  * two never disagree about what a token or a dollar is.
  *
- * @param {{ input: number, output: number, cacheRead: number, cacheWrite: number, cost: number, contextTokens: number, turns: number }} tally
+ * @param {{ input: number, output: number, cacheRead: number, cacheWrite: number, cost: number, costKnown?: boolean, contextTokens: number, turns: number }} tally
  * @param {any} message An assistant message from a pi `message_end` event.
  */
 export function accumulatePiUsage(tally, message) {
 	tally.turns += 1;
 	const usage = message?.usage;
-	if (!usage) return;
+	if (!usage) {
+		tally.costKnown = false;
+		return;
+	}
 	tally.input += usage.input || 0;
 	tally.output += usage.output || 0;
 	tally.cacheRead += usage.cacheRead || 0;
 	tally.cacheWrite += usage.cacheWrite || 0;
+	tally.costKnown = tally.costKnown !== false && Number.isFinite(usage.cost?.total);
 	tally.cost += usage.cost?.total || 0;
 	tally.contextTokens = usage.totalTokens || tally.contextTokens;
 }

@@ -164,6 +164,8 @@ const AUTH_PROBLEM = String.raw`(?:authentication[_ -]?error|authentication (?:f
 const providerAuthError = new RegExp(String.raw`(?:${PROVIDER_CONTEXT}[^\n]{0,80}${AUTH_PROBLEM}|${AUTH_PROBLEM}[^\n]{0,80}${PROVIDER_CONTEXT}|^\s*(?:error:\s*)?${AUTH_PROBLEM}\.?\s*$)`, "i");
 const providerApiKeyError = new RegExp(String.raw`(?:${PROVIDER_CONTEXT}[^\n]{0,80}api[_ -]?key[^\n]{0,40}(?:missing|required|invalid|not found)|api[_ -]?key[^\n]{0,40}(?:missing|required|invalid|not found)[^\n]{0,80}${PROVIDER_CONTEXT})`, "i");
 const QUALITY_FLOW_ERROR_CODES = new Set([
+	"BUDGET_EXCEEDED",
+	"BUDGET_UNOBSERVABLE",
 	"CHECK_COMMAND_FAILED",
 	"ORCHESTRATE_VERIFY_FAILED",
 	"ROUTE_UNRESOLVED",
@@ -186,7 +188,9 @@ export function infraError(result) {
 	}
 	const children = result?.details?.results ?? [];
 	for (const child of children) {
-		if (child?.error) return [child.error.code, child.error.message, child.error.cause].filter(Boolean).join(": ") || "child error";
+		const qualityError = child?.error?.code && QUALITY_FLOW_ERROR_CODES.has(child.error.code);
+		if (child?.error && !qualityError) return [child.error.code, child.error.message, child.error.cause].filter(Boolean).join(": ") || "child error";
+		if (qualityError) continue;
 		if ((typeof child?.exitCode === "number" && child.exitCode !== 0) || child?.stopReason === "error" || child?.stopReason === "timeout") {
 			return child?.errorMessage ?? `child ${child.stopReason ?? "exited with error"}`;
 		}

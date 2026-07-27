@@ -11,6 +11,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accumulatePiUsage, runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
+import { budgetExceededError, budgetUnobservableError } from "../extensions/pi-flows/types.ts";
 
 function finalAssistantText(messages) {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -26,7 +27,8 @@ function finalAssistantText(messages) {
  * undefined → omit --model so the child uses pi's default (matches the flows arm's
  * "agent frontmatter" mode).
  */
-export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal, killGraceMs = 5_000 }) {
+export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal, killGraceMs = 5_000, maxCostUsd, maxGeneratedTokens, command = "pi" }) {
+	const startedAt = Date.now();
 	const dir = mkdtempSync(join(tmpdir(), "pi-baseline-"));
 	const taskFile = join(dir, "task.md");
 	writeFileSync(taskFile, `Task: ${task}\n`, { encoding: "utf8", mode: 0o600 });
@@ -45,15 +47,17 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	let modelOut;
 	let stopReason;
 	let errorMessage;
+	let budgetTerminated = false;
+	let budgetUnobservable = false;
 
 	const run = await runJsonlProcess({
-		command: "pi",
+		command,
 		args,
 		cwd: cwd ?? process.cwd(),
 		timeoutMs,
 		graceMs: killGraceMs,
 		signal,
-		onEvent: (event) => {
+		onEvent: (event, controls) => {
 			if (event.type === "message_end" && event.message) {
 				const m = event.message;
 				if (m.role === "assistant") {
@@ -61,6 +65,16 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 					if (!modelOut && m.model) modelOut = m.model;
 					if (m.stopReason) stopReason = m.stopReason;
 					if (m.errorMessage) errorMessage = m.errorMessage;
+					if (!m.errorMessage && maxCostUsd !== undefined && usage.costKnown === false) {
+						budgetUnobservable = true;
+						stopReason = "budget_unobservable";
+						controls.terminate();
+					} else if (!m.errorMessage && ((maxCostUsd !== undefined && usage.cost >= maxCostUsd)
+						|| (maxGeneratedTokens !== undefined && usage.output >= maxGeneratedTokens))) {
+						budgetTerminated = true;
+						stopReason = "budget_exceeded";
+						controls.terminate();
+					}
 				}
 				messages.push(m);
 			} else if (event.type === "tool_result_end" && event.message) {
@@ -76,7 +90,10 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	if (run.timedOut) stopReason = "timeout";
 	else if (run.aborted) stopReason = "aborted";
 	if (run.spawnErrorMessage) stderr += `spawn error: ${run.spawnErrorMessage}`;
-	const exitCode = run.exitCode;
+	const exitCode = budgetTerminated || budgetUnobservable ? 1 : run.exitCode;
+	const budgetError = budgetUnobservable ? budgetUnobservableError() : budgetTerminated
+		? budgetExceededError({ maxCostUsd, maxGeneratedTokens, spentCost: usage.cost, spentTokens: usage.input + usage.output, spentGeneratedTokens: usage.output }) : undefined;
+	if (budgetError) errorMessage = budgetError.message;
 
 	const protocolError = !run.sawJsonEvent && parseErrors > 0;
 	const text = finalAssistantText(messages) || errorMessage || stderr || "(no output)";
@@ -93,6 +110,8 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 					model: modelOut,
 					stopReason: protocolError ? "error" : stopReason,
 					errorMessage: protocolError ? "plain pi did not produce valid --mode json output" : errorMessage,
+					error: budgetError,
+					durationMs: Date.now() - startedAt,
 					stdoutSample,
 				},
 			],
