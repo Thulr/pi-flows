@@ -28,7 +28,7 @@ import { applyDuelRows, applyJudgedRows, armLine, comparisonTotals, dryRunJudgem
 import { answerText, answerWithArtifacts, armBudgetSignal, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, pairedArmOrder, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
-import { runArmWithRetry } from "./paired-retry.mjs";
+import { deadlineExpiredArm, runArmWithRetry } from "./paired-retry.mjs";
 import { pairedCaseWorkspaces } from "./paired-workspace.mjs";
 import { calibrationSpanFields, caseSpanFields, inspectTraceReport, judgeTraceRun, printScoreDeltas, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
@@ -223,9 +223,9 @@ async function runArmWithInfraRetry(kind, testCase, flow, signal, workspaces, id
 		freshWorkspace: (attempt) => attempt === 1 ? workspaces[kind] : workspaces.freshArm(kind),
 		runAttempt: ({ timeoutMs: remainingTimeoutMs, workspace }) => runArm(kind, testCase, flow, signal, workspace, identity, remainingTimeoutMs),
 		onRetry: ({ arm, attempt, maxRetries }) => console.log(`   ${kind} infra retry ${attempt}/${maxRetries} after zero-token failure: ${String(arm.exclusion.detail).replace(/\s+/g, " ").slice(0, 240)}`),
+		onDeadline: ({ arm }) => deadlineExpiredArm(arm, { timeoutPlan: comparisonTimeoutPlan(testCase), task: testCase.params.task, modelName: model, snapshotId: workspaces.snapshotId }),
 	});
 }
-
 function appendArmTrace(trace, arm, testCase, identity) {
 	if (arm.exclusion) return false;
 	thulr.appendCaseSpans(trace, caseSpanFields(testCase, {

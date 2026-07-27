@@ -261,11 +261,19 @@ export function chargeBudget(budget: FlowBudget | undefined, usage: UsageStats):
 }
 
 export function budgetExceededError(budget: FlowBudget): FlowError {
-	const spent = budget.maxCostUsd !== undefined
-		? `$${budget.spentCost.toFixed(4)} of $${budget.maxCostUsd.toFixed(4)}`
-		: budget.maxGeneratedTokens !== undefined
-			? `${budget.spentGeneratedTokens} of ${budget.maxGeneratedTokens} generated tokens`
-			: `${budget.spentTokens} of ${budget.maxTokens} total tokens`;
+	const costLimit = budget.maxCostUsd;
+	const generatedLimit = budget.maxGeneratedTokens;
+	const totalLimit = budget.maxTokens;
+	const costExceeded = costLimit !== undefined && budget.spentCost >= costLimit;
+	const generatedExceeded = generatedLimit !== undefined && budget.spentGeneratedTokens >= generatedLimit;
+	const totalExceeded = totalLimit !== undefined && budget.spentTokens >= totalLimit;
+	const spent = costExceeded
+		? `$${budget.spentCost.toFixed(4)} of $${costLimit.toFixed(4)}`
+		: generatedExceeded
+			? `${budget.spentGeneratedTokens} of ${generatedLimit} generated tokens`
+			: totalExceeded
+				? `${budget.spentTokens} of ${totalLimit} total tokens`
+				: "configured ceiling (usage unavailable)";
 	return flowError(
 		"BUDGET_EXCEEDED",
 		`Flow budget exhausted (${spent}).`,

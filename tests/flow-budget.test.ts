@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { infraError } from "../evals/lib.mjs";
 import { __test } from "../extensions/pi-flows/index.ts";
+import { budgetExceededError } from "../extensions/pi-flows/types.ts";
 import { runFlow } from "./stub-harness.ts";
 
 test("budget helpers accumulate spend and trip each supported ceiling", () => {
@@ -22,6 +23,25 @@ test("budget helpers accumulate spend and trip each supported ceiling", () => {
 	__test.chargeBudget(generated, usage(0, 60, 50));
 	assert.equal(generated.spentGeneratedTokens, 50);
 	assert.equal(__test.budgetExceeded(generated), true, "generated-token ceiling counts output only");
+});
+
+test("budget errors name the ceiling that actually crossed", () => {
+	const generated = {
+		maxCostUsd: 10,
+		maxGeneratedTokens: 4,
+		spentCost: 0.001,
+		spentTokens: 20,
+		spentGeneratedTokens: 8,
+	};
+	const total = {
+		maxCostUsd: 10,
+		maxTokens: 10,
+		spentCost: 0.001,
+		spentTokens: 20,
+		spentGeneratedTokens: 8,
+	};
+	assert.match(budgetExceededError(generated).message, /8 of 4 generated tokens/);
+	assert.match(budgetExceededError(total).message, /20 of 10 total tokens/);
 });
 
 test("eval treats a binding budget stop as an invalid outcome, not infrastructure", () => {
