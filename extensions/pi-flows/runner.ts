@@ -228,9 +228,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		timedOut = run.timedOut;
 		wasAborted = run.aborted;
 
-		result.exitCode = budgetTerminated ? 0 : run.exitCode;
+		result.exitCode = budgetTerminated ? 1 : run.exitCode;
 		if (budgetTerminated) {
 			result.stopReason = "budget_exceeded";
+			result.error = budgetExceededError(options.budget as FlowBudget);
+			result.errorMessage = result.error.message;
 		} else if (timedOut) {
 			result.stopReason = "timeout";
 			result.error = flowError(

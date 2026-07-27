@@ -27,7 +27,7 @@ import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { applyDuelRows, applyJudgedRows, armLine, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatDuration, formatTokenComparison, judgeDelta, markUnjudgedRows, pct, pickArm, scoreText, unjudgedArm } from "./compare-report.mjs";
 import { answerText, answerWithArtifacts, armBudgetSignal, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
-import { buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
+import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
 import { pairedCaseWorkspaces } from "./paired-workspace.mjs";
 import { calibrationSpanFields, caseSpanFields, inspectTraceReport, judgeTraceRun, printScoreDeltas, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
@@ -177,6 +177,7 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 		}
 	}
 	armBudget.dispose();
+	const timing = armExecutionTiming(result, Date.now() - startedAt);
 
 	const objective = await scoreObjective({ result, thrown, testCase, ctx });
 	const exclusion = armBudget.timedOut
@@ -186,8 +187,6 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 		}
 		: exclusionForRun({ reachedModel: objective.reachedModel, timeoutPlan });
 	const tokenUsage = sumTokenUsage(result);
-	const durationMs = Date.now() - startedAt;
-	const childDurations = (result?.details?.results ?? []).map((child) => child?.durationMs).filter(Number.isFinite);
 	return {
 		// Judged fields start explicitly empty; exactly one of applyJudgedRows /
 		// dryRunJudgements / markUnjudgedRows fills them in before anything reads them.
@@ -196,8 +195,7 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 		exclusion,
 		timeoutPlan,
 		result,
-		durationMs,
-		workerTimeMs: childDurations.length > 0 ? childDurations.reduce((total, value) => total + value, 0) : durationMs,
+		...timing,
 		answer: answerWithArtifacts(objective.answer || answerText(result), cwd, testCase.judgeArtifacts),
 		task,
 		modelName: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),

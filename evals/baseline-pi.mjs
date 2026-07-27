@@ -11,6 +11,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accumulatePiUsage, runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
+import { budgetExceededError } from "../extensions/pi-flows/types.ts";
 
 function finalAssistantText(messages) {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -27,6 +28,7 @@ function finalAssistantText(messages) {
  * "agent frontmatter" mode).
  */
 export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal, killGraceMs = 5_000, maxCostUsd, maxGeneratedTokens, command = "pi" }) {
+	const startedAt = Date.now();
 	const dir = mkdtempSync(join(tmpdir(), "pi-baseline-"));
 	const taskFile = join(dir, "task.md");
 	writeFileSync(taskFile, `Task: ${task}\n`, { encoding: "utf8", mode: 0o600 });
@@ -83,7 +85,11 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	if (run.timedOut) stopReason = "timeout";
 	else if (run.aborted) stopReason = "aborted";
 	if (run.spawnErrorMessage) stderr += `spawn error: ${run.spawnErrorMessage}`;
-	const exitCode = budgetTerminated ? 0 : run.exitCode;
+	const exitCode = budgetTerminated ? 1 : run.exitCode;
+	const budgetError = budgetTerminated
+		? budgetExceededError({ maxCostUsd, maxGeneratedTokens, spentCost: usage.cost, spentTokens: usage.input + usage.output, spentGeneratedTokens: usage.output })
+		: undefined;
+	if (budgetError) errorMessage = budgetError.message;
 
 	const protocolError = !run.sawJsonEvent && parseErrors > 0;
 	const text = finalAssistantText(messages) || errorMessage || stderr || "(no output)";
@@ -100,6 +106,8 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 					model: modelOut,
 					stopReason: protocolError ? "error" : stopReason,
 					errorMessage: protocolError ? "plain pi did not produce valid --mode json output" : errorMessage,
+					error: budgetError,
+					durationMs: Date.now() - startedAt,
 					stdoutSample,
 				},
 			],

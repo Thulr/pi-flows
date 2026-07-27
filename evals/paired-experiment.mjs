@@ -54,6 +54,14 @@ export function evaluatePairConstraint(flows, baseline, constraint) {
 	};
 }
 
+export function armExecutionTiming(result, durationMs) {
+	const childDurations = (result?.details?.results ?? []).map((child) => child?.durationMs).filter(Number.isFinite);
+	return {
+		durationMs,
+		workerTimeMs: childDurations.length > 0 ? childDurations.reduce((total, value) => total + value, 0) : durationMs,
+	};
+}
+
 const T95 = [null, null, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.16, 2.145, 2.131, 2.12, 2.11, 2.101, 2.093, 2.086, 2.08, 2.074, 2.069, 2.064, 2.06, 2.056, 2.052, 2.048, 2.045];
 const round = (value) => value === null ? null : Number(value.toFixed(12));
 const average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length;

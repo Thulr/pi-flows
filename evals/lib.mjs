@@ -187,7 +187,9 @@ export function infraError(result) {
 	}
 	const children = result?.details?.results ?? [];
 	for (const child of children) {
-		if (child?.error) return [child.error.code, child.error.message, child.error.cause].filter(Boolean).join(": ") || "child error";
+		const qualityError = child?.error?.code && QUALITY_FLOW_ERROR_CODES.has(child.error.code);
+		if (child?.error && !qualityError) return [child.error.code, child.error.message, child.error.cause].filter(Boolean).join(": ") || "child error";
+		if (qualityError) continue;
 		if ((typeof child?.exitCode === "number" && child.exitCode !== 0) || child?.stopReason === "error" || child?.stopReason === "timeout") {
 			return child?.errorMessage ?? `child ${child.stopReason ?? "exited with error"}`;
 		}

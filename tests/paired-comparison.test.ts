@@ -5,7 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runPlainPi } from "../evals/baseline-pi.mjs";
-import { buildPairedAnalysis } from "../evals/paired-experiment.mjs";
+import { armExecutionTiming, buildPairedAnalysis } from "../evals/paired-experiment.mjs";
 import { pairedCaseWorkspaces } from "../evals/paired-workspace.mjs";
 
 function runCompare(...args: string[]) {
@@ -144,6 +144,17 @@ test("paired binary inference counts cases rather than repeated trials", () => {
 	assert.equal(reliability.caseSignTest.exactTwoSidedP, 1);
 });
 
+test("arm timing uses the execution interval and child worker durations", () => {
+	assert.deepEqual(armExecutionTiming({ details: { results: [] } }, 125), {
+		durationMs: 125,
+		workerTimeMs: 125,
+	});
+	assert.deepEqual(armExecutionTiming({ details: { results: [{ durationMs: 40 }, { durationMs: 60 }] } }, 75), {
+		durationMs: 75,
+		workerTimeMs: 100,
+	});
+});
+
 test("plain Pi resource budgets terminate execution at a completed response boundary", async () => {
 	const dir = mkdtempSync(path.join(tmpdir(), "pi-flow-budget-baseline-"));
 	const command = path.join(dir, "pi-stub.mjs");
@@ -164,8 +175,10 @@ await new Promise(resolve => setTimeout(resolve, 5000));
 	});
 	const child = result.details.results[0];
 	assert.equal(child.stopReason, "budget_exceeded");
-	assert.equal(child.exitCode, 0);
+	assert.equal(child.exitCode, 1);
+	assert.equal(child.error.code, "BUDGET_EXCEEDED");
 	assert.equal(child.usage.output, 8);
+	assert.ok(child.durationMs < 1500);
 	assert.ok(Date.now() - startedAt < 1500, "budget should stop the held-open process before timeout");
 });
 

@@ -34,7 +34,9 @@ test("single: generated-token budget stops the active child at a response bounda
 	const child = result.details.results[0];
 	assert.equal(child.usage.output, 8);
 	assert.equal(child.stopReason, "budget_exceeded");
-	assert.equal(child.exitCode, 0);
+	assert.equal(child.exitCode, 1);
+	assert.equal(child.error.code, "BUDGET_EXCEEDED");
+	assert.match(result.content[0].text, /Code: BUDGET_EXCEEDED/);
 	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
 });
 
