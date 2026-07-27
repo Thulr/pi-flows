@@ -363,8 +363,9 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
 Each work phase persists its redacted output and validated handoff envelope
 before the next phase. Approval nodes prompt in the interactive UI and pause
 safely in headless runs; repeat the same call with `workflow.resume:true` to
-continue after every stored envelope is revalidated against its current
-contract, schema, artifacts, and digests.
+continue after each sanitized envelope is verified against its content-free
+validation attestation and current contract identity. Existing version-1 state
+files migrate to legacy compatibility envelopes automatically.
 
 ### Worktree (isolated writers and integration)
 

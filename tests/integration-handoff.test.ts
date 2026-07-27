@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 import {
@@ -287,6 +288,98 @@ test("workflow resume revalidates stale and schema-invalid persisted handoffs", 
 			assert.equal(resumed.calls.filter((call) => call.agent === "recon").length, 1);
 		});
 	}
+});
+
+test("workflow resume uses validation attestations when stored content is omitted or redacted", async () => {
+	const cwd = await freshDir();
+	const artifact = "artifact-secret=resume-private-value.txt";
+	const artifactContent = "verified artifact\n";
+	const attestedContract: DelegationContract = {
+		...contract,
+		returnSchema: {
+			type: "object",
+			required: ["code"],
+			properties: { code: { const: "secret=resume-private-value" } },
+			additionalProperties: false,
+		},
+	};
+	const reply = JSON.stringify({
+		schemaVersion: "pi-flows.return-envelope.v1",
+		contractId: delegationContractId(attestedContract),
+		status: "completed",
+		summary: "Verified secret=resume-private-value.",
+		evidence: [],
+		artifactReferences: [{ path: artifact }],
+		digests: [{
+			artifact,
+			algorithm: "sha256",
+			value: createHash("sha256").update(artifactContent).digest("hex"),
+		}],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data: { code: "secret=resume-private-value" },
+	});
+	const params = {
+		task: "Run one private phase.",
+		recordContent: false,
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [{ id: "inspect", agent: "recon", task: "return private result", contract: attestedContract }],
+		},
+	};
+	const initial = await runFlow(params, {
+		recon: { reply, writes: { [artifact]: artifactContent } },
+	}, { cwd });
+	assert.equal(initial.result.details.error, undefined);
+	const state = JSON.parse(await readFile(`${cwd}/workflow.json`, "utf8"));
+	assert.equal(state.version, 2);
+	assert.equal(state.attestations.inspect.validation, "typed");
+	assert.doesNotMatch(JSON.stringify(state), /resume-private-value/);
+
+	const resumed = await runFlow(
+		{ ...params, workflow: { ...params.workflow, resume: true } },
+		{ recon: "MUST_NOT_RERUN" },
+		{ cwd },
+	);
+	assert.equal(resumed.result.details.error, undefined);
+	assert.equal(resumed.calls.filter((call) => call.agent === "recon").length, 1);
+});
+
+test("workflow resume migrates legacy version-1 state to compatibility handoffs", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "prepare the release",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze the release" },
+				{ id: "approve", approval: { message: "Approve the analysis" } },
+				{ id: "plan", agent: "strategist", task: "Plan from {phase.analyze}" },
+			],
+		},
+	};
+	const paused = await runFlow(params, { recon: "NEW_FORMAT_ANALYSIS" }, { cwd });
+	assert.equal(paused.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	const stateFile = `${cwd}/workflow.json`;
+	const legacy = JSON.parse(await readFile(stateFile, "utf8"));
+	legacy.version = 1;
+	legacy.outputs.analyze = "LEGACY_ANALYSIS";
+	delete legacy.handoffs;
+	delete legacy.attestations;
+	await writeFile(stateFile, `${JSON.stringify(legacy, null, 2)}\n`);
+
+	const resumed = await runFlow(
+		{ ...params, workflow: { ...params.workflow, resume: true } },
+		{ strategist: "RELEASE_PLAN" },
+		{ cwd, hasUI: true },
+	);
+	assert.equal(resumed.result.details.error, undefined);
+	assert.match(resumed.calls.at(-1)?.task ?? "", /LEGACY_ANALYSIS/);
+	const migrated = JSON.parse(await readFile(stateFile, "utf8"));
+	assert.equal(migrated.version, 2);
+	assert.equal(migrated.handoffs.analyze.compatibility, "legacy-prose");
+	assert.equal(migrated.attestations.analyze.validation, "legacy-compatibility");
 });
 
 test("debate preserves typed advocate and adjudicator provenance", async () => {

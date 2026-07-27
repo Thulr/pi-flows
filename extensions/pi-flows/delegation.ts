@@ -13,6 +13,15 @@ const ENVELOPE_STATUSES = new Set(["completed", "partial", "blocked", "failed"])
 
 type RecordValue = Record<string, any>;
 
+export interface PersistedHandoffAttestation {
+	schemaVersion: "pi-flows.handoff-attestation.v1";
+	contractId: string | null;
+	compatibility: DelegationHandoffEnvelope["compatibility"];
+	status: DelegationHandoffEnvelope["status"];
+	handoffDigest: string;
+	validation: "typed" | "legacy-compatibility";
+}
+
 function isRecord(value: unknown): value is RecordValue {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -299,8 +308,8 @@ function incompleteEnvelopeError(handoff: DelegationHandoffEnvelope): FlowError 
 export function validatePersistedIntegrationHandoff(
 	value: unknown,
 	options: {
+		attestation: unknown;
 		contract?: DelegationContract;
-		cwd: string;
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
 	},
@@ -332,16 +341,49 @@ export function validatePersistedIntegrationHandoff(
 		if (value.compatibility !== "typed") {
 			return storedError(envelopeError("Persisted contracted workflow phase is not a typed handoff."), options.policy);
 		}
-		const validationError = validateEnvelopeAgainstContract(envelope, options.contract, options.cwd, true);
-		if (validationError) return storedError(validationError, options.policy);
+		const expected = delegationContractId(options.contract);
+		if (envelope.contractId !== expected) {
+			return storedError(flowError(
+				"RETURN_CONTRACT_MISMATCH",
+				"Persisted workflow handoff did not match the current phase contract.",
+				`Expected contractId ${expected}, received ${envelope.contractId ?? "(missing)"}.`,
+				"Discard the stale workflow state and rerun the phase with the current typed contract.",
+			), options.policy);
+		}
 	} else if (value.compatibility !== "legacy-prose" || value.contractId !== null) {
 		return storedError(envelopeError("Persisted legacy workflow phase is not a valid compatibility envelope."), options.policy);
+	}
+	const attestation = options.attestation;
+	const expectedValidation = options.contract ? "typed" : "legacy-compatibility";
+	if (!isRecord(attestation)
+		|| attestation.schemaVersion !== "pi-flows.handoff-attestation.v1"
+		|| attestation.contractId !== value.contractId
+		|| attestation.compatibility !== value.compatibility
+		|| attestation.status !== value.status
+		|| attestation.validation !== expectedValidation
+		|| attestation.handoffDigest !== handoffStorageDigest(value)) {
+		return storedError(envelopeError("Persisted workflow handoff validation attestation is missing or does not match the stored handoff."), options.policy);
 	}
 	const handoff = value as unknown as DelegationHandoffEnvelope;
 	if (handoff.status !== "completed" && options.incompletePolicy !== "include") {
 		return storedError(incompleteEnvelopeError(handoff), options.policy);
 	}
 	return null;
+}
+
+function handoffStorageDigest(handoff: unknown): string {
+	return `sha256:${createHash("sha256").update(JSON.stringify(canonicalJsonValue(handoff))).digest("hex")}`;
+}
+
+export function createPersistedHandoffAttestation(handoff: DelegationHandoffEnvelope): PersistedHandoffAttestation {
+	return {
+		schemaVersion: "pi-flows.handoff-attestation.v1",
+		contractId: handoff.contractId,
+		compatibility: handoff.compatibility,
+		status: handoff.status,
+		handoffDigest: handoffStorageDigest(handoff),
+		validation: handoff.compatibility === "typed" ? "typed" : "legacy-compatibility",
+	};
 }
 
 export function prepareIntegrationHandoff(

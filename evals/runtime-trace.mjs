@@ -58,12 +58,17 @@ function resultErrors(result) {
 	].filter(Boolean);
 }
 
-export function runtimeScoreFamilies({ result, thrown, objective, trace }) {
-	const errors = resultErrors(result);
+export function runtimeExecutionSucceeded(result, thrown) {
 	const childFailures = (result?.details?.results ?? []).some((child) =>
 		child?.exitCode > 0 || ["error", "aborted", "timeout"].includes(child?.stopReason),
 	);
-	const executionPass = !thrown && Boolean(result) && !result?.details?.error && !childFailures;
+	return !thrown && Boolean(result) && !result?.details?.error && !childFailures;
+}
+
+export function runtimeScoreFamilies({ result, thrown, objective, trace }) {
+	const errors = resultErrors(result);
+	const executionPass = runtimeExecutionSucceeded(result, thrown);
+	const childFailures = Boolean(result) && !executionPass && !thrown && !result?.details?.error;
 	const outcomeAvailable = typeof objective?.pass === "boolean";
 	const policyErrors = errors.filter((error) => POLICY_ERROR_CODES.has(error?.code));
 	const executionReason = thrown?.message
@@ -160,7 +165,7 @@ export function measurementRuntimeEvidence({
 					mode: baselineMode,
 					startMs,
 					endMs,
-					executionSuccess: !thrown && Boolean(result),
+					executionSuccess: runtimeExecutionSucceeded(result, thrown),
 					attributes: { "llm.model_name": traceIdentifier(model) },
 					displayTraceFile,
 				});

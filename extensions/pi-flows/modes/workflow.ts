@@ -6,16 +6,17 @@ import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
-import { canonicalHandoff, incompleteHandoffSummary, validatePersistedIntegrationHandoff } from "../delegation.ts";
+import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { acceptIntegrationResult, integrationRunPlan } from "../integration.ts";
 
 interface WorkflowState {
-	version: 1;
+	version: 2;
 	digest: string;
 	status: "running" | "paused" | "failed" | "completed";
 	completedPhaseIds: string[];
 	outputs: Record<string, string>;
 	handoffs: Record<string, DelegationHandoffEnvelope>;
+	attestations: Record<string, PersistedHandoffAttestation>;
 	nextPhaseId?: string;
 	updatedAt: string;
 }
@@ -47,7 +48,43 @@ async function persistState(file: string, state: WorkflowState): Promise<void> {
 }
 
 function freshState(digest: string): WorkflowState {
-	return { version: 1, digest, status: "running", completedPhaseIds: [], outputs: {}, handoffs: {}, updatedAt: new Date().toISOString() };
+	return { version: 2, digest, status: "running", completedPhaseIds: [], outputs: {}, handoffs: {}, attestations: {}, updatedAt: new Date().toISOString() };
+}
+
+function legacyCompatibilityHandoff(phase: any, output: string, step: number, policy: ModeDeps["policy"]): DelegationHandoffEnvelope {
+	const text = policy.recordContent ? sanitizeText(output, policy) : "[content omitted: recordContent=false]";
+	return {
+		schemaVersion: "pi-flows.handoff-envelope.v1",
+		contractId: null,
+		compatibility: "legacy-prose",
+		status: "completed",
+		summary: text,
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data: { text },
+		provenance: { agent: phase.agent, step },
+	};
+}
+
+function migrateWorkflowStateV1(legacy: any, phases: any[], policy: ModeDeps["policy"]): WorkflowState {
+	const state: WorkflowState = {
+		...legacy,
+		version: 2,
+		handoffs: {},
+		attestations: {},
+	};
+	for (const [index, phase] of phases.entries()) {
+		if (!state.completedPhaseIds.includes(phase.id) || phase.approval?.message) continue;
+		const handoff = legacyCompatibilityHandoff(phase, String(state.outputs[phase.id] ?? ""), index + 1, policy);
+		state.handoffs[phase.id] = handoff;
+		state.attestations[phase.id] = createPersistedHandoffAttestation(handoff);
+		state.outputs[phase.id] = canonicalHandoff(handoff);
+	}
+	return state;
 }
 
 export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
@@ -75,10 +112,17 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	let state = freshState(digest);
 	if (spec.resume) {
 		try {
-			state = JSON.parse(await readFile(stateFile, "utf8")) as WorkflowState;
-			if (state.version !== 1 || state.digest !== digest || !Array.isArray(state.completedPhaseIds)
-				|| !state.outputs || typeof state.outputs !== "object" || Array.isArray(state.outputs)
-				|| !state.handoffs || typeof state.handoffs !== "object" || Array.isArray(state.handoffs)) throw new Error("state does not match this workflow");
+			const loaded = JSON.parse(await readFile(stateFile, "utf8")) as any;
+			if (![1, 2].includes(loaded.version) || loaded.digest !== digest || !Array.isArray(loaded.completedPhaseIds)
+				|| !loaded.outputs || typeof loaded.outputs !== "object" || Array.isArray(loaded.outputs)) throw new Error("state does not match this workflow");
+			if (loaded.version === 1) {
+				state = migrateWorkflowStateV1(loaded, phases, policy);
+				await persistState(stateFile, state);
+			} else {
+				if (!loaded.handoffs || typeof loaded.handoffs !== "object" || Array.isArray(loaded.handoffs)
+					|| !loaded.attestations || typeof loaded.attestations !== "object" || Array.isArray(loaded.attestations)) throw new Error("state does not match this workflow");
+				state = loaded as WorkflowState;
+			}
 		} catch (cause) {
 			const error = flowError("WORKFLOW_STATE_INVALID", "Workflow resume state is missing or incompatible.", `Could not resume ${sanitizeText(stateFile, policy)}: ${cause instanceof Error ? cause.message : String(cause)}.`, "Use the same task/phases/stateFile that created the state, or omit resume to start a fresh workflow.");
 			return stateError(deps, [], error);
@@ -95,11 +139,10 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				previous = state.outputs[phase.id] ?? previous;
 				continue;
 			}
-			const phaseCwd = phase.cwd ? path.resolve(defaultCwd, phase.cwd) : defaultCwd;
 			const persisted = state.handoffs[phase.id];
 			const persistedError = validatePersistedIntegrationHandoff(persisted, {
+				attestation: state.attestations[phase.id],
 				contract: phase.contract,
-				cwd: phaseCwd,
 				policy,
 				incompletePolicy: params.incompleteHandoffPolicy,
 			});
@@ -175,6 +218,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 
 		state.completedPhaseIds.push(phase.id);
 		state.handoffs[phase.id] = run.handoff!;
+		state.attestations[phase.id] = createPersistedHandoffAttestation(run.handoff!);
 		state.outputs[phase.id] = params.recordContent === false ? "[content not recorded]" : output;
 		previous = state.outputs[phase.id];
 		state.updatedAt = new Date().toISOString();

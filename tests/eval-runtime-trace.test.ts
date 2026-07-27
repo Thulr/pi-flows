@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import {
 	appendProcessRuntimeTrace,
+	measurementRuntimeEvidence,
 	runtimeScoreFamilies,
 	runtimeTraceContext,
 	runtimeTraceEvidence,
@@ -184,6 +185,29 @@ test("baseline trace evidence redacts displayed paths and write failures", () =>
 	assert.doesNotMatch(stored, /baseline-private-value/);
 	assert.doesNotMatch(stored, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	assert.match(trace.traceFile, /^~/);
+});
+
+test("baseline child failures mark both runtime traces and execution scores failed", async () => {
+	const outputDir = await mkdtemp(path.join(tmpdir(), "pi-eval-baseline-trace-"));
+	const traceFile = path.join(outputDir, "runtime.jsonl");
+	const evidence = measurementRuntimeEvidence({
+		dryRun: false,
+		runner: "baseline",
+		result: { details: { results: [{ exitCode: 1, stopReason: "error" }] } },
+		objective: { pass: false, score: 0 },
+		traceFile,
+		displayTraceFile: "runtime.jsonl",
+		context: runtimeTraceContext("run", { caseId: "case", trialId: "trial", arm: "plain" }),
+		baselineMode: "baseline.pi",
+		startMs: 1,
+		endMs: 2,
+		model: "stub-model",
+	});
+	assert.equal(evidence.runtimeTrace.health, "recorded");
+	assert.equal(evidence.scoreFamilies.execution.pass, false);
+	const span = JSON.parse((await readFile(traceFile, "utf8")).trim());
+	assert.equal(span.status.code, "ERROR");
+	assert.equal(span.attributes["flow.execution_success"], false);
 });
 
 test("eval runner links repeated trials in the raw reliability artifact", async () => {

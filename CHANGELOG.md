@@ -17,7 +17,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   included; provenance-bearing compatibility envelopes keep legacy prose
   callers working. Worktree conflict resolution receives the validated
   evidence/artifact provenance from both sides of the merge, and workflow
-  resume revalidates persisted handoffs before downstream reuse.
+  resume verifies policy-safe handoff attestations before downstream reuse.
+  Version-1 workflow state migrates to version-2 compatibility envelopes.
 - Eval outputs now link stable run/case/trial/arm identities to the exact
   runtime trace and root span. Single-arm reliability and paired-comparison
   artifacts retain trace-health evidence plus separate execution,

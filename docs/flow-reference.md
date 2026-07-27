@@ -376,8 +376,11 @@ parallel scoring cannot mutate the workspace.
 `workflow` runs an ordered state machine of work phases and approval nodes. It
 persists redacted outputs and structured handoff envelopes after every work
 phase, so a headless approval pause or later retry does not discard completed
-work. Resume revalidates each persisted envelope against the current phase
-contract, schema, artifacts, and digests before reusing it downstream.
+work. Version-2 state also stores a content-free attestation created only after
+the original contract, schema, artifact, and digest validation succeeds. Resume
+binds the sanitized envelope to that attestation and the current contract
+identity instead of revalidating policy-transformed content. Existing version-1
+states migrate to legacy compatibility envelopes before downstream reuse.
 
 ```json
 {
