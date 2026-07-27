@@ -183,8 +183,8 @@ async function runArm(kind, testCase, flow, signal, workspace, identity, remaini
 		}
 	}
 	armBudget.dispose();
+	const postExecutionStartedAt = performance.now();
 	const timing = armExecutionTiming(result, Date.now() - startedAt);
-
 	const objective = await scoreObjective({ result, thrown, testCase, ctx });
 	const exclusion = armBudget.timedOut
 		? {
@@ -211,6 +211,7 @@ async function runArm(kind, testCase, flow, signal, workspace, identity, remaini
 		tokensTotal: tokenUsage.total,
 		tokenUsage,
 		costKnown: children.length > 0 && children.every((child) => child?.usage?.costKnown === true),
+		deadlineExcludedMs: performance.now() - postExecutionStartedAt,
 	};
 }
 
