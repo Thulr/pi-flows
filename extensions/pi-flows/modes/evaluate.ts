@@ -13,7 +13,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const operatorWithTask = spec.operator as (FlowAgentRefInput & { task?: unknown; contract?: DelegationContract }) | undefined;
 	const operatorTask = typeof operatorWithTask?.task === "string" ? operatorWithTask.task : undefined;
 	const contract = (operatorWithTask?.contract ?? params.contract) as DelegationContract | undefined;
-	const contractError = contract ? validateDelegationContract(contract) : null;
+	const contractError = contract ? validateDelegationContract(contract, policy) : null;
 	if (contractError) {
 		return { content: [{ type: "text", text: formatFlowError(contractError) }], details: makeDetails("evaluate")([], contractError) };
 	}

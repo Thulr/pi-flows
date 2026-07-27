@@ -34,7 +34,7 @@ function contractError(reason: string): FlowError {
 	);
 }
 
-export function validateDelegationContract(value: unknown): FlowError | null {
+function rawDelegationContractError(value: unknown): FlowError | null {
 	if (!isRecord(value)) return contractError("`contract` must be an object.");
 	if (!nonEmptyString(value.objective)) return contractError("`contract.objective` must be a non-empty string.");
 	for (const field of ["constraints", "nonGoals", "dependencies", "acceptanceChecks"]) {
@@ -61,6 +61,14 @@ export function validateDelegationContract(value: unknown): FlowError | null {
 	}
 	if (!nonEmptyString(value.owner)) return contractError("`contract.owner` must be a non-empty string.");
 	return null;
+}
+
+export function validateDelegationContract(
+	value: unknown,
+	policy: CapturePolicy = { recordContent: true, redactSecrets: true },
+): FlowError | null {
+	const error = rawDelegationContractError(value);
+	return error ? storedError(error, policy) : null;
 }
 
 export function renderDelegationTask(

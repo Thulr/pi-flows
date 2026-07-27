@@ -7,7 +7,7 @@ import { runAgentRef } from "../runner.ts";
 
 export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, policy, makeDetails, defaultCwd } = deps;
-	const contractError = params.contract ? validateDelegationContract(params.contract) : null;
+	const contractError = params.contract ? validateDelegationContract(params.contract, policy) : null;
 	if (contractError) {
 		return { content: [{ type: "text", text: formatFlowError(contractError) }], details: makeDetails("single")([], contractError) };
 	}

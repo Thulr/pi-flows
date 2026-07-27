@@ -79,6 +79,19 @@ test("typed contracts fail before dispatch when required fields are malformed", 
 	assert.match(text, /owner/);
 });
 
+test("pre-dispatch contract errors obey redaction and content-omission policy", async () => {
+	const invalid = { ...contract, returnSchema: { type: "string", pattern: "secret=private-value[" } };
+	for (const recordContent of [true, false]) {
+		const { result, calls, text } = await runFlow(
+			{ agent: "recon", contract: invalid, recordContent },
+			{ recon: envelope() },
+		);
+		assert.equal(calls.length, 0);
+		assert.equal(result.details.error?.code, "INVALID_DELEGATION_CONTRACT");
+		assert.doesNotMatch(`${text}\n${JSON.stringify(result.details)}`, /private-value/);
+	}
+});
+
 test("single rejects return data that does not satisfy the contract schema", async () => {
 	const { result, calls, text } = await runFlow(
 		{ agent: "recon", contract },

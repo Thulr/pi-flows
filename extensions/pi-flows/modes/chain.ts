@@ -12,7 +12,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 	let previous = "";
 	for (const step of params.chain) {
 		const contract = (step.contract ?? params.contract) as DelegationContract | undefined;
-		const error = contract ? validateDelegationContract(contract) : null;
+		const error = contract ? validateDelegationContract(contract, policy) : null;
 		if (error) return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("chain")([], error) };
 	}
 
