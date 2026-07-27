@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -12,6 +13,7 @@ import {
 } from "../extensions/pi-flows/delegation.ts";
 import { FlowParams } from "../extensions/pi-flows/schema.ts";
 import { emptyUsage, type DelegationContract, type FlowRunResult } from "../extensions/pi-flows/types.ts";
+import { workerRecoveryDetails } from "../extensions/pi-flows/modes/worktree.ts";
 import { freshDir, runFlow } from "./stub-harness.ts";
 
 const contract: DelegationContract = {
@@ -67,6 +69,15 @@ function typedEnvelopeFor(envelopeContract: DelegationContract, data: unknown, o
 function typedEnvelope(overrides: Record<string, unknown> = {}) {
 	return typedEnvelopeFor(contract, { answer: 42 }, overrides);
 }
+
+test("worktree recovery details redact home paths while preserving usable locations", () => {
+	const homeWorktree = path.join(homedir(), "AppData", "Local", "Temp", "pi-flow-worker");
+	const details = workerRecoveryDetails([
+		{ branch: "pi-flow/run/a", cwd: homeWorktree },
+	], policy);
+	assert.doesNotMatch(details, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(details, /`pi-flow\/run\/a` at `~[\\/]AppData[\\/]Local[\\/]Temp[\\/]pi-flow-worker`/);
+});
 
 test("typed prompts carry a stable contract identity", () => {
 	const id = delegationContractId(contract);

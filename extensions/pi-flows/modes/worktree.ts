@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
-import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
@@ -65,8 +65,19 @@ function modeError(deps: ModeDeps, results: FlowRunResult[], error: FlowError, e
 	return { content: [{ type: "text", text: `${formatFlowError(error)}${extra}` }], details: deps.makeDetails("worktree")(results, error) };
 }
 
-function workerRecoveryDetails(workers: WorkerWorktree[]): string {
-	const recovery = workers.map((worker) => `- \`${worker.branch}\` at \`${worker.cwd}\``).join("\n");
+function workerRecoveryLocation(worker: { branch: string; cwd: string }, policy: ModeDeps["policy"]): { branch: string; cwd: string } {
+	const recoveryPolicy = { ...policy, recordContent: true };
+	return {
+		branch: sanitizeText(worker.branch, recoveryPolicy, 256),
+		cwd: sanitizeText(safePath(worker.cwd) ?? worker.cwd, recoveryPolicy, 1024),
+	};
+}
+
+export function workerRecoveryDetails(workers: Array<{ branch: string; cwd: string }>, policy: ModeDeps["policy"]): string {
+	const recovery = workers.map((worker) => {
+		const location = workerRecoveryLocation(worker, policy);
+		return `- \`${location.branch}\` at \`${location.cwd}\``;
+	}).join("\n");
 	return `\n\nWorker state retained for recovery:\n${recovery}`;
 }
 
@@ -149,25 +160,27 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			if (failedWorkerIds.length > 0) {
 				retainFailureState = true;
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", "One or more required worktree writers failed.", `Failed worker ids: ${failedWorkerIds.join(", ")}. Partial implementation was not integrated.`, "Inspect the retained worker state, fix the failed tasks or provider/tool errors, then rerun all required worktree tasks.");
-				return modeError(deps, results, error, workerRecoveryDetails(workers));
+				return modeError(deps, results, error, workerRecoveryDetails(workers, policy));
 			}
 			const workerHandoffError = acceptIntegrationResults(deps, workerItems, workerResults);
 			if (workerHandoffError) {
 				retainFailureState = true;
-				return modeError(deps, results, workerHandoffError, workerRecoveryDetails(workers));
+				return modeError(deps, results, workerHandoffError, workerRecoveryDetails(workers, policy));
 			}
 			for (let index = 0; index < workers.length; index += 1) {
 				const committed = commitChanges(workers[index].cwd, `pi-flow(${workers[index].id}): isolated worker changes`);
 				if (!committed.ok) {
 					retainFailureState = true;
 					const error = flowError("WORKTREE_SETUP_FAILED", `Could not commit worker "${workers[index].id}" changes.`, committed.error ?? "git commit failed", "Inspect the worker branch and git hooks/config, then retry.");
-					return modeError(deps, results, error, `\n\nWorker branch: \`${workers[index].branch}\`\nWorker worktree: \`${workers[index].cwd}\``);
+					const recovery = workerRecoveryLocation(workers[index], policy);
+					return modeError(deps, results, error, `\n\nWorker branch: \`${recovery.branch}\`\nWorker worktree: \`${recovery.cwd}\``);
 				}
 				const branchState = branchHasCommitsSince(workers[index].cwd, baseSha);
 				if (!branchState.ok) {
 					retainFailureState = true;
 					const error = flowError("WORKTREE_SETUP_FAILED", `Could not inspect worker "${workers[index].id}" branch.`, branchState.error ?? "git rev-list failed", "Inspect the retained worker branch and git repository state, then retry.");
-					return modeError(deps, results, error, `\n\nWorker branch: \`${workers[index].branch}\`\nWorker worktree: \`${workers[index].cwd}\``);
+					const recovery = workerRecoveryLocation(workers[index], policy);
+					return modeError(deps, results, error, `\n\nWorker branch: \`${recovery.branch}\`\nWorker worktree: \`${recovery.cwd}\``);
 				}
 				workers[index].changed = branchState.changed;
 			}
