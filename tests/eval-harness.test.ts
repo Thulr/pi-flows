@@ -599,38 +599,6 @@ test("eval CLIs reject non-positive arm-timeout overrides", () => {
 	}
 });
 
-test("eval runner repeats isolated subject trials and writes the raw reliability artifact", async () => {
-	const outputDir = await mkdtemp(path.join(tmpdir(), "pi-eval-reliability-cli-"));
-	const traceOut = path.join(outputDir, "trace.jsonl");
-	const reliabilityOut = path.join(outputDir, "reliability.json");
-	const child = spawnSync(
-		process.execPath,
-		[
-			"--import",
-			"tsx",
-			"evals/run.mjs",
-			"--dry-run",
-			"--filter=route-classifies",
-			"--trials=2",
-			`--trace-out=${traceOut}`,
-			`--reliability-out=${reliabilityOut}`,
-		],
-		{ cwd: process.cwd(), encoding: "utf8" },
-	);
-
-	assert.equal(child.status, 0, child.stderr);
-	assert.match(child.stdout, /route-classifies-bug-to-recon::trial-001/);
-	assert.match(child.stdout, /route-classifies-bug-to-recon::trial-002/);
-	const report = JSON.parse(await readFile(reliabilityOut, "utf8"));
-	assert.equal(report.subjectTrials, 2);
-	assert.equal(report.judgeSamples, 1);
-	assert.deepEqual(report.cases[0].trials.map((trial) => trial.trialId), [
-		"route-classifies-bug-to-recon::trial-001",
-		"route-classifies-bug-to-recon::trial-002",
-	]);
-	assert.equal(report.cases[0].trials.every((trial) => trial.answer.includes("ledger")), true);
-});
-
 test("eval calibration canaries are fixed true-negative judge fixtures", () => {
 	assert.ok(CALIBRATION_CASES.length >= 3, "TNR needs more than two negative data points");
 	assert.ok(

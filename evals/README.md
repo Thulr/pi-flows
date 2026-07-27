@@ -52,6 +52,7 @@ npm run eval -- --write-baseline   # promote this run to evals/thulr-baseline.js
 npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
 npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as JUnit XML (CI test ingestion)
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
+npm run eval -- --run-id=release-123 --runtime-trace=/tmp/runtime.jsonl # stable eval/runtime linkage
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 npm run eval:select                # tool-selection eval: should the parent model call flow at all?
 ```
@@ -160,13 +161,22 @@ the contract's optional context/repro attributes: the task text as
 `llm.token_count.total` on the final-answer span (per-case spend, summed into the
 EvalRun), `thulr.prompt_version` stamped
 `pi-flows@<package version>` because the agent prompts ship with the package, and
-`thulr.config_version` stamped with the eval subject configuration. `thulr
+`thulr.config_version` stamped with the eval subject configuration. Product
+spans also carry `pi_flows.eval_run_id`, the exact runtime trace file/trace/root
+span, trace health, and separate execution, verified-outcome, and policy-
+compliance score-family evidence. A missing runtime trace is recorded as
+`pi_flows.runtime_trace.health:"missing"` and a failed trace-health score; it
+does not rewrite the agent's execution or outcome score.
+
+`thulr
 query-traces --prompt-version` / `--config-version` can slice traces by either
 stamp. Sanity-check a trace for free with `thulr inspect-trace --trace
-evals/thulr-trace.jsonl`. This deliberately does **not** reuse a flow's internal multi-span
-trace, where the latest child is often a critic or voter rather than the synthesized
-answer. The `flow`-tool's richer OpenInference trace (`PI_FLOWS_TRACE_FILE` /
-`/flows report`) is a separate, diagnostics-only path.
+evals/thulr-trace.jsonl`. Final-answer grading still uses the compact
+self-contained eval trace—the latest runtime child may be a critic or voter—but
+each graded case now references its richer OpenInference runtime trace and exact
+root span for diagnosis. The two artifacts remain separate so trajectory capture
+cannot change which final answer is graded. Runtime content follows the flow
+call's existing `recordContent` and `redactSecrets` controls.
 
 ## Provider & auth (local dev)
 
@@ -280,12 +290,13 @@ npm run eval:compare -- --arms=sequential,parallel --filter=vote  # isolate para
 npm run eval:compare -- --arms=random-routing,oracle-routing --filter=route # routing headroom
 npm run eval:compare -- --infra-retries=1 --infra-retry-delay=15000 # retry zero-token startup infra only
 npm run eval:compare -- --write=evals/compare.json
+npm run eval:compare -- --run-id=ab-123 --runtime-trace=/tmp/ab-runtime.jsonl
 npm run eval:compare -- --dry-run       # wiring smoke, no model
 
-# Diagnose WHY an arm scored as it did — capture per-child OpenInference spans for the
-# flows arm (the flow tool honors the env var; plain pi has no spans):
-PI_FLOWS_TRACE_FILE=/tmp/ab.jsonl npm run eval:compare -- --duel --write=evals/compare.json
-npm run trace:report -- /tmp/ab.jsonl
+# Diagnose WHY either arm scored as it did. The flows arm records its full child
+# tree; direct/plain baselines receive a process-root runtime span in the same file.
+npm run eval:compare -- --duel --runtime-trace=/tmp/ab-runtime.jsonl --write=evals/compare.json
+npm run trace:report -- /tmp/ab-runtime.jsonl
 ```
 
 `--arms=<reference>,<candidate>` selects two named arms without copying case
@@ -301,7 +312,9 @@ definitions. The default remains `direct,full`. Supported controls are:
 
 Each arm inherits the declared binding constraint. The artifact records its
 topology and configuration identity, attributes measured lift to the ablated
-component, and retains bounded per-case answer/objective evidence. An arm that
+component, retains bounded per-case answer/objective evidence, and links both
+arms of every repeated trial to stable run/case/trial/arm identities plus the
+exact runtime trace/root span. An arm that
 does not apply to a case is excluded as `inapplicable` with a durable reason,
 never silently scored. For statically predictable topologies,
 `compute-matched-self-review` uses one repeated agent profile with the full

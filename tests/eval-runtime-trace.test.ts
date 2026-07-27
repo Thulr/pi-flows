@@ -1,0 +1,133 @@
+import { strict as assert } from "node:assert";
+import { spawnSync } from "node:child_process";
+import { readFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import {
+	runtimeScoreFamilies,
+	runtimeTraceContext,
+	runtimeTraceEvidence,
+} from "../evals/runtime-trace.mjs";
+import { stableTraceIds } from "../extensions/pi-flows/trace.ts";
+import { runFlow } from "./stub-harness.ts";
+
+test("runtime trace ids are stable across file ordering and distinct across paired arms", () => {
+	const flows = runtimeTraceContext("run-abc", {
+		caseId: "case-a",
+		trialId: "case-a::trial-002",
+		trialIndex: 2,
+		arm: "flows",
+	});
+	const baseline = runtimeTraceContext("run-abc", {
+		caseId: "case-a",
+		trialId: "case-a::trial-002",
+		trialIndex: 2,
+		arm: "plain",
+	});
+	assert.deepEqual(stableTraceIds(flows, "parallel"), stableTraceIds(structuredClone(flows), "parallel"));
+	assert.notEqual(stableTraceIds(flows, "parallel").traceId, stableTraceIds(baseline, "parallel").traceId);
+});
+
+test("missing runtime traces are trace-health evidence, not agent failure", () => {
+	const context = runtimeTraceContext("run-abc", {
+		caseId: "case-a",
+		trialId: "case-a::trial-001",
+		trialIndex: 1,
+		arm: "flows",
+	});
+	const trace = runtimeTraceEvidence(undefined, "/tmp/runtime.jsonl", context);
+	const scores = runtimeScoreFamilies({
+		result: { details: { results: [] } },
+		objective: { pass: true, score: 1 },
+		trace,
+	});
+	assert.equal(trace.health, "missing");
+	assert.equal(scores.execution.pass, true);
+	assert.equal(scores.verifiedOutcome.pass, true);
+	assert.equal(scores.traceHealth.pass, false);
+});
+
+test("runtime score families keep execution, outcome, and policy compliance separate", () => {
+	const trace = {
+		health: "recorded",
+		traceFile: "runtime.jsonl",
+		traceId: "a".repeat(32),
+		rootSpanId: "b".repeat(32),
+		context: runtimeTraceContext("run-abc", {
+			caseId: "case-a",
+			trialId: "case-a::trial-001",
+			trialIndex: 1,
+			arm: "flows",
+		}),
+	};
+	const scores = runtimeScoreFamilies({
+		result: {
+			details: {
+				results: [],
+				error: { code: "RETURN_ENVELOPE_INCOMPLETE" },
+			},
+		},
+		objective: { pass: true, score: 1 },
+		trace,
+	});
+	assert.equal(scores.execution.pass, false);
+	assert.equal(scores.verifiedOutcome.pass, true);
+	assert.equal(scores.policyCompliance.pass, false);
+	assert.equal(scores.traceHealth.pass, true);
+});
+
+test("flow execution returns an exact redacted runtime-trace root link", async () => {
+	const context = runtimeTraceContext("run-abc", {
+		caseId: "case-a",
+		trialId: "case-a::trial-003",
+		trialIndex: 3,
+		arm: "flows",
+	});
+	const { result, stubDir } = await runFlow(
+		{
+			agent: "recon",
+			task: "read secret=private-value",
+			traceFile: "runtime.jsonl",
+			traceContext: context,
+			recordContent: false,
+		},
+		{ recon: "secret=private-value" },
+	);
+	const expected = stableTraceIds(context, "single");
+	assert.equal(result.details.trace?.health, "recorded");
+	assert.equal(result.details.trace?.traceId, expected.traceId);
+	assert.equal(result.details.trace?.rootSpanId, expected.rootSpanId);
+	const spans = (await readFile(`${stubDir}/runtime.jsonl`, "utf8"))
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line));
+	const root = spans.find((span) => span.span_id === expected.rootSpanId);
+	assert.equal(root.attributes["flow.run_id"], "run-abc");
+	assert.equal(root.attributes["flow.trial_id"], "case-a::trial-003");
+	assert.doesNotMatch(JSON.stringify(spans), /private-value/);
+});
+
+test("eval runner links repeated trials in the raw reliability artifact", async () => {
+	const outputDir = await mkdtemp(path.join(tmpdir(), "pi-eval-runtime-trace-"));
+	const traceOut = path.join(outputDir, "trace.jsonl");
+	const runtimeTraceOut = path.join(outputDir, "runtime.jsonl");
+	const reliabilityOut = path.join(outputDir, "reliability.json");
+	const child = spawnSync(process.execPath, [
+		"--import", "tsx", "evals/run.mjs", "--dry-run",
+		"--filter=route-classifies", "--trials=2", "--run-id=run-test-123",
+		`--trace-out=${traceOut}`, `--runtime-trace=${runtimeTraceOut}`,
+		`--reliability-out=${reliabilityOut}`,
+	], { cwd: process.cwd(), encoding: "utf8" });
+
+	assert.equal(child.status, 0, child.stderr);
+	const report = JSON.parse(await readFile(reliabilityOut, "utf8"));
+	assert.equal(report.runId, "run-test-123");
+	assert.equal(report.runtimeTraceFile, runtimeTraceOut);
+	assert.deepEqual(report.cases[0].trials.map((trial) => trial.trialId), [
+		"route-classifies-bug-to-recon::trial-001",
+		"route-classifies-bug-to-recon::trial-002",
+	]);
+	assert.equal(report.cases[0].trials.every((trial) => trial.runtimeTrace.health === "missing"), true);
+	assert.equal(report.cases[0].trials.every((trial) => trial.scoreFamilies.traceHealth.pass === false), true);
+});

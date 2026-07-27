@@ -307,7 +307,7 @@ export default function (pi: ExtensionAPI) {
 					? { maxCostUsd: params.maxCostUsd, maxTokens: params.maxTokens, maxGeneratedTokens: params.maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 }
 					: undefined;
 			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
-			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel) : undefined;
+			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
 			let liveDetails = makeDetails(mode)([]);
 			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets);
 			updateFlowUi(ctx, liveDetails);
@@ -362,7 +362,7 @@ export default function (pi: ExtensionAPI) {
 				appendFlowSessionEntry(pi, liveDetails);
 				if (traceSink) {
 					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
-					await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
+					output.details.trace = await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
 				}
 				return output;
 			} finally {

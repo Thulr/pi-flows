@@ -54,12 +54,13 @@ export const selectMeasurementCases = (cases, { filter = "", includeControls = f
  * @param {object} measured the per-run values: answer, label, endMs, model, task,
  *   costUsd, tokensTotal, journeyStage, promptVersion, configVersion
  */
-export function caseSpanFields(testCase, { answer, label, endMs, model, task, costUsd, tokensTotal, journeyStage, promptVersion, configVersion, caseId, trialId, traceCaseId, trialIndex }) {
+export function caseSpanFields(testCase, { answer, label, endMs, model, task, costUsd, tokensTotal, journeyStage, promptVersion, configVersion, caseId, trialId, traceCaseId, trialIndex, evalRunId, runtimeTrace, scoreFamilies }) {
 	return {
 		name: traceCaseId ?? testCase.name,
 		baseCaseId: caseId ?? testCase.name,
 		trialId,
 		trialIndex,
+		evalRunId,
 		answer,
 		criterion: testCase.criterion,
 		criteria: testCase.criteria,
@@ -76,6 +77,8 @@ export function caseSpanFields(testCase, { answer, label, endMs, model, task, co
 		tokensTotal,
 		promptVersion,
 		configVersion,
+		runtimeTrace,
+		scoreFamilies,
 	};
 }
 

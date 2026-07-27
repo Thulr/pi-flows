@@ -56,6 +56,9 @@ test("comparison CLI writes paired repeated trials with stable identities and sn
 	assert.equal(run.status, 0, run.stderr);
 	const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
 	assert.equal(artifact.schemaVersion, "pi-flows.paired-comparison.v1");
+	assert.equal(typeof artifact.runId, "string");
+	assert.ok(artifact.runId.length > 0);
+	assert.equal(artifact.runtimeTraceFile, ".thulr/runs/ab-runtime.trace.jsonl");
 	assert.deepEqual(artifact.constraint, { kind: "deadline", value: 90000, unit: "ms", source: "cli" });
 	assert.equal(artifact.subjectTrials, 2);
 	assert.equal(artifact.rawRows.length, 2);
@@ -77,6 +80,15 @@ test("comparison CLI writes paired repeated trials with stable identities and sn
 		assert.equal(row.flows.workspaceSnapshotId, row.baseline.workspaceSnapshotId);
 		assert.equal(row.flows.timeoutMs, 90000);
 		assert.equal(row.baseline.timeoutMs, 90000);
+		assert.equal(row.flows.runtimeTrace.context.runId, artifact.runId);
+		assert.equal(row.baseline.runtimeTrace.context.runId, artifact.runId);
+		assert.equal(row.flows.runtimeTrace.context.trialId, row.trialId);
+		assert.equal(row.baseline.runtimeTrace.context.trialId, row.trialId);
+		assert.notEqual(row.flows.runtimeTrace.context.arm, row.baseline.runtimeTrace.context.arm);
+		assert.equal(row.flows.runtimeTrace.health, "missing");
+		assert.equal(row.baseline.runtimeTrace.health, "missing");
+		assert.equal(row.flows.scoreFamilies.traceHealth.pass, false);
+		assert.equal(row.baseline.scoreFamilies.traceHealth.pass, false);
 	}
 });
 

@@ -60,10 +60,12 @@ Expected: recon returns paths including `extensions/pi-flows/index.ts` and menti
 ```
 
 Expected: `details.results[0].envelope` has
-`schemaVersion:"pi-flows.return-envelope.v1"`, validated evidence and `data`,
-plus runtime usage. A response whose `data` violates `returnSchema` returns
+`schemaVersion:"pi-flows.return-envelope.v1"`, the dispatched contract's
+`sha256:` `contractId`, validated evidence and `data`, plus runtime usage. A
+response whose `data` violates `returnSchema` returns
 `RETURN_ENVELOPE_INVALID`; a declared SHA-256 digest that does not match its
-artifact returns `RETURN_DIGEST_MISMATCH`.
+artifact returns `RETURN_DIGEST_MISMATCH`. Integration modes additionally reject
+missing/stale identities with `RETURN_CONTRACT_MISMATCH`.
 
 ## Parallel example
 
@@ -79,6 +81,12 @@ artifact returns `RETURN_DIGEST_MISMATCH`.
 ```
 
 Expected: both tasks complete; details include one result per agent and durations.
+Each task may also set `contract`. Valid typed and legacy prose results are
+normalized into `details.results[*].handoff`; prose uses
+`compatibility:"legacy-prose"`, while typed handoffs preserve contract identity,
+status, evidence, artifacts, and source provenance. `partial`/`blocked` typed
+returns stop by default; set `incompleteHandoffPolicy:"include"` only when
+incomplete synthesis is an intentional policy choice.
 
 ## Chain example
 

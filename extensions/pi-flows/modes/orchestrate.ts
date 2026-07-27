@@ -1,9 +1,11 @@
-import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareHandoff, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { canonicalHandoff, incompleteHandoffSummary } from "../delegation.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
@@ -22,7 +24,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("orchestrate")([], error) };
 	}
 	const returnContract = params.returnContract ?? (params.task || nestedTask ? nestedReturnContract : undefined);
-	const contractedGoal = appendReturnContract(goal, returnContract, params.requireEvidence);
+	const contractedGoal = goal;
 
 	const { concurrency } = deps;
 
@@ -42,12 +44,17 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		subtasksJsonProtocolInstruction(maxSubtasks),
 	].join("\n");
-	const decomposed = await runAgentRef(deps, orchestratorRef, orchestratorTask, "orchestrate", 1, results);
+	const orchestratorPlan = integrationRunPlan(deps, orchestratorRef, orchestratorTask);
+	if (orchestratorPlan.error) return { content: [{ type: "text", text: formatFlowError(orchestratorPlan.error) }], details: makeDetails("orchestrate")([], orchestratorPlan.error) };
+	const decomposed = await runAgentRef(deps, orchestratorPlan.plan!.ref, orchestratorPlan.plan!.task, "orchestrate", 1, results, orchestratorPlan.plan!.limits);
 	results.push(decomposed);
 	if (isFailed(decomposed)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: orchestrator "${orchestratorRef.agent}" failed.\n\n${resultText(decomposed)}`, policy) }], details: makeDetails("orchestrate")(results) };
 	}
-	const subtasks = parseSubtasks(resultText(decomposed), maxSubtasks);
+	const orchestratorHandoffError = acceptIntegrationResult(deps, orchestratorPlan.plan!, decomposed);
+	if (orchestratorHandoffError) return { content: [{ type: "text", text: formatFlowError(orchestratorHandoffError) }], details: makeDetails("orchestrate")(results, orchestratorHandoffError) };
+	const decomposedText = decomposed.handoff?.compatibility === "typed" ? JSON.stringify(decomposed.handoff.data) : resultText(decomposed);
+	const subtasks = parseSubtasks(decomposedText, maxSubtasks);
 	if (!subtasks) {
 		const error = flowError(
 			"ORCHESTRATE_NO_SUBTASKS",
@@ -74,27 +81,34 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 
 	// 2. Fan out one worker per subtask.
 	const makeWorkerTask = (subtask: string) =>
-		appendReturnContract(
-			[
+		[
 				"## Overall goal / contract",
 				contractedGoal,
 				"\n## Assigned subtask",
 				subtask,
 				"\n## Your job",
 				"Investigate only the assigned subtask, but aim the findings at the overall goal. Return concrete findings, evidence, risks, and unknowns that the final synthesizer can use.",
-			].join("\n"),
-			spec.workerReturnContract,
-			false,
-		);
+			].join("\n");
+	const workerPlans: IntegrationRunPlan[] = [];
+	for (const subtask of subtasks) {
+		const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(subtask), {
+			returnContract: spec.workerReturnContract,
+			placeholderTask: subtask,
+		});
+		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("orchestrate")(results, planned.error) };
+		workerPlans.push(planned.plan!);
+	}
 	const workerResults = await runAgentFanout(
 		deps,
 		"orchestrate",
-		subtasks.map((subtask) => ({ ref: workerRef, task: makeWorkerTask(subtask), placeholderTask: subtask })),
+		workerPlans,
 		concurrency,
 		results,
 		(done, total) => `Flow orchestrate: ${done}/${total} workers done`,
 	);
 	results.push(...workerResults);
+	const workerHandoffError = acceptIntegrationResults(deps, workerPlans, workerResults);
+	if (workerHandoffError) return { content: [{ type: "text", text: formatFlowError(workerHandoffError) }], details: makeDetails("orchestrate")(results, workerHandoffError) };
 
 	const successfulWorkers = workerResults.filter((result) => !isFailed(result));
 	if (successfulWorkers.length === 0) {
@@ -129,11 +143,20 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			.filter(Boolean)
 			.join("\n");
 
-	let synthesized = await runAgentRef(deps, synthesizerRef, makeSynthesisTask(), "orchestrate", results.length + 1, results);
+	const makeSynthesisPlan = (task: string) => integrationRunPlan(deps, synthesizerRef, task, {
+		fallbackContract: params.contract as DelegationContract | undefined,
+		returnContract,
+		requireEvidence: params.requireEvidence,
+	});
+	let synthesisPlan = makeSynthesisPlan(makeSynthesisTask());
+	if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
+	let synthesized = await runAgentRef(deps, synthesisPlan.plan!.ref, synthesisPlan.plan!.task, "orchestrate", results.length + 1, results, synthesisPlan.plan!.limits);
 	results.push(synthesized);
 	if (isFailed(synthesized)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed.\n\n${resultText(synthesized)}`, policy) }], details: makeDetails("orchestrate")(results) };
 	}
+	let synthesisHandoffError = acceptIntegrationResult(deps, synthesisPlan.plan!, synthesized);
+	if (synthesisHandoffError) return { content: [{ type: "text", text: formatFlowError(synthesisHandoffError) }], details: makeDetails("orchestrate")(results, synthesisHandoffError) };
 
 	let verifyNote = "";
 	let verifyVerdict: "pass" | "revise" | "not_run" = "not_run";
@@ -164,7 +187,9 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Your job",
 				`Judge whether the synthesized answer fully and correctly addresses the goal/contract. ${verdictProtocolInstruction("specific, actionable gaps")} Judge only the answer above.`,
 			].join("\n");
-			const verified = await runAgentRef(deps, verifyRef, verifyTask, "orchestrate", results.length + 1, results);
+			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask);
+			if (verifyPlan.error) return { content: [{ type: "text", text: formatFlowError(verifyPlan.error) }], details: makeDetails("orchestrate")(results, verifyPlan.error) };
+			const verified = await runAgentRef(deps, verifyPlan.plan!.ref, verifyPlan.plan!.task, "orchestrate", results.length + 1, results, verifyPlan.plan!.limits);
 			results.push(verified);
 
 			if (isFailed(verified)) {
@@ -181,8 +206,10 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					details: makeDetailsWithError(error),
 				};
 			}
+			const verifyHandoffError = acceptIntegrationResult(deps, verifyPlan.plan!, verified);
+			if (verifyHandoffError) return { content: [{ type: "text", text: formatFlowError(verifyHandoffError) }], details: makeDetails("orchestrate")(results, verifyHandoffError) };
 
-			verifyVerdict = parseVerdict(resultText(verified));
+			verifyVerdict = parseVerdict(verified.handoff ? canonicalHandoff(verified.handoff) : resultText(verified));
 			verifyNote = `\n\n## Verification (${verifyRef.agent}): ${verifyVerdict === "pass" ? "PASS" : "REVISE"}\n\n${sanitizeText(resultText(verified), policy)}`;
 			if (verifyVerdict === "pass") break;
 
@@ -201,11 +228,15 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			}
 
 			const critiquePrep = handoffWarnings.addFrom(prepareResultHandoff(verified, policy));
-			synthesized = await runAgentRef(deps, synthesizerRef, makeSynthesisTask(sanitizeText(resultText(synthesized), policy), critiquePrep.text), "orchestrate", results.length + 1, results);
+			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(sanitizeText(resultText(synthesized), policy), critiquePrep.text));
+			if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
+			synthesized = await runAgentRef(deps, synthesisPlan.plan!.ref, synthesisPlan.plan!.task, "orchestrate", results.length + 1, results, synthesisPlan.plan!.limits);
 			results.push(synthesized);
 			if (isFailed(synthesized)) {
 				return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed while revising after verifier feedback.\n\n${resultText(synthesized)}`, policy) }], details: makeDetails("orchestrate")(results) };
 			}
+			synthesisHandoffError = acceptIntegrationResult(deps, synthesisPlan.plan!, synthesized);
+			if (synthesisHandoffError) return { content: [{ type: "text", text: formatFlowError(synthesisHandoffError) }], details: makeDetails("orchestrate")(results, synthesisHandoffError) };
 		}
 	}
 
@@ -217,7 +248,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				? ` Verification REVISE noted by ${verifyRef.agent}.`
 				: ` Verification not completed by ${verifyRef.agent}.`
 		: "";
-	const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}.${verificationSummary}`;
+	const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}.${verificationSummary}${incompleteHandoffSummary(results)}`;
 	return {
 		content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`) }],
 		details: makeDetails("orchestrate")(results),

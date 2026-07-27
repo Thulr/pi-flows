@@ -358,6 +358,7 @@ export interface AgentFanoutItem {
 	ref: FlowAgentRefInput;
 	task: string;
 	placeholderTask?: string;
+	limits?: AgentRunLimits;
 }
 
 export interface AgentRunLimits {
@@ -415,7 +416,7 @@ export async function runAgentFanout(
 	const baseStep = priorResults.length;
 	return mapWithConcurrency(items, concurrency, async (item, index) => {
 		const result = await deps.runChild({
-			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1),
+			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1, item.limits),
 			onUpdate: (partial) => {
 				const current = partial.details.results[0];
 				if (current) liveResults[index] = current;

@@ -126,8 +126,10 @@ test("graph wave scheduler orders dependent nodes and renders node outputs", asy
 	const output = await handleGraph(deps);
 	assert.equal(calls.length, 2);
 	assert.match(calls[0].task, /start from map the system/);
-	// Node b's template is rendered with node a's actual (handed-off) output.
-	assert.match(calls[1].task, /use output-of-start from map the s as input/);
+	// Node b receives node a through the documented legacy compatibility envelope.
+	assert.match(calls[1].task, /use \{"schemaVersion":"pi-flows\.handoff-envelope\.v1"/);
+	assert.match(calls[1].task, /"compatibility":"legacy-prose"/);
+	assert.match(calls[1].task, /"text":"output-of-start from map the s"/);
 	assert.equal(output.details.results.length, 2);
 });
 

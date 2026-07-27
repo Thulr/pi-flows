@@ -67,6 +67,7 @@ import { calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgains
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
 import { buildReliabilityReport, formatReliabilitySummary, MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
+import { evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
 import * as thulr from "./thulr.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
@@ -120,6 +121,8 @@ process.env.PI_FLOWS_JUDGE_MODEL = judgeModel;
 // Dry-run gets its own trace path: mock spans must never clobber the last real
 // trace (which re-judging with a different judge model depends on).
 const TRACE = p(flag("trace-out", dryRun ? "evals/thulr-trace.dry-run.jsonl" : "evals/thulr-trace.jsonl"));
+const EVAL_RUN_ID = evalRunId(flag("run-id", null));
+const RUNTIME_TRACE = p(flag("runtime-trace", ".thulr/runs/runtime.trace.jsonl"));
 const RELIABILITY = p(flag("reliability-out", ".thulr/runs/reliability.json"));
 const CANDIDATE = p(".thulr/runs/candidate.json");
 const GATE_CANDIDATE = p(".thulr/runs/candidate.gate.json");
@@ -171,6 +174,7 @@ async function runCases(selected, selectedCalibration, flow) {
 	for (const testCase of selected) {
 		for (let trialIndex = 1; trialIndex <= subjectTrials; trialIndex += 1) {
 			const identity = trialIdentity(testCase.name, trialIndex, subjectTrials);
+			const traceContext = runtimeTraceContext(EVAL_RUN_ID, { ...identity, arm: "flows" });
 			const workspace = caseWorkspace(testCase, { dryRun, arm: "flows", isolate: true });
 			const flowCtx = { cwd: workspace.cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 			const ctx = { flow, model: useAgentModels ? undefined : model, dryRun, flowCtx };
@@ -184,7 +188,14 @@ async function runCases(selected, selectedCalibration, flow) {
 				if (dryRun) {
 					result = testCase.mock;
 				} else {
-					const params = { ...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)), traceLabel: identity.trialId, maxCostUsd: testCase.params.maxCostUsd ?? capUsd, timeoutMs: timeoutPlan.effectiveTimeoutMs };
+					const params = {
+						...(useAgentModels ? structuredClone(testCase.params) : injectModel(testCase.params, model)),
+						traceFile: RUNTIME_TRACE,
+						traceLabel: identity.trialId,
+						traceContext,
+						maxCostUsd: testCase.params.maxCostUsd ?? capUsd,
+						timeoutMs: timeoutPlan.effectiveTimeoutMs,
+					};
 					try {
 						result = await flow.execute(`eval:${identity.trialId}`, params, armBudget.signal, undefined, flowCtx);
 					} catch (error) {
@@ -206,6 +217,8 @@ async function runCases(selected, selectedCalibration, flow) {
 				if (excludedReason === "infra") sawInfraError = true;
 
 				if (!excludedReason) {
+					const runtimeTrace = runtimeTraceEvidence(result, rel(RUNTIME_TRACE), traceContext);
+					const scoreFamilies = runtimeScoreFamilies({ result, thrown, objective, trace: runtimeTrace });
 					thulr.appendCaseSpans(TRACE, caseSpanFields(testCase, {
 						answer,
 						label: objective.pass,
@@ -217,6 +230,9 @@ async function runCases(selected, selectedCalibration, flow) {
 						journeyStage: testCase.journeyStage,
 						promptVersion: PROMPT_VERSION,
 						configVersion: CONFIG_VERSION,
+						evalRunId: EVAL_RUN_ID,
+						runtimeTrace,
+						scoreFamilies,
 						...identity,
 					}));
 					judgedCount += 1;
@@ -224,6 +240,8 @@ async function runCases(selected, selectedCalibration, flow) {
 				}
 
 				const durationMs = endedAt - startedAt;
+				const runtimeTrace = runtimeTraceEvidence(result, rel(RUNTIME_TRACE), traceContext);
+				const scoreFamilies = runtimeScoreFamilies({ result, thrown, objective, trace: runtimeTrace });
 				for (const line of caseLines({ name: identity.trialId, objective, excludedReason, timeoutPlan, reachedModel, cost, durationMs, hard: testCase.hard })) console.log(line);
 				summaries.push({
 					...identity,
@@ -239,6 +257,8 @@ async function runCases(selected, selectedCalibration, flow) {
 					costUsd: cost,
 					tokens,
 					durationMs,
+					runtimeTrace,
+					scoreFamilies,
 				});
 			} finally {
 				armBudget.dispose();
@@ -281,9 +301,16 @@ function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable }) {
 			durationMs: summary.durationMs,
 			exclusion: summary.exclusion,
 			infraFailure: summary.infraFailure,
+			runtimeTrace: summary.runtimeTrace,
+			scoreFamilies: summary.scoreFamilies,
 		};
 	});
-	const report = buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples: samples });
+	const report = buildReliabilityReport(rawTrials, {
+		subjectTrials,
+		judgeSamples: samples,
+		runId: EVAL_RUN_ID,
+		runtimeTraceFile: rel(RUNTIME_TRACE),
+	});
 	mkdirSync(dirname(RELIABILITY), { recursive: true });
 	writeFileSync(RELIABILITY, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 	for (const line of formatReliabilitySummary(report)) console.log(line);
@@ -393,6 +420,8 @@ async function main() {
 	}));
 
 	thulr.startTrace(TRACE);
+	mkdirSync(dirname(RUNTIME_TRACE), { recursive: true });
+	writeFileSync(RUNTIME_TRACE, "", "utf8");
 	const { summaries, calibrationSummaries, judgedCount, productJudgedCount, totalCost, sawInfraError } = await runCases(selected, selectedCalibration, flow);
 
 	const behaviourCases = summaries.filter((s) => !s.hard);

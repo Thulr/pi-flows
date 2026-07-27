@@ -69,9 +69,11 @@ if no justification can be stated, the task belongs in the parent context.
 | `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across the flow tree. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
 | `traceFile` | (none) | Append an OpenInference-shaped JSON span per child (plus a root span) to this JSONL file — trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
+| `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. The identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
 | `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
-| `contract` | (none) | Typed delegation contract for `single`, `chain`, and `evaluate`. It may replace the prose `task` in single/evaluate and requires a validated `pi-flows.return-envelope.v1` response. |
+| `contract` | (none) | Typed delegation contract. It may replace prose `task` in single/evaluate, acts as the final-role fallback in integration modes, and requires a validated `pi-flows.return-envelope.v1` response. Fan-out tasks, graph nodes, workflow phases, worktree tasks, voters/participants, dossier sections, and agent refs can set role-specific contracts. |
+| `incompleteHandoffPolicy` | `fail` | Integration modes reject typed `partial`/`blocked` envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
@@ -89,7 +91,7 @@ not a per-call input. It is enforced by the runtime and surfaced read-only in
 
 ### Trace export (observability)
 
-Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`; root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. Export is best-effort and never fails a flow.
+Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`; root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. When `traceContext` is supplied, `flow.run_id`, `flow.case_id`, `flow.trial_id`, `flow.trial_index`, and `flow.arm` are copied to every span; `details.trace` reports `recorded` or `missing` health and the exact `traceFile`, `traceId`, and `rootSpanId`. Export is best-effort and never fails a flow.
 
 Summarize a trace file from inside pi:
 
@@ -119,9 +121,26 @@ For durable machine-checked handoffs, `contract` is the structured alternative.
 It contains `objective`, `constraints`, `nonGoals`, `dependencies`, `authority`
 (`may`, `mustNot`, `requiresApproval`), `sideEffectClass`, `budget`,
 `acceptanceChecks`, a JSON Schema `returnSchema`, and `owner`. All fields are
-required; arrays and the budget object may be empty. A top-level contract applies
-to single/evaluate and is the fallback for chain steps; a chain step or
-`evaluate.operator` may override it.
+required; arrays and the budget object may be empty. Each dispatched contract has
+a canonical `sha256:` identity. Integration modes require the child to echo that
+identity as `contractId`, so missing/stale returns fail with
+`RETURN_CONTRACT_MISMATCH` before a dependent child, synthesizer, or worktree
+merge can consume them. JSON Schema, artifact-boundary, and digest validation
+also happen before integration.
+
+Single/evaluate use the top-level contract and chain uses it as the step fallback.
+Parallel tasks and vote/debate roles may use it directly; graph nodes, workflow
+phases, worktree tasks, dossier sections, and orchestrate roles can set their own
+contract because their objectives and return schemas often differ. Final
+debrief/integrator roles fall back to the top-level contract.
+
+Every consumed result becomes a `pi-flows.handoff-envelope.v1` with source agent
+and step provenance. Typed results retain contract identity, status, evidence,
+artifact references/digests, and schema-checked data. Existing prose-only results
+remain supported as `compatibility:"legacy-prose"` handoff envelopes with
+`contractId:null`; downstream prompts receive that explicit compatibility shape
+instead of trusting unlabelled prose. Partial and blocked typed envelopes fail
+closed unless `incompleteHandoffPolicy:"include"` is explicitly selected.
 
 Contract budgets apply at dispatch: timeout tightens the top-level limit, while
 cost and token limits are independently enforced. Chain resets the contract

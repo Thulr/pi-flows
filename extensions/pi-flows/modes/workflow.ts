@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { MAX_WORKFLOW_PHASES, flowError, formatFlowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_WORKFLOW_PHASES, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
-import { appendReturnContract } from "../validate.ts";
+import { incompleteHandoffSummary } from "../delegation.ts";
+import { acceptIntegrationResult, integrationRunPlan } from "../integration.ts";
 
 interface WorkflowState {
 	version: 1;
@@ -119,20 +120,27 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			continue;
 		}
 
-		const phaseTask = appendReturnContract(
-			renderPhaseTask(phase.task, params.task, previous, state.outputs),
-			phase.returnContract ?? params.returnContract,
-			phase.requireEvidence ?? params.requireEvidence,
-		);
 		const phaseCwd = phase.cwd ? path.resolve(defaultCwd, phase.cwd) : defaultCwd;
-		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tier: phase.tier, tools: phase.tools };
-		const run = await runAgentRef(deps, ref, phaseTask, "workflow", results.length + 1, results);
+		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tier: phase.tier, tools: phase.tools, contract: phase.contract };
+		const planned = integrationRunPlan(deps, ref, renderPhaseTask(phase.task, params.task, previous, state.outputs), {
+			returnContract: phase.returnContract ?? params.returnContract,
+			requireEvidence: phase.requireEvidence ?? params.requireEvidence,
+		});
+		if (planned.error) return stateError(deps, results, planned.error);
+		const run = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits);
 		results.push(run);
 		if (isFailed(run)) {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
 			return { content: [{ type: "text", text: sanitizeText(`Flow workflow stopped in phase "${phase.id}" (${phase.agent}).\n\n${resultText(run)}`, policy) }], details: deps.makeDetails("workflow")(results) };
+		}
+		const handoffError = acceptIntegrationResult(deps, planned.plan!, run);
+		if (handoffError) {
+			state.status = "failed";
+			state.updatedAt = new Date().toISOString();
+			await persistState(stateFile, state);
+			return stateError(deps, results, handoffError);
 		}
 
 		const output = prepareResultHandoff(run, policy).text;
@@ -168,7 +176,13 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			"Name produced artifacts and put source-path citations beside the claims they support. Distinguish observed facts from recommendations.",
 			"Treat an unresolved binding constraint as a fail-closed gate with a named resolution path; never describe blocked execution as fully ready.",
 		].join("\n");
-		const debriefed = await runAgentRef(deps, debriefRef, debriefTask, "workflow", results.length + 1, results);
+		const planned = integrationRunPlan(deps, debriefRef, debriefTask, {
+			fallbackContract: params.contract as DelegationContract | undefined,
+			returnContract: params.returnContract,
+			requireEvidence: params.requireEvidence,
+		});
+		if (planned.error) return stateError(deps, results, planned.error);
+		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits);
 		results.push(debriefed);
 		if (isFailed(debriefed)) {
 			state.status = "failed";
@@ -176,6 +190,14 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
 			return { content: [{ type: "text", text: sanitizeText(`Flow workflow debrief failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("workflow")(results) };
+		}
+		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);
+		if (handoffError) {
+			state.status = "failed";
+			delete state.nextPhaseId;
+			state.updatedAt = new Date().toISOString();
+			await persistState(stateFile, state);
+			return stateError(deps, results, handoffError);
 		}
 		finalText = resultText(debriefed);
 	}
@@ -185,7 +207,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	state.updatedAt = new Date().toISOString();
 	await persistState(stateFile, state);
 	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow workflow: ${phases.length} phases completed. State: ${sanitizeText(path.relative(defaultCwd, stateFile), policy)}\n\n${sanitizeText(finalText, policy)}`) }],
+		content: [{ type: "text", text: capModelVisibleText(`Flow workflow: ${phases.length} phases completed.${incompleteHandoffSummary(results)} State: ${sanitizeText(path.relative(defaultCwd, stateFile), policy)}\n\n${sanitizeText(finalText, policy)}`) }],
 		details: deps.makeDetails("workflow")(results),
 	};
 }

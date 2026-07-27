@@ -3,8 +3,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import Schema from "typebox/schema";
 import { extractLastJsonBlock } from "./protocol.ts";
-import { redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
-import { flowError, type CapturePolicy, type DelegationContract, type DelegationReturnEnvelope, type FlowBudget, type FlowError, type FlowRunResult } from "./types.ts";
+import { capModelVisibleText, isFailed, redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
+import { flowError, type CapturePolicy, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowBudget, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 import { appendReturnContract } from "./validate.ts";
 
 const ENVELOPE_VERSION = "pi-flows.return-envelope.v1";
@@ -23,6 +23,17 @@ function nonEmptyString(value: unknown): value is string {
 
 function stringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every(nonEmptyString);
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(canonicalJsonValue);
+	if (!isRecord(value)) return value;
+	return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJsonValue(value[key])]));
+}
+
+export function delegationContractId(contract: DelegationContract): string {
+	const digest = createHash("sha256").update(JSON.stringify(canonicalJsonValue(contract))).digest("hex");
+	return `sha256:${digest}`;
 }
 
 function contractError(reason: string): FlowError {
@@ -78,13 +89,15 @@ export function renderDelegationTask(
 	requireEvidence?: boolean,
 ): string {
 	const goal = task?.trim() || contract.objective;
+	const contractId = delegationContractId(contract);
 	return [
 		appendReturnContract(goal, returnContract, requireEvidence),
 		"\n## Typed delegation contract",
 		JSON.stringify(contract, null, 2),
 		"\n## Required return protocol",
 		`Return one JSON object in a fenced \`json\` block using schemaVersion "${ENVELOPE_VERSION}".`,
-		"Required fields: schemaVersion, status, summary, evidence, artifactReferences, digests, changedState, unresolvedQuestions, retry, and data.",
+		`Set contractId to exactly "${contractId}" so downstream consumers can reject missing or stale returns.`,
+		"Required fields: schemaVersion, contractId, status, summary, evidence, artifactReferences, digests, changedState, unresolvedQuestions, retry, and data.",
 		"`data` must satisfy contract.returnSchema. Evidence items use {claim, source}. Artifact references use {path}. Digests use {artifact, algorithm:\"sha256\", value}.",
 		"Use empty arrays when no evidence, artifacts, digests, changed state, or unresolved questions exist. Do not report success as prose outside the envelope.",
 	].join("\n");
@@ -107,6 +120,7 @@ function envelopeError(reason: string): FlowError {
 
 function validateEnvelopeShape(value: unknown): value is DelegationReturnEnvelope {
 	if (!isRecord(value) || value.schemaVersion !== ENVELOPE_VERSION || !ENVELOPE_STATUSES.has(value.status) || !nonEmptyString(value.summary)) return false;
+	if (value.contractId !== undefined && !/^sha256:[a-f0-9]{64}$/i.test(value.contractId)) return false;
 	if (!Array.isArray(value.evidence) || !value.evidence.every((item: unknown) => isRecord(item) && nonEmptyString(item.claim) && nonEmptyString(item.source))) return false;
 	if (!Array.isArray(value.artifactReferences) || !value.artifactReferences.every((item: unknown) => isRecord(item) && nonEmptyString(item.path))) return false;
 	if (!Array.isArray(value.digests) || !value.digests.every((item: unknown) => isRecord(item) && nonEmptyString(item.artifact) && item.algorithm === "sha256" && /^[a-f0-9]{64}$/i.test(item.value))) return false;
@@ -190,9 +204,23 @@ export function validateReturnEnvelope(
 	contract: DelegationContract,
 	cwd: string,
 	policy: CapturePolicy,
+	options: { requireContractIdentity?: boolean } = {},
 ): { envelope?: DelegationReturnEnvelope; error?: FlowError } {
 	const parsed = extractLastJsonBlock(takeRawFinalAssistantText(result) ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
+	if (options.requireContractIdentity) {
+		const expected = delegationContractId(contract);
+		if (parsed.contractId !== expected) {
+			const actual = parsed.contractId ?? "(missing)";
+			const error = flowError(
+				"RETURN_CONTRACT_MISMATCH",
+				"Child return envelope did not match the dispatched contract.",
+				`Expected contractId ${expected}, received ${actual}.`,
+				"Discard the stale or unbound handoff and rerun the child with the current typed contract.",
+			);
+			return { error: storedError(error, policy) };
+		}
+	}
 	let validator;
 	try {
 		validator = Schema.Compile(contract.returnSchema);
@@ -209,4 +237,90 @@ export function validateReturnEnvelope(
 
 export function canonicalEnvelope(envelope: DelegationReturnEnvelope): string {
 	return JSON.stringify(envelope);
+}
+
+function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope, contract: DelegationContract): DelegationHandoffEnvelope {
+	return {
+		schemaVersion: "pi-flows.handoff-envelope.v1",
+		contractId: delegationContractId(contract),
+		compatibility: "typed",
+		status: envelope.status,
+		summary: envelope.summary,
+		evidence: envelope.evidence,
+		artifactReferences: envelope.artifactReferences,
+		digests: envelope.digests,
+		changedState: envelope.changedState,
+		unresolvedQuestions: envelope.unresolvedQuestions,
+		retry: envelope.retry,
+		data: envelope.data,
+		provenance: { agent: result.agent, ...(result.step === undefined ? {} : { step: result.step }) },
+		usage: envelope.usage,
+	};
+}
+
+function compatibilityHandoff(result: FlowRunResult, policy: CapturePolicy): DelegationHandoffEnvelope {
+	const text = redactValue(capModelVisibleText(resultText(result)), policy) as string;
+	return {
+		schemaVersion: "pi-flows.handoff-envelope.v1",
+		contractId: null,
+		compatibility: "legacy-prose",
+		status: isFailed(result) ? "failed" : "completed",
+		summary: text,
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data: { text },
+		provenance: { agent: result.agent, ...(result.step === undefined ? {} : { step: result.step }) },
+		usage: result.usage,
+	};
+}
+
+function incompleteEnvelopeError(handoff: DelegationHandoffEnvelope): FlowError {
+	return flowError(
+		"RETURN_ENVELOPE_INCOMPLETE",
+		`Child returned a ${handoff.status} handoff that cannot be integrated by default.`,
+		`Contract ${handoff.contractId ?? "(legacy)"} from ${handoff.provenance.agent} reported status "${handoff.status}" with ${handoff.unresolvedQuestions.length} unresolved question(s).`,
+		'Resolve or retry the child, or explicitly set incompleteHandoffPolicy:"include" to synthesize while preserving the incomplete status and provenance.',
+		handoff.retry.retryable,
+	);
+}
+
+export function prepareIntegrationHandoff(
+	result: FlowRunResult,
+	options: {
+		contract?: DelegationContract;
+		cwd: string;
+		policy: CapturePolicy;
+		incompletePolicy?: IncompleteHandoffPolicy;
+	},
+): { handoff?: DelegationHandoffEnvelope; error?: FlowError } {
+	let handoff: DelegationHandoffEnvelope;
+	if (options.contract) {
+		const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy, { requireContractIdentity: true });
+		if (validated.error) return { error: validated.error };
+		handoff = typedHandoff(result, validated.envelope!, options.contract);
+	} else {
+		handoff = compatibilityHandoff(result, options.policy);
+	}
+	result.handoff = handoff;
+	if (handoff.status !== "completed" && options.incompletePolicy !== "include") {
+		return { error: storedError(incompleteEnvelopeError(handoff), options.policy) };
+	}
+	return { handoff };
+}
+
+export function canonicalHandoff(handoff: DelegationHandoffEnvelope): string {
+	return JSON.stringify(handoff);
+}
+
+export function incompleteHandoffSummary(results: FlowRunResult[]): string {
+	const incomplete = results.flatMap((result) =>
+		result.handoff && result.handoff.status !== "completed"
+			? [`${result.handoff.provenance.agent}:${result.handoff.status}`]
+			: [],
+	);
+	return incomplete.length ? ` Included incomplete handoffs by explicit policy: ${incomplete.join(", ")}.` : "";
 }
