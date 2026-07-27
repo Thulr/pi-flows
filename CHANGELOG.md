@@ -26,9 +26,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   runtime trace and root span. Single-arm reliability and paired-comparison
   artifacts retain trace-health evidence plus separate execution,
   verified-outcome, and policy-compliance score families; missing trace
-  telemetry no longer masquerades as an agent failure. Trace context, paths,
-  and write failures follow the same redaction and bounding policy as other
-  returned details.
+  telemetry no longer masquerades as an agent failure. Dry runs use separate
+  runtime trace files so mock spans cannot truncate real-run diagnostics, and
+  typed verifier verdicts remain consistent between results and root trace
+  summaries. Trace context, paths, and write failures follow the same redaction
+  and bounding policy as other returned details.
 - `flow` now accepts a typed delegation `contract` in single, chain, and
   evaluate paths. Children return a validated, usage-enriched
   `pi-flows.return-envelope.v1`; JSON Schema, artifact path, and SHA-256 digest

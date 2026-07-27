@@ -11,6 +11,11 @@ export function evalRunId(requested) {
 	return traceIdentifier(value || randomUUID());
 }
 
+export function defaultRuntimeTracePath({ dryRun = false, comparison = false } = {}) {
+	const stem = comparison ? "ab-runtime" : "runtime";
+	return `.thulr/runs/${stem}${dryRun ? ".dry-run" : ""}.trace.jsonl`;
+}
+
 export function runtimeTraceContext(runId, { caseId, trialId, trialIndex, arm, attempt }) {
 	return {
 		runId: traceIdentifier(runId),

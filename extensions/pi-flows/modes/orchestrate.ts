@@ -4,7 +4,7 @@ import { HandoffWarnings, prepareHandoff, prepareResultHandoff } from "../handof
 import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { incompleteHandoffSummary } from "../delegation.ts";
+import { incompleteHandoffSummary, integrationControlText } from "../delegation.ts";
 import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
@@ -53,7 +53,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	}
 	const orchestratorHandoffError = acceptIntegrationResult(deps, orchestratorPlan.plan!, decomposed);
 	if (orchestratorHandoffError) return { content: [{ type: "text", text: formatFlowError(orchestratorHandoffError) }], details: makeDetails("orchestrate")(results, orchestratorHandoffError) };
-	const decomposedText = decomposed.handoff?.compatibility === "typed" ? JSON.stringify(decomposed.handoff.data) : resultText(decomposed);
+	const decomposedText = integrationControlText(decomposed);
 	const subtasks = parseSubtasks(decomposedText, maxSubtasks);
 	if (!subtasks) {
 		const error = flowError(
@@ -209,10 +209,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			const verifyHandoffError = acceptIntegrationResult(deps, verifyPlan.plan!, verified);
 			if (verifyHandoffError) return { content: [{ type: "text", text: formatFlowError(verifyHandoffError) }], details: makeDetails("orchestrate")(results, verifyHandoffError) };
 
-			const verifierVerdictText = verified.handoff?.compatibility === "typed"
-				? JSON.stringify(verified.handoff.data)
-				: resultText(verified);
-			verifyVerdict = parseVerdict(verifierVerdictText);
+			verifyVerdict = parseVerdict(integrationControlText(verified));
 			verifyNote = `\n\n## Verification (${verifyRef.agent}): ${verifyVerdict === "pass" ? "PASS" : "REVISE"}\n\n${sanitizeText(resultText(verified), policy)}`;
 			if (verifyVerdict === "pass") break;
 

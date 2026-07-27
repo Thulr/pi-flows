@@ -1,7 +1,8 @@
 import { emptyUsage, type FlowMode, type FlowRunResult, type ModeOutput, type UsageStats } from "./types.ts";
-import { isFailed, resultText, safePath } from "./sanitize.ts";
+import { isFailed, safePath } from "./sanitize.ts";
 import { parseVerdict } from "./parse.ts";
 import { debateRounds, searchTopology, successfulRuns } from "./topology.ts";
+import { integrationControlText } from "./delegation.ts";
 export { makeTraceSink, stableTraceIds, type TraceSink } from "./trace-sink.ts";
 
 export function formatTokens(count: number): string {
@@ -364,7 +365,7 @@ function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { ver
 	if (mode === "orchestrate" && params.orchestrate?.verify?.agent) {
 		const verifier = output.details.results.at(-1);
 		if (verifier && verifier.agent === params.orchestrate.verify.agent && !isFailed(verifier)) {
-			return { verified: true, success: parseVerdict(resultText(verifier)) === "pass" };
+			return { verified: true, success: parseVerdict(integrationControlText(verifier)) === "pass" };
 		}
 	}
 	return { verified: false };
@@ -401,7 +402,7 @@ export function traceSummaryAttributes(mode: FlowMode, params: any, output: Mode
 	}
 	if (mode === "orchestrate" && params.orchestrate?.verify) {
 		const verifier = results.at(-1);
-		if (verifier) attrs["flow.verify_verdict"] = parseVerdict(resultText(verifier));
+		if (verifier) attrs["flow.verify_verdict"] = parseVerdict(integrationControlText(verifier));
 	}
 	return attrs;
 }

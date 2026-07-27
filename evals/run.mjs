@@ -67,7 +67,7 @@ import { calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgains
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
 import { buildReliabilityReport, formatReliabilitySummary, MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
-import { evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
+import { defaultRuntimeTracePath, evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
 import * as thulr from "./thulr.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
@@ -122,7 +122,7 @@ process.env.PI_FLOWS_JUDGE_MODEL = judgeModel;
 // trace (which re-judging with a different judge model depends on).
 const TRACE = p(flag("trace-out", dryRun ? "evals/thulr-trace.dry-run.jsonl" : "evals/thulr-trace.jsonl"));
 const EVAL_RUN_ID = evalRunId(flag("run-id", null));
-const RUNTIME_TRACE = p(flag("runtime-trace", ".thulr/runs/runtime.trace.jsonl"));
+const RUNTIME_TRACE = p(flag("runtime-trace", defaultRuntimeTracePath({ dryRun })));
 const RELIABILITY = p(flag("reliability-out", ".thulr/runs/reliability.json"));
 const CANDIDATE = p(".thulr/runs/candidate.json");
 const GATE_CANDIDATE = p(".thulr/runs/candidate.gate.json");

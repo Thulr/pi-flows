@@ -421,6 +421,10 @@ export function canonicalHandoff(handoff: DelegationHandoffEnvelope): string {
 	return JSON.stringify(handoff);
 }
 
+export function integrationControlText(result: FlowRunResult): string {
+	return result.handoff?.compatibility === "typed" ? JSON.stringify(result.handoff.data) : resultText(result);
+}
+
 export function incompleteHandoffSummary(results: FlowRunResult[], persistedHandoffs: DelegationHandoffEnvelope[] = []): string {
 	const handoffs = [
 		...results.flatMap((result) => result.handoff ? [result.handoff] : []),

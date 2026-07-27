@@ -58,7 +58,7 @@ test("comparison CLI writes paired repeated trials with stable identities and sn
 	assert.equal(artifact.schemaVersion, "pi-flows.paired-comparison.v1");
 	assert.equal(typeof artifact.runId, "string");
 	assert.ok(artifact.runId.length > 0);
-	assert.equal(artifact.runtimeTraceFile, ".thulr/runs/ab-runtime.trace.jsonl");
+	assert.equal(artifact.runtimeTraceFile, ".thulr/runs/ab-runtime.dry-run.trace.jsonl");
 	assert.deepEqual(artifact.constraint, { kind: "deadline", value: 90000, unit: "ms", source: "cli" });
 	assert.equal(artifact.subjectTrials, 2);
 	assert.equal(artifact.rawRows.length, 2);

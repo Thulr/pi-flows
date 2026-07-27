@@ -6,13 +6,44 @@ import path from "node:path";
 import test from "node:test";
 import {
 	appendProcessRuntimeTrace,
+	defaultRuntimeTracePath,
 	measurementRuntimeEvidence,
 	runtimeScoreFamilies,
 	runtimeTraceContext,
 	runtimeTraceEvidence,
 } from "../evals/runtime-trace.mjs";
-import { stableTraceIds } from "../extensions/pi-flows/trace.ts";
+import { stableTraceIds, traceSummaryAttributes } from "../extensions/pi-flows/trace.ts";
 import { runFlow } from "./stub-harness.ts";
+
+test("dry-run runtime traces use separate default paths", () => {
+	assert.equal(defaultRuntimeTracePath(), ".thulr/runs/runtime.trace.jsonl");
+	assert.equal(defaultRuntimeTracePath({ dryRun: true }), ".thulr/runs/runtime.dry-run.trace.jsonl");
+	assert.equal(defaultRuntimeTracePath({ comparison: true }), ".thulr/runs/ab-runtime.trace.jsonl");
+	assert.equal(defaultRuntimeTracePath({ dryRun: true, comparison: true }), ".thulr/runs/ab-runtime.dry-run.trace.jsonl");
+});
+
+test("trace summaries parse typed verifier verdicts from handoff data", () => {
+	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+	const verifier = {
+		agent: "overwatch",
+		agentSource: "package",
+		task: "verify",
+		exitCode: 0,
+		messages: [{ role: "assistant", content: [{ type: "text", text: '{"data":{"verdict":"pass"}}' }] }],
+		stderr: "",
+		usage,
+		durationMs: 10,
+		handoff: { compatibility: "typed", data: { verdict: "pass" } },
+	};
+	const attrs = traceSummaryAttributes(
+		"orchestrate",
+		{ orchestrate: { verify: { agent: "overwatch" } } },
+		{ content: [{ type: "text", text: "Verification PASS" }], details: { results: [verifier] } } as any,
+	);
+	assert.equal(attrs["flow.outcome_verified"], true);
+	assert.equal(attrs["flow.outcome_success"], true);
+	assert.equal(attrs["flow.verify_verdict"], "pass");
+});
 
 test("runtime trace ids are stable across file ordering and distinct across paired arms", () => {
 	const flows = runtimeTraceContext("run-abc", {
@@ -232,4 +263,20 @@ test("eval runner links repeated trials in the raw reliability artifact", async 
 	]);
 	assert.equal(report.cases[0].trials.every((trial) => trial.runtimeTrace.health === "missing"), true);
 	assert.equal(report.cases[0].trials.every((trial) => trial.scoreFamilies.traceHealth.pass === false), true);
+});
+
+test("eval runner dry-run reliability points at the isolated runtime trace default", async () => {
+	const outputDir = await mkdtemp(path.join(tmpdir(), "pi-eval-dry-runtime-trace-"));
+	const traceOut = path.join(outputDir, "trace.jsonl");
+	const reliabilityOut = path.join(outputDir, "reliability.json");
+	const child = spawnSync(process.execPath, [
+		"--import", "tsx", "evals/run.mjs", "--dry-run",
+		"--filter=route-classifies",
+		`--trace-out=${traceOut}`,
+		`--reliability-out=${reliabilityOut}`,
+	], { cwd: process.cwd(), encoding: "utf8" });
+
+	assert.equal(child.status, 0, child.stderr);
+	const report = JSON.parse(await readFile(reliabilityOut, "utf8"));
+	assert.equal(report.runtimeTraceFile, ".thulr/runs/runtime.dry-run.trace.jsonl");
 });

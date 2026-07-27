@@ -23,7 +23,7 @@ import { pairedCaseWorkspaces } from "./paired-workspace.mjs";
 import { calibrationSpanFields, caseSpanFields, inspectTraceReport, judgeTraceRun, printScoreDeltas, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
-import { evalRunId, measurementRuntimeEvidence, runtimeTraceContext } from "./runtime-trace.mjs";
+import { defaultRuntimeTracePath, evalRunId, measurementRuntimeEvidence, runtimeTraceContext } from "./runtime-trace.mjs";
 import * as thulr from "./thulr.mjs";
 
 loadDotenv();
@@ -103,7 +103,7 @@ const TRACE_DIR = p(flag("trace-dir", ".thulr/runs"));
 const FLOWS_TRACE = p(flag("flows-trace", ".thulr/runs/ab-flows.trace.jsonl"));
 const PLAIN_TRACE = p(flag("baseline-trace", flag("plain-trace", `.thulr/runs/ab-${baselineSlug}.trace.jsonl`)));
 const EVAL_RUN_ID = evalRunId(flag("run-id", null));
-const RUNTIME_TRACE = p(flag("runtime-trace", ".thulr/runs/ab-runtime.trace.jsonl"));
+const RUNTIME_TRACE = p(flag("runtime-trace", defaultRuntimeTracePath({ dryRun, comparison: true })));
 const FLOWS_RUN = p(".thulr/runs/ab-flows.json");
 const PLAIN_RUN = p(`.thulr/runs/ab-${baselineSlug}.json`);
 const FLOWS_COMPARE = p(".thulr/runs/ab-flows.compare.json");
