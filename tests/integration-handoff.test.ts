@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 import {
 	canonicalHandoff,
@@ -254,6 +254,39 @@ test("workflow persists a validated typed phase handoff", async () => {
 	assert.equal(output.details.error, undefined);
 	assert.equal(output.details.results[0].handoff?.compatibility, "typed");
 	assert.equal(output.details.results[0].handoff?.contractId, delegationContractId(contract));
+});
+
+test("workflow resume revalidates stale and schema-invalid persisted handoffs", async (t) => {
+	for (const scenario of ["stale", "invalid"] as const) {
+		await t.test(scenario, async () => {
+			const cwd = await freshDir();
+			const params = {
+				task: "Run one phase.",
+				workflow: {
+					stateFile: "workflow.json",
+					phases: [{ id: "inspect", agent: "recon", task: "return 42", contract }],
+				},
+			};
+			const initial = await runFlow(params, { recon: typedEnvelope() }, { cwd });
+			assert.equal(initial.result.details.error, undefined);
+			const stateFile = `${cwd}/workflow.json`;
+			const state = JSON.parse(await readFile(stateFile, "utf8"));
+			if (scenario === "stale") state.handoffs.inspect.contractId = `sha256:${"0".repeat(64)}`;
+			else state.handoffs.inspect.data = { wrong: true };
+			await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+
+			const resumed = await runFlow(
+				{ ...params, workflow: { ...params.workflow, resume: true } },
+				{ recon: "MUST_NOT_RERUN" },
+				{ cwd },
+			);
+			assert.equal(
+				resumed.result.details.error?.code,
+				scenario === "stale" ? "RETURN_CONTRACT_MISMATCH" : "RETURN_ENVELOPE_INVALID",
+			);
+			assert.equal(resumed.calls.filter((call) => call.agent === "recon").length, 1);
+		});
+	}
 });
 
 test("debate preserves typed advocate and adjudicator provenance", async () => {

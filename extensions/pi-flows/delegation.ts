@@ -180,6 +180,34 @@ function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowE
 	return null;
 }
 
+function validateEnvelopeAgainstContract(
+	envelope: DelegationReturnEnvelope,
+	contract: DelegationContract,
+	cwd: string,
+	requireContractIdentity: boolean,
+): FlowError | null {
+	if (requireContractIdentity) {
+		const expected = delegationContractId(contract);
+		if (envelope.contractId !== expected) {
+			const actual = envelope.contractId ?? "(missing)";
+			return flowError(
+				"RETURN_CONTRACT_MISMATCH",
+				"Child return envelope did not match the dispatched contract.",
+				`Expected contractId ${expected}, received ${actual}.`,
+				"Discard the stale or unbound handoff and rerun the child with the current typed contract.",
+			);
+		}
+	}
+	let validator;
+	try {
+		validator = Schema.Compile(contract.returnSchema);
+	} catch (error) {
+		return contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (!validator.Check(envelope.data)) return envelopeError("Envelope `data` does not satisfy contract.returnSchema.");
+	return validateDigests(envelope, cwd);
+}
+
 function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolicy): DelegationReturnEnvelope {
 	const stored = (value: string) => redactValue(value, policy) as string;
 	return {
@@ -208,28 +236,8 @@ export function validateReturnEnvelope(
 ): { envelope?: DelegationReturnEnvelope; error?: FlowError } {
 	const parsed = extractLastJsonBlock(takeRawFinalAssistantText(result) ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
-	if (options.requireContractIdentity) {
-		const expected = delegationContractId(contract);
-		if (parsed.contractId !== expected) {
-			const actual = parsed.contractId ?? "(missing)";
-			const error = flowError(
-				"RETURN_CONTRACT_MISMATCH",
-				"Child return envelope did not match the dispatched contract.",
-				`Expected contractId ${expected}, received ${actual}.`,
-				"Discard the stale or unbound handoff and rerun the child with the current typed contract.",
-			);
-			return { error: storedError(error, policy) };
-		}
-	}
-	let validator;
-	try {
-		validator = Schema.Compile(contract.returnSchema);
-	} catch (error) {
-		return { error: storedError(contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`), policy) };
-	}
-	if (!validator.Check(parsed.data)) return { error: storedError(envelopeError("Envelope `data` does not satisfy contract.returnSchema."), policy) };
-	const digestError = validateDigests(parsed, cwd);
-	if (digestError) return { error: storedError(digestError, policy) };
+	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd, options.requireContractIdentity ?? false);
+	if (validationError) return { error: storedError(validationError, policy) };
 	const envelope = storedEnvelope({ ...parsed, usage: result.usage }, policy);
 	result.envelope = envelope;
 	return { envelope };
@@ -286,6 +294,54 @@ function incompleteEnvelopeError(handoff: DelegationHandoffEnvelope): FlowError 
 		'Resolve or retry the child, or explicitly set incompleteHandoffPolicy:"include" to synthesize while preserving the incomplete status and provenance.',
 		handoff.retry.retryable,
 	);
+}
+
+export function validatePersistedIntegrationHandoff(
+	value: unknown,
+	options: {
+		contract?: DelegationContract;
+		cwd: string;
+		policy: CapturePolicy;
+		incompletePolicy?: IncompleteHandoffPolicy;
+	},
+): FlowError | null {
+	if (!isRecord(value)) return storedError(envelopeError("Persisted workflow handoff is missing or not an object."), options.policy);
+	if (value.schemaVersion !== "pi-flows.handoff-envelope.v1"
+		|| !isRecord(value.provenance)
+		|| !nonEmptyString(value.provenance.agent)
+		|| (value.provenance.step !== undefined && (!Number.isInteger(value.provenance.step) || value.provenance.step < 0))) {
+		return storedError(envelopeError("Persisted workflow handoff metadata or provenance is structurally invalid."), options.policy);
+	}
+	const envelope = {
+		schemaVersion: ENVELOPE_VERSION,
+		...(typeof value.contractId === "string" ? { contractId: value.contractId } : {}),
+		status: value.status,
+		summary: value.summary,
+		evidence: value.evidence,
+		artifactReferences: value.artifactReferences,
+		digests: value.digests,
+		changedState: value.changedState,
+		unresolvedQuestions: value.unresolvedQuestions,
+		retry: value.retry,
+		data: value.data,
+	};
+	if (!validateEnvelopeShape(envelope)) {
+		return storedError(envelopeError("Persisted workflow handoff is structurally invalid."), options.policy);
+	}
+	if (options.contract) {
+		if (value.compatibility !== "typed") {
+			return storedError(envelopeError("Persisted contracted workflow phase is not a typed handoff."), options.policy);
+		}
+		const validationError = validateEnvelopeAgainstContract(envelope, options.contract, options.cwd, true);
+		if (validationError) return storedError(validationError, options.policy);
+	} else if (value.compatibility !== "legacy-prose" || value.contractId !== null) {
+		return storedError(envelopeError("Persisted legacy workflow phase is not a valid compatibility envelope."), options.policy);
+	}
+	const handoff = value as unknown as DelegationHandoffEnvelope;
+	if (handoff.status !== "completed" && options.incompletePolicy !== "include") {
+		return storedError(incompleteEnvelopeError(handoff), options.policy);
+	}
+	return null;
 }
 
 export function prepareIntegrationHandoff(

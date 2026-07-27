@@ -360,9 +360,11 @@ The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDI
 }
 ```
 
-Each work phase persists its redacted output before the next phase. Approval nodes
-prompt in the interactive UI and pause safely in headless runs; repeat the same
-call with `workflow.resume:true` to continue from the persisted state.
+Each work phase persists its redacted output and validated handoff envelope
+before the next phase. Approval nodes prompt in the interactive UI and pause
+safely in headless runs; repeat the same call with `workflow.resume:true` to
+continue after every stored envelope is revalidated against its current
+contract, schema, artifacts, and digests.
 
 ### Worktree (isolated writers and integration)
 

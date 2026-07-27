@@ -82,10 +82,7 @@ const FlowTaskProperties = {
 
 export const FlowTask = Type.Object(FlowTaskProperties);
 
-export const FlowContractTask = Type.Object({
-	...FlowTaskProperties,
-	contract: Type.Optional(FlowDelegationContract),
-});
+export const FlowContractTask = Type.Object(FlowTaskProperties);
 
 export const FlowAgentRef = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run for this role. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),

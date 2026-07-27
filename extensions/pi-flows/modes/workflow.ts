@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { MAX_WORKFLOW_PHASES, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_WORKFLOW_PHASES, flowError, formatFlowError, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
-import { incompleteHandoffSummary } from "../delegation.ts";
+import { canonicalHandoff, incompleteHandoffSummary, validatePersistedIntegrationHandoff } from "../delegation.ts";
 import { acceptIntegrationResult, integrationRunPlan } from "../integration.ts";
 
 interface WorkflowState {
@@ -15,6 +15,7 @@ interface WorkflowState {
 	status: "running" | "paused" | "failed" | "completed";
 	completedPhaseIds: string[];
 	outputs: Record<string, string>;
+	handoffs: Record<string, DelegationHandoffEnvelope>;
 	nextPhaseId?: string;
 	updatedAt: string;
 }
@@ -46,7 +47,7 @@ async function persistState(file: string, state: WorkflowState): Promise<void> {
 }
 
 function freshState(digest: string): WorkflowState {
-	return { version: 1, digest, status: "running", completedPhaseIds: [], outputs: {}, updatedAt: new Date().toISOString() };
+	return { version: 1, digest, status: "running", completedPhaseIds: [], outputs: {}, handoffs: {}, updatedAt: new Date().toISOString() };
 }
 
 export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
@@ -75,7 +76,9 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	if (spec.resume) {
 		try {
 			state = JSON.parse(await readFile(stateFile, "utf8")) as WorkflowState;
-			if (state.version !== 1 || state.digest !== digest || !Array.isArray(state.completedPhaseIds) || typeof state.outputs !== "object") throw new Error("state does not match this workflow");
+			if (state.version !== 1 || state.digest !== digest || !Array.isArray(state.completedPhaseIds)
+				|| !state.outputs || typeof state.outputs !== "object" || Array.isArray(state.outputs)
+				|| !state.handoffs || typeof state.handoffs !== "object" || Array.isArray(state.handoffs)) throw new Error("state does not match this workflow");
 		} catch (cause) {
 			const error = flowError("WORKFLOW_STATE_INVALID", "Workflow resume state is missing or incompatible.", `Could not resume ${sanitizeText(stateFile, policy)}: ${cause instanceof Error ? cause.message : String(cause)}.`, "Use the same task/phases/stateFile that created the state, or omit resume to start a fresh workflow.");
 			return stateError(deps, [], error);
@@ -88,7 +91,22 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	let previous = "";
 	for (const phase of phases) {
 		if (state.completedPhaseIds.includes(phase.id)) {
-			previous = state.outputs[phase.id] ?? previous;
+			if (phase.approval?.message) {
+				previous = state.outputs[phase.id] ?? previous;
+				continue;
+			}
+			const phaseCwd = phase.cwd ? path.resolve(defaultCwd, phase.cwd) : defaultCwd;
+			const persisted = state.handoffs[phase.id];
+			const persistedError = validatePersistedIntegrationHandoff(persisted, {
+				contract: phase.contract,
+				cwd: phaseCwd,
+				policy,
+				incompletePolicy: params.incompleteHandoffPolicy,
+			});
+			if (persistedError) return stateError(deps, results, persistedError);
+			const validatedOutput = params.recordContent === false ? "[content not recorded]" : canonicalHandoff(persisted);
+			state.outputs[phase.id] = validatedOutput;
+			previous = validatedOutput;
 			continue;
 		}
 
@@ -156,6 +174,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		state.completedPhaseIds.push(phase.id);
+		state.handoffs[phase.id] = run.handoff!;
 		state.outputs[phase.id] = params.recordContent === false ? "[content not recorded]" : output;
 		previous = state.outputs[phase.id];
 		state.updatedAt = new Date().toISOString();

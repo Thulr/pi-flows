@@ -374,8 +374,10 @@ parallel scoring cannot mutate the workspace.
 ## Workflow mode (gated, resumable phases)
 
 `workflow` runs an ordered state machine of work phases and approval nodes. It
-persists redacted outputs after every phase, so a headless approval pause or a
-later retry does not discard completed work.
+persists redacted outputs and structured handoff envelopes after every work
+phase, so a headless approval pause or later retry does not discard completed
+work. Resume revalidates each persisted envelope against the current phase
+contract, schema, artifacts, and digests before reusing it downstream.
 
 ```json
 {
