@@ -240,10 +240,9 @@ export interface FlowBudget {
 export type RecordSpan = (result: FlowRunResult) => void;
 
 export function budgetExceeded(budget: FlowBudget | undefined): boolean {
+	if (activeBudgetExceeded(budget)) return true;
 	if (!budget) return false;
-	if (budget.maxCostUsd !== undefined && budget.spentCost >= budget.maxCostUsd) return true;
 	if (budget.maxTokens !== undefined && budget.spentTokens >= budget.maxTokens) return true;
-	if (budget.maxGeneratedTokens !== undefined && budget.spentGeneratedTokens >= budget.maxGeneratedTokens) return true;
 	return false;
 }
 
