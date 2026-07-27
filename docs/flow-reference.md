@@ -463,7 +463,9 @@ The source checkout is never switched or merged by the mode. On success,
 temporary worktrees and worker branches are removed, while the durable
 `pi-flow/<run>/integration` branch remains for explicit review/merge. Verification
 failure returns the integration branch name instead of merging an unverified
-result. Conflict-resolution prompts include the validated handoff envelopes for
+result. Worker failure or typed-handoff rejection retains the isolated worker
+state and returns every branch and worktree path needed for recovery.
+Conflict-resolution prompts include the validated handoff envelopes for
 the already-integrated and incoming workers, preserving contract identity,
 evidence, artifact references, and digests through each conflict choice and into
 the final integration review. Use this mode only when the tasks are genuinely

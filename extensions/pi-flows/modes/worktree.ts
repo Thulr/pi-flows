@@ -65,6 +65,11 @@ function modeError(deps: ModeDeps, results: FlowRunResult[], error: FlowError, e
 	return { content: [{ type: "text", text: `${formatFlowError(error)}${extra}` }], details: deps.makeDetails("worktree")(results, error) };
 }
 
+function workerRecoveryDetails(workers: WorkerWorktree[]): string {
+	const recovery = workers.map((worker) => `- \`${worker.branch}\` at \`${worker.cwd}\``).join("\n");
+	return `\n\nWorker state retained for recovery:\n${recovery}`;
+}
+
 export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
 	const spec = params.worktree ?? {};
@@ -144,13 +149,12 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			if (failedWorkerIds.length > 0) {
 				retainFailureState = true;
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", "One or more required worktree writers failed.", `Failed worker ids: ${failedWorkerIds.join(", ")}. Partial implementation was not integrated.`, "Inspect the retained worker state, fix the failed tasks or provider/tool errors, then rerun all required worktree tasks.");
-				const recovery = workers.map((worker) => `- \`${worker.branch}\` at \`${worker.cwd}\``).join("\n");
-				return modeError(deps, results, error, `\n\nWorker state retained for recovery:\n${recovery}`);
+				return modeError(deps, results, error, workerRecoveryDetails(workers));
 			}
 			const workerHandoffError = acceptIntegrationResults(deps, workerItems, workerResults);
 			if (workerHandoffError) {
 				retainFailureState = true;
-				return modeError(deps, results, workerHandoffError);
+				return modeError(deps, results, workerHandoffError, workerRecoveryDetails(workers));
 			}
 			for (let index = 0; index < workers.length; index += 1) {
 				const committed = commitChanges(workers[index].cwd, `pi-flow(${workers[index].id}): isolated worker changes`);

@@ -1,7 +1,8 @@
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import {
 	canonicalHandoff,
@@ -519,4 +520,44 @@ test("worktree validates typed worker envelopes before integration", async () =>
 	const workers = output.details.results.filter((run) => run.agent === "operator");
 	assert.equal(workers.length, 2);
 	assert.ok(workers.every((run) => run.handoff?.contractId === delegationContractId(contract)));
+});
+
+test("worktree exposes retained recovery paths after typed handoff rejection", async () => {
+	const cwd = await freshDir();
+	await writeFile(`${cwd}/a.txt`, "old a\n");
+	await writeFile(`${cwd}/b.txt`, "old b\n");
+	execFileSync("git", ["init", "-q"], { cwd });
+	execFileSync("git", ["add", "."], { cwd });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "seed"], { cwd });
+
+	const { result: output, text } = await runFlow(
+		{
+			task: "Update both files.",
+			worktree: {
+				tasks: [
+					{ id: "a", agent: "operator", task: "update a.txt", contract },
+					{ id: "b", agent: "operator", task: "update b.txt", contract },
+				],
+			},
+		},
+		{
+			operator: [
+				{ whenTaskIncludes: "assignment (a)", reply: typedEnvelope({ data: { wrong: true } }), writes: { "a.txt": "new a\n" } },
+				{ whenTaskIncludes: "assignment (b)", reply: typedEnvelope(), writes: { "b.txt": "new b\n" } },
+			],
+		},
+		{ cwd },
+	);
+	assert.equal(output.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.match(text, /Worker state retained for recovery/);
+	const retained = [...text.matchAll(/- `([^`]+)` at `([^`]+)`/g)];
+	assert.equal(retained.length, 2, text);
+	assert.equal(await readFile(`${retained[0][2]}/a.txt`, "utf8"), "new a\n");
+	assert.match(execFileSync("git", ["branch", "--list", retained[0][1]], { cwd, encoding: "utf8" }), new RegExp(retained[0][1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+	for (const [, , worktree] of retained) execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd });
+	for (const branch of execFileSync("git", ["branch", "--list", "pi-flow/*"], { cwd, encoding: "utf8" }).split("\n").map((line) => line.trim()).filter(Boolean)) {
+		execFileSync("git", ["branch", "-D", branch], { cwd });
+	}
+	await rm(path.dirname(retained[0][2]), { recursive: true, force: true });
 });
