@@ -5,6 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+	appendProcessRuntimeTrace,
 	runtimeScoreFamilies,
 	runtimeTraceContext,
 	runtimeTraceEvidence,
@@ -119,6 +120,24 @@ test("flow execution returns an exact redacted runtime-trace root link", async (
 	assert.doesNotMatch(JSON.stringify(spans), /private-value/);
 });
 
+test("recorded runtime span content redacts secrets and home paths", async () => {
+	const secret = "secret=span-private-value";
+	const { stubDir } = await runFlow(
+		{
+			agent: "recon",
+			task: `read ${homedir()} with ${secret}`,
+			traceFile: "runtime.jsonl",
+			recordContent: true,
+			redactSecrets: true,
+		},
+		{ recon: `result from ${homedir()} with ${secret}` },
+	);
+	const spans = await readFile(`${stubDir}/runtime.jsonl`, "utf8");
+	assert.doesNotMatch(spans, /span-private-value/);
+	assert.doesNotMatch(spans, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(spans, /REDACTED_SECRET/);
+});
+
 test("trace identifiers, paths, and write failures honor the redaction policy", async () => {
 	const secret = "secret=trace-private-value";
 	const context = runtimeTraceContext(`run-${secret}`, {
@@ -145,6 +164,26 @@ test("trace identifiers, paths, and write failures honor the redaction policy", 
 	assert.doesNotMatch(stored, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	assert.match(result.details.trace?.context?.runId ?? "", /REDACTED_SECRET/);
 	assert.match(result.details.trace?.traceFile ?? "", /^~/);
+});
+
+test("baseline trace evidence redacts displayed paths and write failures", () => {
+	const secret = "secret=baseline-private-value"; // privacy-scan: allow deliberate trace-redaction fixture
+	const traceFile = path.join(homedir(), `trace-${secret}`, "missing", "runtime.jsonl");
+	const trace = appendProcessRuntimeTrace(traceFile, runtimeTraceContext("run", {
+		caseId: "case",
+		trialId: "trial",
+		arm: "plain",
+	}), {
+		mode: "baseline.pi",
+		startMs: 1,
+		endMs: 2,
+		executionSuccess: false,
+	});
+	const stored = JSON.stringify(trace);
+	assert.equal(trace.health, "missing");
+	assert.doesNotMatch(stored, /baseline-private-value/);
+	assert.doesNotMatch(stored, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(trace.traceFile, /^~/);
 });
 
 test("eval runner links repeated trials in the raw reliability artifact", async () => {

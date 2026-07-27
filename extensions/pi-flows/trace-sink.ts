@@ -83,8 +83,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				"llm.token_count.total": result.usage.contextTokens || result.usage.input + result.usage.output,
 			};
 			if (policy.recordContent) {
-				attributes["input.value"] = result.task;
-				attributes["output.value"] = capModelVisibleText(resultText(result));
+				attributes["input.value"] = sanitizeText(result.task, policy);
+				attributes["output.value"] = sanitizeText(capModelVisibleText(resultText(result)), policy);
 			}
 			void append({
 				trace_id: traceId,

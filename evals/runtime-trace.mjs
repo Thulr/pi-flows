@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { sanitizeText } from "../extensions/pi-flows/sanitize.ts";
+import { safePath, sanitizeText } from "../extensions/pi-flows/sanitize.ts";
 import { stableTraceIds } from "../extensions/pi-flows/trace-identity.mjs";
 
 const traceIdentifier = (value) => sanitizeText(String(value), { recordContent: true, redactSecrets: true }, 256);
+const traceDiagnostic = (value) => sanitizeText(String(value), { recordContent: true, redactSecrets: true }, 1024);
 
 export function evalRunId(requested) {
 	const value = requested?.trim();
@@ -99,6 +100,7 @@ export function appendProcessRuntimeTrace(traceFile, context, {
 	endMs,
 	executionSuccess,
 	attributes = {},
+	displayTraceFile = safePath(traceFile) ?? traceFile,
 }) {
 	const { traceId, rootSpanId } = stableTraceIds(context, mode);
 	const span = {
@@ -123,15 +125,15 @@ export function appendProcessRuntimeTrace(traceFile, context, {
 	};
 	try {
 		appendFileSync(traceFile, `${JSON.stringify(span)}\n`, "utf8");
-		return { health: "recorded", traceFile, traceId, rootSpanId, context };
+		return { health: "recorded", traceFile: traceDiagnostic(displayTraceFile), traceId, rootSpanId, context };
 	} catch (error) {
 		return {
 			health: "missing",
-			traceFile,
+			traceFile: traceDiagnostic(displayTraceFile),
 			traceId,
 			rootSpanId,
 			context,
-			error: error instanceof Error ? error.message : String(error),
+			error: traceDiagnostic(error instanceof Error ? error.message : String(error)),
 		};
 	}
 }
@@ -159,7 +161,8 @@ export function measurementRuntimeEvidence({
 					startMs,
 					endMs,
 					executionSuccess: !thrown && Boolean(result),
-					attributes: { "llm.model_name": model },
+					attributes: { "llm.model_name": traceIdentifier(model) },
+					displayTraceFile,
 				});
 	return {
 		runtimeTrace,
