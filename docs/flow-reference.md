@@ -416,6 +416,7 @@ states migrate to legacy compatibility envelopes before downstream reuse.
 | `workflow.stateFile` | `.pi/flow-workflows/<digest>.json` | Audit/resume state. The digest covers the top-level task, phases, and debrief configuration. The file is written atomically with owner-only permissions. |
 | `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match. |
 | `workflow.debrief` | (none) | Optional final synthesizer over all persisted phase artifacts. |
+| `workflow.approvalTtlMs` | `86400000` (24h) | How long an approval receipt authorizes its gated action. Integer `60000..2592000000`. A resume after the window needs a fresh approval. |
 | `phase.task` | required for work | Supports `{task}`, `{previous}`, and `{phase.<id>}` output placeholders. |
 | `phase.checkCommand` | (none) | Deterministic gate run in the phase `cwd`; non-zero stops with `WORKFLOW_GATE_FAILED`. |
 | `phase.cwd` / `model` / `tools` | inherited | Per-phase process and gate overrides. |
@@ -426,6 +427,43 @@ fail closed with `WORKFLOW_APPROVAL_REQUIRED` after persisting completed artifac
 and the next phase. Resume the same task/phases/state file in an interactive UI
 with `workflow.resume:true`. A denied approval returns
 `WORKFLOW_APPROVAL_DENIED`; it never silently advances.
+
+### Approval receipts
+
+A granted approval becomes a `pi-flows.approval-receipt.v1` receipt in the state
+file rather than a bare `APPROVED` marker. Each receipt binds one action — the
+approval phase and the contiguous run of work phases it gates — to the exact
+parameters approved, plus the requesting and approving actors, the workflow
+digest, the state schema version, an issue time, and an expiry.
+
+An approval authorizes exactly one downstream action: the phase immediately
+after it, or `workflow.complete` when the approval is last. The receipt is
+re-verified against the live spec immediately before that action runs, and spent
+once the action has actually run. Re-entering the same action after a crash is a
+resume and is allowed; presenting the receipt for a different action is a replay
+and returns `APPROVAL_RECEIPT_CONSUMED`.
+
+The binding covers what the workflow digest cannot see: the gated phases'
+effective definitions after flow-level fallbacks (`returnContract`,
+`requireEvidence`, the resolved contract) plus `agentScope` and
+`incompleteHandoffPolicy`. Changing `agentScope` between approval and resume
+swaps which repo-controlled prompt runs, so it invalidates the approval with
+`APPROVAL_RECEIPT_STALE`.
+
+Receipts surface in `details.approvals`, in the final answer, and on the trace
+root span (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
+`flow.approval_consumed_count`, `flow.approval_blocked`) as identifiers and
+status only — the approved parameters never leave the binding digest. Set
+`PI_FLOWS_APPROVAL_ACTOR` to label the approving actor; it is an audit
+attribution, not an authenticated identity.
+
+Version-2 state files migrate on resume: a completed approval recorded as
+`APPROVED` becomes a `legacy-compatibility` receipt with no approver and no
+expiry, which still binds the gated action.
+
+This protects against replay and drift in a local state file, not against an
+attacker who can write that file — there is no key to sign a receipt with that
+would not live beside it.
 
 ## Worktree mode (isolated writers and integration)
 

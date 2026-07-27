@@ -367,6 +367,16 @@ continue after each sanitized envelope is verified against its content-free
 validation attestation and current contract identity. Existing version-1 state
 files migrate to legacy compatibility envelopes automatically.
 
+A granted approval becomes a single-use receipt rather than a bare `APPROVED`
+marker. The receipt binds the exact action it authorizes — the gated phases and
+their effective parameters, including `agentScope` — along with who approved it
+and when it expires (`workflow.approvalTtlMs`, 24h by default). It is verified
+against the live spec before the gated phase runs and spent once that phase has
+run, so a resume cannot inherit consent for something the approval never covered.
+Receipt identity and status reach `details.approvals`, the final answer, and the
+trace; the approved parameters stay inside the binding digest. See
+[docs/flow-reference.md](docs/flow-reference.md#approval-receipts).
+
 ### Worktree (isolated writers and integration)
 
 ```json

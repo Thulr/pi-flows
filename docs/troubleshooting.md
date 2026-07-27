@@ -273,6 +273,52 @@ Cause: the interactive approval phase was declined.
 Fix: review the persisted phase outputs, revise the workflow inputs if needed,
 then resume when the approval can be granted.
 
+### `APPROVAL_RECEIPT_INVALID`
+
+Cause: the phase about to run is gated by an approval, but the resume state
+carries no usable receipt for it — the state file was truncated, hand-edited, or
+written by a tool that does not understand
+`pi-flows.approval-receipt.v1`.
+
+Fix: re-run the workflow in an interactive Pi UI so the phase is approved again.
+A malformed receipt cannot be repaired in place; approvals are only minted by an
+actual approval.
+
+### `APPROVAL_RECEIPT_STALE`
+
+Cause: an approval was granted, then the action it authorizes changed. A receipt
+binds the gated phases' effective definitions — agent, task template, cwd, model,
+tier, tools, checkCommand, delegation contract — plus the `agentScope`,
+`returnContract`, `requireEvidence`, and `incompleteHandoffPolicy` in force when
+consent was given. Editing any of them between approval and resume means the
+approval no longer covers what would run. Flipping `agentScope` to `project` is
+the case worth naming: it swaps which repo-controlled prompt executes.
+
+Fix: resume in an interactive Pi UI to approve the current action, or restore the
+parameters that were approved and resume again.
+
+### `APPROVAL_RECEIPT_EXPIRED`
+
+Cause: the resume arrived after the approval's window closed. Receipts expire so
+consent cannot be banked indefinitely; the default window is 24 hours from the
+moment approval was granted.
+
+Fix: approve again in an interactive Pi UI, or set
+`workflow.approvalTtlMs` (60000..2592000000 ms) to a longer window *before*
+approving. Widening it afterwards does not revive a spent window — the expiry is
+stamped into the receipt at issue time.
+
+### `APPROVAL_RECEIPT_CONSUMED`
+
+Cause: a receipt that was already spent by one action was presented to authorize
+a different one. Approvals are single use: one approval phase authorizes exactly
+one downstream action (the phase immediately after it, or `workflow.complete`
+when the approval is last).
+
+Fix: give the second action its own approval phase. Re-running the same action
+after a crash is not a replay and is allowed — this error only fires when the
+consumer differs from the one recorded on the receipt.
+
 ### `WORKTREE_NOT_GIT`
 
 Cause: `worktree` mode was invoked outside a Git repository or with an invalid

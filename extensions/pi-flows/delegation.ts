@@ -34,7 +34,8 @@ function stringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every(nonEmptyString);
 }
 
-function canonicalJsonValue(value: unknown): unknown {
+/** Recursively key-sorted JSON, so a digest identifies content rather than authoring order. Shared with approval receipts so every binding digest in the extension canonicalizes the same way. */
+export function canonicalJsonValue(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(canonicalJsonValue);
 	if (!isRecord(value)) return value;
 	return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJsonValue(value[key])]));

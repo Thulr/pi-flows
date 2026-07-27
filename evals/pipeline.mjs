@@ -13,11 +13,15 @@
 //   inspectTraceReport      both
 //   judgeTraceRun           both
 //   printScoreDeltas        both (run.mjs passes thulr.gate, compare.mjs thulr.compare)
+//   assessCalibration       run.mjs only — judge calibration + its gate rules
 //   gateAgainstBaseline     run.mjs only — the release gate + JUnit artifact
 //   harnessExitCode         run.mjs only — the two-axis exit policy
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as thulr from "./thulr.mjs";
+import { caseSplit } from "./calibration-coverage.mjs";
+import { buildCalibrationReport, calibrationGateIssues, calibrationKey, calibrationRecords, formatCalibrationReport, rubricDigest, traceAttributeDigest, DEFAULT_CRITICAL_MISS_RATE_CAP, EVAL_TRACE_SCHEMA_VERSION } from "./calibration.mjs";
+import { buildReviewReport, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
 
 /** Absolute path for a repo-relative path. */
 export const repoPath = (relPath) => resolve(process.cwd(), relPath);
@@ -164,6 +168,98 @@ export function printScoreDeltas({ run, options, heading, unavailable, log = con
 	}
 }
 
+// --- Phase: judge calibration ----------------------------------------------
+
+const readJsonOrNull = (path) => {
+	try {
+		return path && existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+	} catch {
+		return null;
+	}
+};
+
+/** The trace's span shapes, so a changed case -> span projection invalidates calibration on its own. */
+function traceSpans(trace) {
+	if (!existsSync(trace)) return [];
+	return readFileSync(trace, "utf8")
+		.split("\n")
+		.filter((line) => line.trim())
+		.flatMap((line) => {
+			try {
+				return [JSON.parse(line)];
+			} catch {
+				return [];
+			}
+		});
+}
+
+/**
+ * Calibrate the judge against ground truth, then decide whether that calibration
+ * is good enough to gate a release.
+ *
+ * The stored calibration from the previous run is read back purely to detect
+ * drift: if this run's judge, rubric, thresholds, or trace projection differ, the
+ * old numbers are reported as stale rather than silently carried forward.
+ *
+ * @returns {{ report: object, issues: string[], blocks: boolean, path: string|null }}
+ */
+export function assessCalibration({
+	corpus,
+	summaries,
+	verdicts,
+	keyInputs,
+	reviewsPath = null,
+	criticalDimensions = [],
+	criticalMissRateCap = DEFAULT_CRITICAL_MISS_RATE_CAP,
+	abstentionBand,
+	trace,
+	out = null,
+	log = console.log,
+}) {
+	const groups = { measurement: corpus.measurement ?? [], calibration: corpus.calibration ?? [] };
+	const allCases = [...groups.measurement, ...groups.calibration];
+	const byId = new Map(allCases.map((testCase) => [testCase.id ?? testCase.name, testCase]));
+	const splitEntries = Object.entries(groups).flatMap(([group, cases]) => cases.map((testCase) => ({ testCase, split: caseSplit(testCase, { group }) })));
+
+	const cases = summaries
+		.filter((summary) => !summary.excludedReason)
+		.map((summary) => {
+			const testCase = byId.get(summary.caseId ?? summary.name);
+			return testCase && { testCase, caseId: summary.traceCaseId ?? summary.name, objective: summary.objective, split: caseSplit(testCase, { group: summary.calibration ? "calibration" : "measurement" }) };
+		})
+		.filter(Boolean);
+
+	// Prefer the extended review set `npm run eval:review` writes — it carries the
+	// dimension, blinding, and adjudication thulr's schema has no room for. Falling
+	// back to thulr's own set costs only those fields: it normalizes as unblinded
+	// criterion verdicts, which is exactly what it is.
+	const extended = reviewSetPath(trace);
+	const reviewSet = readJsonOrNull(existsSync(extended) ? extended : reviewsPath);
+	const humanTruth = reviewGroundTruth(buildReviewReport(reviewSet ?? { reviews: [] }));
+	const records = calibrationRecords({ cases, verdicts, humanTruth, abstentionBand });
+	const key = calibrationKey({
+		...keyInputs,
+		rubric: rubricDigest(allCases),
+		traceSchemaVersion: EVAL_TRACE_SCHEMA_VERSION,
+		traceSerialization: traceAttributeDigest(traceSpans(trace)),
+	});
+	const report = buildCalibrationReport({ key, storedKey: readJsonOrNull(out)?.key ?? null, splitEntries, records, reviewSet, criticalDimensions, abstentionBand });
+	const issues = calibrationGateIssues(report, { criticalMissRateCap });
+
+	log("\njudge calibration:");
+	log(formatCalibrationReport(report));
+	if (issues.length) {
+		log("\ncalibration blocks the release gate:");
+		for (const issue of issues) log(`  ✗ ${issue}`);
+	}
+	if (out) {
+		mkdirSync(dirname(out), { recursive: true });
+		writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+		log(`calibration report written to ${relativeToRepo(out)}`);
+	}
+	return { report, issues, blocks: issues.length > 0, path: out };
+}
+
 /**
  * The release gate: compare the candidate against the baseline on the dimensions
  * BOTH runs carry (a dimension the baseline has never seen cannot regress), then
@@ -200,17 +296,22 @@ export function gateAgainstBaseline({ baseline, candidate, gateEvalRun, extraSco
 
 /**
  * The harness exit code. A run is green only when every MEASURED behaviour case
- * passed both axes, the gate found no regression, and nothing was excluded as
+ * passed both axes, the gate found no regression, the judge is calibrated well
+ * enough on every dimension trusted to block, and nothing was excluded as
  * infrastructure. A run with zero measured cases is green only if infra was not
  * the reason there are none — otherwise a total auth failure would exit 0.
  *
+ * `calibrationBlocks` is separate from `gateBlocks` so the reason a run is red
+ * stays legible: a regression and an uncalibrated judge are different problems
+ * with different fixes.
+ *
  * Pure so the policy can be read and tested without running an eval.
  *
- * @param {{ measured: number, passed: number, infraExcluded?: number, gateBlocks?: boolean }} counts
+ * @param {{ measured: number, passed: number, infraExcluded?: number, gateBlocks?: boolean, calibrationBlocks?: boolean }} counts
  * @returns {0 | 1}
  */
-export function harnessExitCode({ measured, passed, infraExcluded = 0, gateBlocks = false }) {
+export function harnessExitCode({ measured, passed, infraExcluded = 0, gateBlocks = false, calibrationBlocks = false }) {
 	const infraBlocked = infraExcluded > 0;
 	const measuredPass = measured === 0 ? !infraBlocked : passed === measured;
-	return measuredPass && !gateBlocks && !infraBlocked ? 0 : 1;
+	return measuredPass && !gateBlocks && !calibrationBlocks && !infraBlocked ? 0 : 1;
 }

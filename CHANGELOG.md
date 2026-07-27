@@ -10,6 +10,44 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Workflow approvals are now durable, single-use receipts instead of a bare
+  `APPROVED` marker in the resume state. A receipt binds the exact action it
+  authorizes — the approval phase and the work phases it gates, at their
+  effective parameters after flow-level fallbacks, plus `agentScope` and
+  `incompleteHandoffPolicy` — along with the requesting and approving actors, the
+  workflow digest, the state schema version, an issue time, and an expiry
+  (`workflow.approvalTtlMs`, 24h by default). Receipts are re-verified against the
+  live spec immediately before the gated action runs and spent once it has run, so
+  a crash-resume re-uses consent it already had while a different action is
+  refused as a replay. Headless workflows still fail closed. New error codes:
+  `APPROVAL_RECEIPT_INVALID`, `APPROVAL_RECEIPT_STALE`, `APPROVAL_RECEIPT_EXPIRED`,
+  `APPROVAL_RECEIPT_CONSUMED`. Receipt identity and status reach
+  `details.approvals`, the final answer, and the trace root span
+  (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
+  `flow.approval_consumed_count`, `flow.approval_blocked`) without exposing the
+  approved parameters. Version-2 workflow state migrates to
+  `legacy-compatibility` receipts that still bind the gated action.
+- Judge calibration is now evidence a release decision can rest on. Every run
+  writes a versioned `pi-flows.calibration.v1` report with per-dimension coverage,
+  truth-class x decision confusion matrices, per-class precision/recall,
+  false-positive and false-negative rates, and Wilson 95% bounds on each. A
+  dimension is authoritative only with three independent failed labels plus passed
+  and partial examples, an abstention rate under 25%, and no contested human
+  labels; `--critical-dimension` opts a dimension into blocking the release gate
+  and `--write-baseline` when it falls short. Judge verdicts within
+  `--abstention-band` of the decision boundary abstain and escalate to human review
+  instead of voting. Cases are versioned in separately-digested
+  `rubric-development`, `calibration`, and `held-out` splits, validated in
+  preflight before any model runs. A calibration key over the judge, prompt,
+  config, rubric text, thresholds, and trace-attribute shape invalidates a prior
+  calibration automatically and names what changed.
+- `npm run eval:review` records blinded independent labels, per-dimension
+  verdicts, reviewer identity, and adjudications to an extended
+  `pi-flows.review-set.v1` set alongside thulr's. Unanimous blinded reviewers
+  resolve a case, disagreements need an adjudicator, and an unadjudicated
+  disagreement stays unresolved rather than being settled by whoever labeled last.
+  Inter-reviewer agreement is reported as observed/expected agreement and Fleiss
+  kappa.
 - Parallel, orchestrate, graph, workflow, worktree, vote, debate, and dossier
   now validate typed return envelopes before every dependent dispatch,
   synthesis, persistence, or merge. Stable contract identities reject missing

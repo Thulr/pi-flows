@@ -1,5 +1,6 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { DEFAULT_APPROVAL_TTL_MS, MAX_APPROVAL_TTL_MS, MIN_APPROVAL_TTL_MS } from "./approval.ts";
 import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, DEFAULT_TIMEOUT_MS, MAX_DEBATE_ROUNDS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, MAX_PARALLEL_TASKS, MAX_WORKFLOW_PHASES } from "./types.ts";
 
 const TierDescription = 'Capability tier for this child, portable across providers: "fast" for mechanical scouting/extraction/classification, "capable" (default) for ordinary work, "deep" for the hardest reasoning or final adjudication. Resolves to the user-configured PI_FLOWS_FAST_MODEL / PI_FLOWS_DEEP_MODEL and falls back to their default model when unmapped. Prefer tier over model unless the user named a concrete model.';
@@ -226,6 +227,7 @@ export const FlowWorkflow = Type.Object({
 	phases: Type.Array(FlowWorkflowPhase, { minItems: 1, maxItems: MAX_WORKFLOW_PHASES, description: "Ordered work and approval phases. Exactly one of agent+task or approval is required per phase." }),
 	stateFile: Type.Optional(Type.String({ description: "Persist redacted phase state for audit/resume. Defaults to .pi/flow-workflows/<workflow-digest>.json." })),
 	resume: Type.Optional(Type.Boolean({ description: "Resume completed phases from stateFile. The workflow digest must match.", default: false })),
+	approvalTtlMs: Type.Optional(Type.Number({ description: `How long an approval receipt authorizes its gated action, in milliseconds. A resume after this window needs a fresh approval. Default ${DEFAULT_APPROVAL_TTL_MS} (24h).`, minimum: MIN_APPROVAL_TTL_MS, maximum: MAX_APPROVAL_TTL_MS, default: DEFAULT_APPROVAL_TTL_MS })),
 	debrief: Type.Optional(FlowAgentRef),
 }, {
 	description: "Phase-gated state-machine mode: execute ordered work phases, enforce deterministic gates, pause at resumable human approval nodes, persist artifacts, then optionally debrief the completed phase outputs.",

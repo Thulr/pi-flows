@@ -342,6 +342,11 @@ export default function (pi: ExtensionAPI) {
 						if (!ctx.hasUI) return "required";
 						return await ctx.ui.confirm(title, message) ? "approved" : "denied";
 					},
+					// Who to credit on an approval receipt. pi does not hand the
+					// extension an authenticated operator identity, so this is an
+					// audit label: whatever PI_FLOWS_APPROVAL_ACTOR names, else the
+					// channel that actually answered the prompt.
+					approvalActor: process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || "interactive-ui",
 					makeDetails,
 					runChild: runFlowAgent,
 					concurrency,

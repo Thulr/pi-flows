@@ -382,6 +382,20 @@ function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { ver
 	return { verified: false };
 }
 
+/** Refusals that mean "a human gate stopped this run" — surfaced on the trace so an audit can tell a blocked flow from a failed one. */
+const APPROVAL_BLOCKING_CODES = new Set<string>([
+	"WORKFLOW_APPROVAL_REQUIRED",
+	"WORKFLOW_APPROVAL_DENIED",
+	"CHECKPOINT_APPROVAL_REQUIRED",
+	"CHECKPOINT_APPROVAL_DENIED",
+	"PROJECT_AGENT_APPROVAL_REQUIRED",
+	"PROJECT_AGENT_APPROVAL_DENIED",
+	"APPROVAL_RECEIPT_INVALID",
+	"APPROVAL_RECEIPT_STALE",
+	"APPROVAL_RECEIPT_EXPIRED",
+	"APPROVAL_RECEIPT_CONSUMED",
+]);
+
 export function traceSummaryAttributes(mode: FlowMode, params: any, output: ModeOutput): Record<string, unknown> {
 	const results = output.details.results.filter((result) => result.exitCode !== -1);
 	const usage = flowUsageTotals(results);
@@ -401,6 +415,15 @@ export function traceSummaryAttributes(mode: FlowMode, params: any, output: Mode
 	};
 	if (criticalPathMs !== undefined) attrs["flow.critical_path_ms"] = criticalPathMs;
 	if (outcome.success !== undefined) attrs["flow.outcome_success"] = outcome.success;
+	// Approval identity and status, never the parameters an approval was granted
+	// for — those stay inside the receipt's binding digest.
+	const approvals = output.details.approvals ?? [];
+	if (approvals.length) {
+		attrs["flow.approval_receipt_count"] = approvals.length;
+		attrs["flow.approval_receipt_ids"] = approvals.map((receipt) => receipt.receiptId).join(",");
+		attrs["flow.approval_consumed_count"] = approvals.filter((receipt) => receipt.status === "consumed").length;
+	}
+	if (APPROVAL_BLOCKING_CODES.has(output.details.error?.code as string)) attrs["flow.approval_blocked"] = output.details.error!.code;
 	if (mode === "vote") {
 		const voterCount = Array.isArray(params.vote?.voters) && params.vote.voters.length > 0 ? params.vote.voters.length : Number.isFinite(params.vote?.count) ? Math.floor(params.vote.count) : results.length;
 		const voters = results.slice(0, Math.max(0, voterCount));

@@ -84,6 +84,10 @@ export const FLOW_ERROR_CODES = [
 	"WORKFLOW_GATE_FAILED",
 	"WORKFLOW_APPROVAL_REQUIRED",
 	"WORKFLOW_APPROVAL_DENIED",
+	"APPROVAL_RECEIPT_INVALID",
+	"APPROVAL_RECEIPT_STALE",
+	"APPROVAL_RECEIPT_EXPIRED",
+	"APPROVAL_RECEIPT_CONSUMED",
 	"WORKTREE_NOT_GIT",
 	"WORKTREE_DIRTY_SOURCE",
 	"WORKTREE_SETUP_FAILED",
@@ -180,6 +184,24 @@ export interface FlowRunResult {
 	handoff?: DelegationHandoffEnvelope;
 }
 
+/**
+ * The publishable face of an approval receipt: identifiers and status only. The
+ * parameters an approval was granted for stay inside the receipt's binding
+ * digest, so a receipt can be surfaced in details, traces, and the final answer
+ * without leaking the task text or contract it authorized. Receipt mechanics
+ * live in approval.ts.
+ */
+export interface ApprovalReceiptSummary {
+	receiptId: string;
+	action: string;
+	approvedBy: string;
+	issuedAt: string;
+	expiresAt: string | null;
+	status: "issued" | "consumed";
+	consumedBy: string | null;
+	validation: "typed" | "legacy-compatibility";
+}
+
 export interface FlowDetails {
 	mode: FlowMode;
 	version: string;
@@ -202,6 +224,8 @@ export interface FlowDetails {
 	discoveryIssues?: DiscoveryIssue[];
 	error?: FlowError;
 	trace?: FlowTraceLink;
+	/** Approval receipts this run issued or spent. Identifiers and status only — the approved parameters stay inside the binding digest. */
+	approvals?: ApprovalReceiptSummary[];
 }
 
 export interface FlowTaskInput {
@@ -433,6 +457,8 @@ export interface ModeDeps {
 	budget?: FlowBudget;
 	recordSpan?: RecordSpan;
 	requestApproval?: (title: string, message: string) => Promise<"approved" | "required" | "denied">;
+	/** Audit label recorded as the approving actor on an approval receipt. An attribution label for the audit trail, not an authenticated identity. */
+	approvalActor?: string;
 	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
 	/** The child-run seam. Handlers reach it via the runner helpers (runAgentRef/runAgentFanout), which execute every child through this — so tests can inject an in-process fake. */
 	runChild: RunChild;

@@ -19,6 +19,10 @@
 //   npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/size regressions
 //   npm run eval -- --score-guardrail=evidence_quality   # also gate a named-criteria dimension's score (criterion is always gated)
 //   npm run eval -- --noise-band=0.10    # judge/efficiency regression tolerance (default 0.05)
+//   npm run eval -- --critical-dimension=criterion   # let a calibrated dimension block the gate (needs 3 independent
+//                                         # failed labels plus passed/partial examples, no contested human labels)
+//   npm run eval -- --critical-miss-rate=0.1   # missed defects a critical dimension may carry (default 0)
+//   npm run eval -- --abstention-band=0.15   # judge scores this close to 0.5 abstain and escalate (default 0.1)
 //   npm run eval -- --write-baseline      # promote this run to evals/thulr-baseline.json (the gate baseline)
 //   npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
 //   npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as a JUnit XML testsuite (CI ingestion)
@@ -63,10 +67,11 @@ import { createFlagReader } from "./cli-flags.mjs";
 import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
-import { calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
+import { calibrationPreflightStep, thresholdFingerprint, COVERAGE_REQUIREMENT } from "./calibration.mjs";
+import { assessCalibration, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
-import { buildReliabilityReport, formatReliabilitySummary, MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
+import { writeReliabilityArtifact, MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
 import { defaultRuntimeTracePath, evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
 import * as thulr from "./thulr.mjs";
 
@@ -110,6 +115,15 @@ const efficiencyGuardrails = flags("efficiency-guardrail");
 // dimension is observed for a few runs before it can block.
 const extraScoreGuardrails = flags("score-guardrail");
 const noiseBand = Number(flag("noise-band", "0.05"));
+// Judge calibration. A dimension named here is trusted to BLOCK the release, so
+// it must first earn that: enough independent ground truth in every class, no
+// contested human labels, and no missed defects above the cap. Off by default —
+// a dimension is observed for a few runs before it can stop a release.
+const criticalDimensions = flags("critical-dimension");
+const criticalMissRateCap = Number(flag("critical-miss-rate", "0"));
+// Judge scores this close to the 0.5 decision boundary abstain and escalate to
+// human review instead of voting, so the judge is never scored on a coin flip.
+const abstentionBand = Number(flag("abstention-band", "0.1"));
 // Emit-the-trace-and-stop: the command-template mode `thulr run-experiment` and
 // `thulr optimize` drive ("the template MUST emit a structured JSONL trace to {out}").
 const traceOnly = has("trace-only");
@@ -140,6 +154,10 @@ const compareFlag = flag("compare-baseline", null);
 const gateBaseline = compareFlag ? p(compareFlag) : existsSync(BASELINE_DEFAULT) ? BASELINE_DEFAULT : null;
 const writeBaseline = has("write-baseline") ? p(flag("write-baseline", "") || BASELINE_DEFAULT) : null;
 const LABELS = p(".thulr/runs/candidate.labels.json");
+const CALIBRATION = p(flag("calibration-out", ".thulr/runs/calibration.json"));
+// Everything the reliability artifact needs except `judgeAvailable`, which is the
+// one thing that differs between the trace-only and judged exits.
+const RELIABILITY_OPTIONS = { out: RELIABILITY, displayPath: rel(RELIABILITY), subjectTrials, judgeSamples: samples, runId: EVAL_RUN_ID, runtimeTraceFile: rel(RUNTIME_TRACE) };
 // Human-review calibration (thulr review): an SME verdict set folded into
 // `thulr calibrate` as judge-vs-human ground truth (TPR/TNR) on top of the
 // deterministic-label axis. Defaults to the path `thulr review` writes for this
@@ -155,6 +173,7 @@ const reviews = reviewsFlag ? p(reviewsFlag) : existsSync(reviewsDefault) ? revi
 function preflight() {
 	return runPreflight([
 		corpusPreflightStep(EVAL_CORPUS),
+		calibrationPreflightStep(EVAL_CORPUS),
 		...(dryRun ? [] : [
 			requireBinary("pi", "✗ `pi` was not found on PATH.\n  The eval harness needs the pi CLI and a configured model provider.\n  Install: npm i -g @earendil-works/pi-coding-agent\n  Or smoke-test the harness offline with: npm run eval -- --dry-run"),
 			...(traceOnly ? [] : [requireHealthyThulr((why) => `✗ ${why}\n  The eval gate judges answer quality and blocks regressions through thulr.\n  Install it (e.g. \`cargo install thulr\`), run \`thulr doctor\` for the full diagnosis,\n  or smoke-test the harness offline with: npm run eval -- --dry-run`)]),
@@ -281,41 +300,6 @@ async function runCases(selected, selectedCalibration, flow) {
 	return { summaries, calibrationSummaries, judgedCount, productJudgedCount, totalCost, sawInfraError };
 }
 
-function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable }) {
-	const rawTrials = summaries.map((summary) => {
-		const judge = verdicts.get(summary.traceCaseId) ?? null;
-		const judgePass = judge?.criterion?.verdict ?? null;
-		return {
-			caseId: summary.caseId,
-			trialId: summary.trialId,
-			traceCaseId: summary.traceCaseId,
-			trialIndex: summary.trialIndex,
-			pass: !summary.exclusion && summary.objective.pass && (!judgeAvailable || judgePass === true),
-			objective: summary.objective,
-			judge,
-			answer: summary.answer,
-			costUsd: summary.costUsd,
-			tokens: summary.tokens,
-			durationMs: summary.durationMs,
-			exclusion: summary.exclusion,
-			infraFailure: summary.infraFailure,
-			runtimeTrace: summary.runtimeTrace,
-			scoreFamilies: summary.scoreFamilies,
-		};
-	});
-	const report = buildReliabilityReport(rawTrials, {
-		subjectTrials,
-		judgeSamples: samples,
-		runId: EVAL_RUN_ID,
-		runtimeTraceFile: rel(RUNTIME_TRACE),
-	});
-	mkdirSync(dirname(RELIABILITY), { recursive: true });
-	writeFileSync(RELIABILITY, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-	for (const line of formatReliabilitySummary(report)) console.log(line);
-	console.log(`Raw trial reliability report: ${rel(RELIABILITY)} (subject trials ${subjectTrials}; judge-noise samples ${samples})`);
-	return report;
-}
-
 // --- Phase: thulr judge -> calibrate -> gate -> baseline (skipped in dry-run) ---
 function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }) {
 	mkdirSync(dirname(CANDIDATE), { recursive: true });
@@ -364,6 +348,19 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }
 		console.log(`release gate excludes ${calibrationSummaries.length} calibration canar${calibrationSummaries.length === 1 ? "y" : "ies"} from pass-rate comparison; full judged run remains ${rel(CANDIDATE)}.`);
 	}
 
+	const calibration = assessCalibration({
+		corpus: EVAL_CORPUS,
+		summaries: [...summaries, ...calibrationSummaries],
+		verdicts,
+		keyInputs: { judgeModel, judgeSamples: samples, judgeBin, evalSet, promptVersion: PROMPT_VERSION, configVersion: CONFIG_VERSION, thresholds: thresholdFingerprint({ noiseBand, scoreGuardrails: extraScoreGuardrails, efficiencyGuardrails, abstentionBand, criticalDimensions, coverage: COVERAGE_REQUIREMENT }) },
+		reviewsPath: reviews,
+		criticalDimensions,
+		criticalMissRateCap,
+		abstentionBand,
+		trace: TRACE,
+		out: CALIBRATION,
+	});
+
 	let gateResult = null;
 	if (gateBaseline) {
 		gateResult = gateAgainstBaseline({
@@ -381,14 +378,16 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }
 	}
 
 	if (writeBaseline) {
-		if (gateResult?.blocks) {
-			console.log(`\nNot promoting baseline: the gate reported a regression. Fix it before advancing ${rel(writeBaseline)}.`);
+		// A baseline is a claim that this run is the standard to beat. A run whose
+		// judge is not calibrated well enough to gate cannot make that claim either.
+		if (gateResult?.blocks || calibration.blocks) {
+			console.log(`\nNot promoting baseline: ${gateResult?.blocks ? "the gate reported a regression" : "judge calibration is not release-grade"}. Fix it before advancing ${rel(writeBaseline)}.`);
 		} else {
 			thulr.promoteBaseline({ input: judged.comparePath, output: writeBaseline });
 			console.log(`\nPromoted this run to baseline: ${rel(writeBaseline)}`);
 		}
 	}
-	return gateResult;
+	return { gateResult, calibration };
 }
 
 async function main() {
@@ -441,13 +440,14 @@ async function main() {
 
 	const verdicts = new Map();
 	let gateResult = null;
+	let calibrationResult = null;
 
 	if (traceOnly) {
 		// Re-run-mode contract: the driver (thulr run-experiment / optimize) judges,
 		// ranks, and selects. Exit 0 iff a judgeable trace was emitted — objective
 		// misses are labels in the trace, not a candidate failure.
 		console.log(`\n(trace-only) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; judge/gate left to the driver.`);
-		writeReliabilityArtifact(summaries, verdicts, { judgeAvailable: false });
+		writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: false });
 		process.exit(productJudgedCount > 0 ? 0 : 1);
 	}
 
@@ -456,9 +456,9 @@ async function main() {
 	} else if (!shouldJudgeProductSpans({ dryRun, traceOnly, productSpans: productJudgedCount })) {
 		console.log("\nNo product case is eligible for judging — skipping thulr judge/gate/baseline (calibration canaries alone are not a candidate).");
 	} else {
-		gateResult = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts });
+		({ gateResult, calibration: calibrationResult } = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }));
 	}
-	writeReliabilityArtifact(summaries, verdicts, { judgeAvailable: !dryRun && productJudgedCount > 0 });
+	writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: !dryRun && productJudgedCount > 0 });
 
 	// A behaviour case passes only when its objective check AND thulr's criterion
 	// agree (the two-axis contract). Hard cases are score-tracked, not pass-gated —
@@ -480,6 +480,7 @@ async function main() {
 		passed,
 		infraExcluded: excludedByReason("infra"),
 		gateBlocks: !!gateResult?.blocks,
+		calibrationBlocks: !!calibrationResult?.blocks,
 	}));
 }
 
