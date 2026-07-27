@@ -206,7 +206,9 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Your job",
 				"Resolve every merge conflict in this integration worktree without dropping either worker's intended behavior. Use the validated handoff evidence, artifact references, and digests above to explain each conflict choice. Run focused checks. Do not commit; the harness commits the resolution.",
 			].join("\n");
-			const conflictPlan = integrationRunPlan(deps, { ...integrator, contract: undefined }, conflictTask);
+			const conflictPlan = integrationRunPlan(deps, integrator, conflictTask, {
+				fallbackContract: params.contract as DelegationContract | undefined,
+			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
 			const resolved = await runAgentRef(deps, conflictPlan.plan!.ref, conflictPlan.plan!.task, "worktree", results.length + 1, results, conflictPlan.plan!.limits);
 			results.push(resolved);

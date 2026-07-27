@@ -5,10 +5,46 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
+import type { DelegationContract } from "../extensions/pi-flows/types.ts";
 
 const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
+
+const contract: DelegationContract = {
+	objective: "Resolve integration conflicts.",
+	constraints: [],
+	nonGoals: [],
+	dependencies: [],
+	authority: { may: ["Edit conflicted files."], mustNot: [], requiresApproval: [] },
+	sideEffectClass: "reversible",
+	budget: {},
+	acceptanceChecks: ["All conflicts are resolved."],
+	returnSchema: {
+		type: "object",
+		required: ["resolved"],
+		properties: { resolved: { type: "boolean" } },
+		additionalProperties: false,
+	},
+	owner: "integrator",
+};
+
+function resolverEnvelope(kind: "missing" | "stale" | "invalid") {
+	return JSON.stringify({
+		schemaVersion: "pi-flows.return-envelope.v1",
+		...(kind === "missing" ? {} : { contractId: kind === "stale" ? `sha256:${"0".repeat(64)}` : delegationContractId(contract) }),
+		status: "completed",
+		summary: "Resolved conflict.",
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: ["shared.txt"],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data: kind === "invalid" ? { wrong: true } : { resolved: true },
+	});
+}
 
 function flowTool() {
 	const tools = new Map<string, any>();
@@ -31,13 +67,31 @@ async function runFlow(params: any, plan: Record<string, unknown>, cwd: string) 
 	return { result, calls, text: result.content[0]?.text ?? "" };
 }
 
-test("worktree: rejects a conflict resolution that aborts and drops the incoming branch", async () => {
+async function conflictRepo() {
 	const cwd = await mkdtemp(path.join(tmpdir(), "stub-pi-"));
 	await writeFile(path.join(cwd, "shared.txt"), "base\n");
 	execFileSync("git", ["init", "-q"], { cwd });
 	execFileSync("git", ["add", "."], { cwd });
 	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "seed"], { cwd });
+	return cwd;
+}
 
+async function cleanupConflictRepo(cwd: string) {
+	const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd, encoding: "utf8" })
+		.split("\n")
+		.filter((line) => line.startsWith("worktree "))
+		.map((line) => line.slice("worktree ".length))
+		.slice(1);
+	const tempRoot = worktrees[0] ? path.dirname(worktrees[0]) : undefined;
+	for (const worktree of worktrees) execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd });
+	for (const branch of execFileSync("git", ["branch", "--list", "pi-flow/*"], { cwd, encoding: "utf8" }).split("\n").map((line) => line.trim()).filter(Boolean)) {
+		execFileSync("git", ["branch", "-D", branch], { cwd });
+	}
+	if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+}
+
+test("worktree: rejects a conflict resolution that aborts and drops the incoming branch", async () => {
+	const cwd = await conflictRepo();
 	const { result, calls, text } = await runFlow(
 		{
 			task: "Integrate both conflicting edits",
@@ -68,16 +122,49 @@ test("worktree: rejects a conflict resolution that aborts and drops the incoming
 	assert.match(conflictCall.task, /A_DONE/);
 	assert.match(conflictCall.task, /B_DONE/);
 	assert.match(text, /incoming worker branch was not preserved/i);
+	await cleanupConflictRepo(cwd);
+});
 
-	const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd, encoding: "utf8" })
-		.split("\n")
-		.filter((line) => line.startsWith("worktree "))
-		.map((line) => line.slice("worktree ".length))
-		.slice(1);
-	const tempRoot = worktrees[0] ? path.dirname(worktrees[0]) : undefined;
-	for (const worktree of worktrees) execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd });
-	for (const branch of execFileSync("git", ["branch", "--list", "pi-flow/*"], { cwd, encoding: "utf8" }).split("\n").map((line) => line.trim()).filter(Boolean)) {
-		execFileSync("git", ["branch", "-D", branch], { cwd });
+test("worktree: validates typed conflict resolver envelopes before committing", async (t) => {
+	const cases = [
+		{ kind: "missing", error: "RETURN_CONTRACT_MISMATCH" },
+		{ kind: "stale", error: "RETURN_CONTRACT_MISMATCH" },
+		{ kind: "invalid", error: "RETURN_ENVELOPE_INVALID" },
+	] as const;
+	for (const { kind, error } of cases) {
+		await t.test(kind, async () => {
+			const cwd = await conflictRepo();
+			const { result, calls } = await runFlow(
+				{
+					task: "Integrate both conflicting edits",
+					contract,
+					worktree: {
+						tasks: [
+							{ id: "a", agent: "operator", task: "Apply variant A" },
+							{ id: "b", agent: "operator", task: "Apply variant B" },
+						],
+						integrator: { agent: "debrief" },
+					},
+				},
+				{
+					operator: [
+						{ whenTaskIncludes: "assignment (a)", reply: "A_DONE", writes: { "shared.txt": "variant a\n" } },
+						{ whenTaskIncludes: "assignment (b)", reply: "B_DONE", writes: { "shared.txt": "variant b\n" } },
+					],
+					debrief: {
+						whenTaskIncludes: "Merge conflict",
+						reply: resolverEnvelope(kind),
+						writes: { "shared.txt": "resolved\n" },
+						gitArgs: ["add", "shared.txt"],
+					},
+				},
+				cwd,
+			);
+			assert.equal(result.details.error?.code, error);
+			assert.equal(calls.filter((call) => call.agent === "debrief").length, 1);
+			const resolutionCommits = execFileSync("git", ["log", "--all", "--grep=pi-flow: resolve", "--format=%s"], { cwd, encoding: "utf8" }).trim();
+			assert.equal(resolutionCommits, "");
+			await cleanupConflictRepo(cwd);
+		});
 	}
-	if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
 });
