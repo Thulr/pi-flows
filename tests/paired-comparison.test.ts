@@ -7,6 +7,7 @@ import path from "node:path";
 import { runPlainPi } from "../evals/baseline-pi.mjs";
 import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, pairedArmOrder, studentTCritical95 } from "../evals/paired-experiment.mjs";
 import { pairedCaseWorkspaces } from "../evals/paired-workspace.mjs";
+import { comparisonTotals, formatCostComparison } from "../evals/compare-report.mjs";
 
 function runCompare(...args: string[]) {
 	return spawnSync(process.execPath, ["--import", "tsx", "evals/compare.mjs", "--dry-run", "--filter=route-classifies", ...args], {
@@ -287,11 +288,26 @@ test("paired workspaces clone one immutable snapshot for both arms", () => {
 		assert.notEqual(pair.flows.cwd, pair.plain.cwd);
 		writeFileSync(path.join(pair.flows.cwd, "seed.txt"), "mutated\n");
 		assert.equal(readFileSync(path.join(pair.plain.cwd, "seed.txt"), "utf8"), "clean\n");
+		const retry = pair.freshArm("flows");
+		assert.equal(readFileSync(path.join(retry.cwd, "seed.txt"), "utf8"), "clean\n");
 		assert.equal(readFileSync(path.join(source, "seed.txt"), "utf8"), "clean\n");
 		assert.equal(pair.snapshotId.length, 64);
 	} finally {
 		pair.dispose();
 	}
+});
+
+test("comparison totals suppress unknown treatment cost and ratios", () => {
+	const row = {
+		flowsTraceOk: false,
+		plainTraceOk: false,
+		flows: { cost: 0, costKnown: false, durationMs: 1, tokenUsage: { known: false } },
+		plain: { cost: 1, costKnown: true, durationMs: 1, tokenUsage: { known: false } },
+	};
+	const totals = comparisonTotals([row]);
+	assert.equal(totals.flowsCostKnown, false);
+	assert.equal(totals.baselineCostKnown, true);
+	assert.equal(formatCostComparison("flows", totals.flowsCost, totals.flowsCostKnown, "plain", totals.plainCost, totals.baselineCostKnown), "est. cost      flows n/a (model price unavailable)    plain $1.0000");
 });
 
 function pairedRow(caseId: string, trialIndex: number, options) {

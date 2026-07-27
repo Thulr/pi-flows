@@ -44,6 +44,13 @@ export function formatTokenComparison(candidateLabel, candidate, baselineLabel, 
 	return `tokens         ${candidateLabel} ${candidateText}    ${baselineLabel} ${baselineText}${ratio}`;
 }
 
+export function formatCostComparison(candidateLabel, candidateCost, candidateKnown, baselineLabel, baselineCost, baselineKnown) {
+	const candidateText = candidateKnown ? `$${candidateCost.toFixed(4)}` : "n/a (model price unavailable)";
+	const baselineText = baselineKnown ? `$${baselineCost.toFixed(4)}` : "n/a (model price unavailable)";
+	const ratio = candidateKnown && baselineKnown && baselineCost > 0 ? `    (${(candidateCost / baselineCost).toFixed(1)}x baseline)` : "";
+	return `est. cost      ${candidateLabel} ${candidateText}    ${baselineLabel} ${baselineText}${ratio}`;
+}
+
 export const aggregateTokenUsage = (rows, kind) => ({
 	input: rows.reduce((total, row) => total + (row[kind].tokenUsage?.input ?? 0), 0),
 	output: rows.reduce((total, row) => total + (row[kind].tokenUsage?.output ?? 0), 0),
@@ -156,6 +163,7 @@ export function comparisonTotals(rows) {
 		plainTokens: aggregateTokenUsage(rows, "plain"),
 		flowsSeconds: rows.reduce((total, row) => total + row.flows.durationMs, 0) / 1000,
 		plainSeconds: rows.reduce((total, row) => total + row.plain.durationMs, 0) / 1000,
+		flowsCostKnown: rows.every((row) => row.flows.costKnown === true),
 		baselineCostKnown: rows.every((row) => row.plain.costKnown === true),
 	};
 }

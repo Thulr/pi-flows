@@ -24,10 +24,11 @@ import { runPlainPi } from "./baseline-pi.mjs";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
 import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
-import { applyDuelRows, applyJudgedRows, armLine, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatDuration, formatTokenComparison, judgeDelta, markUnjudgedRows, pct, pickArm, scoreText, unjudgedArm } from "./compare-report.mjs";
+import { applyDuelRows, applyJudgedRows, armLine, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatCostComparison, formatDuration, formatTokenComparison, judgeDelta, markUnjudgedRows, pct, pickArm, scoreText, unjudgedArm } from "./compare-report.mjs";
 import { answerText, answerWithArtifacts, armBudgetSignal, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, pairedArmOrder, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
+import { runArmWithRetry } from "./paired-retry.mjs";
 import { pairedCaseWorkspaces } from "./paired-workspace.mjs";
 import { calibrationSpanFields, caseSpanFields, inspectTraceReport, judgeTraceRun, printScoreDeltas, relativeToRepo as rel, repoPath as p, selectMeasurementCases } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
@@ -133,18 +134,23 @@ function enforceModelParity(flows, baseline) {
 	baseline.exclusion = exclusion;
 }
 
-async function runArm(kind, testCase, flow, signal, workspace, identity) {
+function comparisonTimeoutPlan(testCase) {
+	const base = timeoutPlanForCase(testCase, { defaultTimeoutMs: timeoutMs });
+	return bindingConstraint.kind === "deadline"
+		? { ...base, effectiveTimeoutMs: bindingConstraint.value }
+		: base;
+}
+
+async function runArm(kind, testCase, flow, signal, workspace, identity, remainingTimeoutMs) {
 	const cwd = workspace.cwd;
 	const flowCtx = { cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 	const ctx = { flow, model: subjectModel, dryRun, flowCtx };
 	const startedAt = Date.now();
 	const task = testCase.params.task;
-	const baseTimeoutPlan = timeoutPlanForCase(testCase, { defaultTimeoutMs: timeoutMs });
-	const timeoutPlan = bindingConstraint.kind === "deadline"
-		? { ...baseTimeoutPlan, effectiveTimeoutMs: bindingConstraint.value }
-		: baseTimeoutPlan;
+	const timeoutPlan = comparisonTimeoutPlan(testCase);
 	const effectiveTimeoutMs = timeoutPlan.effectiveTimeoutMs;
-	const armBudget = armBudgetSignal(signal, dryRun ? 0 : effectiveTimeoutMs);
+	const executionTimeoutMs = Math.max(1, Math.min(effectiveTimeoutMs, remainingTimeoutMs ?? effectiveTimeoutMs));
+	const armBudget = armBudgetSignal(signal, dryRun ? 0 : executionTimeoutMs);
 	const progress = (message) => {
 		const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
 		console.log(`   ${kind} +${elapsed}s ${String(message ?? "").replace(/\s+/g, " ").slice(0, 180)}`);
@@ -158,7 +164,7 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 		const constraintBudget = bindingConstraint.kind === "cost"
 			? { maxCostUsd: bindingConstraint.value }
 			: bindingConstraint.kind === "generated_tokens" ? { maxGeneratedTokens: bindingConstraint.value } : {};
-		const params = { ...injectModel(testCase.params, model), ...constraintBudget, traceLabel: identity.traceCaseId, timeoutMs: effectiveTimeoutMs };
+		const params = { ...injectModel(testCase.params, model), ...constraintBudget, traceLabel: identity.traceCaseId, timeoutMs: executionTimeoutMs };
 		try {
 			result = await flow.execute(`cmp:flows:${identity.trialId}`, params, armBudget.signal, (partial) => progress(partial?.content?.[0]?.text), flowCtx);
 		} catch (error) {
@@ -168,8 +174,8 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 		try {
 			progress(`starting ${baselineLabel} process...`);
 			result = baselineKind === "codex"
-				? await runCodex({ task, cwd, model: codexModel, reportedModel: subjectModel, timeoutMs: effectiveTimeoutMs, signal: armBudget.signal })
-				: await runPlainPi({ task, cwd, model: subjectModel, timeoutMs: effectiveTimeoutMs, signal: armBudget.signal,
+				? await runCodex({ task, cwd, model: codexModel, reportedModel: subjectModel, timeoutMs: executionTimeoutMs, signal: armBudget.signal })
+				: await runPlainPi({ task, cwd, model: subjectModel, timeoutMs: executionTimeoutMs, signal: armBudget.signal,
 					...(bindingConstraint.kind === "cost" ? { maxCostUsd: bindingConstraint.value } : {}),
 					...(bindingConstraint.kind === "generated_tokens" ? { maxGeneratedTokens: bindingConstraint.value } : {}) });
 		} catch (error) {
@@ -183,7 +189,7 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 	const exclusion = armBudget.timedOut
 		? {
 			reason: timeoutPlan.debugBudget ? "debug_budget" : "infra",
-			detail: `${timeoutPlan.debugBudget ? "debug " : ""}arm timed out after ${effectiveTimeoutMs}ms (case budget ${timeoutPlan.caseTimeoutMs}ms)`,
+			detail: `${timeoutPlan.debugBudget ? "debug " : ""}arm timed out after ${executionTimeoutMs}ms (case budget ${timeoutPlan.caseTimeoutMs}ms)`,
 		}
 		: exclusionForRun({ reachedModel: objective.reachedModel, timeoutPlan });
 	const children = result?.details?.results ?? [];
@@ -208,22 +214,15 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 	};
 }
 
-const wait = (ms) => new Promise((resolveWait) => setTimeout(resolveWait, ms));
-
-async function runArmWithInfraRetry(kind, testCase, flow, signal, workspace, identity) {
-	let arm;
-	for (let attempt = 1; attempt <= infraRetries + 1; attempt += 1) {
-		arm = await runArm(kind, testCase, flow, signal, workspace, identity);
-		arm.attempts = attempt;
-		const retryable = arm.exclusion?.reason === "infra"
-			&& arm.tokensTotal === 0
-			&& arm.cost === 0
-			&& !/timeout|timed out|aborted/i.test(arm.exclusion.detail ?? "");
-		if (!retryable || attempt > infraRetries) return arm;
-		console.log(`   ${kind} infra retry ${attempt}/${infraRetries} after zero-token failure: ${String(arm.exclusion.detail).replace(/\s+/g, " ").slice(0, 240)}`);
-		if (infraRetryDelayMs > 0) await wait(infraRetryDelayMs);
-	}
-	return arm;
+async function runArmWithInfraRetry(kind, testCase, flow, signal, workspaces, identity) {
+	return runArmWithRetry({
+		maxRetries: infraRetries,
+		retryDelayMs: infraRetryDelayMs,
+		timeoutMs: comparisonTimeoutPlan(testCase).effectiveTimeoutMs,
+		freshWorkspace: (attempt) => attempt === 1 ? workspaces[kind] : workspaces.freshArm(kind),
+		runAttempt: ({ timeoutMs: remainingTimeoutMs, workspace }) => runArm(kind, testCase, flow, signal, workspace, identity, remainingTimeoutMs),
+		onRetry: ({ arm, attempt, maxRetries }) => console.log(`   ${kind} infra retry ${attempt}/${maxRetries} after zero-token failure: ${String(arm.exclusion.detail).replace(/\s+/g, " ").slice(0, 240)}`),
+	});
 }
 
 function appendArmTrace(trace, arm, testCase, identity) {
@@ -302,7 +301,7 @@ async function runComparisonCases(selected, flow, signal) {
 			try {
 				const armOrder = pairedArmOrder(caseIndex, trialIndex);
 				const arms = {};
-				for (const kind of armOrder) arms[kind] = await runArmWithInfraRetry(kind, testCase, flow, signal, { ...workspaces[kind], snapshotId: workspaces.snapshotId }, identity);
+				for (const kind of armOrder) arms[kind] = await runArmWithInfraRetry(kind, testCase, flow, signal, workspaces, identity);
 				const { flows, plain } = arms;
 				enforceModelParity(flows, plain);
 				const constraint = evaluatePairConstraint(flows, plain, bindingConstraint);
@@ -422,7 +421,7 @@ function reportSummary(rows, totals, exclusions) {
 	if (exclusions.flows.infra || exclusions.plain.infra || exclusions.flows.debug_budget || exclusions.plain.debug_budget) {
 		console.log(`  exclusions     flows infra ${exclusions.flows.infra}, debug ${exclusions.flows.debug_budget}  ·  ${baselineSlug} infra ${exclusions.plain.infra}, debug ${exclusions.plain.debug_budget}`);
 	}
-	console.log(`  est. cost      flows $${totals.flowsCost.toFixed(4)}    ${baselineSlug} ${totals.baselineCostKnown ? `$${totals.plainCost.toFixed(4)}` : "n/a (model price unavailable)"}${totals.baselineCostKnown && totals.plainCost > 0 ? `    (${(totals.flowsCost / totals.plainCost).toFixed(1)}x baseline)` : ""}`);
+	console.log(`  ${formatCostComparison("flows", totals.flowsCost, totals.flowsCostKnown, baselineSlug, totals.plainCost, totals.baselineCostKnown)}`);
 	console.log(`  ${formatTokenComparison("flows", totals.flowsTokens, baselineSlug, totals.plainTokens)}`);
 	console.log(`  wall-clock     flows ${totals.flowsSeconds.toFixed(0)}s    ${baselineSlug} ${totals.plainSeconds.toFixed(0)}s`);
 	console.log(`\nNote: ${baselineLabel} is the baseline and Pi Flows is the candidate in thulr compare. Both arms must report the same underlying model or the pair is excluded. Native thulr duel is the head-to-head quality signal.`);

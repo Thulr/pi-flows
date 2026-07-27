@@ -35,33 +35,39 @@ function snapshotDigest(directory) {
 export function pairedCaseWorkspaces(testCase, { dryRun = false, trialId = testCase.name } = {}) {
 	if (dryRun) {
 		const snapshotId = createHash("sha256").update(`dry-run:${testCase.name}:${trialId}`).digest("hex");
+		const freshArm = () => ({ cwd: process.cwd(), snapshotId });
 		return {
 			snapshotId,
-			flows: { cwd: process.cwd() },
-			plain: { cwd: process.cwd() },
+			flows: freshArm(),
+			plain: freshArm(),
+			freshArm,
 			dispose() {},
 		};
 	}
 
 	const snapshot = mkdtempSync(join(tmpdir(), "pi-eval-pair-snapshot-"));
-	const flows = mkdtempSync(join(tmpdir(), "pi-eval-pair-flows-"));
-	const plain = mkdtempSync(join(tmpdir(), "pi-eval-pair-plain-"));
+	const armDirectories = [];
 	try {
 		if (testCase.workspace) testCase.setupWorkspace?.(snapshot, { arm: "paired" });
 		else if (testCase.cwd) copyDirectory(testCase.cwd, snapshot);
 		const snapshotId = snapshotDigest(snapshot);
-		copyDirectory(snapshot, flows);
-		copyDirectory(snapshot, plain);
+		const freshArm = (kind) => {
+			const cwd = mkdtempSync(join(tmpdir(), `pi-eval-pair-${kind}-`));
+			armDirectories.push(cwd);
+			copyDirectory(snapshot, cwd);
+			return { cwd, snapshotId };
+		};
 		return {
 			snapshotId,
-			flows: { cwd: flows },
-			plain: { cwd: plain },
+			flows: freshArm("flows"),
+			plain: freshArm("plain"),
+			freshArm,
 			dispose() {
-				for (const directory of [snapshot, flows, plain]) rmSync(directory, { recursive: true, force: true });
+				for (const directory of [snapshot, ...armDirectories]) rmSync(directory, { recursive: true, force: true });
 			},
 		};
 	} catch (error) {
-		for (const directory of [snapshot, flows, plain]) rmSync(directory, { recursive: true, force: true });
+		for (const directory of [snapshot, ...armDirectories]) rmSync(directory, { recursive: true, force: true });
 		throw error;
 	}
 }

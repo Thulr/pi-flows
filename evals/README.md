@@ -320,7 +320,10 @@ The fair A/B contract is enforced rather than inferred:
   budget-stopped executions from disappearing from efficiency results.
 - The default infra retry applies only to zero-token, zero-cost startup failures.
   It does not retry timeouts or completed answers and therefore cannot cherry-pick
-  a better response.
+  a better response. Every attempt starts from a fresh clone of the immutable
+  pair snapshot, and all attempts plus retry delays share one outer arm deadline.
+  End-to-end latency includes failed attempts and delays; worker time includes
+  every attempted execution.
 
 `eval:compare` adds the same calibration canaries to both arm traces, filters them
 out of the comparison artifacts, and prints per-dimension baseline -> flows deltas.
