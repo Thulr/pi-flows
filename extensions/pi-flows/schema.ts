@@ -6,6 +6,55 @@ const TierDescription = 'Capability tier for this child, portable across provide
 
 export const FlowTier = StringEnum(["fast", "capable", "deep"] as const, { description: TierDescription });
 
+const StringList = Type.Array(Type.String({ minLength: 1 }));
+
+export const FlowDelegationContract = Type.Object({
+	objective: Type.String({ minLength: 1, description: "The outcome the child owns." }),
+	constraints: StringList,
+	nonGoals: StringList,
+	dependencies: StringList,
+	authority: Type.Object({
+		may: StringList,
+		mustNot: StringList,
+		requiresApproval: StringList,
+	}),
+	sideEffectClass: StringEnum(["none", "read-only", "reversible", "irreversible"] as const),
+	budget: Type.Object({
+		timeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
+		maxCostUsd: Type.Optional(Type.Number({ minimum: 0 })),
+		maxTokens: Type.Optional(Type.Number({ minimum: 0 })),
+		maxGeneratedTokens: Type.Optional(Type.Number({ minimum: 0 })),
+	}),
+	acceptanceChecks: StringList,
+	returnSchema: Type.Record(Type.String(), Type.Any(), { description: "JSON Schema applied to the return envelope's data field." }),
+	owner: Type.String({ minLength: 1 }),
+}, {
+	description: "Typed delegation contract. When present, the child must return a validated pi-flows.return-envelope.v1 JSON object.",
+});
+
+export const FlowReturnEnvelope = Type.Object({
+	schemaVersion: Type.Literal("pi-flows.return-envelope.v1"),
+	status: StringEnum(["completed", "partial", "blocked", "failed"] as const),
+	summary: Type.String({ minLength: 1 }),
+	evidence: Type.Array(Type.Object({ claim: Type.String({ minLength: 1 }), source: Type.String({ minLength: 1 }) })),
+	artifactReferences: Type.Array(Type.Object({ path: Type.String({ minLength: 1 }) })),
+	digests: Type.Array(Type.Object({
+		artifact: Type.String({ minLength: 1 }),
+		algorithm: Type.Literal("sha256"),
+		value: Type.String({ pattern: "^[a-fA-F0-9]{64}$" }),
+	})),
+	changedState: StringList,
+	unresolvedQuestions: StringList,
+	retry: Type.Object({
+		retryable: Type.Boolean(),
+		reason: Type.Optional(Type.String({ minLength: 1 })),
+		afterMs: Type.Optional(Type.Number({ minimum: 0 })),
+	}),
+	data: Type.Any(),
+}, {
+	description: "Durable child return envelope used when a typed delegation contract is supplied. Runtime usage is attached to the validated envelope when available.",
+});
+
 export const FlowTask = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
 	task: Type.String({ minLength: 1, description: "Complete task for that agent, including the target and expected output. Do not use vague one-word tasks. Chain tasks may use {task} and {previous}." }),
@@ -17,6 +66,7 @@ export const FlowTask = Type.Object({
 	),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this agent's task. Use it to specify summary shape, required fields, or max length." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return.", default: false })),
+	contract: Type.Optional(FlowDelegationContract),
 });
 
 export const FlowAgentRef = Type.Object({
@@ -34,6 +84,7 @@ export const FlowEvaluateOperatorRef = Type.Object({
 	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the generator process" })),
+	contract: Type.Optional(FlowDelegationContract),
 });
 
 export const FlowEvaluate = Type.Object({
@@ -238,6 +289,7 @@ export const FlowParams = Type.Object({
 	),
 	agent: Type.Optional(Type.String({ minLength: 1, description: "Single-agent mode: agent name, e.g. recon for a read-only scout or analyst for deeper investigation. Use with task; never pass an empty agent." })),
 	task: Type.Optional(Type.String({ minLength: 1, description: "Single-agent task, shared {task} value for chain steps, or the goal/contract for evaluate mode. For a named-agent request like 'ask recon to inspect package.json', set agent:'recon' and put the complete requested work here; never use a vague one-word task." })),
+	contract: Type.Optional(FlowDelegationContract),
 	tasks: Type.Optional(Type.Array(FlowTask, { description: "Parallel mode: tasks to run concurrently" })),
 	chain: Type.Optional(Type.Array(FlowTask, { description: "Chain mode: tasks to run sequentially" })),
 	evaluate: Type.Optional(FlowEvaluate),

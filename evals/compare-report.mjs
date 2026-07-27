@@ -107,6 +107,7 @@ export function armLine(label, arm) {
 }
 
 export const pickArm = (a) => ({
+	arm: a.arm ?? null,
 	dims: a.dims ?? {},
 	judgePass: a.judged?.verdict ?? null,
 	judgeScore: a.judged?.score ?? null,
@@ -128,6 +129,10 @@ export const pickArm = (a) => ({
 	model: a.modelName,
 	workspaceSnapshotId: a.workspaceSnapshotId,
 	answer: a.exclusion ? "" : (a.answer ?? "").slice(0, 1000),
+	evidence: {
+		objective: a.objective?.notes ?? null,
+		answer: a.exclusion ? "" : (a.answer ?? "").slice(0, 4000),
+	},
 });
 
 const judgeScore = (arm) => arm.judged?.score ?? 0;

@@ -98,6 +98,9 @@ export const FLOW_ERROR_CODES = [
 	"SHARED_WRITE_CWD",
 	"PROJECT_AGENT_APPROVAL_REQUIRED",
 	"PROJECT_AGENT_APPROVAL_DENIED",
+	"INVALID_DELEGATION_CONTRACT",
+	"RETURN_ENVELOPE_INVALID",
+	"RETURN_DIGEST_MISMATCH",
 	"CHILD_PROTOCOL_ERROR",
 	"CHILD_EXIT_NONZERO",
 	"CHILD_ABORTED",
@@ -171,6 +174,7 @@ export interface FlowRunResult {
 	durationMs?: number;
 	stdoutParseErrors?: number;
 	stdoutSample?: string;
+	envelope?: DelegationReturnEnvelope;
 }
 
 export interface FlowDetails {
@@ -205,6 +209,43 @@ export interface FlowTaskInput {
 	tools?: string;
 	returnContract?: string;
 	requireEvidence?: boolean;
+	contract?: DelegationContract;
+}
+
+export interface DelegationContract {
+	objective: string;
+	constraints: string[];
+	nonGoals: string[];
+	dependencies: string[];
+	authority: {
+		may: string[];
+		mustNot: string[];
+		requiresApproval: string[];
+	};
+	sideEffectClass: "none" | "read-only" | "reversible" | "irreversible";
+	budget: {
+		timeoutMs?: number;
+		maxCostUsd?: number;
+		maxTokens?: number;
+		maxGeneratedTokens?: number;
+	};
+	acceptanceChecks: string[];
+	returnSchema: Record<string, unknown>;
+	owner: string;
+}
+
+export interface DelegationReturnEnvelope {
+	schemaVersion: "pi-flows.return-envelope.v1";
+	status: "completed" | "partial" | "blocked" | "failed";
+	summary: string;
+	evidence: Array<{ claim: string; source: string }>;
+	artifactReferences: Array<{ path: string }>;
+	digests: Array<{ artifact: string; algorithm: "sha256"; value: string }>;
+	changedState: string[];
+	unresolvedQuestions: string[];
+	retry: { retryable: boolean; reason?: string; afterMs?: number };
+	data: unknown;
+	usage?: UsageStats;
 }
 
 export interface FlowAgentRefInput {

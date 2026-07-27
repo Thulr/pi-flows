@@ -71,6 +71,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
 | `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
+| `contract` | (none) | Typed delegation contract for `single`, `chain`, and `evaluate`. It may replace the prose `task` in single/evaluate and requires a validated `pi-flows.return-envelope.v1` response. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
@@ -113,6 +114,53 @@ phases, worktree tasks, and dossier sections accept task-level contracts; those
 override the top-level contract. Dossier sections and worktree tasks require
 evidence by default. `orchestrate.workerReturnContract` can set a worker-specific
 contract while the top-level `returnContract` still applies to synthesis.
+
+For durable machine-checked handoffs, `contract` is the structured alternative.
+It contains `objective`, `constraints`, `nonGoals`, `dependencies`, `authority`
+(`may`, `mustNot`, `requiresApproval`), `sideEffectClass`, `budget`,
+`acceptanceChecks`, a JSON Schema `returnSchema`, and `owner`. All fields are
+required; arrays and the budget object may be empty. A top-level contract applies
+to single/evaluate and is the fallback for chain steps; a chain step or
+`evaluate.operator` may override it.
+
+```json
+{
+  "agent": "recon",
+  "contract": {
+    "objective": "Find the configured sample identifier.",
+    "constraints": ["Read only."],
+    "nonGoals": ["Do not edit configuration."],
+    "dependencies": ["settings.txt"],
+    "authority": {
+      "may": ["Read repository files."],
+      "mustNot": ["Write repository files."],
+      "requiresApproval": []
+    },
+    "sideEffectClass": "read-only",
+    "budget": { "timeoutMs": 30000, "maxGeneratedTokens": 2000 },
+    "acceptanceChecks": ["Return the exact value and source path."],
+    "returnSchema": {
+      "type": "object",
+      "required": ["answer"],
+      "properties": { "answer": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "owner": "parent"
+  }
+}
+```
+
+The child must return `pi-flows.return-envelope.v1` with `status`, `summary`,
+`evidence`, `artifactReferences`, `digests`, `changedState`,
+`unresolvedQuestions`, `retry`, and `data`. `data` is checked against
+`returnSchema`; declared SHA-256 digests are checked against files inside the
+child `cwd`; runtime usage is attached when available. Invalid schema data,
+unsafe/missing artifacts, or digest mismatches fail closed with a structured
+error before a chain step or evaluate critic can consume the handoff. The
+validated envelope is retained on `details.results[].envelope`.
+
+Existing `task`, `returnContract`, and `requireEvidence` calls remain prose-based
+and behave as before.
 
 Parallel fan-out is read-optimized by default. If two write-capable agents would
 run concurrently in the same `cwd`, pi-flows returns `SHARED_WRITE_CWD` before
@@ -523,7 +571,7 @@ lesson-augmented.
 - `agentsDir`: package/user/project directories with home paths redacted to `~`.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
-- `results`: child run summaries with redacted task preview, usage, duration, stderr, and structured error when applicable. On error, `results` still contains every run that completed before the failure — a graph that ran two waves before hitting a cycle reports those runs' usage and cost alongside `error`.
+- `results`: child run summaries with redacted task preview, usage, duration, stderr, optional validated typed-contract `envelope`, and structured error when applicable. On error, `results` still contains every run that completed before the failure — a graph that ran two waves before hitting a cycle reports those runs' usage and cost alongside `error`.
 
 ## Error contract
 
