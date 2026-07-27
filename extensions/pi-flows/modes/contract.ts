@@ -39,8 +39,8 @@ function refAgent(ref: FlowAgentRefInput | undefined, fallback?: string): string
  */
 const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 	single: {
-		paramHint: "agent+task",
-		isActive: (params, hasObjectMode) => Boolean(params.agent && params.task && !hasObjectMode),
+		paramHint: "agent+(task|contract)",
+		isActive: (params, hasObjectMode) => Boolean(params.agent && (params.task || params.contract) && !hasObjectMode),
 		requestedAgents: (params) => (params.agent ? [params.agent] : []),
 		renderLabel: (params) => params.agent ?? "agent",
 		handler: handleSingle,

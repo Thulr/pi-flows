@@ -29,6 +29,42 @@ Plain English: *"scout the repo for the extension entrypoint and summarize what 
 
 Expected: recon returns paths including `extensions/pi-flows/index.ts` and mentions `flow` plus `/flows`.
 
+## Typed-contract single-agent example
+
+```json
+{
+  "agent": "recon",
+  "contract": {
+    "objective": "Find the extension entrypoint.",
+    "constraints": ["Read only."],
+    "nonGoals": ["Do not modify source files."],
+    "dependencies": ["extensions/pi-flows"],
+    "authority": {
+      "may": ["Read repository files."],
+      "mustNot": ["Write repository files."],
+      "requiresApproval": []
+    },
+    "sideEffectClass": "read-only",
+    "budget": { "timeoutMs": 30000, "maxGeneratedTokens": 2000 },
+    "acceptanceChecks": ["Return the exact entrypoint path."],
+    "returnSchema": {
+      "type": "object",
+      "required": ["entrypoint"],
+      "properties": { "entrypoint": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "owner": "parent"
+  },
+  "why": "user asked for a delegated read-only scout with a validated handoff"
+}
+```
+
+Expected: `details.results[0].envelope` has
+`schemaVersion:"pi-flows.return-envelope.v1"`, validated evidence and `data`,
+plus runtime usage. A response whose `data` violates `returnSchema` returns
+`RETURN_ENVELOPE_INVALID`; a declared SHA-256 digest that does not match its
+artifact returns `RETURN_DIGEST_MISMATCH`.
+
 ## Parallel example
 
 ```json

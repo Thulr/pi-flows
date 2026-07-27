@@ -275,6 +275,9 @@ npm run eval:compare -- --baseline=pi   # compare against plain headless Pi inst
 npm run eval:compare -- --include-controls # also run simple threshold/control cases
 npm run eval:compare -- --duel          # add native thulr head-to-head quality judging
 npm run eval:compare -- --filter=vote   # scope to keep cost down (runs both arms per case)
+npm run eval:compare -- --arms=no-verifier,full --filter=evaluate # attribute verifier lift
+npm run eval:compare -- --arms=sequential,parallel --filter=vote  # isolate parallelism
+npm run eval:compare -- --arms=random-routing,oracle-routing --filter=route # routing headroom
 npm run eval:compare -- --infra-retries=1 --infra-retry-delay=15000 # retry zero-token startup infra only
 npm run eval:compare -- --write=evals/compare.json
 npm run eval:compare -- --dry-run       # wiring smoke, no model
@@ -284,6 +287,29 @@ npm run eval:compare -- --dry-run       # wiring smoke, no model
 PI_FLOWS_TRACE_FILE=/tmp/ab.jsonl npm run eval:compare -- --duel --write=evals/compare.json
 npm run trace:report -- /tmp/ab.jsonl
 ```
+
+`--arms=<reference>,<candidate>` selects two named arms without copying case
+definitions. The default remains `direct,full`. Supported controls are:
+
+- `compute-matched-self-review`, `deterministic-workflow`, and
+  `no-communication-ensemble` for extra-compute, fixed-workflow, and ensemble
+  alternatives;
+- `random-routing` and label-defined `oracle-routing` for routing value;
+- `no-integrator`, `no-verifier`, and `minimal-context` for component/context
+  ablations;
+- `sequential` and `parallel` for execution-order comparisons.
+
+Each arm inherits the declared binding constraint. The artifact records its
+topology and configuration identity, attributes measured lift to the ablated
+component, and retains bounded per-case answer/objective evidence. An arm that
+does not apply to a case is excluded as `inapplicable` with a durable reason,
+never silently scored. For statically predictable topologies,
+`compute-matched-self-review` uses one repeated agent profile with the full
+case topology's planned model-call count and the same binding allocation; both
+the call count and binding are recorded in its configuration identity.
+Data-dependent topologies (early-stopping loops, generated fan-out, gates, and
+conditional synthesis) are explicitly inapplicable because their realized call
+count cannot be matched before execution.
 
 The fair A/B contract is enforced rather than inferred:
 

@@ -50,6 +50,7 @@ export {
 	PI_FLOWS_VERSION,
 } from "./types.ts";
 export { redactText, scanForInjection, stripControlChars } from "./sanitize.ts";
+export { FlowDelegationContract, FlowReturnEnvelope } from "./schema.ts";
 
 export const __test = {
 	redactText,

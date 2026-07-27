@@ -2,6 +2,8 @@ import * as os from "node:os";
 import type { Message } from "@earendil-works/pi-ai";
 import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type FlowError, type FlowRunResult } from "./types.ts";
 
+const rawFinalAssistantText = new WeakMap<FlowRunResult, string>();
+
 export function safePath(candidate: string | null | undefined): string | null {
 	if (!candidate) return null;
 	const home = os.homedir();
@@ -117,6 +119,19 @@ export function getFinalAssistantText(messages: Message[]): string {
 		}
 	}
 	return "";
+}
+
+/** Retain one bounded raw candidate only long enough for typed-envelope validation. */
+export function captureRawFinalAssistantText(result: FlowRunResult, message: Message): void {
+	const text = getFinalAssistantText([message]);
+	if (text) rawFinalAssistantText.set(result, capBytes(text, MODEL_VISIBLE_OUTPUT_CAP, "Envelope candidate"));
+}
+
+/** Consume the raw candidate so it cannot leak through returned details or linger after validation. */
+export function takeRawFinalAssistantText(result: FlowRunResult): string | undefined {
+	const text = rawFinalAssistantText.get(result);
+	rawFinalAssistantText.delete(result);
+	return text;
 }
 
 export function isFailed(result: FlowRunResult): boolean {

@@ -5,6 +5,19 @@ import { __test } from "../extensions/pi-flows/index.ts";
 import { budgetExceededError } from "../extensions/pi-flows/types.ts";
 import { runFlow } from "./stub-harness.ts";
 
+const contractWithBudget = (budget: Record<string, number>) => ({
+	objective: "Return a bounded answer.",
+	constraints: [],
+	nonGoals: [],
+	dependencies: [],
+	authority: { may: [], mustNot: [], requiresApproval: [] },
+	sideEffectClass: "read-only",
+	budget,
+	acceptanceChecks: [],
+	returnSchema: { type: "object" },
+	owner: "parent",
+});
+
 test("budget helpers accumulate spend and trip each supported ceiling", () => {
 	const usage = (cost: number, input: number, output: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, cost, contextTokens: 0, turns: 1 });
 	assert.equal(__test.budgetExceeded(undefined), false, "no budget never trips");
@@ -71,6 +84,29 @@ test("generated-token budget stops the active child at a response boundary", asy
 	assert.equal(child.error.code, "BUDGET_EXCEEDED");
 	assert.match(result.content[0].text, /Code: BUDGET_EXCEEDED/);
 	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
+});
+
+test("typed contract cost and token budgets stop the contracted child", async () => {
+	for (const budget of [{ maxCostUsd: 0.00001 }, { maxTokens: 4 }, { maxGeneratedTokens: 4 }]) {
+		const { result } = await runFlow(
+			{ agent: "recon", contract: contractWithBudget(budget), timeoutMs: 2_000 },
+			{ recon: { reply: "bounded response", holdOpenMs: 5_000 } },
+		);
+		const child = result.details.results[0];
+		assert.equal(child.stopReason, "budget_exceeded", JSON.stringify(budget));
+		assert.equal(child.error.code, "BUDGET_EXCEEDED");
+	}
+});
+
+test("typed contract timeout tightens the top-level child timeout", async () => {
+	const startedAt = Date.now();
+	const { result } = await runFlow(
+		{ agent: "recon", contract: contractWithBudget({ timeoutMs: 50 }), timeoutMs: 2_000 },
+		{ recon: { reply: "too late", delayBeforeReplyMs: 500 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.error.code, "CHILD_TIMEOUT");
+	assert.ok(Date.now() - startedAt < 1_500, "contract timeout should win over the looser top-level timeout");
 });
 
 test("legacy total-token budgets remain a between-child spawn gate", async () => {

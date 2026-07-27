@@ -10,6 +10,18 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- `flow` now accepts a typed delegation `contract` in single, chain, and
+  evaluate paths. Children return a validated, usage-enriched
+  `pi-flows.return-envelope.v1`; JSON Schema, artifact path, and SHA-256 digest
+  failures return structured fail-closed errors before downstream consumption.
+  Existing prose `task`, `returnContract`, and `requireEvidence` calls are
+  unchanged.
+- `eval:compare -- --arms=<reference>,<candidate>` now selects named architecture
+  controls and ablations for compute-matched self-review, deterministic
+  workflow, no-communication ensembles, random/oracle routing, integrator and
+  verifier removal, context scope, and sequential/parallel execution. Artifacts
+  record topology/configuration identity, explicit inapplicability, component
+  lift, and bounded per-case evidence.
 - The single-arm eval runner now accepts `--trials=N` (maximum 50) to repeat the
   stochastic subject case in clean per-trial workspaces, independently of
   `--samples` judge-noise sampling. It writes an auditable raw reliability

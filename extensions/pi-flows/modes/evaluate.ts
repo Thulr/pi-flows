@@ -1,7 +1,8 @@
-import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff, prepareTextHandoff } from "../handoff.ts";
-import { appendReturnContract, clampIterations, normalizeTimeout, validateSharedWriteCwd } from "../validate.ts";
+import { appendReturnContract, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
+import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
@@ -9,9 +10,14 @@ import { runCheckCommand } from "../commands.ts";
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
 	const spec = params.evaluate ?? {};
-	const operatorWithTask = spec.operator as (FlowAgentRefInput & { task?: unknown }) | undefined;
+	const operatorWithTask = spec.operator as (FlowAgentRefInput & { task?: unknown; contract?: DelegationContract }) | undefined;
 	const operatorTask = typeof operatorWithTask?.task === "string" ? operatorWithTask.task : undefined;
-	const goal: string | undefined = params.task ?? operatorTask;
+	const contract = (operatorWithTask?.contract ?? params.contract) as DelegationContract | undefined;
+	const contractError = contract ? validateDelegationContract(contract, policy) : null;
+	if (contractError) {
+		return { content: [{ type: "text", text: formatFlowError(contractError) }], details: makeDetails("evaluate")([], contractError) };
+	}
+	const goal: string | undefined = params.task ?? operatorTask ?? contract?.objective;
 
 	if (!goal || !goal.trim()) {
 		const error = flowError(
@@ -22,7 +28,9 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		);
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")([], error) };
 	}
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = contract
+		? renderDelegationTask(goal, contract, params.returnContract, params.requireEvidence)
+		: appendReturnContract(goal, params.returnContract, params.requireEvidence);
 
 	const generatorRef: FlowAgentRefInput = spec.operator ?? { agent: "operator" };
 	// The critic may be a single agent or a panel (god-metric → decomposed evaluators:
@@ -56,6 +64,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	let passed = false;
 	let rounds = 0;
 	let lastCheckOk: boolean | null = null;
+	const contractBudget = contract ? createDelegationBudget(contract) : undefined;
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
 		rounds = iteration;
@@ -73,7 +82,15 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 						"\n## Reviewer feedback on that attempt (address every point)",
 						critique,
 					].join("\n");
-		const generated = await runAgentRef(deps, generatorRef, generatorTask, "evaluate", results.length + 1, results);
+		const generated = await runAgentRef(
+			deps,
+			generatorRef,
+			generatorTask,
+			"evaluate",
+			results.length + 1,
+			results,
+			contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget } : {},
+		);
 		results.push(generated);
 		lastGenerator = generated;
 		emitLive();
@@ -83,10 +100,18 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				details: makeDetails("evaluate")(results),
 			};
 		}
+		let envelopeText: string | null = null;
+		if (contract) {
+			const validated = validateReturnEnvelope(generated, contract, resolvedCwd(defaultCwd, generatorRef.cwd), policy);
+			if (validated.error) {
+				return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("evaluate")(results, validated.error) };
+			}
+			envelopeText = canonicalEnvelope(validated.envelope!);
+		}
 
 		// The artifact crosses a trust boundary into the critic prompt: strip
 		// invisible characters and flag injection markers before reuse.
-		const artifactPrep = handoffWarnings.addFrom(prepareResultHandoff(generated, policy));
+		const artifactPrep = handoffWarnings.addFrom(envelopeText === null ? prepareResultHandoff(generated, policy) : prepareTextHandoff(envelopeText, policy));
 		const artifact = artifactPrep.text;
 		priorArtifact = artifact;
 

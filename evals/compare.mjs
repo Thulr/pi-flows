@@ -24,7 +24,9 @@ import { runPlainPi } from "./baseline-pi.mjs";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
 import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
-import { applyDuelRows, applyJudgedRows, armLine, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, fixed, formatCostComparison, formatDuration, formatTokenComparison, judgeDelta, markUnjudgedRows, pct, pickArm, scoreText, unjudgedArm } from "./compare-report.mjs";
+import { ablationAttribution, experimentArmInfo, parseArmSelection, planExperimentArm } from "./experiment-arms.mjs";
+import { applyDuelRows, applyJudgedRows, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, formatDuration, markUnjudgedRows, scoreText, unjudgedArm } from "./compare-report.mjs";
+import { rawArtifactRows, reportPerCase, reportSummary } from "./comparison-output.mjs";
 import { answerText, answerWithArtifacts, armBudgetSignal, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, pairedArmOrder, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
@@ -58,6 +60,17 @@ if (useAgentModels) {
 const codexModel = baselineKind === "codex" ? codexModelFromPi(model) : null;
 const baselineLabel = baselineKind === "codex" ? "Codex" : "plain Pi";
 const baselineSlug = baselineKind === "codex" ? "codex" : "plain";
+let armNames;
+try {
+	armNames = parseArmSelection(flag("arms", null));
+} catch (error) {
+	console.error(error.message);
+	process.exit(2);
+}
+const armPair = { reference: experimentArmInfo(armNames[0]), candidate: experimentArmInfo(armNames[1]) };
+const referenceLabel = armPair.reference.name;
+const candidateLabel = armPair.candidate.name;
+const legacyDefaultArms = referenceLabel === "direct" && candidateLabel === "full";
 const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-haiku-4-5";
 const samples = Math.min(10, Math.max(1, Number(flag("samples", "1")) || 1));
 const subjectTrials = positiveIntegerFlag("trials", 1, MAX_SUBJECT_TRIALS);
@@ -77,7 +90,7 @@ try {
 	console.error(error.message);
 	process.exit(2);
 }
-if (baselineKind === "codex" && bindingConstraint.kind !== "deadline") {
+if ([armPair.reference, armPair.candidate].some((arm) => arm.runner === "baseline") && baselineKind === "codex" && bindingConstraint.kind !== "deadline") {
 	console.error(`--constraint=${bindingConstraint.kind}:... requires --baseline=pi because Codex CLI cannot enforce that resource ceiling during execution`);
 	process.exit(2);
 }
@@ -141,32 +154,56 @@ function comparisonTimeoutPlan(testCase) {
 		: base;
 }
 
-async function runArm(kind, testCase, flow, signal, workspace, identity, remainingTimeoutMs) {
+function inapplicableMeasurement(plan, testCase, workspace) {
+	return {
+		...unjudgedArm(),
+		objective: { pass: false, score: 0, notes: plan.exclusion.detail },
+		exclusion: plan.exclusion,
+		timeoutPlan: comparisonTimeoutPlan(testCase),
+		result: null,
+		durationMs: 0,
+		workerTimeMs: 0,
+		answer: "",
+		task: testCase.params.task,
+		modelName: useAgentModels ? "agent-frontmatter" : model,
+		reportedModels: [],
+		workspaceSnapshotId: workspace.snapshotId,
+		tokensTotal: 0,
+		tokenUsage: { known: false, input: null, output: null, total: null },
+		cost: 0,
+		costKnown: false,
+		deadlineExcludedMs: 0,
+		arm: { name: plan.name, component: plan.component, topology: plan.topology, configurationIdentity: plan.configurationIdentity, computeAllocation: plan.computeAllocation ?? null },
+	};
+}
+
+async function runArm(kind, plan, testCase, flow, signal, workspace, identity, remainingTimeoutMs) {
+	if (!plan.applicable) return inapplicableMeasurement(plan, testCase, workspace);
 	const cwd = workspace.cwd;
 	const flowCtx = { cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } };
 	const ctx = { flow, model: subjectModel, dryRun, flowCtx };
 	const startedAt = Date.now();
-	const task = testCase.params.task;
+	const task = plan.task ?? plan.params?.task ?? testCase.params.task;
 	const timeoutPlan = comparisonTimeoutPlan(testCase);
 	const effectiveTimeoutMs = timeoutPlan.effectiveTimeoutMs;
 	const executionTimeoutMs = Math.max(1, Math.min(effectiveTimeoutMs, remainingTimeoutMs ?? effectiveTimeoutMs));
 	const armBudget = armBudgetSignal(signal, dryRun ? 0 : executionTimeoutMs);
 	const progress = (message) => {
 		const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-		console.log(`   ${kind} +${elapsed}s ${String(message ?? "").replace(/\s+/g, " ").slice(0, 180)}`);
+		console.log(`   ${plan.name} +${elapsed}s ${String(message ?? "").replace(/\s+/g, " ").slice(0, 180)}`);
 	};
 
 	let result;
 	let thrown;
 	if (dryRun) {
 		result = testCase.mock;
-	} else if (kind === "flows") {
+	} else if (plan.runner === "flow") {
 		const constraintBudget = bindingConstraint.kind === "cost"
 			? { maxCostUsd: bindingConstraint.value }
 			: bindingConstraint.kind === "generated_tokens" ? { maxGeneratedTokens: bindingConstraint.value } : {};
-		const params = { ...injectModel(testCase.params, model), ...constraintBudget, traceLabel: identity.traceCaseId, timeoutMs: executionTimeoutMs };
+		const params = { ...injectModel(plan.params, model), ...constraintBudget, traceLabel: identity.traceCaseId, timeoutMs: executionTimeoutMs };
 		try {
-			result = await flow.execute(`cmp:flows:${identity.trialId}`, params, armBudget.signal, (partial) => progress(partial?.content?.[0]?.text), flowCtx);
+			result = await flow.execute(`cmp:${plan.name}:${identity.trialId}`, params, armBudget.signal, (partial) => progress(partial?.content?.[0]?.text), flowCtx);
 		} catch (error) {
 			thrown = error;
 		}
@@ -212,17 +249,19 @@ async function runArm(kind, testCase, flow, signal, workspace, identity, remaini
 		tokenUsage,
 		costKnown: children.length > 0 && children.every((child) => child?.usage?.costKnown === true),
 		deadlineExcludedMs: performance.now() - postExecutionStartedAt,
+		arm: { name: plan.name, component: plan.component, topology: plan.topology, configurationIdentity: plan.configurationIdentity, computeAllocation: plan.computeAllocation ?? null },
 	};
 }
 
-async function runArmWithInfraRetry(kind, testCase, flow, signal, workspaces, identity) {
+async function runArmWithInfraRetry(kind, plan, testCase, flow, signal, workspaces, identity) {
+	if (!plan.applicable) return inapplicableMeasurement(plan, testCase, workspaces[kind]);
 	return runArmWithRetry({
 		maxRetries: infraRetries,
 		retryDelayMs: infraRetryDelayMs,
 		timeoutMs: comparisonTimeoutPlan(testCase).effectiveTimeoutMs,
 		freshWorkspace: (attempt) => attempt === 1 ? workspaces[kind] : workspaces.freshArm(kind),
-		runAttempt: ({ timeoutMs: remainingTimeoutMs, workspace }) => runArm(kind, testCase, flow, signal, workspace, identity, remainingTimeoutMs),
-		onRetry: ({ arm, attempt, maxRetries }) => console.log(`   ${kind} infra retry ${attempt}/${maxRetries} after zero-token failure: ${String(arm.exclusion.detail).replace(/\s+/g, " ").slice(0, 240)}`),
+		runAttempt: ({ timeoutMs: remainingTimeoutMs, workspace }) => runArm(kind, plan, testCase, flow, signal, workspace, identity, remainingTimeoutMs),
+		onRetry: ({ arm, attempt, maxRetries }) => console.log(`   ${plan.name} infra retry ${attempt}/${maxRetries} after zero-token failure: ${String(arm.exclusion.detail).replace(/\s+/g, " ").slice(0, 240)}`),
 		onDeadline: ({ arm }) => deadlineExpiredArm(arm, { timeoutPlan: comparisonTimeoutPlan(testCase), task: testCase.params.task, modelName: model, snapshotId: workspaces.snapshotId }),
 	});
 }
@@ -238,7 +277,7 @@ function appendArmTrace(trace, arm, testCase, identity) {
 		tokensTotal: arm.tokensTotal,
 		journeyStage: testCase.journeyStage,
 		promptVersion: PROMPT_VERSION,
-		configVersion: CONFIG_VERSION,
+		configVersion: `${CONFIG_VERSION}:${arm.arm.configurationIdentity}`,
 		...identity,
 	}));
 	return true;
@@ -301,8 +340,12 @@ async function runComparisonCases(selected, flow, signal) {
 			const workspaces = pairedCaseWorkspaces(testCase, { dryRun, trialId: identity.trialId });
 			try {
 				const armOrder = pairedArmOrder(caseIndex, trialIndex);
+				const plans = {
+					plain: planExperimentArm(armPair.reference.name, testCase, { bindingConstraint, seed: identity.trialId }),
+					flows: planExperimentArm(armPair.candidate.name, testCase, { bindingConstraint, seed: identity.trialId }),
+				};
 				const arms = {};
-				for (const kind of armOrder) arms[kind] = await runArmWithInfraRetry(kind, testCase, flow, signal, workspaces, identity);
+				for (const kind of armOrder) arms[kind] = await runArmWithInfraRetry(kind, plans[kind], testCase, flow, signal, workspaces, identity);
 				const { flows, plain } = arms;
 				enforceModelParity(flows, plain);
 				const constraint = evaluatePairConstraint(flows, plain, bindingConstraint);
@@ -321,8 +364,8 @@ async function runComparisonCases(selected, flow, signal) {
 				rows.push({ ...identity, name: identity.traceCaseId, suite: testCase.suite, taskFamily: testCase.taskFamily, armOrder, constraint, flows, plain, flowsTraceOk, plainTraceOk, duel: null });
 				const pairExcluded = flows.exclusion || plain.exclusion;
 				const constraintInvalid = !constraint.pairEligible && !pairExcluded;
-				const suffix = pairExcluded ? `  inconclusive (${flows.exclusion ? `flows ${flows.exclusion.reason}` : ""}${flows.exclusion && plain.exclusion ? "; " : ""}${plain.exclusion ? `${baselineSlug} ${plain.exclusion.reason}` : ""})` : constraintInvalid ? `  inconclusive (${bindingConstraint.kind} constraint)` : "";
-				console.log(`   result flows obj ${flows.exclusion ? "n/a" : scoreText(flows.objective.score ?? 0)}  ${baselineSlug} obj ${plain.exclusion ? "n/a" : scoreText(plain.objective.score ?? 0)}${suffix}`);
+				const suffix = pairExcluded ? `  inconclusive (${flows.exclusion ? `${candidateLabel} ${flows.exclusion.reason}` : ""}${flows.exclusion && plain.exclusion ? "; " : ""}${plain.exclusion ? `${referenceLabel} ${plain.exclusion.reason}` : ""})` : constraintInvalid ? `  inconclusive (${bindingConstraint.kind} constraint)` : "";
+				console.log(`   result ${candidateLabel} obj ${flows.exclusion ? "n/a" : scoreText(flows.objective.score ?? 0)}  ${referenceLabel} obj ${plain.exclusion ? "n/a" : scoreText(plain.objective.score ?? 0)}${suffix}`);
 			} finally {
 				workspaces.dispose();
 			}
@@ -348,10 +391,10 @@ function judgeAndCompare(rows, flowsJudged, plainJudged) {
 	const flowsCases = flowsJudged + CALIBRATION_CASES.length;
 	const plainCases = plainJudged + CALIBRATION_CASES.length;
 	console.log(`\ntraces: ${rel(FLOWS_TRACE)} (${flowsCases} cases)  |  ${rel(PLAIN_TRACE)} (${plainCases} cases)`);
-	inspectTrace("flows", FLOWS_TRACE);
-	inspectTrace(baselineSlug, PLAIN_TRACE);
-	const flowsRun = judgeTrace("flows", { trace: FLOWS_TRACE, out: FLOWS_RUN, compareOut: FLOWS_COMPARE, labels: FLOWS_LABELS });
-	const plainRun = judgeTrace(baselineSlug, { trace: PLAIN_TRACE, out: PLAIN_RUN, compareOut: PLAIN_COMPARE, labels: PLAIN_LABELS });
+	inspectTrace(candidateLabel, FLOWS_TRACE);
+	inspectTrace(referenceLabel, PLAIN_TRACE);
+	const flowsRun = judgeTrace(candidateLabel, { trace: FLOWS_TRACE, out: FLOWS_RUN, compareOut: FLOWS_COMPARE, labels: FLOWS_LABELS });
+	const plainRun = judgeTrace(referenceLabel, { trace: PLAIN_TRACE, out: PLAIN_RUN, compareOut: PLAIN_COMPARE, labels: PLAIN_LABELS });
 	applyJudgedRows(rows, flowsRun.gateEvalRun, plainRun.gateEvalRun);
 
 	const dimensions = thulr.sharedGateDimensions(plainRun.gateEvalRun, flowsRun.gateEvalRun, thulr.evalRunDimensions(flowsRun.gateEvalRun));
@@ -359,20 +402,20 @@ function judgeAndCompare(rows, flowsJudged, plainJudged) {
 	printScoreDeltas({
 		run: thulr.compare,
 		options: compareOptions,
-		heading: `\nthulr A/B deltas (${baselineSlug} -> flows):`,
+			heading: `\nthulr A/B deltas (${referenceLabel} -> ${candidateLabel}):`,
 		unavailable: "\nthulr A/B deltas unavailable",
 	});
 	const compare = thulr.compare(compareOptions);
-	console.log(`\nthulr compare (baseline ${baselineLabel} -> candidate Pi Flows):`);
+	console.log(`\nthulr compare (${referenceLabel} -> ${candidateLabel}):`);
 	process.stdout.write(compare.report);
 
 	if (duelEnabled) {
-		console.log(`\nthulr duel (${baselineSlug} vs flows; selected A/B cases only in headline):`);
+		console.log(`\nthulr duel (${referenceLabel} vs ${candidateLabel}; selected A/B cases only in headline):`);
 		const duel = thulr.duel({
 			traceA: PLAIN_TRACE,
 			traceB: FLOWS_TRACE,
-			labelA: baselineSlug,
-			labelB: "flows",
+			labelA: referenceLabel,
+			labelB: candidateLabel,
 			out: DUEL_REPORT,
 			model: judgeModel,
 			json: true,
@@ -384,65 +427,6 @@ function judgeAndCompare(rows, flowsJudged, plainJudged) {
 		console.log(`  report ${rel(DUEL_REPORT)}`);
 	}
 	return { flowsRun, plainRun };
-}
-
-// --- Phase: per-case and summary layout ------------------------------------
-function reportPerCase(rows) {
-	console.log("\nPer-case results");
-	for (const row of rows) {
-		const delta = judgeDelta(row);
-		const arrow = delta === null ? "inconclusive" : delta > 0.001 ? "flows" : delta < -0.001 ? baselineSlug : "tie";
-		console.log(row.name);
-		console.log(armLine("flows", row.flows));
-		console.log(armLine(baselineSlug, row.plain));
-		console.log(`   judge delta ${delta === null ? "n/a" : fixed(delta)}  ${arrow}`);
-		if (row.duel) {
-			if (row.duel.winner === "skipped") {
-				console.log(`   duel skipped (${row.duel.reason})`);
-			} else {
-				console.log(`   duel ${row.duel.winner}  (passes: ${row.duel.first_pass}, ${row.duel.second_pass})`);
-			}
-		}
-	}
-}
-
-function reportSummary(rows, totals, exclusions) {
-	const comparable = totals.qualityRows.length;
-	const caseCount = new Set(rows.map((row) => row.caseId)).size;
-	console.log(`\nSummary over ${rows.length} paired trial${rows.length === 1 ? "" : "s"} across ${caseCount} case${caseCount === 1 ? "" : "s"}`);
-	const inconclusive = rows.length - comparable;
-	console.log(`  quality rows    ${comparable}/${rows.length} comparable${inconclusive ? `  ·  inconclusive ${inconclusive}` : ""}`);
-	const duelSummary = duelQualitySummary(rows);
-	if (duelEnabled && duelSummary.decided + duelSummary.skipped > 0) {
-		console.log(`  thulr duel     flows wins ${duelSummary.flows} - ${baselineSlug} wins ${duelSummary.plain} - ties ${duelSummary.ties} - flips ${duelSummary.flips}${duelSummary.skipped ? ` - skipped ${duelSummary.skipped}` : ""}`);
-	}
-	console.log(`  thulr pass     flows ${totals.flowsCriterionPasses}/${comparable} (${pct(totals.flowsCriterionPasses, comparable)})    ${baselineSlug} ${totals.plainCriterionPasses}/${comparable} (${pct(totals.plainCriterionPasses, comparable)})`);
-	console.log(`  thulr mean     flows ${comparable ? totals.flowsJudgeMean.toFixed(2) : "n/a"}    ${baselineSlug} ${comparable ? totals.plainJudgeMean.toFixed(2) : "n/a"}    lift ${comparable ? fixed(totals.flowsJudgeMean - totals.plainJudgeMean) : "n/a"}`);
-	console.log(`  abs per-case   flows wins ${totals.wins} - ${baselineSlug} wins ${totals.losses} - ties ${comparable - totals.wins - totals.losses}`);
-	if (exclusions.flows.infra || exclusions.plain.infra || exclusions.flows.debug_budget || exclusions.plain.debug_budget) {
-		console.log(`  exclusions     flows infra ${exclusions.flows.infra}, debug ${exclusions.flows.debug_budget}  ·  ${baselineSlug} infra ${exclusions.plain.infra}, debug ${exclusions.plain.debug_budget}`);
-	}
-	console.log(`  ${formatCostComparison("flows", totals.flowsCost, totals.flowsCostKnown, baselineSlug, totals.plainCost, totals.baselineCostKnown)}`);
-	console.log(`  ${formatTokenComparison("flows", totals.flowsTokens, baselineSlug, totals.plainTokens)}`);
-	console.log(`  wall-clock     flows ${totals.flowsSeconds.toFixed(0)}s    ${baselineSlug} ${totals.plainSeconds.toFixed(0)}s`);
-	console.log(`\nNote: ${baselineLabel} is the baseline and Pi Flows is the candidate in thulr compare. Both arms must report the same underlying model or the pair is excluded. Native thulr duel is the head-to-head quality signal.`);
-}
-
-function rawArtifactRows(rows) {
-	return rows.map((row) => ({
-		caseId: row.caseId,
-		trialId: row.trialId,
-		traceCaseId: row.traceCaseId,
-		trialIndex: row.trialIndex,
-		suite: row.suite,
-		taskFamily: row.taskFamily,
-		armOrder: row.armOrder.map((kind) => kind === "plain" ? "baseline" : kind),
-		constraint: row.constraint,
-		duel: row.duel,
-		comparable: row.flowsTraceOk && row.plainTraceOk,
-		flows: pickArm(row.flows),
-		baseline: pickArm(row.plain),
-	}));
 }
 
 async function main() {
@@ -466,18 +450,21 @@ async function main() {
 	const judgeBinLabel = !dryRun && judgeBin ? ` via ${rel(judgeBin)}` : "";
 	const constraintLabel = `${bindingConstraint.kind} ${bindingConstraint.value} ${bindingConstraint.unit}`;
 	const safetyTimeoutLabel = bindingConstraint.kind === "deadline" ? "" : `  -  safety timeout ${formatDuration(timeoutMs)} default; per-case budgets honored`;
-	console.log(`pi-flows paired A/B (${baselineLabel} baseline vs Pi Flows)  -  subject ${useAgentModels ? "(agent frontmatter)" : model}  -  ${subjectTrials} subject trial${subjectTrials === 1 ? "" : "s"}  -  judge ${dryRun ? "(skipped)" : `${judgeModel}${judgeBinLabel}`}${duelEnabled ? " +duel" : ""}  -  binding constraint ${constraintLabel}${safetyTimeoutLabel}${trace}${dryRun ? "  -  DRY RUN" : ""}\n`);
+	console.log(`pi-flows paired A/B (${referenceLabel} reference vs ${candidateLabel} candidate)  -  subject ${useAgentModels ? "(agent frontmatter)" : model}  -  ${subjectTrials} subject trial${subjectTrials === 1 ? "" : "s"}  -  judge ${dryRun ? "(skipped)" : `${judgeModel}${judgeBinLabel}`}${duelEnabled ? " +duel" : ""}  -  binding constraint ${constraintLabel}${safetyTimeoutLabel}${trace}${dryRun ? "  -  DRY RUN" : ""}\n`);
 
 	const { rows, flowsJudged, plainJudged } = await runComparisonCases(selected, flow, signal);
 	const { flowsRun, plainRun } = judgeAndCompare(rows, flowsJudged, plainJudged);
 
-	reportPerCase(rows);
+	const outputLabels = { candidateLabel, referenceLabel, legacyDefaultArms };
+	reportPerCase(rows, outputLabels);
 	const totals = comparisonTotals(rows);
 	const exclusions = exclusionSummary(rows);
-	reportSummary(rows, totals, exclusions);
-	const rawRows = rawArtifactRows(rows);
+	reportSummary(rows, totals, exclusions, { ...outputLabels, duelEnabled });
+	const rawRows = rawArtifactRows(rows, outputLabels);
 	const analysis = buildPairedAnalysis(rawRows, promotionRule);
+	analysis.ablation = ablationAttribution(analysis, armPair);
 	console.log(`\n${formatPairedAnalysis(analysis).join("\n")}`);
+	console.log(`  attributed ${analysis.ablation.component} lift: quality ${analysis.ablation.qualityLift ?? "n/a"}, reliability ${analysis.ablation.reliabilityLift ?? "n/a"} (${referenceLabel} -> ${candidateLabel})`);
 	const excludedIds = selected
 		.filter((testCase) => rows.filter((row) => row.caseId === testCase.name).every((row) => !row.flowsTraceOk || !row.plainTraceOk))
 		.map((testCase) => testCase.name);
@@ -485,7 +472,7 @@ async function main() {
 
 	if (writeArtifact) {
 		const out = resolve(process.cwd(), writeArtifact);
-		writeFileSync(out, `${JSON.stringify({ schemaVersion: "pi-flows.paired-comparison.v1", model: useAgentModels ? "agent" : model, baseline: { kind: baselineKind, label: baselineLabel }, judgeModel, subjectTrials, constraint: bindingConstraint, promotionRule, costBasis: "model-price-estimate", duel: duelEnabled, qualityRows: totals.qualityRows.length, exclusions, thulr: { flows: flowsRun ? rel(flowsRun.comparePath) : null, baseline: plainRun ? rel(plainRun.comparePath) : null, duel: duelEnabled && flowsRun && plainRun ? rel(DUEL_REPORT) : null }, analysis, rawRows }, null, 2)}\n`, "utf8");
+			writeFileSync(out, `${JSON.stringify({ schemaVersion: "pi-flows.paired-comparison.v1", model: useAgentModels ? "agent" : model, baseline: { kind: baselineKind, label: baselineLabel }, arms: armPair, judgeModel, subjectTrials, constraint: bindingConstraint, promotionRule, costBasis: "model-price-estimate", duel: duelEnabled, qualityRows: totals.qualityRows.length, exclusions, thulr: { flows: flowsRun ? rel(flowsRun.comparePath) : null, baseline: plainRun ? rel(plainRun.comparePath) : null, duel: duelEnabled && flowsRun && plainRun ? rel(DUEL_REPORT) : null }, analysis, rawRows }, null, 2)}\n`, "utf8");
 		console.log(`\nWrote comparison: ${out}`);
 	}
 

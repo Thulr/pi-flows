@@ -170,6 +170,41 @@ Every spawning call also requires `"why"` — one sentence naming the reason del
 { "agent": "recon", "task": "Find the API routes for billing", "why": "user asked for a delegated read-only scout" }
 ```
 
+For machine-checked single, chain, or evaluate handoffs, use a typed `contract`
+instead of (or alongside) prose `task`:
+
+```json
+{
+  "agent": "recon",
+  "contract": {
+    "objective": "Find the configured sample identifier.",
+    "constraints": ["Read only."],
+    "nonGoals": ["Do not edit configuration."],
+    "dependencies": ["settings.txt"],
+    "authority": { "may": ["Read files."], "mustNot": ["Write files."], "requiresApproval": [] },
+    "sideEffectClass": "read-only",
+    "budget": { "timeoutMs": 30000, "maxGeneratedTokens": 2000 },
+    "acceptanceChecks": ["Return the exact value and source path."],
+    "returnSchema": {
+      "type": "object",
+      "required": ["answer"],
+      "properties": { "answer": { "type": "string" } }
+    },
+    "owner": "parent"
+  },
+  "why": "user asked for a delegated read-only scout with a validated handoff"
+}
+```
+
+The child returns a validated `pi-flows.return-envelope.v1` containing status,
+evidence, artifact references/digests, changed state, unresolved questions,
+retry information, schema-checked `data`, and runtime usage when available.
+Schema or digest failures stop before downstream consumption. Existing
+`task`, `returnContract`, and `requireEvidence` calls keep their prose behavior.
+Contract budgets tighten child timeouts and enforce cost/token limits separately
+from flow-wide budgets.
+See [Return contracts](./docs/flow-reference.md#return-contracts-and-write-isolation).
+
 ### Parallel
 
 ```json

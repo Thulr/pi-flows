@@ -34,6 +34,7 @@ export const CASES = defineCases([
 	{
 		name: "route-classifies-bug-to-recon",
 		params: { task: "The billing webhook handler in this repo returns HTTP 500 on every call in production. Find the root cause and name the specific defect.", route: { candidates: ["recon", "strategist", "overwatch"], fallback: "recon" } },
+		experiment: { oracleAgent: "recon" },
 		cwd: fixturesRepo,
 		criterion: "Identifies the root cause: recordPayment references `ledger` — an in-memory store that is never declared or initialized — so every webhook call throws a ReferenceError and the endpoint returns HTTP 500.",
 		criteria: {

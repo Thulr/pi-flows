@@ -80,6 +80,44 @@ test("comparison CLI writes paired repeated trials with stable identities and sn
 	}
 });
 
+test("comparison CLI records named topologies, configuration identity, and component lift", () => {
+	const outputDir = mkdtempSync(path.join(tmpdir(), "pi-flow-experiment-arms-"));
+	const artifactPath = path.join(outputDir, "comparison.json");
+	const run = runCompare(
+		"--constraint=deadline:90000",
+		"--arms=random-routing,oracle-routing",
+		`--write=${artifactPath}`,
+	);
+
+	assert.equal(run.status, 0, run.stderr);
+	const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
+	assert.equal(artifact.arms.reference.name, "random-routing");
+	assert.equal(artifact.arms.candidate.name, "oracle-routing");
+	assert.equal(artifact.analysis.ablation.component, "routing");
+	const row = artifact.rawRows[0];
+	assert.deepEqual(new Set(row.armOrder), new Set(["random-routing", "oracle-routing"]));
+	assert.equal(row.baseline.arm.topology, "random-routing");
+	assert.equal(row.flows.arm.topology, "oracle-routing");
+	assert.match(row.flows.arm.configurationIdentity, /deadline:90000/);
+	assert.ok(row.flows.evidence.answer.length > 0);
+});
+
+test("comparison CLI excludes inapplicable named arms with a durable reason", () => {
+	const outputDir = mkdtempSync(path.join(tmpdir(), "pi-flow-inapplicable-arm-"));
+	const artifactPath = path.join(outputDir, "comparison.json");
+	const run = runCompare(
+		"--constraint=deadline:90000",
+		"--arms=full,no-integrator",
+		`--write=${artifactPath}`,
+	);
+
+	assert.equal(run.status, 0, run.stderr);
+	const row = JSON.parse(readFileSync(artifactPath, "utf8")).rawRows[0];
+	assert.equal(row.comparable, false);
+	assert.equal(row.flows.excluded.reason, "inapplicable");
+	assert.match(row.flows.excluded.detail, /does not apply/);
+});
+
 test("comparison CLI binds eligibility to the declared constraint and retains other outcomes", () => {
 	const outputDir = mkdtempSync(path.join(tmpdir(), "pi-flow-paired-constraint-"));
 	const artifactPath = path.join(outputDir, "comparison.json");

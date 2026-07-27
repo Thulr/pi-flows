@@ -95,7 +95,7 @@ Cause: the parameters did not select exactly one mode — zero modes, more than
 one conflicting mode, or a required field for the chosen mode (most modes need a
 top-level `task`) was missing.
 
-Fix: choose exactly one of `list:true`, `showConfig:true`, `agent`+`task`,
+Fix: choose exactly one of `list:true`, `showConfig:true`, `agent`+(`task` or `contract`),
 `tasks[]`, `chain[]`, `evaluate{}`, `vote{}`, `route{}`, `orchestrate{}`,
 `graph{}`, `loop{}`, `search{}`, `workflow{}`, `worktree{}`, `debate{}`,
 `dossier{}`, or `monitor{}`, and supply that mode's required fields. Run
@@ -383,6 +383,34 @@ Cause: the interactive approval prompt for project-local agents was declined.
 Fix: review the project-local agent files in `.pi/flow-agents`. Retry and
 approve if you trust them, or pass `confirmProjectAgents:false` in a trusted
 non-UI run.
+
+### `INVALID_DELEGATION_CONTRACT`
+
+Cause: a typed `contract` is missing a required field, contains a malformed
+authority/budget/side-effect value, or has a `returnSchema` that cannot compile.
+
+Fix: provide the complete typed contract documented in
+[Flow reference](./flow-reference.md#return-contracts-and-write-isolation).
+Contract validation happens before the affected single, chain, or evaluate child
+is dispatched.
+
+### `RETURN_ENVELOPE_INVALID`
+
+Cause: a child governed by a typed contract returned prose or malformed JSON,
+its `data` did not satisfy `contract.returnSchema`, or an artifact reference was
+missing or escaped the child working directory.
+
+Fix: return one `pi-flows.return-envelope.v1` JSON object with every required
+field, keep artifact paths inside the child `cwd`, and make `data` satisfy the
+declared JSON Schema. The handoff is not passed downstream until it validates.
+
+### `RETURN_DIGEST_MISMATCH`
+
+Cause: a return envelope declared a SHA-256 digest that did not match the
+referenced artifact's bytes.
+
+Fix: treat the artifact and envelope as untrusted, regenerate them together,
+then retry. Do not copy the failed handoff into a downstream child.
 
 ### `CHILD_PROTOCOL_ERROR`
 
