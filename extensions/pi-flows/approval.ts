@@ -36,8 +36,11 @@ export const DEFAULT_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 export const MIN_APPROVAL_TTL_MS = 60 * 1000;
 export const MAX_APPROVAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Recorded as the consumer when an approval gates the end of the workflow rather than a following phase. */
-export const WORKFLOW_COMPLETE_CONSUMER = "workflow.complete";
+/** The step id standing for "the workflow finishes", used when an approval gates the tail of a workflow rather than a following phase. */
+export const WORKFLOW_COMPLETE_STEP = "workflow.complete";
+
+/** Fallback approver label when the host supplies no actor. An audit attribution, not an authenticated identity. */
+export const DEFAULT_APPROVAL_ACTOR = "interactive-ui";
 
 /**
  * Everything one approval authorizes. The digest over this record is the
@@ -77,15 +80,6 @@ export type { ApprovalReceiptSummary };
 
 function isRecord(value: unknown): value is Record<string, any> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function receiptError(
-	code: "APPROVAL_RECEIPT_INVALID" | "APPROVAL_RECEIPT_STALE" | "APPROVAL_RECEIPT_EXPIRED" | "APPROVAL_RECEIPT_CONSUMED",
-	message: string,
-	cause: string,
-	fix: string,
-): FlowError {
-	return flowError(code, message, cause, fix);
 }
 
 /**
@@ -174,9 +168,9 @@ function shapeIssue(value: unknown): string | null {
  * the stored receipt, so a receipt only authorizes what it was actually granted
  * for.
  *
- * @param consumer the action id about to use this receipt — the id of the phase
- *   the approval gates, or `workflow.complete`. Re-verifying with the same
- *   consumer is a resume; a different consumer is a replay and is refused.
+ * @param consumer the action about to use this receipt. Every step the approval
+ *   gates presents the SAME action, so re-verifying anywhere inside that run is a
+ *   resume; a different action is a replay and is refused.
  */
 export function verifyApprovalReceipt(
 	receipt: unknown,
@@ -185,7 +179,7 @@ export function verifyApprovalReceipt(
 ): FlowError | null {
 	const shape = shapeIssue(receipt);
 	if (shape) {
-		return receiptError(
+		return flowError(
 			"APPROVAL_RECEIPT_INVALID",
 			`No usable approval receipt authorizes "${binding.action}".`,
 			`${shape}.`,
@@ -195,7 +189,7 @@ export function verifyApprovalReceipt(
 	const stored = receipt as ApprovalReceipt;
 	const expected = approvalBindingDigest(binding);
 	if (stored.bindingDigest !== expected || stored.action !== binding.action) {
-		return receiptError(
+		return flowError(
 			"APPROVAL_RECEIPT_STALE",
 			`The approval for "${binding.action}" no longer matches the action it would authorize.`,
 			"The approved action or its effective parameters (agent scope, return contract, evidence requirement, incomplete-handoff policy, or delegation contract) changed after approval was granted.",
@@ -205,7 +199,7 @@ export function verifyApprovalReceipt(
 	if (stored.expiresAt !== null) {
 		const expiry = Date.parse(stored.expiresAt);
 		if (!Number.isFinite(expiry)) {
-			return receiptError(
+			return flowError(
 				"APPROVAL_RECEIPT_INVALID",
 				`No usable approval receipt authorizes "${binding.action}".`,
 				`receipt.expiresAt is not a parseable ISO timestamp: ${JSON.stringify(stored.expiresAt)}.`,
@@ -213,7 +207,7 @@ export function verifyApprovalReceipt(
 			);
 		}
 		if (now > expiry) {
-			return receiptError(
+			return flowError(
 				"APPROVAL_RECEIPT_EXPIRED",
 				`The approval for "${binding.action}" expired at ${stored.expiresAt}.`,
 				"Approvals authorize a bounded window so consent cannot be banked indefinitely; this resume arrived after that window closed.",
@@ -222,7 +216,7 @@ export function verifyApprovalReceipt(
 		}
 	}
 	if (stored.consumedAt !== null && stored.consumedBy !== consumer) {
-		return receiptError(
+		return flowError(
 			"APPROVAL_RECEIPT_CONSUMED",
 			`The approval for "${binding.action}" was already spent.`,
 			`Receipt ${stored.receiptId} was consumed by "${stored.consumedBy}" and cannot also authorize "${consumer}".`,
@@ -232,7 +226,7 @@ export function verifyApprovalReceipt(
 	return null;
 }
 
-/** Burn a receipt once its authorized action has actually run. Re-consuming by the same action is a resume, not a second use. */
+/** Burn a receipt once its authorized action has begun. Re-consuming by the same action is a resume, not a second use. */
 export function consumeApprovalReceipt(receipt: ApprovalReceipt, consumer: string, now = Date.now()): ApprovalReceipt {
 	if (receipt.consumedAt !== null && receipt.consumedBy === consumer) return receipt;
 	return { ...receipt, consumedAt: new Date(now).toISOString(), consumedBy: consumer };

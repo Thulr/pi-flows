@@ -25,40 +25,29 @@ export const CALIBRATION_SCHEMA_VERSION = "pi-flows.calibration.v1";
 /** Missed defects a critical dimension may carry and still gate. Zero by default: a dimension trusted to block must not be waving defects through. */
 export const DEFAULT_CRITICAL_MISS_RATE_CAP = 0;
 
-export {
-	CALIBRATION_CLASSES,
-	CALIBRATION_SPLITS,
-	COVERAGE_REQUIREMENT,
-	DEFAULT_ABSTENTION_BAND,
-	EVAL_TRACE_SCHEMA_VERSION,
-	calibrationKey,
-	calibrationKeyDrift,
-	rubricDigest,
-	thresholdFingerprint,
-	traceAttributeDigest,
-};
-
 /**
  * Judge verdicts joined to ground truth, one record per case-dimension.
  *
  * Human labels override deterministic ones where both exist: a reviewed case has
  * been looked at by a person who could see what the objective check could not.
  *
- * @param {object[]} cases the judged cases, each `{ testCase, caseId, objective }`
- * @param {Map<string, object>} verdicts caseId -> `{ dimension: { verdict, score } }`
+ * @param {object[]} cases the judged cases, each `{ testCase, caseId, verdictKey?, objective }`.
+ *   `caseId` is the base case (what coverage counts); `verdictKey` is the trial the
+ *   judge graded, and defaults to `caseId` when a case ran once.
+ * @param {Map<string, object>} verdicts verdictKey -> `{ dimension: { verdict, score } }`
  * @param {object[]} humanTruth resolved review labels from review-agreement.mjs
  */
 export function calibrationRecords({ cases, verdicts, humanTruth = [], abstentionBand = DEFAULT_ABSTENTION_BAND }) {
-	const humanByKey = new Map(humanTruth.map((entry) => [`${entry.dimension} ${entry.caseId}`, entry]));
+	const humanByKey = new Map(humanTruth.map((entry) => [`${entry.dimension}::${entry.caseId}`, entry]));
 	const records = [];
 	for (const entry of cases ?? []) {
-		const { testCase, caseId, objective, split } = entry;
-		const dimensions = verdicts?.get?.(caseId) ?? {};
+		const { testCase, caseId, verdictKey, objective, split } = entry;
+		const dimensions = verdicts?.get?.(verdictKey ?? caseId) ?? {};
 		for (const [dimension, dimensionVerdict] of Object.entries(dimensions)) {
 			// A judge-only dimension is declared as having no ground truth; scoring it
 			// against a guessed label would manufacture agreement or disagreement.
 			if (testCase?.judgeOnlyDimensions?.includes(dimension)) continue;
-			const human = humanByKey.get(`${dimension} ${caseId}`);
+			const human = humanByKey.get(`${dimension}::${caseId}`);
 			const truth = human?.truth ?? groundTruthClass(testCase, dimension, objective);
 			if (!truth) continue;
 			const decision = judgeDecision(dimensionVerdict, { abstentionBand });
@@ -97,6 +86,10 @@ export function buildCalibrationReport({
 	const review = buildReviewReport(reviewSet ?? { reviews: [] });
 	const coverage = dimensionCoverage(records);
 	const authoritative = authoritativeDimensions(coverage);
+	// Ground truth from a deterministic objective check is independent of the judge,
+	// which is what calibration needs — but a reader deciding how far to trust an
+	// authoritative dimension should be able to see how much of it a person looked at.
+	const groundTruthSources = records.reduce((counts, record) => ({ ...counts, [record.source]: (counts[record.source] ?? 0) + 1 }), {});
 	return {
 		schemaVersion: CALIBRATION_SCHEMA_VERSION,
 		generatedAt,
@@ -105,6 +98,7 @@ export function buildCalibrationReport({
 		abstentionBand,
 		splits: splitVersions(splitEntries),
 		coverage,
+		groundTruthSources,
 		statistics: dimensionStatistics(records.filter((record) => record.decision)),
 		review,
 		escalations: abstentionEscalations(records),
@@ -146,9 +140,6 @@ export function calibrationGateIssues(report, { criticalMissRateCap = DEFAULT_CR
 				`critical dimension "${dimension}" has ${contested.length} contested human label(s) (${contested.map((entry) => entry.caseId).join(", ")}). Adjudicate them with \`npm run eval:review -- --role adjudicator\` before gating on this dimension.`,
 			);
 		}
-	}
-	if (report.drift.status === "stale" && report.authority.critical.length) {
-		issues.push(`prior calibration is stale — it was measured with a different ${report.drift.changed.join(", ")}. Re-run calibration before gating on it.`);
 	}
 	return issues;
 }
@@ -198,13 +189,18 @@ export function calibrationPreflightStep(corpus, { onValid = console.log } = {})
 export function formatCalibrationReport(report) {
 	const lines = [
 		formatCalibrationKeyDrift(report.drift, report.key),
+		...(report.drift.status === "stale" ? ["  (this run recomputed calibration from scratch, so the stale prior is superseded, not relied on)"] : []),
 		`splits: ${CALIBRATION_SPLITS.map((split) => `${split} ${report.splits[split].caseCount} (${report.splits[split].digest})`).join(", ")}`,
 		formatCoverageReport(report.coverage),
 		formatDimensionStatistics(report.statistics),
 		formatReviewReport(report.review),
 	];
+	lines.push(`ground truth: ${Object.entries(report.groundTruthSources).map(([source, count]) => `${count} ${source}`).join(", ") || "none"}`);
 	if (report.escalations.length) {
-		lines.push(`escalated to human review (judge abstained): ${report.escalations.map((entry) => `${entry.dimension}:${entry.caseId}`).join(", ")}`);
+		lines.push(`escalated to human review — the judge abstained on ${report.escalations.length} case-dimension(s). Record a blinded verdict for each:`);
+		for (const entry of report.escalations) {
+			lines.push(`  npm run eval:review -- --case ${entry.caseId} --dimension ${entry.dimension} --blinded --reviewer <you> --verdict <pass|fail|unsure>`);
+		}
 	}
 	if (report.authority.critical.length) {
 		lines.push(`critical dimensions: ${report.authority.critical.join(", ")} — authoritative: ${report.authority.authoritative.join(", ") || "none"}`);

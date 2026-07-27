@@ -5,10 +5,11 @@ Read this before editing the repo.
 ## Project shape
 
 - Extension entrypoint: `extensions/pi-flows/index.ts` (registers the `flow` tool and `/flows` command; re-exports the public API)
-- Extension modules: `extensions/pi-flows/*.ts` — `types.ts` (constants, types, error codes, `ModeDeps` incl. the `runChild` seam), `sanitize.ts` (redaction, caps, injection scan), `validate.ts`, `parse.ts`, `agents.ts` (discovery), `runner.ts` (child-run adapter), `jsonl-child.mjs` (child-process JSONL protocol, shared with evals), `trace.ts`, `reflexion.ts`, `ui.ts`, `schema.ts` (TypeBox params)
+- Extension modules: `extensions/pi-flows/*.ts` — `types.ts` (constants, types, error codes, `ModeDeps` incl. the `runChild` seam), `sanitize.ts` (redaction, caps, injection scan), `validate.ts`, `parse.ts`, `agents.ts` (discovery), `runner.ts` (child-run adapter), `jsonl-child.mjs` (child-process JSONL protocol, shared with evals), `delegation.ts` (typed contracts, return envelopes, handoff attestations), `integration.ts` (per-mode dispatch adapter), `approval.ts` (durable single-use approval receipts), `trace.ts`, `reflexion.ts`, `ui.ts`, `schema.ts` (TypeBox params)
 - Mode handlers: `extensions/pi-flows/modes/*.ts`, one file per mode. `modes/contract.ts` is the single mode table (activation, requested agents, label, handler, param hint). Add a new mode by writing a handler file, adding its entry to `CONTRACTS` in `modes/contract.ts`, its name to `RUN_MODE_NAMES` in `types.ts`, and its params field in `schema.ts` — `modes/registry.ts` and the dispatch core in `index.ts` derive from the table and do not change. A missing or extra contract entry is a compile error.
 - Bundled agent prompts: `agents/*.md`
-- Tests: `tests/pi-flows.test.ts` (offline contract) + `tests/integration.test.ts` (execution path against a stub `pi`)
+- Tests: `tests/*.test.ts` — `pi-flows.test.ts` (offline contract) and `integration.test.ts` (execution path against a stub `pi`) are full; add new coverage in a new file (the 800-line cap is enforced)
+- Eval calibration: `evals/calibration.mjs` (report assembly + gate rules) over `calibration-key.mjs` (validity key), `calibration-coverage.mjs` (splits, per-dimension coverage), `calibration-stats.mjs` (confusion matrices, rates, bounds), `review-agreement.mjs` (blinded human labels, adjudication, agreement)
 - User docs: `README.md`, `docs/*.md`, `examples/README.md`
 
 ## Required checks

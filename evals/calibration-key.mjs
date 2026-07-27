@@ -47,7 +47,10 @@ function canonicalJsonValue(value) {
 	return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJsonValue(value[key])]));
 }
 
-const digestOf = (value, length = 16) => createHash("sha256").update(JSON.stringify(canonicalJsonValue(value))).digest("hex").slice(0, length);
+/** One canonical digest for every calibration artifact, so two digests over the same content always agree. */
+export const canonicalDigest = (value, length = 16) => createHash("sha256").update(JSON.stringify(canonicalJsonValue(value))).digest("hex").slice(0, length);
+
+const digestOf = canonicalDigest;
 
 /**
  * A digest over every rubric the judge reads: the primary criterion, the named

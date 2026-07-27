@@ -8,7 +8,7 @@ import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { acceptIntegrationResult, integrationRunPlan } from "../integration.ts";
-import { WORKFLOW_COMPLETE_CONSUMER, approvalReceiptSummary, consumeApprovalReceipt, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
+import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, consumeApprovalReceipt, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
 
 /** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
 const APPROVER_LABEL_CAP = 256;
@@ -45,20 +45,29 @@ function renderPhaseTask(template: string, task: string | undefined, previous: s
 }
 
 /**
- * Which approval, if any, authorizes entering each phase. An approval phase
- * authorizes exactly one downstream action: the phase immediately after it, or
- * the end of the workflow when it is last. Keyed by that consumer so the loop
- * can look up its authorization without re-scanning.
+ * Which approval, if any, authorizes entering each step. An approval authorizes
+ * ONE action, but that action spans every step between it and the next consent
+ * point: the work phases it gates, the approval that ends the run, and the
+ * workflow's own completion when nothing else follows. Every one of those steps
+ * is registered, so a resume landing in the middle of a gated run still
+ * re-verifies rather than walking in behind a check it never reached.
  */
 function approvalAuthorizations(phases: any[]): Map<string, number> {
 	const authorizations = new Map<string, number>();
 	for (const [index, phase] of phases.entries()) {
 		if (!phase?.approval?.message) continue;
-		const next = phases[index + 1];
-		authorizations.set(next ? next.id : WORKFLOW_COMPLETE_CONSUMER, index);
+		let step = index + 1;
+		for (; step < phases.length; step += 1) {
+			authorizations.set(phases[step].id, index);
+			if (phases[step]?.approval?.message) break;
+		}
+		if (step >= phases.length) authorizations.set(WORKFLOW_COMPLETE_STEP, index);
 	}
 	return authorizations;
 }
+
+/** The action id an approval phase authorizes. The single source for both the binding and the consumption record. */
+const approvalActionId = (phase: any): string => `workflow.phase:${phase.id}`;
 
 /**
  * A gated phase's EFFECTIVE definition — what it resolves to once flow-level
@@ -93,7 +102,7 @@ function approvalBindingFor(phases: any[], index: number, deps: ModeDeps, digest
 	const gated: any[] = [];
 	for (let next = index + 1; next < phases.length && !phases[next]?.approval?.message; next += 1) gated.push(phases[next]);
 	return {
-		action: `workflow.phase:${phases[index].id}`,
+		action: approvalActionId(phases[index]),
 		parameters: {
 			approvalMessage: phases[index].approval.message,
 			agentScope: deps.agentScope,
@@ -106,12 +115,16 @@ function approvalBindingFor(phases: any[], index: number, deps: ModeDeps, digest
 	};
 }
 
-/** Burn the receipt that authorized an action, once that action has actually run. */
-function consumeAuthorization(state: WorkflowState, phases: any[], authorizedBy: number | undefined, consumer: string): void {
+/**
+ * Burn the receipt that authorized an action, once that action has begun. The
+ * consumer is the ACTION, not the individual step, so a gated run of several
+ * phases spends one approval once rather than needing one per phase.
+ */
+function consumeAuthorization(state: WorkflowState, phases: any[], authorizedBy: number | undefined): void {
 	if (authorizedBy === undefined) return;
 	const approvalId = phases[authorizedBy].id;
 	const receipt = state.receipts[approvalId];
-	if (receipt) state.receipts[approvalId] = consumeApprovalReceipt(receipt, consumer);
+	if (receipt) state.receipts[approvalId] = consumeApprovalReceipt(receipt, approvalActionId(phases[authorizedBy]));
 }
 
 function stateError(deps: ModeDeps, results: FlowRunResult[], error: FlowError, state?: WorkflowState): ModeOutput {
@@ -186,13 +199,12 @@ function migrateWorkflowStateV1(legacy: any, phases: any[], policy: ModeDeps["po
  */
 function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDeps, digest: string): WorkflowState {
 	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, receipts: {} };
-	const authorizations = approvalAuthorizations(phases);
-	for (const [consumer, index] of authorizations) {
-		const approvalId = phases[index].id;
-		if (!state.completedPhaseIds.includes(approvalId)) continue;
-		state.receipts[approvalId] = legacyApprovalReceipt(approvalBindingFor(phases, index, deps, digest), {
+	for (const [index, phase] of phases.entries()) {
+		if (!phase?.approval?.message || !state.completedPhaseIds.includes(phase.id)) continue;
+		const binding = approvalBindingFor(phases, index, deps, digest);
+		state.receipts[phase.id] = legacyApprovalReceipt(binding, {
 			issuedAt: typeof legacy.updatedAt === "string" ? legacy.updatedAt : new Date().toISOString(),
-			consumedBy: consumer,
+			consumedBy: binding.action,
 		});
 	}
 	return state;
@@ -273,7 +285,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		// minted in an earlier process against an earlier spec.
 		const authorizedBy = authorizations.get(phase.id);
 		if (authorizedBy !== undefined) {
-			const receiptError = verifyApprovalReceipt(state.receipts[phases[authorizedBy].id], approvalBindingFor(phases, authorizedBy, deps, digest), { consumer: phase.id });
+			const binding = approvalBindingFor(phases, authorizedBy, deps, digest);
+			const receiptError = verifyApprovalReceipt(state.receipts[phases[authorizedBy].id], binding, { consumer: binding.action });
 			if (receiptError) {
 				state.status = "failed";
 				state.updatedAt = new Date().toISOString();
@@ -305,12 +318,12 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			// Consent becomes a receipt bound to exactly what it authorizes. It is
 			// minted unconsumed: it says the action may run, not that it has.
 			const receipt = issueApprovalReceipt(approvalBindingFor(phases, phases.indexOf(phase), deps, digest), {
-				approvedBy: sanitizeText(deps.approvalActor ?? "interactive-ui", { ...policy, recordContent: true }, APPROVER_LABEL_CAP),
+				approvedBy: sanitizeText(deps.approvalActor ?? DEFAULT_APPROVAL_ACTOR, { ...policy, recordContent: true }, APPROVER_LABEL_CAP),
 				ttlMs: approvalTtl.ttlMs,
 			});
 			state.receipts[phase.id] = receipt;
 			state.completedPhaseIds.push(phase.id);
-			consumeAuthorization(state, phases, authorizedBy, phase.id);
+			consumeAuthorization(state, phases, authorizedBy);
 			state.outputs[phase.id] = `APPROVED (receipt ${receipt.receiptId})`;
 			previous = state.outputs[phase.id];
 			state.updatedAt = new Date().toISOString();
@@ -354,7 +367,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		state.completedPhaseIds.push(phase.id);
-		consumeAuthorization(state, phases, authorizedBy, phase.id);
+		consumeAuthorization(state, phases, authorizedBy);
 		state.handoffs[phase.id] = run.handoff!;
 		state.attestations[phase.id] = createPersistedHandoffAttestation(run.handoff!);
 		state.outputs[phase.id] = params.recordContent === false ? "[content not recorded]" : output;
@@ -365,16 +378,17 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 
 	// A trailing approval gates the workflow's own completion (and its debrief),
 	// so it is verified and spent here rather than by a following phase.
-	const tailApproval = authorizations.get(WORKFLOW_COMPLETE_CONSUMER);
+	const tailApproval = authorizations.get(WORKFLOW_COMPLETE_STEP);
 	if (tailApproval !== undefined) {
-		const receiptError = verifyApprovalReceipt(state.receipts[phases[tailApproval].id], approvalBindingFor(phases, tailApproval, deps, digest), { consumer: WORKFLOW_COMPLETE_CONSUMER });
+		const tailBinding = approvalBindingFor(phases, tailApproval, deps, digest);
+		const receiptError = verifyApprovalReceipt(state.receipts[phases[tailApproval].id], tailBinding, { consumer: tailBinding.action });
 		if (receiptError) {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
 			return stateError(deps, results, receiptError, state);
 		}
-		consumeAuthorization(state, phases, tailApproval, WORKFLOW_COMPLETE_CONSUMER);
+		consumeAuthorization(state, phases, tailApproval);
 	}
 
 	let finalText = previous;

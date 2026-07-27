@@ -20,7 +20,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as thulr from "./thulr.mjs";
 import { caseSplit } from "./calibration-coverage.mjs";
-import { buildCalibrationReport, calibrationGateIssues, calibrationKey, calibrationRecords, formatCalibrationReport, rubricDigest, traceAttributeDigest, DEFAULT_CRITICAL_MISS_RATE_CAP, EVAL_TRACE_SCHEMA_VERSION } from "./calibration.mjs";
+import { buildCalibrationReport, calibrationGateIssues, calibrationRecords, formatCalibrationReport, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
+import { calibrationKey, rubricDigest, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
 import { buildReviewReport, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
 
 /** Absolute path for a repo-relative path. */
@@ -221,11 +222,22 @@ export function assessCalibration({
 	const byId = new Map(allCases.map((testCase) => [testCase.id ?? testCase.name, testCase]));
 	const splitEntries = Object.entries(groups).flatMap(([group, cases]) => cases.map((testCase) => ({ testCase, split: caseSplit(testCase, { group }) })));
 
+	// Two identities, deliberately. `caseId` is the BASE case, which is what
+	// coverage counts — five trials of one case are one observation, and keying
+	// coverage on the per-trial id would let `--trials=3` manufacture three
+	// "independent" labels out of one. `verdictKey` is the per-trial id the judge
+	// actually rendered a verdict against.
 	const cases = summaries
 		.filter((summary) => !summary.excludedReason)
 		.map((summary) => {
 			const testCase = byId.get(summary.caseId ?? summary.name);
-			return testCase && { testCase, caseId: summary.traceCaseId ?? summary.name, objective: summary.objective, split: caseSplit(testCase, { group: summary.calibration ? "calibration" : "measurement" }) };
+			return testCase && {
+				testCase,
+				caseId: summary.caseId ?? summary.name,
+				verdictKey: summary.traceCaseId ?? summary.name,
+				objective: summary.objective,
+				split: caseSplit(testCase, { group: summary.calibration ? "calibration" : "measurement" }),
+			};
 		})
 		.filter(Boolean);
 

@@ -226,7 +226,7 @@ test("approving mints a receipt that the gated phase spends", async () => {
 	assert.equal(approvals?.length, 1);
 	assert.equal(approvals[0].action, "workflow.phase:approve");
 	assert.equal(approvals[0].status, "consumed");
-	assert.equal(approvals[0].consumedBy, "ship", "the receipt is spent by the exact action it authorized");
+	assert.equal(approvals[0].consumedBy, "workflow.phase:approve", "the receipt is spent by the exact action it authorized");
 	assert.equal(approvals[0].approvedBy, "interactive-ui");
 	assert.equal(approvals[0].validation, "typed");
 	assert.match(resumed.text, new RegExp(`receipt ${approvals[0].receiptId}`), "the final answer names the receipt");
@@ -311,6 +311,37 @@ test("a resume state with the receipt stripped out fails closed", async () => {
 	assert.equal(shipCalls(stripped.calls), spent);
 });
 
+test("every phase an approval gates re-verifies, not just the first", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Ship in two steps.",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "approve", approval: { message: "Approve the two-step rollout" } },
+				{ id: "ship", agent: "strategist", task: "Ship it" },
+				{ id: "verify", agent: "recon", task: "Verify the rollout" },
+			],
+		},
+	};
+	const resumeTwoStep = (overrides: Record<string, any> = {}) => ({ ...params, ...overrides, workflow: { ...params.workflow, resume: true } });
+
+	const paused = await runFlow(params, {}, { cwd });
+	assert.equal(paused.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	// Approve, ship, then fail on the SECOND gated phase — the resume lands in the
+	// middle of the gated run, past the phase that first presented the receipt.
+	const crashed = await runFlow(resumeTwoStep(), { strategist: "SHIPPED", recon: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+	assert.equal(crashed.result.details.approvals?.[0].status, "consumed");
+	const verifyCalls = (calls: Call[]) => calls.filter((call) => call.agent === "recon").length;
+
+	const widened = await runFlow(resumeTwoStep({ agentScope: "all", confirmProjectAgents: false }), { recon: "VERIFIED" }, { cwd });
+	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE", "the second gated phase must be checked too");
+	assert.equal(verifyCalls(widened.calls), verifyCalls(crashed.calls));
+
+	const resumed = await runFlow(resumeTwoStep(), { recon: "VERIFIED" }, { cwd });
+	assert.equal(resumed.result.details.error, undefined, "the unchanged action still resumes on the already-spent receipt");
+});
+
 test("a trailing approval gates the workflow's own completion", async () => {
 	const cwd = await freshDir();
 	const params = {
@@ -328,7 +359,7 @@ test("a trailing approval gates the workflow's own completion", async () => {
 
 	const resumed = await runFlow({ ...params, workflow: { ...params.workflow, resume: true } }, {}, { cwd, hasUI: true });
 	assert.equal(resumed.result.details.error, undefined);
-	assert.equal(resumed.result.details.approvals?.[0].consumedBy, "workflow.complete");
+	assert.equal(resumed.result.details.approvals?.[0].consumedBy, "workflow.phase:signoff");
 });
 
 test("a pre-receipt state migrates to a bound receipt instead of a bare APPROVED string", async () => {
@@ -346,11 +377,14 @@ test("a pre-receipt state migrates to a bound receipt instead of a bare APPROVED
 	const migrated = resumed.result.details.approvals?.[0];
 	assert.equal(migrated?.validation, "legacy-compatibility");
 	assert.equal(migrated?.expiresAt, null);
+	assert.equal(migrated?.consumedBy, "workflow.phase:approve");
 	assert.equal((await readState(cwd)).version, 3);
 
-	// Migrated consent still binds: widening the scope afterwards is refused.
-	const widened = await runFlow(resumeParams({ agentScope: "all", confirmProjectAgents: false }, { phases: [...APPROVAL_PARAMS.workflow.phases.slice(0, 2), { id: "ship", agent: "strategist", task: "Ship using {phase.analyze}" }] }), { strategist: "SHIPPED" }, { cwd });
-	assert.equal(widened.result.details.error, undefined, "the gated phase already completed, so nothing re-verifies");
+	// Migrated consent still binds. The approval gates the tail of this workflow as
+	// well as the phase after it, so widening the scope is refused even once every
+	// phase has completed — the receipt is not spent by the workflow finishing.
+	const widened = await runFlow(resumeParams({ agentScope: "all", confirmProjectAgents: false }), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
 });
 
 test("an invalid approval window is refused before any child runs", async () => {

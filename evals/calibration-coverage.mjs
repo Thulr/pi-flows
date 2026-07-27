@@ -17,7 +17,7 @@
 // rubric tuned until it agrees with the cases it was tuned on tells you nothing.
 // Each split is versioned separately, so a report can say the held-out set is
 // untouched while the rubric-development set churns.
-import { createHash } from "node:crypto";
+import { canonicalDigest } from "./calibration-key.mjs";
 
 /** Where a case sits in the calibration lifecycle. Registered per case; see `caseSplit`. */
 export const CALIBRATION_SPLITS = ["rubric-development", "calibration", "held-out"];
@@ -35,8 +35,6 @@ export const COVERAGE_REQUIREMENT = { failed: 3, passed: 1, partial: 1 };
 
 /** Above this share of abstentions a dimension is not authoritative: the rubric is too ambiguous to grade against. */
 export const MAX_ABSTENTION_RATE = 0.25;
-
-const digestOf = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 
 /**
  * The split a case belongs to. An explicit `calibrationSplit` on the case wins.
@@ -71,7 +69,7 @@ export function splitVersions(entries) {
 	return Object.fromEntries(
 		CALIBRATION_SPLITS.map((split) => {
 			const cases = bySplit[split].sort((left, right) => String(left.id).localeCompare(String(right.id)));
-			return [split, { caseCount: cases.length, caseIds: cases.map((entry) => entry.id), digest: digestOf(cases) }];
+			return [split, { caseCount: cases.length, caseIds: cases.map((entry) => entry.id), digest: canonicalDigest(cases) }];
 		}),
 	);
 }
@@ -99,9 +97,11 @@ export function groundTruthClass(testCase, dimension, objective) {
 const emptyCounts = () => Object.fromEntries(CALIBRATION_CLASSES.map((klass) => [klass, 0]));
 
 /**
- * Per-dimension coverage over normalized label records.
+ * Per-dimension coverage over normalized label records. Independence is counted
+ * by `caseId` alone: `source` and `reviewer` travel on the record for reporting
+ * (see `groundTruthSources`), not for counting.
  *
- * @param {Array<{ dimension: string, caseId: string, truth: string, source: string, reviewer?: string|null, abstained?: boolean }>} records
+ * @param {Array<{ dimension: string, caseId: string, truth: string, source?: string, abstained?: boolean }>} records
  */
 export function dimensionCoverage(records, { requirement = COVERAGE_REQUIREMENT, maxAbstentionRate = MAX_ABSTENTION_RATE } = {}) {
 	const byDimension = new Map();

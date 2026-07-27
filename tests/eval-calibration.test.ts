@@ -336,6 +336,16 @@ test("abstained verdicts leave the matrix and enter the escalation queue", () =>
 	assert.match(escalations[0].reason, /ambiguity band/);
 });
 
+test("an abstention escalates with the command that resolves it", () => {
+	const report = buildCalibrationReport({
+		key: calibrationKey(KEY_INPUTS),
+		records: [...authoritativeRecords(), { caseId: "unsure-case", dimension: "criterion", truth: "partial", source: "deterministic", decision: "abstain", abstained: true, score: 0.5 }],
+	});
+	assert.equal(report.escalations.length, 1);
+	assert.match(formatCalibrationReport(report), /npm run eval:review -- --case unsure-case --dimension criterion --blinded/);
+	assert.match(formatCalibrationReport(report), /ground truth: 6 deterministic/);
+});
+
 // --- Human review -----------------------------------------------------------
 
 // Raw review-set entries, as `thulr review` writes them.
@@ -518,14 +528,20 @@ test("a contested human label on a critical dimension blocks until it is adjudic
 	assert.match(issues[0], /--role adjudicator/);
 });
 
-test("a stale prior calibration blocks a gate that depends on it", () => {
+test("a stale prior calibration is reported, not treated as this run's problem", () => {
 	const report = buildCalibrationReport({
 		key: calibrationKey(KEY_INPUTS),
 		storedKey: calibrationKey({ ...KEY_INPUTS, judgeModel: "openai/gpt-5.5" }),
 		records: authoritativeRecords(),
 		criticalDimensions: ["criterion"],
 	});
-	assert.deepEqual(calibrationGateIssues(report), ["prior calibration is stale — it was measured with a different judgeModel. Re-run calibration before gating on it."]);
+	assert.equal(report.drift.status, "stale");
+	assert.deepEqual(report.drift.changed, ["judgeModel"]);
+	// This run measured its own calibration from scratch, so the superseded prior
+	// is news, not a defect. Blocking on it would make every judge swap cost one
+	// guaranteed red run that a byte-identical rerun then passes.
+	assert.deepEqual(calibrationGateIssues(report), []);
+	assert.match(formatCalibrationReport(report), /superseded, not relied on/);
 });
 
 test("an uncalibrated judge fails the run for a different reason than a regression", () => {
@@ -535,6 +551,32 @@ test("an uncalibrated judge fails the run for a different reason than a regressi
 });
 
 // --- The phase, end to end --------------------------------------------------
+
+test("repeat trials of one case cannot manufacture independent coverage", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "pi-flow-trials-"));
+	const trace = path.join(dir, "trace.jsonl");
+	await writeFile(trace, `${JSON.stringify({ attributes: { "thulr.answer": "a" } })}\n`);
+
+	// One case, three trials — exactly the shape `--trials=3` produces, where the
+	// per-trial trace id differs but the base case does not.
+	const summaries = [1, 2, 3].map((index) => ({
+		name: `only-case::trial-00${index}`,
+		caseId: "only-case",
+		traceCaseId: `only-case::trial-00${index}`,
+		objective: { pass: false, score: 0 },
+	}));
+	const { report } = assessCalibration({
+		corpus: { measurement: [{ id: "only-case", criterion: "Finds it." }], calibration: [] },
+		summaries,
+		verdicts: verdictsFor(Object.fromEntries(summaries.map((summary) => [summary.traceCaseId, { criterion: { verdict: false, score: 0.05 } }]))),
+		keyInputs: KEY_INPUTS,
+		trace,
+		log: () => undefined,
+	});
+	assert.equal(report.coverage.criterion.labels.failed, 3, "each trial is still a labelled observation of the judge");
+	assert.equal(report.coverage.criterion.independent.failed, 1, "but they are one case, so they are one independent label");
+	assert.equal(report.coverage.criterion.authoritative, false);
+});
 
 test("assessCalibration writes a versioned artifact and detects drift against it", async () => {
 	const dir = await mkdtemp(path.join(tmpdir(), "pi-flow-calibration-"));
