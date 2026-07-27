@@ -30,6 +30,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			"chain",
 			index + 1,
 			results,
+			Boolean(contract),
 		);
 		results.push(result);
 
@@ -40,7 +41,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			};
 		}
 		if (contract) {
-			const validated = validateReturnEnvelope(result, contract, resolvedCwd(defaultCwd, step.cwd));
+			const validated = validateReturnEnvelope(result, contract, resolvedCwd(defaultCwd, step.cwd), policy);
 			if (validated.error) {
 				return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("chain")(results, validated.error) };
 			}

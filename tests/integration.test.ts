@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../extensions/pi-flows/commands.ts";
@@ -29,7 +30,6 @@ const integrationEnvelope = (data: unknown) => JSON.stringify({
 	evidence: [{ claim: "Identifier found.", source: "settings.txt:1" }], artifactReferences: [], digests: [],
 	changedState: [], unresolvedQuestions: [], retry: { retryable: false }, data,
 });
-
 test("single: spawns the stub child, returns its text, and accumulates usage", async () => {
 	const { result, calls, text } = await runFlow({ agent: "recon", task: "find the billing routes" }, { recon: "ROUTES: /charge /refund" });
 
@@ -67,23 +67,32 @@ test("single: appends return contracts, updates UI status, and writes a session 
 	assert.equal(entries[0]?.data.mode, "single");
 });
 
-test("single: validates typed envelopes through the child-process path", async () => {
-	const { result, calls } = await runFlow(
+test("single: typed envelopes validate and fail closed through the child-process path", async () => {
+	const valid = await runFlow(
 		{ agent: "recon", contract: integrationContract },
 		{ recon: integrationEnvelope({ answer: "xyzzy-42" }) },
 	);
-	assert.equal(calls.length, 1);
-	assert.equal(result.details.results[0].envelope?.data.answer, "xyzzy-42");
-	assert.ok(result.details.results[0].envelope?.usage);
-});
-
-test("single: malformed typed envelopes fail closed through the child-process path", async () => {
-	const { result, calls } = await runFlow(
+	assert.equal(valid.result.details.results[0].envelope?.data.answer, "xyzzy-42");
+	assert.ok(valid.result.details.results[0].envelope?.usage);
+	const invalid = await runFlow(
 		{ agent: "recon", contract: integrationContract },
 		{ recon: JSON.stringify({ status: "completed" }) },
 	);
-	assert.equal(calls.length, 1);
-	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.equal(invalid.result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+});
+
+test("single: typed validation precedes content omission and redaction", async () => {
+	const omitted = await runFlow(
+		{ agent: "recon", contract: integrationContract, recordContent: false },
+		{ recon: integrationEnvelope({ answer: "xyzzy-42" }) },
+	);
+	assert.equal(omitted.result.details.error, undefined);
+	assert.doesNotMatch(JSON.stringify(omitted.result.details), /xyzzy-42/);
+	const homeValue = path.join(homedir(), "sample.txt");
+	const exactContract = { ...integrationContract, returnSchema: { type: "object", required: ["answer"], properties: { answer: { const: homeValue } } } };
+	const redacted = await runFlow({ agent: "recon", contract: exactContract }, { recon: integrationEnvelope({ answer: homeValue }) });
+	assert.equal(redacted.result.details.error, undefined);
+	assert.equal(redacted.result.details.results[0].envelope?.data.answer, "~/sample.txt");
 });
 
 test("single: PI_FLOWS_CHILD_NO_EXTENSIONS isolates spawned child pi", async () => {

@@ -363,6 +363,7 @@ export interface RunChildOptions {
 	timeoutMs?: number;
 	recordContent?: boolean;
 	redactSecrets?: boolean;
+	captureRawOutput?: boolean;
 	step?: number;
 	signal?: AbortSignal;
 	onUpdate?: Update;

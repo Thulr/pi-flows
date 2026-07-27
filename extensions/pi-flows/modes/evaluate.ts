@@ -81,7 +81,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 						"\n## Reviewer feedback on that attempt (address every point)",
 						critique,
 					].join("\n");
-		const generated = await runAgentRef(deps, generatorRef, generatorTask, "evaluate", results.length + 1, results);
+		const generated = await runAgentRef(deps, generatorRef, generatorTask, "evaluate", results.length + 1, results, Boolean(contract));
 		results.push(generated);
 		lastGenerator = generated;
 		emitLive();
@@ -93,7 +93,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 		let envelopeText: string | null = null;
 		if (contract) {
-			const validated = validateReturnEnvelope(generated, contract, resolvedCwd(defaultCwd, generatorRef.cwd));
+			const validated = validateReturnEnvelope(generated, contract, resolvedCwd(defaultCwd, generatorRef.cwd), policy);
 			if (validated.error) {
 				return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("evaluate")(results, validated.error) };
 			}

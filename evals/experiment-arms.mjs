@@ -123,13 +123,19 @@ function removeIntegrator(params) {
 
 function removeVerifier(params) {
 	if (params.evaluate) {
+		const operator = params.evaluate.operator ?? {};
+		const contract = operator.contract ?? params.contract;
+		const task = params.task ?? operator.task ?? contract?.objective;
+		if (!task) return null;
 		return {
 			...baseParams({ params }),
-			agent: params.evaluate.operator?.agent ?? "operator",
-			...(params.evaluate.operator?.cwd ? { cwd: params.evaluate.operator.cwd } : {}),
-			...(params.evaluate.operator?.model ? { model: params.evaluate.operator.model } : {}),
-			...(params.evaluate.operator?.tier ? { tier: params.evaluate.operator.tier } : {}),
-			...(params.evaluate.operator?.tools ? { tools: params.evaluate.operator.tools } : {}),
+			task,
+			agent: operator.agent ?? "operator",
+			...(contract ? { contract } : {}),
+			...(operator.cwd ?? params.cwd ? { cwd: operator.cwd ?? params.cwd } : {}),
+			...(operator.model ?? params.model ? { model: operator.model ?? params.model } : {}),
+			...(operator.tier ?? params.tier ? { tier: operator.tier ?? params.tier } : {}),
+			...(operator.tools ?? params.tools ? { tools: operator.tools ?? params.tools } : {}),
 		};
 	}
 	if (params.orchestrate?.verify) {

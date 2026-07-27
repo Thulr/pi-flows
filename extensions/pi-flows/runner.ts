@@ -6,7 +6,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, activeBudgetExceeded, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
-import { appendCapped, capBytes, getFinalAssistantText, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
+import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
 
 export function getPiInvocation(args: string[]): { command: string; args: string[] } {
@@ -174,6 +174,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				if (event.type === "message_end" && event.message) {
 					const message = event.message as Message;
 					if (message.role === "assistant") {
+						if (options.captureRawOutput) captureRawFinalAssistantText(result, message);
 						const turnUsage = emptyUsage();
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
@@ -316,6 +317,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			);
 			result.errorMessage = result.error.message;
 		}
+		if (isFailed(result)) takeRawFinalAssistantText(result);
 		return result;
 	} finally {
 		result.durationMs = Date.now() - started;
@@ -352,7 +354,7 @@ export interface AgentFanoutItem {
 }
 
 /** The standard per-run plumbing (everything except onUpdate), built in exactly one place. */
-function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined): Omit<RunChildOptions, "onUpdate"> {
+function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, captureRawOutput = false): Omit<RunChildOptions, "onUpdate"> {
 	return {
 		defaultCwd: deps.defaultCwd,
 		agents: deps.discovery.agents,
@@ -365,6 +367,7 @@ function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, m
 		timeoutMs: deps.params.timeoutMs,
 		recordContent: deps.params.recordContent,
 		redactSecrets: deps.params.redactSecrets,
+		captureRawOutput,
 		step,
 		signal: deps.signal,
 		budget: deps.budget,
@@ -407,9 +410,9 @@ export async function runAgentFanout(
 }
 
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
-export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[]): Promise<FlowRunResult> {
+export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], captureRawOutput = false): Promise<FlowRunResult> {
 	return deps.runChild({
-		...childRunOptions(deps, ref, task, mode, step),
+		...childRunOptions(deps, ref, task, mode, step, captureRawOutput),
 		onUpdate: (partial) => {
 			const current = partial.details.results[0];
 			deps.onUpdate?.({ content: partial.content, details: deps.makeDetails(mode)([...priorResults, ...(current ? [current] : [])]) });

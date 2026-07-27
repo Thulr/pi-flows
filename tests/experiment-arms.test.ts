@@ -16,6 +16,18 @@ const baseCase = {
 	},
 	experiment: { oracleAgent: "recon" },
 };
+const typedContract = (objective) => ({
+	objective,
+	constraints: [],
+	nonGoals: [],
+	dependencies: [],
+	authority: { may: [], mustNot: [], requiresApproval: [] },
+	sideEffectClass: "read-only",
+	budget: {},
+	acceptanceChecks: [],
+	returnSchema: { type: "object" },
+	owner: "parent",
+});
 
 test("comparison arm selection is named, paired, and backwards compatible by default", () => {
 	assert.deepEqual(parseArmSelection(null), ["direct", "full"]);
@@ -94,6 +106,27 @@ test("mode-specific ablations remove integration and verification", () => {
 	assert.equal(noVerifier.applicable, true);
 	assert.equal(noVerifier.params.agent, "operator");
 	assert.equal(noVerifier.params.evaluate, undefined);
+});
+
+test("no-verifier preserves evaluate aliases and the effective typed contract", () => {
+	const options = { bindingConstraint: binding, seed: "trial-1" };
+	const operatorTask = planExperimentArm("no-verifier", {
+		name: "operator-task", params: { evaluate: { operator: { agent: "operator", task: "Operator-owned goal." } } },
+	}, options);
+	assert.equal(operatorTask.params.task, "Operator-owned goal.");
+
+	const topContract = typedContract("Top contract goal.");
+	const operatorContract = typedContract("Operator contract goal.");
+	const contractOnly = planExperimentArm("no-verifier", {
+		name: "contract-only", params: { contract: topContract, evaluate: { operator: { agent: "operator" } } },
+	}, options);
+	assert.equal(contractOnly.params.task, "Top contract goal.");
+	assert.deepEqual(contractOnly.params.contract, topContract);
+	const override = planExperimentArm("no-verifier", {
+		name: "contract-override", params: { contract: topContract, evaluate: { operator: { agent: "operator", contract: operatorContract } } },
+	}, options);
+	assert.equal(override.params.task, "Operator contract goal.");
+	assert.deepEqual(override.params.contract, operatorContract);
 });
 
 test("context and execution-order ablations are explicit and case-scoped", () => {

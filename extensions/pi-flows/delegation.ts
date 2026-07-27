@@ -3,8 +3,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import Schema from "typebox/schema";
 import { extractLastJsonBlock } from "./protocol.ts";
-import { resultText } from "./sanitize.ts";
-import { flowError, type DelegationContract, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
+import { redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
+import { flowError, type CapturePolicy, type DelegationContract, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
 import { appendReturnContract } from "./validate.ts";
 
 const ENVELOPE_VERSION = "pi-flows.return-envelope.v1";
@@ -152,12 +152,28 @@ function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowE
 	return null;
 }
 
+function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolicy): DelegationReturnEnvelope {
+	const stored = (value: string) => redactValue(value, policy) as string;
+	return {
+		...envelope,
+		summary: stored(envelope.summary),
+		evidence: envelope.evidence.map(({ claim, source }) => ({ claim: stored(claim), source: stored(source) })),
+		artifactReferences: envelope.artifactReferences.map(({ path: artifact }) => ({ path: stored(artifact) })),
+		digests: envelope.digests.map((digest) => ({ ...digest, artifact: stored(digest.artifact) })),
+		changedState: envelope.changedState.map(stored),
+		unresolvedQuestions: envelope.unresolvedQuestions.map(stored),
+		retry: { ...envelope.retry, ...(envelope.retry.reason ? { reason: stored(envelope.retry.reason) } : {}) },
+		data: redactValue(envelope.data, policy),
+	};
+}
+
 export function validateReturnEnvelope(
 	result: FlowRunResult,
 	contract: DelegationContract,
 	cwd: string,
+	policy: CapturePolicy,
 ): { envelope?: DelegationReturnEnvelope; error?: FlowError } {
-	const parsed = extractLastJsonBlock(resultText(result));
+	const parsed = extractLastJsonBlock(takeRawFinalAssistantText(result) ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object.") };
 	let validator;
 	try {
@@ -168,7 +184,7 @@ export function validateReturnEnvelope(
 	if (!validator.Check(parsed.data)) return { error: envelopeError("Envelope `data` does not satisfy contract.returnSchema.") };
 	const digestError = validateDigests(parsed, cwd);
 	if (digestError) return { error: digestError };
-	const envelope = { ...parsed, usage: result.usage };
+	const envelope = storedEnvelope({ ...parsed, usage: result.usage }, policy);
 	result.envelope = envelope;
 	return { envelope };
 }

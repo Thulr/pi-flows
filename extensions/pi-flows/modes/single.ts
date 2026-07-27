@@ -21,9 +21,10 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 		"single",
 		undefined,
 		[],
+		Boolean(params.contract),
 	);
 	if (params.contract && !isFailed(result)) {
-		const validated = validateReturnEnvelope(result, params.contract, resolvedCwd(defaultCwd, params.cwd));
+		const validated = validateReturnEnvelope(result, params.contract, resolvedCwd(defaultCwd, params.cwd), policy);
 		if (validated.error) {
 			return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("single")([result], validated.error) };
 		}
