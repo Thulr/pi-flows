@@ -33,47 +33,51 @@ const COMPONENTS = {
 const clone = (value) => structuredClone(value);
 const hash = (value) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex").slice(0, 12);
 
+const MODE_EXPERIMENTS = [
+	{ name: "single", active: (p) => Boolean(p.agent), primary: (p) => p.agent, calls: () => 1 },
+	{ name: "parallel", active: (p) => Boolean(p.tasks), primary: (p) => p.tasks[0]?.agent, calls: (p) => p.tasks.length },
+	{ name: "chain", active: (p) => Boolean(p.chain), primary: (p) => p.chain[0]?.agent, calls: (p) => p.chain.length },
+	{
+		name: "evaluate",
+		active: (p) => Boolean(p.evaluate),
+		primary: (p) => p.evaluate.operator?.agent,
+		calls: (p) => (p.evaluate.maxIterations ?? 3) * (1 + (Array.isArray(p.evaluate.redteam) ? p.evaluate.redteam.length : 1)),
+	},
+	{
+		name: "vote",
+		active: (p) => Boolean(p.vote),
+		primary: (p) => p.vote.agent ?? p.vote.voters?.[0]?.agent,
+		calls: (p) => (p.vote.voters?.length ?? p.vote.count ?? 3) + (p.vote.debrief ? 1 : 0),
+	},
+	{ name: "route", active: (p) => Boolean(p.route), primary: (p) => p.route.fallback ?? p.route.candidates?.[0], calls: () => 2 },
+	{
+		name: "orchestrate",
+		active: (p) => Boolean(p.orchestrate),
+		primary: (p) => p.orchestrate.recon?.agent,
+		calls: (p) => 1 + (p.orchestrate.maxSubtasks ?? 4) + 1 + (p.orchestrate.verify ? p.orchestrate.verifyPolicy === "revise" ? p.orchestrate.verifyMaxIterations ?? 2 : 1 : 0),
+	},
+	{ name: "graph", active: (p) => Boolean(p.graph), primary: (p) => p.graph.nodes[0]?.agent, calls: (p) => p.graph.nodes.length + (p.graph.debrief ? 1 : 0) },
+	{ name: "loop", active: (p) => Boolean(p.loop), primary: (p) => p.loop.body?.agent, calls: (p) => (p.loop.maxIterations ?? 3) * (p.loop.judge ? 2 : 1) },
+	{ name: "search", active: (p) => Boolean(p.search), primary: (p) => p.search.generator?.agent, calls: (p) => (p.search.maxRounds ?? 2) * (p.search.candidates ?? 3) * 2 + 1 },
+	{ name: "workflow", active: (p) => Boolean(p.workflow), primary: (p) => p.workflow.phases.find((phase) => phase.agent)?.agent, calls: (p) => p.workflow.phases.filter((phase) => phase.agent).length + (p.workflow.debrief ? 1 : 0) },
+	{ name: "worktree", active: (p) => Boolean(p.worktree), primary: (p) => p.worktree.tasks[0]?.agent, calls: (p) => p.worktree.tasks.length + 1 },
+	{ name: "debate", active: (p) => Boolean(p.debate), primary: (p) => p.debate.participants[0]?.agent, calls: (p) => p.debate.participants.length * (p.debate.rounds ?? 2) + 1 },
+	{ name: "dossier", active: (p) => Boolean(p.dossier), primary: (p) => p.dossier.sections[0]?.agent, calls: (p) => p.dossier.sections.length + 1 },
+	{ name: "monitor", active: (p) => Boolean(p.monitor), primary: (p) => p.monitor.reactor?.agent, calls: () => 1 },
+];
+
+const experimentMode = (params) => MODE_EXPERIMENTS.find((mode) => mode.active(params));
+
 function modeName(params) {
-	if (params.agent) return "single";
-	return ["tasks", "chain", "evaluate", "vote", "route", "orchestrate", "graph", "loop", "search", "workflow", "worktree", "debate", "dossier", "monitor"]
-		.find((key) => params[key] !== undefined) ?? "unknown";
+	return experimentMode(params)?.name ?? "unknown";
 }
 
 function primaryAgent(params) {
-	return params.agent
-		?? params.evaluate?.operator?.agent
-		?? params.vote?.agent
-		?? params.vote?.voters?.[0]?.agent
-		?? params.route?.fallback
-		?? params.route?.candidates?.[0]
-		?? params.orchestrate?.recon?.agent
-		?? params.chain?.[0]?.agent
-		?? params.tasks?.[0]?.agent
-		?? params.workflow?.phases?.find((phase) => phase.agent)?.agent
-		?? params.worktree?.tasks?.[0]?.agent
-		?? "operator";
+	return experimentMode(params)?.primary(params) ?? "operator";
 }
 
 function expectedModelCalls(params) {
-	if (params.agent) return 1;
-	if (params.tasks) return params.tasks.length;
-	if (params.chain) return params.chain.length;
-	if (params.evaluate) {
-		const critics = Array.isArray(params.evaluate.redteam) ? params.evaluate.redteam.length : 1;
-		return (params.evaluate.maxIterations ?? 3) * (1 + critics);
-	}
-	if (params.vote) return (params.vote.voters?.length ?? params.vote.count ?? 3) + (params.vote.debrief ? 1 : 0);
-	if (params.route) return 2;
-	if (params.orchestrate) return 1 + (params.orchestrate.maxSubtasks ?? 4) + 1 + (params.orchestrate.verify ? params.orchestrate.verifyPolicy === "revise" ? params.orchestrate.verifyMaxIterations ?? 2 : 1 : 0);
-	if (params.graph) return params.graph.nodes.length + (params.graph.debrief ? 1 : 0);
-	if (params.loop) return (params.loop.maxIterations ?? 3) * (params.loop.judge ? 2 : 1);
-	if (params.search) return (params.search.maxRounds ?? 2) * (params.search.candidates ?? 3) * 2 + 1;
-	if (params.workflow) return params.workflow.phases.filter((phase) => phase.agent).length + (params.workflow.debrief ? 1 : 0);
-	if (params.worktree) return params.worktree.tasks.length + 1;
-	if (params.debate) return params.debate.participants.length * (params.debate.rounds ?? 2) + 1;
-	if (params.dossier) return params.dossier.sections.length + 1;
-	if (params.monitor) return 1;
-	return 1;
+	return experimentMode(params)?.calls(params) ?? 1;
 }
 
 function baseParams(testCase) {
