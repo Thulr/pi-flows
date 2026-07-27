@@ -24,7 +24,7 @@
 // recorded approval facts were changed after the fact by a partial write, a
 // half-applied merge, or a tool that rewrites one field.
 import { createHash, randomUUID } from "node:crypto";
-import { canonicalJsonValue } from "./delegation.ts";
+import { canonicalSha256, isRecord } from "./delegation.ts";
 import { flowError, type ApprovalReceiptSummary, type FlowError } from "./types.ts";
 
 export const APPROVAL_RECEIPT_SCHEMA_VERSION = "pi-flows.approval-receipt.v1";
@@ -82,9 +82,8 @@ export interface ApprovalReceipt {
 
 export type { ApprovalReceiptSummary };
 
-function isRecord(value: unknown): value is Record<string, any> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
+/** A receipt mid-construction: every recorded field, with the integrity digest not yet stamped. */
+type UnsealedReceipt = Omit<ApprovalReceipt, "receiptDigest"> & { receiptDigest?: string };
 
 /**
  * The binding digest: what the approval AUTHORIZES. Canonical (recursively
@@ -93,14 +92,13 @@ function isRecord(value: unknown): value is Record<string, any> {
  * delegation contract ids already use.
  */
 export function approvalBindingDigest(binding: ApprovalBinding): string {
-	const canonical = canonicalJsonValue({
+	return canonicalSha256({
 		action: binding.action,
 		parameters: binding.parameters ?? null,
 		requestedBy: binding.requestedBy,
 		workflowDigest: binding.workflowDigest,
 		stateVersion: binding.stateVersion,
 	});
-	return `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
 }
 
 /**
@@ -111,16 +109,15 @@ export function approvalBindingDigest(binding: ApprovalBinding): string {
  * caught rather than honoured. It stops accidents, not an attacker: anyone
  * editing the state file deliberately can recompute it.
  */
-export function approvalReceiptDigest(receipt: Omit<ApprovalReceipt, "receiptDigest"> & { receiptDigest?: string }): string {
+export function approvalReceiptDigest(receipt: UnsealedReceipt): string {
 	const { receiptDigest: _ignored, ...recorded } = receipt;
-	return `sha256:${createHash("sha256").update(JSON.stringify(canonicalJsonValue(recorded))).digest("hex")}`;
+	return canonicalSha256(recorded);
 }
 
-/** Re-stamp the integrity digest after a legitimate field change (consumption). */
-const sealed = (receipt: Omit<ApprovalReceipt, "receiptDigest"> & { receiptDigest?: string }): ApprovalReceipt => ({
-	...(receipt as ApprovalReceipt),
-	receiptDigest: approvalReceiptDigest(receipt),
-});
+/** Stamp the integrity digest onto a receipt, at issue and after each legitimate field change. */
+function sealReceipt(receipt: UnsealedReceipt): ApprovalReceipt {
+	return { ...(receipt as ApprovalReceipt), receiptDigest: approvalReceiptDigest(receipt) };
+}
 
 /** Mint a receipt for a granted approval. The receipt starts unconsumed: it authorizes the action, it does not record that the action happened. */
 export function issueApprovalReceipt(
@@ -129,7 +126,7 @@ export function issueApprovalReceipt(
 ): ApprovalReceipt {
 	const issuedAt = new Date(now).toISOString();
 	const bindingDigest = approvalBindingDigest(binding);
-	return sealed({
+	return sealReceipt({
 		schemaVersion: APPROVAL_RECEIPT_SCHEMA_VERSION,
 		receiptId: createHash("sha256").update(`${bindingDigest}:${issuedAt}:${randomUUID()}`).digest("hex").slice(0, 16),
 		action: binding.action,
@@ -155,7 +152,7 @@ export function issueApprovalReceipt(
  */
 export function legacyApprovalReceipt(binding: ApprovalBinding, { issuedAt, consumedBy }: { issuedAt: string; consumedBy: string }): ApprovalReceipt {
 	const bindingDigest = approvalBindingDigest(binding);
-	return sealed({
+	return sealReceipt({
 		schemaVersion: APPROVAL_RECEIPT_SCHEMA_VERSION,
 		receiptId: createHash("sha256").update(`${bindingDigest}:legacy`).digest("hex").slice(0, 16),
 		action: binding.action,
@@ -224,7 +221,11 @@ export function verifyApprovalReceipt(
 			"Re-run in an interactive Pi UI to approve the current action, or restore the parameters that were approved and resume again.",
 		);
 	}
-	if (stored.expiresAt !== null) {
+	// The window bounds how long consent authorizes STARTING the action. Once the
+	// receipt has been spent on it, re-checking the clock would abort a gated run
+	// halfway through and leave the workflow worse off than finishing it — the
+	// binding still has to match, so nothing about the action can have changed.
+	if (stored.expiresAt !== null && stored.consumedAt === null) {
 		const expiry = Date.parse(stored.expiresAt);
 		if (!Number.isFinite(expiry)) {
 			return flowError(
@@ -257,11 +258,18 @@ export function verifyApprovalReceipt(
 /** Burn a receipt once its authorized action has begun. Re-consuming by the same action is a resume, not a second use. */
 export function consumeApprovalReceipt(receipt: ApprovalReceipt, consumer: string, now = Date.now()): ApprovalReceipt {
 	if (receipt.consumedAt !== null && receipt.consumedBy === consumer) return receipt;
-	return sealed({ ...receipt, consumedAt: new Date(now).toISOString(), consumedBy: consumer });
+	return sealReceipt({ ...receipt, consumedAt: new Date(now).toISOString(), consumedBy: consumer });
 }
 
-/** Identifiers and status only — the bound parameters never leave the binding digest. */
+/**
+ * Identifiers and status only — the bound parameters never leave the binding
+ * digest. Receipts reach this summary even when no step re-verified them this
+ * run (an approval whose gated phases all completed earlier), so the integrity
+ * digest is re-checked here too: an audit line must not repeat a receipt's
+ * claims about who approved what as fact when the record does not hold together.
+ */
 export function approvalReceiptSummary(receipt: ApprovalReceipt): ApprovalReceiptSummary {
+	const intact = isRecord(receipt) && receipt.receiptDigest === approvalReceiptDigest(receipt);
 	return {
 		receiptId: receipt.receiptId,
 		action: receipt.action,
@@ -270,7 +278,7 @@ export function approvalReceiptSummary(receipt: ApprovalReceipt): ApprovalReceip
 		expiresAt: receipt.expiresAt,
 		status: receipt.consumedAt === null ? "issued" : "consumed",
 		consumedBy: receipt.consumedBy,
-		validation: receipt.validation,
+		validation: intact ? receipt.validation : "unverified",
 	};
 }
 

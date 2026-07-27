@@ -174,7 +174,7 @@ export function buildReviewReport(raw) {
 		resolutions.push({ caseId, dimension, ...resolved });
 		agreementGroups.push({ caseId, dimension, verdicts: group.filter((review) => review.role === "reviewer" && review.blinded).map((review) => review.verdict) });
 	}
-	resolutions.sort((left, right) => `${left.dimension}:${left.caseId}`.localeCompare(`${right.dimension}:${right.caseId}`));
+	resolutions.sort((left, right) => `${left.dimension}::${left.caseId}`.localeCompare(`${right.dimension}::${right.caseId}`));
 
 	const reviewers = {};
 	for (const review of reviews) {

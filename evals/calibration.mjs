@@ -5,9 +5,12 @@
 // artifact plus one question: may this dimension block a release?
 //
 // A dimension is a release signal only when it is `authoritative`: enough
-// independent ground truth in all three classes, not drowning in abstentions,
-// and its human labels resolved rather than contested. Everything else is
-// `provisional` — measured and reported, but not trusted to say no.
+// independent ground truth in all three classes, decided rather than abstained,
+// and not drowning in abstentions overall. Everything else is `provisional` —
+// measured and reported, but not trusted to say no. Contested human labels and
+// missed defects are checked separately, per critical dimension, by
+// `calibrationGateIssues` — a dimension can be authoritative and still be refused
+// the right to block.
 //
 // Which dimensions are CRITICAL is a policy choice, not a fact about the judge,
 // so it is opt-in (`--critical-dimension=criterion`). That matches how score
@@ -16,7 +19,7 @@
 // fails its calibration requirements blocks the gate rather than quietly
 // degrading to a warning.
 import { authoritativeDimensions, caseSplit, dimensionCoverage, formatCoverageReport, groundTruthClass, splitVersions, CALIBRATION_CLASSES, CALIBRATION_SPLITS } from "./calibration-coverage.mjs";
-import { DEFAULT_ABSTENTION_BAND, abstentionEscalations, dimensionStatistics, formatDimensionStatistics, judgeDecision } from "./calibration-stats.mjs";
+import { DEFAULT_ABSTENTION_BAND, abstentionEscalations, collapseTrials, dimensionStatistics, formatDimensionStatistics, judgeDecision } from "./calibration-stats.mjs";
 import { calibrationKeyDrift, formatCalibrationKeyDrift } from "./calibration-key.mjs";
 import { buildReviewReport, formatReviewReport } from "./review-agreement.mjs";
 
@@ -84,12 +87,16 @@ export function buildCalibrationReport({
 	generatedAt = new Date().toISOString(),
 }) {
 	const review = buildReviewReport(reviewSet ?? { reviews: [] });
-	const coverage = dimensionCoverage(records);
+	// One observation per case, everywhere. Repeat trials are the judge answering
+	// the same question again, not a second question — so coverage, statistics, and
+	// the escalation queue all speak in cases rather than in trials.
+	const observations = collapseTrials(records);
+	const coverage = dimensionCoverage(observations);
 	const authoritative = authoritativeDimensions(coverage);
 	// Ground truth from a deterministic objective check is independent of the judge,
 	// which is what calibration needs — but a reader deciding how far to trust an
 	// authoritative dimension should be able to see how much of it a person looked at.
-	const groundTruthSources = records.reduce((counts, record) => ({ ...counts, [record.source]: (counts[record.source] ?? 0) + 1 }), {});
+	const groundTruthSources = observations.reduce((counts, record) => ({ ...counts, [record.source]: (counts[record.source] ?? 0) + 1 }), {});
 	return {
 		schemaVersion: CALIBRATION_SCHEMA_VERSION,
 		generatedAt,
@@ -99,9 +106,9 @@ export function buildCalibrationReport({
 		splits: splitVersions(splitEntries),
 		coverage,
 		groundTruthSources,
-		statistics: dimensionStatistics(records.filter((record) => record.decision)),
+		statistics: dimensionStatistics(observations.filter((record) => record.decision)),
 		review,
-		escalations: abstentionEscalations(records),
+		escalations: abstentionEscalations(observations),
 		authority: {
 			authoritative,
 			provisional: Object.keys(coverage).filter((dimension) => !coverage[dimension].authoritative),

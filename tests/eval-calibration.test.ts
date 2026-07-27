@@ -30,6 +30,7 @@ import {
 } from "../evals/calibration-coverage.mjs";
 import {
 	abstentionEscalations,
+	collapseTrials,
 	confusionMatrix,
 	detectionMetrics,
 	judgeDecision,
@@ -573,9 +574,31 @@ test("repeat trials of one case cannot manufacture independent coverage", async 
 		trace,
 		log: () => undefined,
 	});
-	assert.equal(report.coverage.criterion.labels.failed, 3, "each trial is still a labelled observation of the judge");
-	assert.equal(report.coverage.criterion.independent.failed, 1, "but they are one case, so they are one independent label");
+	assert.equal(report.coverage.criterion.labels.failed, 1, "three trials of one case are one observation");
+	assert.equal(report.coverage.criterion.independent.failed, 1);
 	assert.equal(report.coverage.criterion.authoritative, false);
+	// The confidence bound is the whole point of reporting uncertainty, so it must
+	// not read as three independent observations either.
+	assert.equal(report.statistics.criterion.detection.falseNegativeRate.samples, 1);
+});
+
+test("trials that disagree collapse to an abstention rather than a coin flip", () => {
+	const split = collapseTrials([
+		{ caseId: "flaky", dimension: "criterion", truth: "failed", source: "deterministic", decision: "fail", score: 0.1 },
+		{ caseId: "flaky", dimension: "criterion", truth: "failed", source: "deterministic", decision: "pass", score: 0.9 },
+	]);
+	assert.equal(split.length, 1);
+	assert.equal(split[0].decision, "abstain");
+	assert.equal(split[0].abstained, true);
+	assert.equal(split[0].score, 0.5, "the collapsed score is the mean across trials");
+	assert.equal(split[0].trials, 2);
+
+	const agreed = collapseTrials([
+		{ caseId: "stable", dimension: "criterion", truth: "failed", source: "deterministic", decision: "fail", score: 0.1 },
+		{ caseId: "stable", dimension: "criterion", truth: "failed", source: "deterministic", decision: "fail", score: 0.2 },
+		{ caseId: "stable", dimension: "criterion", truth: "failed", source: "deterministic", decision: "pass", score: 0.9 },
+	]);
+	assert.equal(agreed[0].decision, "fail", "a strict majority decides");
 });
 
 test("assessCalibration writes a versioned artifact and detects drift against it", async () => {

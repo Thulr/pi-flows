@@ -453,9 +453,16 @@ effective definitions after flow-level fallbacks (`returnContract`,
 swaps which repo-controlled prompt runs, so it invalidates the approval with
 `APPROVAL_RECEIPT_STALE`.
 
+The expiry gates *starting* the authorized action. Once the receipt has been
+spent on it, a gated run finishes rather than aborting halfway because the clock
+passed — the binding still has to match, so nothing about the action can have
+changed.
+
 Every recorded field — actors, issue time, expiry, consumption — is additionally
 covered by a `receiptDigest`, so a partial write, a half-applied merge, or a tool
-that rewrites one field is caught rather than honoured.
+that rewrites one field is caught rather than honoured. A receipt that fails that
+check is reported with `validation: "unverified"` wherever it surfaces, rather
+than having its claims repeated as fact.
 
 Receipts surface in `details.approvals`, in the final answer, and on the trace
 root span (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,

@@ -300,9 +300,11 @@ parameters that were approved and resume again.
 
 ### `APPROVAL_RECEIPT_EXPIRED`
 
-Cause: the resume arrived after the approval's window closed. Receipts expire so
-consent cannot be banked indefinitely; the default window is 24 hours from the
-moment approval was granted.
+Cause: the resume arrived after the approval's window closed, before the
+authorized action had begun. Receipts expire so consent cannot be banked
+indefinitely; the default window is 24 hours from the moment approval was
+granted. The window gates *starting* the action — a gated run already under way
+finishes rather than aborting halfway when the clock passes.
 
 Fix: approve again in an interactive Pi UI, or set
 `workflow.approvalTtlMs` (60000..2592000000 ms) to a longer window *before*

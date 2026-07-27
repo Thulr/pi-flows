@@ -159,6 +159,29 @@ test("a migrated receipt still binds but claims no approver or window", () => {
 	assert.equal(verifyApprovalReceipt(receipt, binding({ action: "workflow.phase:other" }), { consumer: "ship", now: NOW })?.code, "APPROVAL_RECEIPT_STALE");
 });
 
+test("the expiry window gates starting the action, not finishing one already under way", () => {
+	// A gated run that outlives its window must not abort halfway: the action was
+	// authorized and begun, the binding still matches, and stopping mid-run leaves
+	// the workflow worse off than finishing it.
+	const started = consumeApprovalReceipt(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS }), "workflow.phase:approve", NOW);
+	const wayLater = NOW + MIN_APPROVAL_TTL_MS * 100;
+	assert.equal(verifyApprovalReceipt(started, binding(), { consumer: "workflow.phase:approve", now: wayLater }), null);
+
+	// An unspent receipt past its window is still refused — that is the case the
+	// window exists for.
+	const unspent = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS });
+	assert.equal(verifyApprovalReceipt(unspent, binding(), { consumer: "workflow.phase:approve", now: wayLater })?.code, "APPROVAL_RECEIPT_EXPIRED");
+});
+
+test("a receipt no path re-verified is reported as unverified, not repeated as fact", () => {
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
+	assert.equal(approvalReceiptSummary(receipt).validation, "typed");
+	const tampered = { ...receipt, approvedBy: "someone-else" } as typeof receipt;
+	const summary = approvalReceiptSummary(tampered);
+	assert.equal(summary.validation, "unverified", "the audit line must not launder an edited record");
+	assert.match(formatApprovalReceipt(summary), /someone-else/, "the claimed value is still shown, just not vouched for");
+});
+
 test("a receipt summary carries identity and status but never the bound parameters", () => {
 	const receipt = issueApprovalReceipt(binding({ parameters: { secret: "launch-code-hunter2" } }), { approvedBy: "justin", now: NOW }); // privacy-scan: allow deliberate receipt-leak fixture
 	const summary = approvalReceiptSummary(consumeApprovalReceipt(receipt, "ship", NOW));

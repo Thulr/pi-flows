@@ -35,7 +35,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   false-positive and false-negative rates, and Wilson 95% bounds on each. A
   dimension is authoritative only with three independent *decided* failed labels
   plus passed and partial examples and an abstention rate under 25% — repeat
-  trials of one case count once, and an abstention never counts as coverage;
+  trials of one case collapse to one observation (disagreeing trials collapse to
+  an abstention), and an abstention never counts as coverage;
   `--critical-dimension` opts a dimension into blocking the release gate
   and `--write-baseline` when it falls short. Judge verdicts within
   `--abstention-band` of the decision boundary abstain and escalate to human review

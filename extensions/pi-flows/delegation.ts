@@ -22,7 +22,7 @@ export interface PersistedHandoffAttestation {
 	validation: "typed" | "legacy-compatibility";
 }
 
-function isRecord(value: unknown): value is RecordValue {
+export function isRecord(value: unknown): value is RecordValue {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -41,9 +41,13 @@ export function canonicalJsonValue(value: unknown): unknown {
 	return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJsonValue(value[key])]));
 }
 
+/** One canonical digest for every content identity in the extension, so two digests over the same content always agree. */
+export function canonicalSha256(value: unknown): string {
+	return `sha256:${createHash("sha256").update(JSON.stringify(canonicalJsonValue(value))).digest("hex")}`;
+}
+
 export function delegationContractId(contract: DelegationContract): string {
-	const digest = createHash("sha256").update(JSON.stringify(canonicalJsonValue(contract))).digest("hex");
-	return `sha256:${digest}`;
+	return canonicalSha256(contract);
 }
 
 function contractError(reason: string): FlowError {
@@ -380,7 +384,7 @@ export function validatePersistedIntegrationHandoff(
 }
 
 function handoffStorageDigest(handoff: unknown): string {
-	return `sha256:${createHash("sha256").update(JSON.stringify(canonicalJsonValue(handoff))).digest("hex")}`;
+	return canonicalSha256(handoff);
 }
 
 export function createPersistedHandoffAttestation(handoff: DelegationHandoffEnvelope): PersistedHandoffAttestation {

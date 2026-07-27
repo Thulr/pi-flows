@@ -145,7 +145,40 @@ export function abstentionEscalations(records) {
 			truth: record.truth ?? null,
 			reason: "judge score sat inside the ambiguity band around the decision boundary",
 		}))
-		.sort((left, right) => `${left.dimension}:${left.caseId}`.localeCompare(`${right.dimension}:${right.caseId}`));
+		.sort((left, right) => `${left.dimension}::${left.caseId}`.localeCompare(`${right.dimension}::${right.caseId}`));
+}
+
+/**
+ * Collapse repeat trials into one observation per case-dimension.
+ *
+ * Statistics answer "how often does the judge get a CASE right", so five trials
+ * of one case must not read as five independent observations inside a confidence
+ * bound — that is the same inflation coverage already refuses, and here it would
+ * quietly tighten the very interval the gate reads. Trials that disagree are
+ * exactly the ambiguity abstention exists for, so a decision without a strict
+ * majority collapses to `abstain` and escalates rather than being resolved by a
+ * coin flip.
+ */
+export function collapseTrials(records) {
+	const byCase = new Map();
+	for (const record of records ?? []) {
+		if (!record?.dimension || !record?.caseId) continue;
+		const key = `${record.dimension}::${record.caseId}`;
+		byCase.set(key, [...(byCase.get(key) ?? []), record]);
+	}
+	return [...byCase.values()].map((trials) => {
+		const counts = trials.reduce((totals, trial) => ({ ...totals, [trial.decision]: (totals[trial.decision] ?? 0) + 1 }), {});
+		const [decision, count] = Object.entries(counts).sort(([, left], [, right]) => right - left)[0];
+		const majority = count * 2 > trials.length ? decision : "abstain";
+		const scores = trials.map((trial) => trial.score).filter(Number.isFinite);
+		return {
+			...trials[0],
+			decision: majority,
+			abstained: majority === "abstain",
+			score: scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null,
+			trials: trials.length,
+		};
+	});
 }
 
 /** Per-dimension statistics over normalized records. */

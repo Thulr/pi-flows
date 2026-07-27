@@ -6,7 +6,7 @@ import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
-import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
+import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { acceptIntegrationResult, integrationRunPlan } from "../integration.ts";
 import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, consumeApprovalReceipt, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
 
@@ -139,8 +139,6 @@ function workflowDetails(deps: ModeDeps, results: FlowRunResult[], state?: Workf
 	return details;
 }
 
-const isStateMap = (value: unknown): boolean => Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
 async function persistState(file: string, state: WorkflowState): Promise<void> {
 	await mkdir(path.dirname(file), { recursive: true });
 	const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -243,9 +241,9 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			if (![1, 2, WORKFLOW_STATE_VERSION].includes(loaded.version) || loaded.digest !== digest || !Array.isArray(loaded.completedPhaseIds)
 				|| !loaded.outputs || typeof loaded.outputs !== "object" || Array.isArray(loaded.outputs)) throw new Error("state does not match this workflow");
 			let restored = loaded.version === 1 ? migrateWorkflowStateV1(loaded, phases, policy) : loaded;
-			if (!isStateMap(restored.handoffs) || !isStateMap(restored.attestations)) throw new Error("state does not match this workflow");
+			if (!isRecord(restored.handoffs) || !isRecord(restored.attestations)) throw new Error("state does not match this workflow");
 			if (restored.version < WORKFLOW_STATE_VERSION) restored = migrateWorkflowStateV2(restored, phases, deps, digest);
-			if (!isStateMap(restored.receipts)) throw new Error("state does not match this workflow");
+			if (!isRecord(restored.receipts)) throw new Error("state does not match this workflow");
 			state = restored as WorkflowState;
 			if (loaded.version !== WORKFLOW_STATE_VERSION) await persistState(stateFile, state);
 		} catch (cause) {

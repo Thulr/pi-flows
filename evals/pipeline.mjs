@@ -13,7 +13,7 @@
 //   inspectTraceReport      both
 //   judgeTraceRun           both
 //   printScoreDeltas        both (run.mjs passes thulr.gate, compare.mjs thulr.compare)
-//   writeReliabilityArtifact  run.mjs only — the per-trial reliability artifact
+//   writeReliabilityArtifact run.mjs only — the per-trial reliability artifact
 //   assessCalibration       run.mjs only — judge calibration + its gate rules
 //   gateAgainstBaseline     run.mjs only — the release gate + JUnit artifact
 //   harnessExitCode         run.mjs only — the two-axis exit policy
@@ -174,8 +174,9 @@ export function printScoreDeltas({ run, options, heading, unavailable, log = con
 // --- Phase: reliability artifact -------------------------------------------
 /**
  * Project the run's per-case summaries onto raw trials, build the reliability
- * report, write it, and print its headline. Lives here rather than in the CLI so
- * the trial projection stays next to the statistics that consume it.
+ * report, write it, and print its headline. A phase rather than a statistics
+ * helper: it does IO and prints, so it lives here and `reliability.mjs` stays a
+ * pure builder plus formatter.
  *
  * `judgeAvailable` is false in dry runs and in runs with nothing judgeable: with
  * no judge verdict, a trial passes on its objective check alone rather than on a

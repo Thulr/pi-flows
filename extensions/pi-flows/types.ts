@@ -199,7 +199,8 @@ export interface ApprovalReceiptSummary {
 	expiresAt: string | null;
 	status: "issued" | "consumed";
 	consumedBy: string | null;
-	validation: "typed" | "legacy-compatibility";
+	/** `unverified` means the receipt's own integrity digest did not match — the audit line says so rather than repeating its claims as fact. */
+	validation: "typed" | "legacy-compatibility" | "unverified";
 }
 
 export interface FlowDetails {
