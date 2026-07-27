@@ -61,6 +61,17 @@ test("supported controls separate compute, ensembling, and routing", () => {
 	assert.equal(oracle.params.agent, "recon");
 });
 
+test("compute matching excludes topologies whose runtime call count is data-dependent", () => {
+	for (const testCase of [
+		{ name: "orchestrate", params: { task: "Coordinate.", orchestrate: { maxSubtasks: 4 } } },
+		{ name: "worktree", params: { task: "Edit.", worktree: { tasks: [{ id: "a", agent: "operator", task: "Edit a." }] } } },
+	]) {
+		const plan = planExperimentArm("compute-matched-self-review", testCase, { bindingConstraint: binding, seed: "trial-1" });
+		assert.equal(plan.applicable, false, testCase.name);
+		assert.equal(plan.exclusion.reason, "inapplicable");
+	}
+});
+
 test("mode-specific ablations remove integration and verification", () => {
 	const voteCase = {
 		name: "vote-case",

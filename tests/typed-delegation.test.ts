@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { FlowParams, FlowReturnEnvelope } from "../extensions/pi-flows/schema.ts";
+import { FlowContractTask, FlowParams, FlowReturnEnvelope, FlowTask } from "../extensions/pi-flows/schema.ts";
 import { freshDir, runFlow } from "./stub-harness.ts";
 
 const returnSchema = {
@@ -47,6 +47,8 @@ function envelope(overrides: Record<string, unknown> = {}) {
 
 test("public schemas expose typed contracts and runtime-enriched envelopes", () => {
 	assert.ok(FlowParams.properties.contract);
+	assert.ok(FlowContractTask.properties.contract);
+	assert.equal("contract" in FlowTask.properties, false);
 	assert.ok(FlowReturnEnvelope.properties.usage);
 });
 

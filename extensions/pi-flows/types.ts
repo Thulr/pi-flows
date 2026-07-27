@@ -209,7 +209,6 @@ export interface FlowTaskInput {
 	tools?: string;
 	returnContract?: string;
 	requireEvidence?: boolean;
-	contract?: DelegationContract;
 }
 
 export interface DelegationContract {

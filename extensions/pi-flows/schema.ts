@@ -65,7 +65,7 @@ export const FlowReturnEnvelope = Type.Object({
 	description: "Durable child return envelope used when a typed delegation contract is supplied. Runtime usage is attached to the validated envelope when available.",
 });
 
-export const FlowTask = Type.Object({
+const FlowTaskProperties = {
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
 	task: Type.String({ minLength: 1, description: "Complete task for that agent, including the target and expected output. Do not use vague one-word tasks. Chain tasks may use {task} and {previous}." }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this agent process" })),
@@ -76,6 +76,12 @@ export const FlowTask = Type.Object({
 	),
 	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this agent's task. Use it to specify summary shape, required fields, or max length." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return.", default: false })),
+};
+
+export const FlowTask = Type.Object(FlowTaskProperties);
+
+export const FlowContractTask = Type.Object({
+	...FlowTaskProperties,
 	contract: Type.Optional(FlowDelegationContract),
 });
 
@@ -301,7 +307,7 @@ export const FlowParams = Type.Object({
 	task: Type.Optional(Type.String({ minLength: 1, description: "Single-agent task, shared {task} value for chain steps, or the goal/contract for evaluate mode. For a named-agent request like 'ask recon to inspect package.json', set agent:'recon' and put the complete requested work here; never use a vague one-word task." })),
 	contract: Type.Optional(FlowDelegationContract),
 	tasks: Type.Optional(Type.Array(FlowTask, { description: "Parallel mode: tasks to run concurrently" })),
-	chain: Type.Optional(Type.Array(FlowTask, { description: "Chain mode: tasks to run sequentially" })),
+	chain: Type.Optional(Type.Array(FlowContractTask, { description: "Chain mode: tasks to run sequentially" })),
 	evaluate: Type.Optional(FlowEvaluate),
 	vote: Type.Optional(FlowVote),
 	route: Type.Optional(FlowRoute),

@@ -12,6 +12,23 @@ import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../extensions/pi-f
 import { byAgent, flowTool, freshDir, runFlow, stubPi, type Call } from "./stub-harness.ts";
 
 const ZWSP = String.fromCharCode(0x200b);
+const integrationContract = {
+	objective: "Find the sample identifier.",
+	constraints: ["Read only."],
+	nonGoals: ["Do not edit."],
+	dependencies: ["settings.txt"],
+	authority: { may: ["Read files."], mustNot: ["Write files."], requiresApproval: [] },
+	sideEffectClass: "read-only",
+	budget: { maxGeneratedTokens: 2_000 },
+	acceptanceChecks: ["Return the identifier."],
+	returnSchema: { type: "object", required: ["answer"], properties: { answer: { type: "string" } } },
+	owner: "parent",
+};
+const integrationEnvelope = (data: unknown) => JSON.stringify({
+	schemaVersion: "pi-flows.return-envelope.v1", status: "completed", summary: "Found it.",
+	evidence: [{ claim: "Identifier found.", source: "settings.txt:1" }], artifactReferences: [], digests: [],
+	changedState: [], unresolvedQuestions: [], retry: { retryable: false }, data,
+});
 
 test("single: spawns the stub child, returns its text, and accumulates usage", async () => {
 	const { result, calls, text } = await runFlow({ agent: "recon", task: "find the billing routes" }, { recon: "ROUTES: /charge /refund" });
@@ -48,6 +65,25 @@ test("single: appends return contracts, updates UI status, and writes a session 
 	assert.ok(widgets.some((widget) => widget.some((line) => /recon/.test(line))), "widget should show child agent status");
 	assert.equal(entries[0]?.customType, "pi-flows.run");
 	assert.equal(entries[0]?.data.mode, "single");
+});
+
+test("single: validates typed envelopes through the child-process path", async () => {
+	const { result, calls } = await runFlow(
+		{ agent: "recon", contract: integrationContract },
+		{ recon: integrationEnvelope({ answer: "xyzzy-42" }) },
+	);
+	assert.equal(calls.length, 1);
+	assert.equal(result.details.results[0].envelope?.data.answer, "xyzzy-42");
+	assert.ok(result.details.results[0].envelope?.usage);
+});
+
+test("single: malformed typed envelopes fail closed through the child-process path", async () => {
+	const { result, calls } = await runFlow(
+		{ agent: "recon", contract: integrationContract },
+		{ recon: JSON.stringify({ status: "completed" }) },
+	);
+	assert.equal(calls.length, 1);
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
 });
 
 test("single: PI_FLOWS_CHILD_NO_EXTENSIONS isolates spawned child pi", async () => {

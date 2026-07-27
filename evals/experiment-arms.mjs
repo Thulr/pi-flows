@@ -41,7 +41,7 @@ const MODE_EXPERIMENTS = [
 		name: "evaluate",
 		active: (p) => Boolean(p.evaluate),
 		primary: (p) => p.evaluate.operator?.agent,
-		calls: (p) => (p.evaluate.maxIterations ?? 3) * (1 + (Array.isArray(p.evaluate.redteam) ? p.evaluate.redteam.length : 1)),
+		calls: () => null,
 	},
 	{
 		name: "vote",
@@ -54,16 +54,16 @@ const MODE_EXPERIMENTS = [
 		name: "orchestrate",
 		active: (p) => Boolean(p.orchestrate),
 		primary: (p) => p.orchestrate.recon?.agent,
-		calls: (p) => 1 + (p.orchestrate.maxSubtasks ?? 4) + 1 + (p.orchestrate.verify ? p.orchestrate.verifyPolicy === "revise" ? p.orchestrate.verifyMaxIterations ?? 2 : 1 : 0),
+		calls: () => null,
 	},
 	{ name: "graph", active: (p) => Boolean(p.graph), primary: (p) => p.graph.nodes[0]?.agent, calls: (p) => p.graph.nodes.length + (p.graph.debrief ? 1 : 0) },
-	{ name: "loop", active: (p) => Boolean(p.loop), primary: (p) => p.loop.body?.agent, calls: (p) => (p.loop.maxIterations ?? 3) * (p.loop.judge ? 2 : 1) },
-	{ name: "search", active: (p) => Boolean(p.search), primary: (p) => p.search.generator?.agent, calls: (p) => (p.search.maxRounds ?? 2) * (p.search.candidates ?? 3) * 2 + 1 },
-	{ name: "workflow", active: (p) => Boolean(p.workflow), primary: (p) => p.workflow.phases.find((phase) => phase.agent)?.agent, calls: (p) => p.workflow.phases.filter((phase) => phase.agent).length + (p.workflow.debrief ? 1 : 0) },
-	{ name: "worktree", active: (p) => Boolean(p.worktree), primary: (p) => p.worktree.tasks[0]?.agent, calls: (p) => p.worktree.tasks.length + 1 },
+	{ name: "loop", active: (p) => Boolean(p.loop), primary: (p) => p.loop.body?.agent, calls: () => null },
+	{ name: "search", active: (p) => Boolean(p.search), primary: (p) => p.search.generator?.agent, calls: () => null },
+	{ name: "workflow", active: (p) => Boolean(p.workflow), primary: (p) => p.workflow.phases.find((phase) => phase.agent)?.agent, calls: () => null },
+	{ name: "worktree", active: (p) => Boolean(p.worktree), primary: (p) => p.worktree.tasks[0]?.agent, calls: () => null },
 	{ name: "debate", active: (p) => Boolean(p.debate), primary: (p) => p.debate.participants[0]?.agent, calls: (p) => p.debate.participants.length * (p.debate.rounds ?? 2) + 1 },
-	{ name: "dossier", active: (p) => Boolean(p.dossier), primary: (p) => p.dossier.sections[0]?.agent, calls: (p) => p.dossier.sections.length + 1 },
-	{ name: "monitor", active: (p) => Boolean(p.monitor), primary: (p) => p.monitor.reactor?.agent, calls: () => 1 },
+	{ name: "dossier", active: (p) => Boolean(p.dossier), primary: (p) => p.dossier.sections[0]?.agent, calls: () => null },
+	{ name: "monitor", active: (p) => Boolean(p.monitor), primary: (p) => p.monitor.reactor?.agent, calls: () => null },
 ];
 
 const experimentMode = (params) => MODE_EXPERIMENTS.find((mode) => mode.active(params));
@@ -77,7 +77,7 @@ function primaryAgent(params) {
 }
 
 function expectedModelCalls(params) {
-	return experimentMode(params)?.calls(params) ?? 1;
+	return experimentMode(params)?.calls(params) ?? null;
 }
 
 function baseParams(testCase) {
@@ -173,6 +173,7 @@ function armTransform(name, testCase, seed, bindingConstraint) {
 	if (name === "full") return { runner: "flow", params, topology: `flow-${modeName(params)}` };
 	if (name === "compute-matched-self-review") {
 		const modelCalls = expectedModelCalls(params);
+		if (!Number.isInteger(modelCalls) || modelCalls < 1) return null;
 		const chain = Array.from({ length: modelCalls }, (_, index) => ({
 			agent,
 			task: index === 0
