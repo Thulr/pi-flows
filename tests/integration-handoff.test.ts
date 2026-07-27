@@ -46,10 +46,10 @@ function result(text: string): FlowRunResult {
 	};
 }
 
-function typedEnvelope(overrides: Record<string, unknown> = {}) {
+function typedEnvelopeFor(envelopeContract: DelegationContract, data: unknown, overrides: Record<string, unknown> = {}) {
 	return JSON.stringify({
 		schemaVersion: "pi-flows.return-envelope.v1",
-		contractId: delegationContractId(contract),
+		contractId: delegationContractId(envelopeContract),
 		status: "completed",
 		summary: "Found it.",
 		evidence: [{ claim: "The answer is 42.", source: "answer.txt:1" }],
@@ -58,9 +58,13 @@ function typedEnvelope(overrides: Record<string, unknown> = {}) {
 		changedState: [],
 		unresolvedQuestions: [],
 		retry: { retryable: false },
-		data: { answer: 42 },
+		data,
 		...overrides,
 	});
+}
+
+function typedEnvelope(overrides: Record<string, unknown> = {}) {
+	return typedEnvelopeFor(contract, { answer: 42 }, overrides);
 }
 
 test("typed prompts carry a stable contract identity", () => {
@@ -119,6 +123,17 @@ test("partial and blocked typed handoffs fail closed unless inclusion is explici
 		assert.equal(included.handoff?.status, status);
 		assert.match(canonicalHandoff(included.handoff!), new RegExp(`"status":"${status}"`));
 	}
+});
+
+test("failed typed handoffs remain terminal when incomplete inclusion is explicit", () => {
+	const failed = prepareIntegrationHandoff(result(typedEnvelope({ status: "failed" })), {
+		contract,
+		cwd: "/tmp",
+		policy,
+		incompletePolicy: "include",
+	});
+	assert.equal(failed.error?.code, "RETURN_ENVELOPE_INCOMPLETE");
+	assert.match(failed.error?.fix ?? "", /Failed handoffs remain terminal/);
 });
 
 test("legacy prose is preserved through a provenance-bearing compatibility envelope", () => {
@@ -215,6 +230,40 @@ test("orchestrate rejects an invalid typed worker before synthesis", async () =>
 	);
 	assert.equal(output.details.error?.code, "RETURN_ENVELOPE_INVALID");
 	assert.deepEqual(calls.map((call) => call.agent).sort(), ["commander", "recon", "recon"].sort());
+});
+
+test("orchestrate reads typed verifier verdicts from handoff data", async () => {
+	const verifierContract: DelegationContract = {
+		...contract,
+		objective: "Judge the synthesized answer.",
+		acceptanceChecks: ["Return a pass or revise verdict."],
+		returnSchema: {
+			type: "object",
+			required: ["verdict"],
+			properties: { verdict: { type: "string", enum: ["pass", "revise"] } },
+			additionalProperties: false,
+		},
+	};
+	const { result: output, calls, text } = await runFlow(
+		{
+			task: "Answer from one finding.",
+			orchestrate: {
+				recon: { agent: "recon" },
+				verify: { agent: "overwatch", contract: verifierContract },
+				verifyPolicy: "fail",
+				maxSubtasks: 1,
+			},
+		},
+		{
+			commander: '["find the answer"]',
+			recon: "WORKER_FINDING",
+			debrief: "COMPLETE_ANSWER",
+			overwatch: typedEnvelopeFor(verifierContract, { verdict: "pass" }, { summary: "Verified." }),
+		},
+	);
+	assert.equal(output.details.error, undefined);
+	assert.deepEqual(calls.map((call) => call.agent), ["commander", "recon", "debrief", "overwatch"]);
+	assert.match(text, /Verification PASS/);
 });
 
 test("dossier rejects invalid typed evidence before debrief", async () => {
@@ -344,6 +393,39 @@ test("workflow resume uses validation attestations when stored content is omitte
 	);
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.calls.filter((call) => call.agent === "recon").length, 1);
+});
+
+test("workflow resume preserves included incomplete handoffs in the final summary", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Review an incomplete finding.",
+		incompleteHandoffPolicy: "include",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "inspect", agent: "recon", task: "Inspect the finding", contract },
+				{ id: "approve", approval: { message: "Accept the incomplete finding" } },
+			],
+		},
+	};
+	const paused = await runFlow(params, {
+		recon: typedEnvelope({
+			status: "partial",
+			summary: "Partial finding.",
+			unresolvedQuestions: ["Need one more source."],
+			retry: { retryable: true, reason: "Source unavailable." },
+		}),
+	}, { cwd });
+	assert.equal(paused.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+
+	const resumed = await runFlow(
+		{ ...params, workflow: { ...params.workflow, resume: true } },
+		{},
+		{ cwd, hasUI: true },
+	);
+	assert.equal(resumed.result.details.error, undefined);
+	assert.match(resumed.text, /Included incomplete handoffs by explicit policy: recon:partial/);
+	assert.match(resumed.text, /APPROVED/);
 });
 
 test("workflow resume migrates legacy version-1 state to compatibility handoffs", async () => {

@@ -296,13 +296,20 @@ function compatibilityHandoff(result: FlowRunResult, policy: CapturePolicy): Del
 }
 
 function incompleteEnvelopeError(handoff: DelegationHandoffEnvelope): FlowError {
+	const resolution = handoff.status === "failed"
+		? "Retry the failed child and require a completed, partial, or blocked handoff before integration. Failed handoffs remain terminal."
+		: 'Resolve or retry the child, or explicitly set incompleteHandoffPolicy:"include" to synthesize while preserving the incomplete status and provenance.';
 	return flowError(
 		"RETURN_ENVELOPE_INCOMPLETE",
-		`Child returned a ${handoff.status} handoff that cannot be integrated by default.`,
+		`Child returned a ${handoff.status} handoff that cannot be integrated.`,
 		`Contract ${handoff.contractId ?? "(legacy)"} from ${handoff.provenance.agent} reported status "${handoff.status}" with ${handoff.unresolvedQuestions.length} unresolved question(s).`,
-		'Resolve or retry the child, or explicitly set incompleteHandoffPolicy:"include" to synthesize while preserving the incomplete status and provenance.',
+		resolution,
 		handoff.retry.retryable,
 	);
+}
+
+function canIncludeIncompleteHandoff(handoff: DelegationHandoffEnvelope, policy: IncompleteHandoffPolicy | undefined): boolean {
+	return policy === "include" && (handoff.status === "partial" || handoff.status === "blocked");
 }
 
 export function validatePersistedIntegrationHandoff(
@@ -365,7 +372,7 @@ export function validatePersistedIntegrationHandoff(
 		return storedError(envelopeError("Persisted workflow handoff validation attestation is missing or does not match the stored handoff."), options.policy);
 	}
 	const handoff = value as unknown as DelegationHandoffEnvelope;
-	if (handoff.status !== "completed" && options.incompletePolicy !== "include") {
+	if (handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
 		return storedError(incompleteEnvelopeError(handoff), options.policy);
 	}
 	return null;
@@ -404,7 +411,7 @@ export function prepareIntegrationHandoff(
 		handoff = compatibilityHandoff(result, options.policy);
 	}
 	result.handoff = handoff;
-	if (handoff.status !== "completed" && options.incompletePolicy !== "include") {
+	if (handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
 		return { error: storedError(incompleteEnvelopeError(handoff), options.policy) };
 	}
 	return { handoff };
@@ -414,10 +421,14 @@ export function canonicalHandoff(handoff: DelegationHandoffEnvelope): string {
 	return JSON.stringify(handoff);
 }
 
-export function incompleteHandoffSummary(results: FlowRunResult[]): string {
-	const incomplete = results.flatMap((result) =>
-		result.handoff && result.handoff.status !== "completed"
-			? [`${result.handoff.provenance.agent}:${result.handoff.status}`]
+export function incompleteHandoffSummary(results: FlowRunResult[], persistedHandoffs: DelegationHandoffEnvelope[] = []): string {
+	const handoffs = [
+		...results.flatMap((result) => result.handoff ? [result.handoff] : []),
+		...persistedHandoffs,
+	];
+	const incomplete = handoffs.flatMap((handoff) =>
+		handoff.status !== "completed"
+			? [`${handoff.provenance.agent}:${handoff.status}`]
 			: [],
 	);
 	return incomplete.length ? ` Included incomplete handoffs by explicit policy: ${incomplete.join(", ")}.` : "";

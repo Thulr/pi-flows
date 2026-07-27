@@ -416,12 +416,12 @@ dispatch, synthesis, persisted state, or worktree merge.
 ### `RETURN_ENVELOPE_INCOMPLETE`
 
 Cause: a typed child reported `partial`, `blocked`, or `failed`, and the
-integration mode's default fail-closed policy refused to summarize it as
-complete.
+integration mode refused to summarize it as complete.
 
 Fix: resolve/retry the child. If incomplete evidence is intentionally useful,
-set `incompleteHandoffPolicy:"include"` explicitly; the final header and
-provenance envelope will retain the incomplete status.
+set `incompleteHandoffPolicy:"include"` explicitly for `partial` or `blocked`
+handoffs; the final header and provenance envelope will retain the incomplete
+status. A `failed` handoff is always terminal and must be retried.
 
 ### `RETURN_DIGEST_MISMATCH`
 

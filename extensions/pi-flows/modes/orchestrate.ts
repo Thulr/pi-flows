@@ -4,7 +4,7 @@ import { HandoffWarnings, prepareHandoff, prepareResultHandoff } from "../handof
 import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { canonicalHandoff, incompleteHandoffSummary } from "../delegation.ts";
+import { incompleteHandoffSummary } from "../delegation.ts";
 import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
@@ -209,7 +209,10 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			const verifyHandoffError = acceptIntegrationResult(deps, verifyPlan.plan!, verified);
 			if (verifyHandoffError) return { content: [{ type: "text", text: formatFlowError(verifyHandoffError) }], details: makeDetails("orchestrate")(results, verifyHandoffError) };
 
-			verifyVerdict = parseVerdict(verified.handoff ? canonicalHandoff(verified.handoff) : resultText(verified));
+			const verifierVerdictText = verified.handoff?.compatibility === "typed"
+				? JSON.stringify(verified.handoff.data)
+				: resultText(verified);
+			verifyVerdict = parseVerdict(verifierVerdictText);
 			verifyNote = `\n\n## Verification (${verifyRef.agent}): ${verifyVerdict === "pass" ? "PASS" : "REVISE"}\n\n${sanitizeText(resultText(verified), policy)}`;
 			if (verifyVerdict === "pass") break;
 

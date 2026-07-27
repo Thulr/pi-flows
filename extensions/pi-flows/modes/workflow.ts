@@ -132,6 +132,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	const results: FlowRunResult[] = [];
+	const resumedHandoffs: DelegationHandoffEnvelope[] = [];
 	let previous = "";
 	for (const phase of phases) {
 		if (state.completedPhaseIds.includes(phase.id)) {
@@ -147,6 +148,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				incompletePolicy: params.incompleteHandoffPolicy,
 			});
 			if (persistedError) return stateError(deps, results, persistedError);
+			if (persisted.status !== "completed") resumedHandoffs.push(persisted);
 			const validatedOutput = params.recordContent === false ? "[content not recorded]" : canonicalHandoff(persisted);
 			state.outputs[phase.id] = validatedOutput;
 			previous = validatedOutput;
@@ -270,7 +272,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	state.updatedAt = new Date().toISOString();
 	await persistState(stateFile, state);
 	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow workflow: ${phases.length} phases completed.${incompleteHandoffSummary(results)} State: ${sanitizeText(path.relative(defaultCwd, stateFile), policy)}\n\n${sanitizeText(finalText, policy)}`) }],
+		content: [{ type: "text", text: capModelVisibleText(`Flow workflow: ${phases.length} phases completed.${incompleteHandoffSummary(results, resumedHandoffs)} State: ${sanitizeText(path.relative(defaultCwd, stateFile), policy)}\n\n${sanitizeText(finalText, policy)}`) }],
 		details: deps.makeDetails("workflow")(results),
 	};
 }
