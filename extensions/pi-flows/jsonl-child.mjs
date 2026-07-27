@@ -151,7 +151,10 @@ export function runJsonlProcess(options) {
 export function accumulatePiUsage(tally, message) {
 	tally.turns += 1;
 	const usage = message?.usage;
-	if (!usage) return;
+	if (!usage) {
+		tally.costKnown = false;
+		return;
+	}
 	tally.input += usage.input || 0;
 	tally.output += usage.output || 0;
 	tally.cacheRead += usage.cacheRead || 0;

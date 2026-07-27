@@ -211,19 +211,25 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
 }
 ```
 
-## Cost budget and tracing example
+## Resource budget and tracing example
 
 ```json
 {
   "task": "Summarize how this repo handles errors, logging, and configuration",
   "orchestrate": { "recon": { "agent": "recon" }, "maxSubtasks": 3 },
   "maxCostUsd": 0.25,
+  "maxGeneratedTokens": 4000,
   "traceFile": "flow-trace.jsonl",
   "why": "a broad three-area map is more reading than one context should serialize"
 }
 ```
 
-Expected: the run stops spawning children once cumulative cost reaches `$0.25` (returning `BUDGET_EXCEEDED` for any refused child), and `flow-trace.jsonl` gains one OpenInference-shaped span per child plus a root `flow.orchestrate` span. Inspect it with `jq` — e.g. total cost: `jq -s 'map(.attributes["flow.cost_usd"] // 0) | add' flow-trace.jsonl`.
+Expected: when cumulative cost reaches `$0.25` or generated output reaches 4,000
+tokens at a completed model-response boundary, the active child stops and no
+further child is spawned (`BUDGET_EXCEEDED`). `flow-trace.jsonl` gains one
+OpenInference-shaped span per child plus a root `flow.orchestrate` span. Inspect
+it with `jq` — e.g. total cost:
+`jq -s 'map(.attributes["flow.cost_usd"] // 0) | add' flow-trace.jsonl`.
 
 ## User custom-agent example
 

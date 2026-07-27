@@ -94,7 +94,7 @@ export function armLine(label, arm) {
 	const excluded = arm.exclusion ? `  EXCLUDED ${arm.exclusion.reason}: ${exclusionText(arm)}` : "";
 	const judgeScore = arm.exclusion ? "n/a" : Number.isFinite(arm.judged?.score) ? arm.judged.score.toFixed(2) : "n/a";
 	const objScore = arm.exclusion ? "n/a" : scoreText(arm.objective.score ?? 0);
-	const cost = arm.costKnown === false ? "cost n/a" : `$${arm.cost.toFixed(4)}`;
+	const cost = arm.costKnown === true ? `$${arm.cost.toFixed(4)}` : "cost n/a";
 	const tokens = arm.tokenUsage?.known ? `${formatTokenCount(arm.tokenUsage.total)} tok` : "tokens n/a";
 	return `   ${label}  judge ${judgeScore}${arm.judged?.verdict === false ? "!" : ""}  obj ${objScore}${!arm.exclusion && arm.objective.pass ? "" : arm.exclusion ? "" : "!"}  ${cost}  ${tokens}  ${(arm.durationMs / 1000).toFixed(1)}s${excluded}`;
 }
@@ -106,7 +106,7 @@ export const pickArm = (a) => ({
 	objPass: a.exclusion ? null : a.objective.pass,
 	objScore: a.exclusion ? null : a.objective.score,
 	cost: a.cost,
-	costKnown: a.costKnown ?? true,
+	costKnown: a.costKnown === true,
 	tokens: a.tokenUsage,
 	generatedTokens: a.tokenUsage?.known ? a.tokenUsage.output : null,
 	durationMs: a.durationMs,
@@ -156,7 +156,7 @@ export function comparisonTotals(rows) {
 		plainTokens: aggregateTokenUsage(rows, "plain"),
 		flowsSeconds: rows.reduce((total, row) => total + row.flows.durationMs, 0) / 1000,
 		plainSeconds: rows.reduce((total, row) => total + row.plain.durationMs, 0) / 1000,
-		baselineCostKnown: rows.every((row) => row.plain.costKnown !== false),
+		baselineCostKnown: rows.every((row) => row.plain.costKnown === true),
 	};
 }
 

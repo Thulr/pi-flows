@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, activeBudgetExceeded, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, getFinalAssistantText, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
@@ -181,7 +181,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						if (!message.errorMessage && options.budget?.maxCostUsd !== undefined && turnUsage.costKnown === false) {
 							budgetUnobservable = true;
 							controls.terminate();
-						} else if (!message.errorMessage && budgetExceeded(options.budget)) {
+						} else if (!message.errorMessage && activeBudgetExceeded(options.budget)) {
 							budgetTerminated = true;
 							controls.terminate();
 						}

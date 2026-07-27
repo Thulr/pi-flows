@@ -186,6 +186,7 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 			detail: `${timeoutPlan.debugBudget ? "debug " : ""}arm timed out after ${effectiveTimeoutMs}ms (case budget ${timeoutPlan.caseTimeoutMs}ms)`,
 		}
 		: exclusionForRun({ reachedModel: objective.reachedModel, timeoutPlan });
+	const children = result?.details?.results ?? [];
 	const tokenUsage = sumTokenUsage(result);
 	return {
 		// Judged fields start explicitly empty; exactly one of applyJudgedRows /
@@ -199,11 +200,11 @@ async function runArm(kind, testCase, flow, signal, workspace, identity) {
 		answer: answerWithArtifacts(objective.answer || answerText(result), cwd, testCase.judgeArtifacts),
 		task,
 		modelName: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),
-		reportedModels: [...new Set((result?.details?.results ?? []).map((child) => child?.model).filter(Boolean))],
+		reportedModels: [...new Set(children.map((child) => child?.model).filter(Boolean))],
 		workspaceSnapshotId: workspace.snapshotId,
 		tokensTotal: tokenUsage.total,
 		tokenUsage,
-		costKnown: (result?.details?.results ?? []).every((child) => child?.usage?.costKnown !== false),
+		costKnown: children.length > 0 && children.every((child) => child?.usage?.costKnown === true),
 	};
 }
 
@@ -492,7 +493,6 @@ async function main() {
 		console.log("\nWARN Some arms could not complete (auth, credits, network, or timeout) - inconclusive infra, not a quality verdict.");
 	}
 }
-
 main().catch((error) => {
 	console.error(`compare failed: ${error?.stack ?? error}`);
 	process.exit(1);

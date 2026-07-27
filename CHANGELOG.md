@@ -25,10 +25,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   predeclared improvement or non-inferiority promotion margins. Arm order is
   counterbalanced across case/trial pairs.
 - Flow budgets now accept `maxGeneratedTokens` for an output-only ceiling.
-  Cost and token budgets stop children at completed model-response accounting
-  boundaries, which lets paired evaluations apply the same active resource
-  constraint to treatment and plain-Pi control arms. Cost ceilings fail closed
-  with `BUDGET_UNOBSERVABLE` when a provider omits cost telemetry.
+  Cost and generated-token budgets stop children at completed model-response
+  accounting boundaries, which lets paired evaluations apply the same active
+  resource constraint to treatment and plain-Pi control arms. The existing
+  total-token budget remains a between-child spawn gate. Cost ceilings fail
+  closed with `BUDGET_UNOBSERVABLE` when a provider omits cost telemetry.
 
 ### Changed
 

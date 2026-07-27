@@ -265,6 +265,20 @@ await new Promise(resolve => setTimeout(resolve, 5000));
 	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
 });
 
+test("plain Pi cost budgets fail closed when usage telemetry is absent", async () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "pi-flow-unmetered-baseline-"));
+	const command = path.join(dir, "pi-stub.mjs");
+	writeFileSync(command, `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({type:"message_end",message:{role:"assistant",content:[{type:"text",text:"unmetered"}],model:"stub"}})+"\\n");
+`);
+	chmodSync(command, 0o700);
+	const result = await runPlainPi({ task: "bounded task", cwd: dir, model: "stub", command, maxCostUsd: 1, timeoutMs: 2000, killGraceMs: 10 });
+	const child = result.details.results[0];
+	assert.equal(child.usage.costKnown, false);
+	assert.equal(child.stopReason, "budget_unobservable");
+	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
+});
+
 test("paired workspaces clone one immutable snapshot for both arms", () => {
 	const source = mkdtempSync(path.join(tmpdir(), "pi-flow-pair-source-"));
 	writeFileSync(path.join(source, "seed.txt"), "clean\n");

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { infraError } from "../evals/lib.mjs";
 import { __test } from "../extensions/pi-flows/index.ts";
+import { runFlow } from "./stub-harness.ts";
 
 test("budget helpers accumulate spend and trip each supported ceiling", () => {
 	const usage = (cost: number, input: number, output: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, cost, contextTokens: 0, turns: 1 });
@@ -35,4 +36,55 @@ test("eval treats a binding budget stop as an invalid outcome, not infrastructur
 		},
 	};
 	assert.equal(infraError(result), null);
+});
+
+test("generated-token budget stops the active child at a response boundary", async () => {
+	const startedAt = Date.now();
+	const { result } = await runFlow(
+		{ agent: "recon", task: "return a bounded answer", maxGeneratedTokens: 4, timeoutMs: 2_000 },
+		{ recon: { reply: "partial answer", holdOpenMs: 5_000 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.usage.output, 8);
+	assert.equal(child.stopReason, "budget_exceeded");
+	assert.equal(child.exitCode, 1);
+	assert.equal(child.error.code, "BUDGET_EXCEEDED");
+	assert.match(result.content[0].text, /Code: BUDGET_EXCEEDED/);
+	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
+});
+
+test("legacy total-token budgets remain a between-child spawn gate", async () => {
+	const { result } = await runFlow(
+		{ agent: "recon", task: "return one complete answer", maxTokens: 4, timeoutMs: 2_000 },
+		{ recon: { reply: "complete answer" } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.usage.input + child.usage.output, 20);
+	assert.equal(child.stopReason, "endTurn");
+	assert.equal(child.exitCode, 0);
+	assert.equal(child.error, undefined);
+	assert.match(result.content[0].text, /complete answer/);
+});
+
+test("cost budget fails closed when provider cost telemetry is absent", async () => {
+	const { result } = await runFlow(
+		{ agent: "recon", task: "return a cost-bounded answer", maxCostUsd: 1, timeoutMs: 2_000 },
+		{ recon: { reply: "unpriced answer", omitCost: true, holdOpenMs: 5_000 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.usage.costKnown, false);
+	assert.equal(child.stopReason, "budget_unobservable");
+	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
+	assert.match(result.content[0].text, /Code: BUDGET_UNOBSERVABLE/);
+});
+
+test("cost budget fails closed when provider usage telemetry is absent", async () => {
+	const { result } = await runFlow(
+		{ agent: "recon", task: "return a cost-bounded answer", maxCostUsd: 1, timeoutMs: 2_000 },
+		{ recon: { reply: "unmetered answer", omitUsage: true } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.usage.costKnown, false);
+	assert.equal(child.stopReason, "budget_unobservable");
+	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
 });

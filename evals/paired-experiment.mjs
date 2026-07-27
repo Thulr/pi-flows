@@ -32,7 +32,7 @@ export function parsePromotionRule(improvementMargin, nonInferiorityMargin) {
 }
 
 function constraintObservation(arm, constraint) {
-	if (constraint.kind === "cost") return { known: arm.costKnown !== false, value: arm.cost };
+	if (constraint.kind === "cost") return { known: arm.costKnown === true, value: arm.cost };
 	if (constraint.kind === "generated_tokens") return { known: arm.tokenUsage?.known === true, value: arm.tokenUsage?.output };
 	return { known: Number.isFinite(arm.durationMs), value: arm.durationMs };
 }
@@ -165,7 +165,7 @@ function metricSet(rows) {
 	return {
 		quality: clusteredPairedDelta(rows, (arm) => arm.judgeScore, "judge-score"),
 		reliability: pairedReliability(rows),
-		costUsd: resourceDelta((arm) => arm.costKnown === false ? null : arm.cost, "USD"),
+		costUsd: resourceDelta((arm) => arm.costKnown === true ? arm.cost : null, "USD"),
 		generatedTokens: resourceDelta((arm) => arm.generatedTokens, "tokens"),
 		totalTokens: resourceDelta((arm) => arm.tokens?.known === true ? arm.tokens.total : null, "tokens"),
 		endToEndLatencyMs: resourceDelta((arm) => arm.durationMs, "ms"),

@@ -65,7 +65,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
 | `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached at a completed model-response boundary, the active child stops and no further child spawns. |
-| `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached at a completed model-response boundary, the active child stops and no further child spawns. |
+| `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached, no further child spawns. |
 | `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across the flow tree. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
 | `traceFile` | (none) | Append an OpenInference-shaped JSON span per child (plus a root span) to this JSONL file — trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
@@ -84,7 +84,7 @@ voters, subtasks, worktree writers, debate participants, and dossier sections --
 not a per-call input. It is enforced by the runtime and surfaced read-only in
 `details.config`.
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross the ceiling; at that accounting boundary its child is stopped, and queued or subsequent children are refused. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero.
 
 ### Trace export (observability)
 

@@ -247,6 +247,13 @@ export function budgetExceeded(budget: FlowBudget | undefined): boolean {
 	return false;
 }
 
+export function activeBudgetExceeded(budget: FlowBudget | undefined): boolean {
+	if (!budget) return false;
+	if (budget.maxCostUsd !== undefined && budget.spentCost >= budget.maxCostUsd) return true;
+	if (budget.maxGeneratedTokens !== undefined && budget.spentGeneratedTokens >= budget.maxGeneratedTokens) return true;
+	return false;
+}
+
 export function chargeBudget(budget: FlowBudget | undefined, usage: UsageStats): void {
 	if (!budget) return;
 	budget.spentCost += usage.cost || 0;

@@ -58,6 +58,7 @@ let stopReason = "endTurn";
 let errorMessage;
 let extraEvents = [];
 let omitCost = false;
+let omitUsage = false;
 if (reply && typeof reply === "object") {
 	for (const [relativePath, content] of Object.entries(reply.writes ?? {})) {
 		const target = path.resolve(process.cwd(), relativePath);
@@ -77,6 +78,7 @@ if (reply && typeof reply === "object") {
 	if (typeof reply.errorMessage === "string") errorMessage = reply.errorMessage;
 	if (Array.isArray(reply.extraEvents)) extraEvents = reply.extraEvents;
 	omitCost = reply.omitCost === true;
+	omitUsage = reply.omitUsage === true;
 	reply = reply.reply;
 }
 if (reply === undefined) reply = `stub reply for ${agent}`;
@@ -87,7 +89,7 @@ const event = {
 	message: {
 		role: "assistant",
 		content: [{ type: "text", text: String(reply) }],
-		usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, ...(omitCost ? {} : { cost: { total: 0.0001 } }), totalTokens: 20 },
+		...(omitUsage ? {} : { usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, ...(omitCost ? {} : { cost: { total: 0.0001 } }), totalTokens: 20 } }),
 		model,
 		stopReason,
 		...(errorMessage ? { errorMessage } : {}),
