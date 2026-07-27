@@ -215,10 +215,10 @@ async function runCases(selected, selectedCalibration, flow) {
 				const tokens = sumTokens(result);
 				totalCost += cost;
 				if (excludedReason === "infra") sawInfraError = true;
+				const runtimeTrace = runtimeTraceEvidence(result, rel(RUNTIME_TRACE), traceContext);
+				const scoreFamilies = runtimeScoreFamilies({ result, thrown, objective, trace: runtimeTrace });
 
 				if (!excludedReason) {
-					const runtimeTrace = runtimeTraceEvidence(result, rel(RUNTIME_TRACE), traceContext);
-					const scoreFamilies = runtimeScoreFamilies({ result, thrown, objective, trace: runtimeTrace });
 					thulr.appendCaseSpans(TRACE, caseSpanFields(testCase, {
 						answer,
 						label: objective.pass,
@@ -240,8 +240,6 @@ async function runCases(selected, selectedCalibration, flow) {
 				}
 
 				const durationMs = endedAt - startedAt;
-				const runtimeTrace = runtimeTraceEvidence(result, rel(RUNTIME_TRACE), traceContext);
-				const scoreFamilies = runtimeScoreFamilies({ result, thrown, objective, trace: runtimeTrace });
 				for (const line of caseLines({ name: identity.trialId, objective, excludedReason, timeoutPlan, reachedModel, cost, durationMs, hard: testCase.hard })) console.log(line);
 				summaries.push({
 					...identity,

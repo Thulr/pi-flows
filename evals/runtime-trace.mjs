@@ -65,11 +65,14 @@ export function runtimeScoreFamilies({ result, thrown, objective, trace }) {
 	const executionPass = !thrown && Boolean(result) && !result?.details?.error && !childFailures;
 	const outcomeAvailable = typeof objective?.pass === "boolean";
 	const policyErrors = errors.filter((error) => POLICY_ERROR_CODES.has(error?.code));
+	const executionReason = thrown?.message
+		? traceIdentifier(thrown.message)
+		: result?.details?.error?.code ?? (childFailures ? "child execution failed" : null);
 	return {
 		execution: {
 			available: true,
 			pass: executionPass,
-			reason: thrown?.message ?? result?.details?.error?.code ?? (childFailures ? "child execution failed" : null),
+			reason: executionReason,
 		},
 		verifiedOutcome: {
 			available: outcomeAvailable,

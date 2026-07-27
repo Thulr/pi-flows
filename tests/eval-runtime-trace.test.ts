@@ -77,6 +77,17 @@ test("runtime score families keep execution, outcome, and policy compliance sepa
 	assert.equal(scores.traceHealth.pass, true);
 });
 
+test("runtime score-family diagnostics redact secrets and home paths", () => {
+	const scores = runtimeScoreFamilies({
+		thrown: new Error(`provider failed under ${homedir()} with token=trace-private-value`),
+		objective: { pass: false, score: 0 },
+		trace: { health: "missing" },
+	});
+	assert.match(scores.execution.reason, /REDACTED_SECRET/);
+	assert.doesNotMatch(scores.execution.reason, /trace-private-value/);
+	assert.doesNotMatch(scores.execution.reason, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
 test("flow execution returns an exact redacted runtime-trace root link", async () => {
 	const context = runtimeTraceContext("run-abc", {
 		caseId: "case-a",
