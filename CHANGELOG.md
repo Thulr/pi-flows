@@ -15,12 +15,15 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   synthesis, persistence, or merge. Stable contract identities reject missing
   and stale returns; partial/blocked statuses fail closed unless explicitly
   included; provenance-bearing compatibility envelopes keep legacy prose
-  callers working.
+  callers working. Worktree conflict resolution receives the validated
+  evidence/artifact provenance from both sides of the merge.
 - Eval outputs now link stable run/case/trial/arm identities to the exact
   runtime trace and root span. Single-arm reliability and paired-comparison
   artifacts retain trace-health evidence plus separate execution,
   verified-outcome, and policy-compliance score families; missing trace
-  telemetry no longer masquerades as an agent failure.
+  telemetry no longer masquerades as an agent failure. Trace context, paths,
+  and write failures follow the same redaction and bounding policy as other
+  returned details.
 - `flow` now accepts a typed delegation `contract` in single, chain, and
   evaluate paths. Children return a validated, usage-enriched
   `pi-flows.return-envelope.v1`; JSON Schema, artifact path, and SHA-256 digest

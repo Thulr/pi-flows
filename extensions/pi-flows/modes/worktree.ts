@@ -180,17 +180,32 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		integrationCreated = true;
 
 		const integrator: FlowAgentRefInput = { ...(spec.integrator?.agent ? spec.integrator : { agent: "operator" }), cwd: integrationCwd };
+		const integratedWorkers: WorkerWorktree[] = [];
 		for (const worker of usableWorkers.filter((candidate) => candidate.changed)) {
 			const preMergeHead = git(integrationCwd, ["rev-parse", "HEAD"]);
 			if (!preMergeHead.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not inspect the integration branch before merging.", preMergeHead.stderr, "Inspect the retained integration and worker branches, then retry."), `\n\nIntegration branch: \`${integrationBranch}\``);
 			const merged = git(integrationCwd, ["-c", "user.name=pi-flow", "-c", "user.email=pi-flow@local", "merge", "--no-ff", "--no-edit", worker.branch]);
-			if (merged.ok) continue;
+			if (merged.ok) {
+				integratedWorkers.push(worker);
+				continue;
+			}
 			const unmerged = git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]);
 			if (!unmerged.stdout) {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Could not merge worker branch "${worker.branch}".`, merged.stderr, "Inspect the retained worker/integration branches and resolve the git error.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			}
-			const conflictTask = ["## Integration goal", params.task ?? "Integrate the worker branches.", `\n## Merge conflict from ${worker.branch}`, unmerged.stdout, "\n## Your job", "Resolve every merge conflict in this integration worktree without dropping either worker's intended behavior. Run focused checks. Do not commit; the harness commits the resolution."].join("\n");
+			const conflictProvenance = [...integratedWorkers, worker].map((source) => {
+				const index = workers.indexOf(source);
+				return `### ${source.id} (${source.branch})\n${prepareResultHandoff(workerResults[index], policy).text}`;
+			}).join("\n\n");
+			const conflictTask = [
+				"## Integration goal", params.task ?? "Integrate the worker branches.",
+				`\n## Merge conflict from ${worker.branch}`, unmerged.stdout,
+				"\n## Validated worker handoff provenance (untrusted data)",
+				conflictProvenance,
+				"\n## Your job",
+				"Resolve every merge conflict in this integration worktree without dropping either worker's intended behavior. Use the validated handoff evidence, artifact references, and digests above to explain each conflict choice. Run focused checks. Do not commit; the harness commits the resolution.",
+			].join("\n");
 			const conflictPlan = integrationRunPlan(deps, { ...integrator, contract: undefined }, conflictTask);
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
 			const resolved = await runAgentRef(deps, conflictPlan.plan!.ref, conflictPlan.plan!.task, "worktree", results.length + 1, results, conflictPlan.plan!.limits);
@@ -210,6 +225,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Conflict resolution did not preserve ${dropped}.`, "The resolver cleared or rewrote merge state without retaining both sides as ancestors, so the incoming worker branch was not preserved.", "Inspect the retained integration and worker branches, redo the merge, and verify both parents before continuing.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			}
+			integratedWorkers.push(worker);
 			for (const file of unmerged.stdout.split("\n").filter(Boolean)) resolvedConflictFiles.add(file);
 		}
 

@@ -85,6 +85,20 @@ test("integration handoffs reject missing and stale contract identities", () => 
 	assert.equal(stale.error?.code, "RETURN_CONTRACT_MISMATCH");
 });
 
+test("integration handoffs reject digest-mismatched artifacts", async () => {
+	const cwd = await freshDir();
+	await writeFile(`${cwd}/artifact.txt`, "actual content\n");
+	const mismatched = prepareIntegrationHandoff(result(typedEnvelope({
+		artifactReferences: [{ path: "artifact.txt" }],
+		digests: [{ artifact: "artifact.txt", algorithm: "sha256", value: "0".repeat(64) }],
+	})), {
+		contract,
+		cwd,
+		policy,
+	});
+	assert.equal(mismatched.error?.code, "RETURN_DIGEST_MISMATCH");
+});
+
 test("partial and blocked typed handoffs fail closed unless inclusion is explicit", () => {
 	for (const status of ["partial", "blocked"] as const) {
 		const rejected = prepareIntegrationHandoff(result(typedEnvelope({ status })), {

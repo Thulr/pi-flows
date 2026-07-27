@@ -1,36 +1,24 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
+import { sanitizeText } from "../extensions/pi-flows/sanitize.ts";
+import { stableTraceIds } from "../extensions/pi-flows/trace-identity.mjs";
+
+const traceIdentifier = (value) => sanitizeText(String(value), { recordContent: true, redactSecrets: true }, 256);
 
 export function evalRunId(requested) {
 	const value = requested?.trim();
-	return value || randomUUID();
+	return traceIdentifier(value || randomUUID());
 }
 
 export function runtimeTraceContext(runId, { caseId, trialId, trialIndex, arm, attempt }) {
 	return {
-		runId,
-		caseId,
-		trialId,
+		runId: traceIdentifier(runId),
+		caseId: traceIdentifier(caseId),
+		trialId: traceIdentifier(trialId),
 		...(trialIndex === undefined ? {} : { trialIndex }),
-		...(arm ? { arm } : {}),
+		...(arm ? { arm: traceIdentifier(arm) } : {}),
 		...(attempt === undefined ? {} : { attempt }),
 	};
-}
-
-function stableIds(context, mode) {
-	const identity = JSON.stringify({
-		schemaVersion: "pi-flows.runtime-trace.v1",
-		runId: context.runId,
-		caseId: context.caseId,
-		trialId: context.trialId,
-		trialIndex: context.trialIndex ?? null,
-		arm: context.arm ?? null,
-		attempt: context.attempt ?? null,
-		mode,
-	});
-	const traceId = createHash("sha256").update(identity).digest("hex").slice(0, 32);
-	const rootSpanId = createHash("sha256").update(`${traceId}:root`).digest("hex").slice(0, 32);
-	return { traceId, rootSpanId };
 }
 
 export function runtimeTraceEvidence(result, traceFile, context) {
@@ -109,7 +97,7 @@ export function appendProcessRuntimeTrace(traceFile, context, {
 	executionSuccess,
 	attributes = {},
 }) {
-	const { traceId, rootSpanId } = stableIds(context, mode);
+	const { traceId, rootSpanId } = stableTraceIds(context, mode);
 	const span = {
 		trace_id: traceId,
 		span_id: rootSpanId,

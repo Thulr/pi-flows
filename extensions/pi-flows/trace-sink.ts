@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import type {
@@ -8,27 +8,26 @@ import type {
 	FlowTraceLink,
 	RecordSpan,
 } from "./types.ts";
-import { capModelVisibleText, isFailed, resultText, safePath } from "./sanitize.ts";
+import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
+import { stableTraceIds } from "./trace-identity.mjs";
+
+export { stableTraceIds } from "./trace-identity.mjs";
 
 export interface TraceSink {
 	record: RecordSpan;
 	finalize: (status: { ok: boolean }, attributes?: Record<string, unknown>) => Promise<FlowTraceLink>;
 }
 
-export function stableTraceIds(context: FlowTraceContext, mode: string): { traceId: string; rootSpanId: string } {
-	const identity = JSON.stringify({
-		schemaVersion: "pi-flows.runtime-trace.v1",
-		runId: context.runId,
-		caseId: context.caseId,
-		trialId: context.trialId,
-		trialIndex: context.trialIndex ?? null,
-		arm: context.arm ?? null,
-		attempt: context.attempt ?? null,
-		mode,
-	});
-	const traceId = createHash("sha256").update(identity).digest("hex").slice(0, 32);
-	const rootSpanId = createHash("sha256").update(`${traceId}:root`).digest("hex").slice(0, 32);
-	return { traceId, rootSpanId };
+function storedTraceContext(context: FlowTraceContext, policy: CapturePolicy): FlowTraceContext {
+	const identifier = (value: string) => sanitizeText(value, { ...policy, recordContent: true }, 256);
+	return {
+		runId: identifier(context.runId),
+		caseId: identifier(context.caseId),
+		trialId: identifier(context.trialId),
+		...(context.trialIndex === undefined ? {} : { trialIndex: context.trialIndex }),
+		...(context.arm === undefined ? {} : { arm: identifier(context.arm) }),
+		...(context.attempt === undefined ? {} : { attempt: context.attempt }),
+	};
 }
 
 function traceContextAttributes(context?: FlowTraceContext): Record<string, unknown> {
@@ -47,6 +46,8 @@ function traceContextAttributes(context?: FlowTraceContext): Record<string, unkn
 export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, traceLabel?: string, context?: FlowTraceContext): TraceSink {
 	const ids = context ? stableTraceIds(context, mode) : { traceId: randomUUID().replace(/-/g, ""), rootSpanId: randomUUID().replace(/-/g, "") };
 	const { traceId, rootSpanId } = ids;
+	const storedContext = context ? storedTraceContext(context, policy) : undefined;
+	const storedTraceLabel = traceLabel ? sanitizeText(traceLabel, { ...policy, recordContent: true }, 256) : undefined;
 	const rootStart = Date.now();
 	let writeError: string | undefined;
 
@@ -66,7 +67,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			const attributes: Record<string, unknown> = {
 				"openinference.span.kind": "AGENT",
 				"flow.mode": mode,
-				"flow.trace_label": traceLabel,
+				"flow.trace_label": storedTraceLabel,
 				"flow.agent": result.agent,
 				"flow.agent_source": result.agentSource,
 				"flow.step": result.step,
@@ -75,7 +76,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				"flow.duration_ms": result.durationMs,
 				"flow.stop_reason": result.stopReason,
 				"flow.error_code": result.error?.code,
-				...traceContextAttributes(context),
+				...traceContextAttributes(storedContext),
 				"llm.model_name": result.model,
 				"llm.token_count.prompt": result.usage.input,
 				"llm.token_count.completion": result.usage.output,
@@ -109,8 +110,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				attributes: {
 					"openinference.span.kind": "CHAIN",
 					"flow.mode": mode,
-					"flow.trace_label": traceLabel,
-					...traceContextAttributes(context),
+					"flow.trace_label": storedTraceLabel,
+					...traceContextAttributes(storedContext),
 					...attributes,
 					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
 					"flow.execution_success": status.ok,
@@ -118,11 +119,11 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			});
 			return {
 				health: writeError ? "missing" : "recorded",
-				traceFile: safePath(traceFile) ?? traceFile,
+				traceFile: sanitizeText(safePath(traceFile) ?? traceFile, { ...policy, recordContent: true }, 1024),
 				traceId,
 				rootSpanId,
-				...(context ? { context } : {}),
-				...(writeError ? { error: writeError } : {}),
+				...(storedContext ? { context: storedContext } : {}),
+				...(writeError ? { error: sanitizeText(writeError, { ...policy, recordContent: true }, 1024) } : {}),
 			};
 		},
 	};

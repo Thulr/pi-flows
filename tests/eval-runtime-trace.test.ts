@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { readFile, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -106,6 +106,34 @@ test("flow execution returns an exact redacted runtime-trace root link", async (
 	assert.equal(root.attributes["flow.run_id"], "run-abc");
 	assert.equal(root.attributes["flow.trial_id"], "case-a::trial-003");
 	assert.doesNotMatch(JSON.stringify(spans), /private-value/);
+});
+
+test("trace identifiers, paths, and write failures honor the redaction policy", async () => {
+	const secret = "secret=trace-private-value";
+	const context = runtimeTraceContext(`run-${secret}`, {
+		caseId: `case-${secret}`,
+		trialId: `trial-${secret}`,
+		trialIndex: 1,
+		arm: `arm-${secret}`,
+	});
+	const traceFile = path.join(homedir(), `trace-${secret}`, "missing", "runtime.jsonl");
+	const { result } = await runFlow(
+		{
+			agent: "recon",
+			task: "return a safe result",
+			traceFile,
+			traceContext: context,
+			recordContent: true,
+			redactSecrets: true,
+		},
+		{ recon: "safe result" },
+	);
+	const stored = JSON.stringify(result.details.trace);
+	assert.equal(result.details.trace?.health, "missing");
+	assert.doesNotMatch(stored, /trace-private-value/);
+	assert.doesNotMatch(stored, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.match(result.details.trace?.context?.runId ?? "", /REDACTED_SECRET/);
+	assert.match(result.details.trace?.traceFile ?? "", /^~/);
 });
 
 test("eval runner links repeated trials in the raw reliability artifact", async () => {

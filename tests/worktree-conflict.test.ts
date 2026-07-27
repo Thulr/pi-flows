@@ -27,7 +27,7 @@ async function runFlow(params: any, plan: Record<string, unknown>, cwd: string) 
 		{ cwd, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } },
 	);
 	const log = await readFile(path.join(cwd, "calls.jsonl"), "utf8").catch(() => "");
-	const calls: Array<{ agent: string }> = log.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	const calls: Array<{ agent: string; task: string }> = log.split("\n").filter(Boolean).map((line) => JSON.parse(line));
 	return { result, calls, text: result.content[0]?.text ?? "" };
 }
 
@@ -63,6 +63,10 @@ test("worktree: rejects a conflict resolution that aborts and drops the incoming
 	);
 	assert.equal(result.details.error.code, "WORKTREE_INTEGRATION_FAILED", text);
 	assert.equal(calls.filter((call) => call.agent === "debrief").length, 1, "integration review must not run after a dropped worker branch");
+	const conflictCall = calls.find((call) => call.agent === "debrief")!;
+	assert.match(conflictCall.task, /Validated worker handoff provenance/);
+	assert.match(conflictCall.task, /A_DONE/);
+	assert.match(conflictCall.task, /B_DONE/);
 	assert.match(text, /incoming worker branch was not preserved/i);
 
 	const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd, encoding: "utf8" })
