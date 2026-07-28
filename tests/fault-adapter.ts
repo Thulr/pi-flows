@@ -22,6 +22,7 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
+import { budgetAttributes } from "../extensions/pi-flows/trace-attributes.ts";
 import { budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type FlowAgent, type FlowBudget, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
 export type FaultKind = "delay" | "loss" | "duplicate" | "reorder" | "failure" | "stale";
@@ -179,7 +180,7 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 				name: "child.refused",
 				ok: false,
 				scope: childOptions.scope,
-				attributes: { "flow.budget.refused_agent": agent },
+				attributes: { "flow.budget.refused_agent": agent, ...budgetAttributes(exhausted) },
 			});
 			const refused = baseResult(childOptions, "", { input: 0, output: 0, cost: 0 });
 			refused.exitCode = 1;

@@ -69,6 +69,9 @@ test("every scenario is classified and carries explicit opportunity denominators
 
 test("benign controls run through the same harness so false containment stays measurable", async () => {
 	await ran;
+	// A scenario that threw is absent from `outcomes`; reporting rates over what
+	// survived would quietly shrink the denominators the suite exists to state.
+	assert.equal(outcomes.length, scenarios.length, `${failures.size} scenario(s) threw: ${[...failures.keys()].join(", ")}`);
 	const report = faultPortfolioReport(outcomes);
 	assert.ok(report.controls >= 3, `expected benign controls in the suite, saw ${report.controls}`);
 	assert.ok(report.controlOpportunities > 0, "controls must contribute a false-containment denominator");

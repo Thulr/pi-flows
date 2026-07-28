@@ -33,7 +33,6 @@ export interface FaultPortfolioReport {
  * reported: containment without a false-containment denominator is not evidence
  * of judgement, only of caution.
  *
-
  * @param outcomes each scenario paired with the checks its run actually
  *   produced. Passing the manifest's own `expected` blocks here would make every
  *   rate a restatement of the declarations.

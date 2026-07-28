@@ -381,4 +381,4 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 
 // The fan-out/dispatch plumbing moved to dispatch.ts to keep this module focused
 // on the seam's production adapter. Handlers import both from here.
-export { mapWithConcurrency, runAgentFanout, runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./dispatch.ts";
+export { mapWithConcurrency, runAgentFanout, runAgentRef, type AgentFanoutItem, type AgentRunLimits, type AgentRunPlacement } from "./dispatch.ts";

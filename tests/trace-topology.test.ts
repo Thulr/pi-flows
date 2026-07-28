@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { formatTraceReport, parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete, type TraceSpanRecord } from "../extensions/pi-flows/trace.ts";
-import { promptVersion } from "../extensions/pi-flows/trace-attributes.ts";
+import { constraintIdentifiers, promptVersion } from "../extensions/pi-flows/trace-attributes.ts";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import type { DelegationContract } from "../extensions/pi-flows/types.ts";
@@ -112,9 +112,17 @@ test("child spans identify prompt version, allowed tools, authority, contract, a
 	assert.equal(constraintIds.length, contract.constraints.length + contract.acceptanceChecks.length);
 	assert.match(constraintIds[0], /^constraint\.1:[a-f0-9]{12}$/);
 	assert.match(constraintIds.at(-1)!, /^acceptance\.1:[a-f0-9]{12}$/);
-	// Content-derived, not positional: two different constraints cannot share an id,
-	// which is what makes "was this one preserved?" answerable across hops.
+	// Content-derived, not positional, in both directions: two different
+	// constraints cannot share a digest, and one constraint keeps its digest when
+	// its position moves. Positional ids would satisfy the first and break the
+	// second — and it is the second that makes "was this one preserved?"
+	// answerable once a constraint is reordered or inserted before.
 	assert.equal(new Set(constraintIds.map((id) => id.split(":")[1])).size, constraintIds.length);
+	const digestOf = (target: string, from: DelegationContract) =>
+		constraintIdentifiers(from)[from.constraints.indexOf(target)].split(":")[1];
+	const reordered: DelegationContract = { ...contract, constraints: [...contract.constraints].reverse() };
+	assert.equal(digestOf("Cite every claim.", reordered), digestOf("Cite every claim.", contract));
+	assert.notEqual(constraintIdentifiers(reordered)[0], constraintIdentifiers(contract)[0], "the id still records where the constraint sits");
 
 	// The prompt version identifies the prompt that actually ran — compared against
 	// the discovered agent's own system prompt, so a digest of the wrong string fails.
