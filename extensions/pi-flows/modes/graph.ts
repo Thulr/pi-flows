@@ -1,4 +1,4 @@
-import { MAX_GRAPH_NODES, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
@@ -70,7 +70,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				placeholderTask: node.task,
 				// A node's dependencies are links, not parentage: node b consumed node
 				// a's output but was scheduled by the wave, not spawned by a.
-				scope: { key: node.id, dependsOn: (node.dependsOn ?? []).map((dependency: string) => `${dependency}.handoff`) },
+				scope: { key: encodeAuthorKey(node.id), dependsOn: (node.dependsOn ?? []).map((dependency: string) => `${encodeAuthorKey(dependency)}.handoff`) },
 			});
 			if (planned.error) {
 				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };

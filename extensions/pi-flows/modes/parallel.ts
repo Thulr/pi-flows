@@ -52,7 +52,9 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 		(done, total) => `Flow parallel: ${done}/${total} done`,
 		{ key: "tasks", name: "parallel tasks" },
 	);
-	const handoffError = acceptIntegrationResults(deps, plans, results);
+	// Validated, but no boundary: these outputs go into the response the caller
+	// reads, and parallel spawns nothing that consumes them.
+	const handoffError = acceptIntegrationResults(deps, plans, results, undefined, { consumed: false });
 	if (handoffError) {
 		return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("parallel")(results, handoffError) };
 	}

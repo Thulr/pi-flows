@@ -15,6 +15,7 @@ export type {
 	RecordEvent,
 	SpanStage,
 } from "./trace-scope.ts";
+export { encodeAuthorKey } from "./trace-scope.ts";
 
 export const PI_FLOWS_VERSION = "0.3.0";
 

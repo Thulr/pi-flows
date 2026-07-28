@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { MAX_WORKFLOW_PHASES, flowError, formatFlowError, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_WORKFLOW_PHASES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
@@ -33,7 +33,7 @@ function workflowDigest(task: string | undefined, spec: any): string {
 }
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
-const phaseStageKey = (phaseId: string) => `phase-${phaseId}`;
+const phaseStageKey = (phaseId: string) => `phase-${encodeAuthorKey(phaseId)}`;
 const phaseStateKey = (phaseId: string) => `${phaseStageKey(phaseId)}.state`;
 const phaseApprovalKey = (phaseId: string) => `${phaseStageKey(phaseId)}.approval`;
 function phaseWorkKey(phaseId: string): string {

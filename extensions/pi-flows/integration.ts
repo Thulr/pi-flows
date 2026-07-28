@@ -268,11 +268,24 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 	emitHandoff(record, deps, handoff, result, plan.scope, prepared.text, prepared.warnings, plan.contract, rejection);
 }
 
+/**
+ * Validate a child's return and, when another agent will read it, record the
+ * boundary it crossed.
+ *
+ * Validation always runs: an envelope that fails its contract, schema, or digest
+ * checks must fail closed whether or not anything downstream consumes it. Only
+ * the evidence is conditional, because a handoff event asserts that one agent's
+ * output became another agent's input. `parallel` returns its outputs to the
+ * caller and spawns nothing that reads them, so recording one there would invent
+ * a boundary — and would measure it in `prepareResultHandoff` bytes the caller's
+ * response never used.
+ */
 export function acceptIntegrationResult(
 	deps: ModeDeps,
 	plan: IntegrationRunPlan,
 	result: FlowRunResult,
 	incompletePolicy: IncompleteHandoffPolicy = deps.params.incompleteHandoffPolicy ?? "fail",
+	options: { consumed?: boolean } = {},
 ): FlowError | null {
 	const prepared = prepareIntegrationHandoff(result, {
 		contract: plan.contract,
@@ -280,20 +293,33 @@ export function acceptIntegrationResult(
 		policy: deps.policy,
 		incompletePolicy,
 	});
-	recordHandoffEvidence(deps, plan, result, prepared.error, prepared.rejected);
+	if (options.consumed !== false) recordHandoffEvidence(deps, plan, result, prepared.error, prepared.rejected);
 	return prepared.error ?? null;
 }
 
+/**
+ * Record the boundary for a result already accepted with `consumed:false`.
+ *
+ * For consumers that only learn afterwards whether anything downstream will read
+ * the output — an orchestrate verdict is a handoff when it sends the answer back
+ * for revision, and the end of the run when it passes.
+ */
+export function recordIntegrationHandoff(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult): void {
+	recordHandoffEvidence(deps, plan, result);
+}
+
+/** @see acceptIntegrationResult for what `consumed:false` withholds, and why. */
 export function acceptIntegrationResults(
 	deps: ModeDeps,
 	plans: IntegrationRunPlan[],
 	results: FlowRunResult[],
 	incompletePolicy: IncompleteHandoffPolicy = deps.params.incompleteHandoffPolicy ?? "fail",
+	options: { consumed?: boolean } = {},
 ): FlowError | null {
 	for (let index = 0; index < results.length; index += 1) {
 		const result = results[index];
 		if (!result || result.error || result.exitCode !== 0) continue;
-		const error = acceptIntegrationResult(deps, plans[index], result, incompletePolicy);
+		const error = acceptIntegrationResult(deps, plans[index], result, incompletePolicy, options);
 		if (error) return error;
 	}
 	return null;

@@ -61,7 +61,7 @@ const envelope = (data: unknown = { answer: "package.json" }, overrides: Record<
 	...overrides,
 });test("trace health counts expected against observed spans and the report surfaces the gap", async () => {
 	const { stubDir, result } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", traceFile: TRACE, graph: { nodes: [{ id: "alpha", agent: "recon", task: "A" }, { id: "beta", agent: "recon", task: "use {node.alpha}", dependsOn: ["alpha"] }] } },
 		{ recon: "done" },
 	);
 	const link = result.details.trace!;
@@ -709,5 +709,38 @@ test("redaction that shortens a dependency list is not truncation", async () => 
 	assert.match(declared, /REDACTED/, "the secret-shaped id is redacted on the way out");
 	assert.ok(declared.length < 200, "redaction brought the list well under the cap");
 	assert.equal(attr(beta, "flow.depends_on_truncated"), undefined, "a complete stored list is not truncated");
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+});
+
+test("an author id cannot claim a key the framework derives", async () => {
+	// A node may legitimately be named `source.handoff`. Unescaped it answers to
+	// the same key as node `source`'s handoff event, so a dependency on `source`
+	// resolves to whichever registered first — and the gate accepts the link
+	// because both spans advertise the key.
+	const { stubDir, result } = await runFlow(
+		{
+			task: "map it",
+			traceFile: TRACE,
+			concurrency: 1,
+			graph: {
+				nodes: [
+					{ id: "source", agent: "recon", task: "a" },
+					{ id: "source.handoff", agent: "recon", task: "b" },
+					{ id: "sink", agent: "recon", task: "use {node.source}", dependsOn: ["source"] },
+				],
+			},
+		},
+		{ recon: "node output" },
+	);
+	assert.equal(result.details.error, undefined);
+	const spans = await readSpans(stubDir);
+	const keys = spans.map((span) => attr(span, "flow.unit_key")).filter(Boolean);
+	assert.equal(new Set(keys).size, keys.length, "no two units may answer to one key");
+
+	// The dependency resolves to the real handoff of node `source`, not to the
+	// unrelated child that happens to be named after it.
+	const sink = spans.find((span) => attr(span, "flow.unit_key") === "sink")!;
+	const realHandoff = spans.find((span) => attr(span, "flow.unit_key") === "source.handoff" && attr(span, "flow.event_kind") === "handoff")!;
+	assert.equal(attr(sink, "flow.depends_on_span_ids"), realHandoff.span_id);
 	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });

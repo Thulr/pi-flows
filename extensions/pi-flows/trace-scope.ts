@@ -126,6 +126,23 @@ export function encodeUnitKey(key: string): string {
 	return key.replaceAll("%", "%25").replaceAll(",", "%2C");
 }
 
+/**
+ * Escape an author-supplied identifier before it becomes part of a unit key.
+ *
+ * The framework derives keys by suffixing a dot — `<unit>.handoff`,
+ * `<unit>.check`, `<phase>.approval`. A graph node, workflow phase, or worktree
+ * task may legitimately be named `source.handoff`, and unescaped it would answer
+ * to the same name as node `source`'s handoff event. A dependency on `source`
+ * would then resolve to whichever registered first, and the gate would accept
+ * the link because both spans advertise the key.
+ *
+ * Dots the framework writes stay literal; only the author's are escaped, so the
+ * two namespaces cannot overlap.
+ */
+export function encodeAuthorKey(id: string): string {
+	return id.replaceAll("%", "%25").replaceAll(".", "%2E");
+}
+
 export function emptyTraceHealth(): FlowTraceHealth {
 	return { expectedSpans: 0, observedSpans: 0, droppedSpans: 0, redactedSpans: 0, failedExports: 0 };
 }

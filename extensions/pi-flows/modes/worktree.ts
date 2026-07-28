@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
@@ -82,7 +82,7 @@ export function workerRecoveryDetails(workers: Array<{ branch: string; cwd: stri
 }
 
 /** One place a worker's unit key is derived, so a dependency link cannot name a worker that was never registered. */
-const workerKey = (id: string) => `worker-${id}`;
+const workerKey = (id: string) => `worker-${encodeAuthorKey(id)}`;
 const BRANCHES_KEY = "worktrees-created";
 
 export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
@@ -249,7 +249,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				name: "worktree.merge_conflict",
 				ok: false,
 				// The observation the resolver was dispatched to answer.
-				scope: { key: `conflict-${worker.id}.observed`, dependsOn: [workerKey(worker.id)] },
+				scope: { key: `conflict-${encodeAuthorKey(worker.id)}.observed`, dependsOn: [workerKey(worker.id)] },
 				attributes: { "flow.worktree.worker_id": worker.id, "flow.worktree.conflict_file_count": unmerged.stdout.split("\n").filter(Boolean).length },
 			});
 			const conflictPlan = integrationRunPlan(deps, integrator, conflictTask, {

@@ -508,15 +508,20 @@ test("a fan-out handoff is attributable to the child that produced it", async ()
 	// own scope. If the merged placement never reached the item, these events land
 	// at the root with no key and no producer.
 	const { stubDir } = await runFlow(
-		{ task: "collect", traceFile: TRACE, concurrency: 1, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "finding" },
+		{
+			task: "collect",
+			traceFile: TRACE,
+			concurrency: 1,
+			dossier: { sections: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }], debrief: { agent: "debrief" } },
+		},
+		{ recon: "finding", debrief: "synthesis" },
 	);
 	const spans = await readSpans(stubDir);
-	const stage = byRole(spans, "stage").find((span) => attr(span, "flow.stage_key") === "tasks")!;
+	const stage = byRole(spans, "stage").find((span) => attr(span, "flow.stage_key") === "sections")!;
 	for (const index of [1, 2]) {
-		const child = unit(spans, `tasks.${index}`)!;
-		const handoff = unit(spans, `tasks.${index}.handoff`);
-		assert.ok(handoff, `tasks.${index} must record a keyed handoff`);
+		const child = unit(spans, `section-${index}`)!;
+		const handoff = unit(spans, `section-${index}.handoff`);
+		assert.ok(handoff, `section-${index} must record a keyed handoff`);
 		assert.equal(handoff.parent_span_id, stage.span_id, "the handoff belongs to the fan-out stage, not the root");
 		assert.equal(attr(handoff, "flow.depends_on_span_ids"), child.span_id);
 	}

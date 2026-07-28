@@ -230,6 +230,16 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   fallback rebuild the number out of the very keys it was meant to check.
   Presence and readability are now separate questions, and a stated value
   nothing can read invalidates the trace.
+- Author-supplied identifiers — graph node ids, workflow phase ids, worktree
+  task ids — are escaped before becoming unit keys, so they cannot collide with
+  the keys the framework derives. A node named `source.handoff` used to answer
+  to the same key as node `source`'s handoff event, and a dependency on
+  `source` resolved to whichever registered first.
+- `parallel` validates its children's returns but no longer records handoff
+  events for them. Its outputs go into the response the caller reads and it
+  spawns nothing that consumes them, so there was no boundary to record — and
+  the bytes were measured on a handoff envelope the response never carried.
+  Validation still fails closed; only the evidence is withheld.
 - `evaluate` records a handoff only where one was crossed. A failed check on the
   final iteration ends the run, so neither the artifact nor the check output
   reaches another agent; a critic REVISE on the final iteration returns to the
