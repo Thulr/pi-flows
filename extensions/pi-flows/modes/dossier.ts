@@ -80,7 +80,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);
 	results.push(debriefed);
 	if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow dossier: synthesizer failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("dossier")(results) };
-	const debriefHandoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);
+	const debriefHandoffError = acceptIntegrationResult(deps, planned.plan!, debriefed, undefined, { consumed: false });
 	if (debriefHandoffError) return { content: [{ type: "text", text: formatFlowError(debriefHandoffError) }], details: deps.makeDetails("dossier")(results, debriefHandoffError) };
 
 	return {
