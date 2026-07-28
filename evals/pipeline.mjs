@@ -20,9 +20,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as thulr from "./thulr.mjs";
-import { caseSplit } from "./calibration-coverage.mjs";
+import { caseSplit, COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
 import { buildCalibrationReport, calibrationGateIssues, calibrationRecords, formatCalibrationReport, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
-import { calibrationKey, rubricDigest, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
+import { calibrationKey, rubricDigest, thresholdFingerprint, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
 import { buildReviewReport, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
 import { buildReliabilityReport, formatReliabilitySummary } from "./reliability.mjs";
 
@@ -255,6 +255,7 @@ export function assessCalibration({
 	criticalDimensions = [],
 	criticalMissRateCap = DEFAULT_CRITICAL_MISS_RATE_CAP,
 	abstentionBand,
+	guardrails = {},
 	trace,
 	out = null,
 	log = console.log,
@@ -293,6 +294,7 @@ export function assessCalibration({
 	const records = calibrationRecords({ cases, verdicts, humanTruth, abstentionBand });
 	const key = calibrationKey({
 		...keyInputs,
+		thresholds: thresholdFingerprint({ ...guardrails, abstentionBand, criticalDimensions, criticalMissRateCap, coverage: COVERAGE_REQUIREMENT }),
 		rubric: rubricDigest(allCases),
 		traceSchemaVersion: EVAL_TRACE_SCHEMA_VERSION,
 		traceSerialization: traceAttributeDigest(traceSpans(trace)),

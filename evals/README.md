@@ -531,20 +531,26 @@ A dimension is `authoritative` only when it has, in this run:
 Everything else is `provisional`: measured and reported, but not trusted to say
 no. A critical dimension additionally blocks on **contested human labels** —
 reviewers who disagreed and were never adjudicated leave the ground truth
-unsettled, not silently settled — and on missed defects above
-`--critical-miss-rate`. Declare which dimensions may block with
-`--critical-dimension`:
+unsettled, not silently settled — and on a missed-defect upper bound above
+`--critical-miss-rate`.
+
+**`criterion` is critical by default**, because it is already the always-on
+release guardrail: gating a release on a judge whose accuracy nothing checks is
+the hole this exists to close. The calibration canaries carry deterministic
+ground truth in all three classes so the default is satisfiable, and a test
+asserts the shipped set can clear it. Name additional dimensions, or opt out
+entirely, with `--critical-dimension`:
 
 ```bash
-npm run eval -- --critical-dimension=criterion          # let it block once it is authoritative
+npm run eval -- --critical-dimension=evidence_quality   # also let a named dimension block
+npm run eval -- --critical-dimension=none              # report calibration without gating on it
 npm run eval -- --critical-miss-rate=0.1                # cap the 95% UPPER BOUND on missed defects (default 0.35)
 npm run eval -- --abstention-band=0.15                  # widen the too-close-to-call band (default 0.1)
 ```
 
-An opted-in dimension that fails any requirement blocks the release gate and
+A critical dimension that fails any requirement blocks the release gate and
 refuses `--write-baseline` — a run whose judge is not calibrated cannot claim to
-be the standard to beat. With no `--critical-dimension`, nothing blocks; the
-report is printed either way.
+be the standard to beat. The report is printed either way.
 
 ### What the report says
 

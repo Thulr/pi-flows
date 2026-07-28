@@ -19,8 +19,10 @@
 //   npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/size regressions
 //   npm run eval -- --score-guardrail=evidence_quality   # also gate a named-criteria dimension's score (criterion is always gated)
 //   npm run eval -- --noise-band=0.10    # judge/efficiency regression tolerance (default 0.05)
-//   npm run eval -- --critical-dimension=criterion   # let a calibrated dimension block the gate (needs 3 independent
-//                                         # failed labels plus passed/partial examples, no contested human labels)
+//   npm run eval -- --critical-dimension=evidence_quality   # also let a named dimension block the gate
+//   npm run eval -- --critical-dimension=none   # opt out: report calibration without gating on it
+//                                         # (criterion gates by default; it needs 3 independent failed labels
+//                                         #  plus passed/partial examples and a miss-rate bound under the cap)
 //   npm run eval -- --critical-miss-rate=0.1   # cap on the 95% UPPER BOUND of missed defects (default 0.35)
 //   npm run eval -- --abstention-band=0.15   # judge scores this close to 0.5 abstain and escalate (default 0.1)
 //   npm run eval -- --write-baseline      # promote this run to evals/thulr-baseline.json (the gate baseline)
@@ -67,9 +69,7 @@ import { createFlagReader } from "./cli-flags.mjs";
 import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
-import { calibrationPreflightStep, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
-import { thresholdFingerprint } from "./calibration-key.mjs";
-import { COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
+import { calibrationPreflightStep, resolveCriticalDimensions, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
 import { assessCalibration, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases, writeReliabilityArtifact } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
@@ -119,9 +119,15 @@ const extraScoreGuardrails = flags("score-guardrail");
 const noiseBand = Number(flag("noise-band", "0.05"));
 // Judge calibration. A dimension named here is trusted to BLOCK the release, so
 // it must first earn that: enough independent ground truth in every class, no
-// contested human labels, and no missed defects above the cap. Off by default —
-// a dimension is observed for a few runs before it can stop a release.
-const criticalDimensions = flags("critical-dimension");
+// contested human labels, and a missed-defect upper bound under the cap.
+//
+// `criterion` is critical by default because it is already the always-on release
+// guardrail — gating on a judge whose accuracy nothing checks is the hole this
+// exists to close. The calibration canaries carry deterministic ground truth in
+// all three classes precisely so the default is satisfiable; a test asserts the
+// shipped set can clear it, so this cannot quietly become unreachable. Opt out
+// per run with --critical-dimension=none.
+const criticalDimensions = resolveCriticalDimensions(flags("critical-dimension"));
 const criticalMissRateCap = Number(flag("critical-miss-rate", String(DEFAULT_CRITICAL_MISS_RATE_CAP)));
 // Judge scores this close to the 0.5 decision boundary abstain and escalate to
 // human review instead of voting, so the judge is never scored on a coin flip.
@@ -354,11 +360,12 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }
 		corpus: EVAL_CORPUS,
 		summaries: [...summaries, ...calibrationSummaries],
 		verdicts,
-		keyInputs: { judgeModel, judgeSamples: samples, judgeBin, evalSet, promptVersion: PROMPT_VERSION, configVersion: CONFIG_VERSION, thresholds: thresholdFingerprint({ noiseBand, scoreGuardrails: extraScoreGuardrails, efficiencyGuardrails, abstentionBand, criticalDimensions, criticalMissRateCap, coverage: COVERAGE_REQUIREMENT }) },
+		keyInputs: { judgeModel, judgeSamples: samples, judgeBin, evalSet, promptVersion: PROMPT_VERSION, configVersion: CONFIG_VERSION },
 		reviewsPath: reviews,
 		criticalDimensions,
 		criticalMissRateCap,
 		abstentionBand,
+		guardrails: { noiseBand, scoreGuardrails: extraScoreGuardrails, efficiencyGuardrails },
 		trace: TRACE,
 		out: CALIBRATION,
 	});

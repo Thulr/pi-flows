@@ -80,7 +80,17 @@ register([
 ], "adversarial", "code-review", review);
 register([
 	"calibration-consensus-wrong-answer",
+	"calibration-consensus-correct-answer",
 ], "adversarial", "consensus", review);
+register([
+	"calibration-known-value-correct",
+	"calibration-nonanswer-restates-task",
+], "adversarial", "repository-lookup", lookup);
+register([
+	"calibration-webhook-complete-review",
+	"calibration-session-cache-partial-review",
+	"calibration-session-cache-fabricated-defect",
+], "adversarial", "code-review", review);
 
 register([
 	"trivial-answer-no-flow",

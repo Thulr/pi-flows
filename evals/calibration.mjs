@@ -12,12 +12,12 @@
 // `calibrationGateIssues` — a dimension can be authoritative and still be refused
 // the right to block.
 //
-// Which dimensions are CRITICAL is a policy choice, not a fact about the judge,
-// so it is opt-in (`--critical-dimension=criterion`). That matches how score
-// guardrails already work here: a dimension is observed for a few runs before it
-// is allowed to block. What is not optional is that an opted-in dimension which
-// fails its calibration requirements blocks the gate rather than quietly
-// degrading to a warning.
+// `criterion` is CRITICAL by default, because it is already the always-on release
+// guardrail: gating a release on a judge whose accuracy nothing checks is the
+// hole this module exists to close. Named dimensions stay opt-in, matching how
+// score guardrails work here — a new dimension is observed for a few runs before
+// it is allowed to block. Either way, a critical dimension that fails its
+// calibration requirements blocks the gate rather than degrading to a warning.
 import { authoritativeDimensions, caseSplit, dimensionCoverage, formatCoverageReport, groundTruthClass, splitVersions, CALIBRATION_CLASSES, CALIBRATION_SPLITS, GATING_SPLITS } from "./calibration-coverage.mjs";
 import { DEFAULT_ABSTENTION_BAND, abstentionEscalations, collapseTrials, dimensionStatistics, formatDimensionStatistics, judgeDecision } from "./calibration-stats.mjs";
 import { calibrationKeyDrift, formatCalibrationKeyDrift } from "./calibration-key.mjs";
@@ -33,6 +33,20 @@ export const CALIBRATION_SCHEMA_VERSION = "pi-flows.calibration.v1";
  * deliberate: clearing this needs more evidence than the coverage floor alone.
  */
 export const DEFAULT_CRITICAL_MISS_RATE_CAP = 0.35;
+
+/** The dimension that gates by default: already the always-on release guardrail. */
+export const DEFAULT_CRITICAL_DIMENSIONS = ["criterion"];
+
+/**
+ * Which dimensions this run lets block a release. Named dimensions replace the
+ * default rather than adding to it, and the literal `none` opts out entirely —
+ * so "report calibration but do not gate on it" stays expressible without
+ * making the safe case the silent one.
+ */
+export function resolveCriticalDimensions(requested = []) {
+	if (requested.includes("none")) return [];
+	return requested.length > 0 ? requested : [...DEFAULT_CRITICAL_DIMENSIONS];
+}
 
 /**
  * Judge verdicts joined to ground truth, one record per case-dimension.

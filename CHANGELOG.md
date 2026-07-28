@@ -45,8 +45,14 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   rubric was tuned against are reported but never gate, and the gate reads the
   95% upper bound on missed defects rather than the point estimate — zero misses
   out of four is not evidence of a zero miss rate.
-  `--critical-dimension` opts a dimension into blocking the release gate
-  and `--write-baseline` when it falls short. Judge verdicts within
+  `criterion` is critical **by default** — gating a release on a judge whose
+  accuracy nothing checks was the hole this closes — and a critical dimension
+  that falls short blocks the release gate and refuses `--write-baseline`. The
+  calibration canary set gains known-GOOD and additional known-bad fixtures so
+  the default is satisfiable: it previously held no positive example at all, so a
+  judge that failed everything scored perfectly on defect detection. Name other
+  dimensions, or opt out, with `--critical-dimension` (`=none` to report without
+  gating). Judge verdicts within
   `--abstention-band` of the decision boundary abstain and escalate to human review
   instead of voting. Cases are versioned in separately-digested
   `rubric-development`, `calibration`, and `held-out` splits, validated in

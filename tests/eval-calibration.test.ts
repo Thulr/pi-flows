@@ -50,9 +50,11 @@ import {
 	calibrationGateIssues,
 	calibrationRecords,
 	formatCalibrationReport,
+	DEFAULT_CRITICAL_MISS_RATE_CAP,
 	validateCalibrationCorpus,
 } from "../evals/calibration.mjs";
-import { assessCalibration, harnessExitCode } from "../evals/pipeline.mjs";
+import { assessCalibration, calibrationObjective, harnessExitCode } from "../evals/pipeline.mjs";
+import { CALIBRATION_CASES } from "../evals/corpus.mjs";
 
 const KEY_INPUTS = {
 	judgeModel: "anthropic/claude-haiku-4-5",
@@ -368,140 +370,10 @@ test("an abstention escalates with the command that resolves it", () => {
 	assert.match(formatCalibrationReport(report), /ground truth \(gating splits calibration \+ held-out\): 16 deterministic/);
 });
 
-// --- Human review -----------------------------------------------------------
-
-// Raw review-set entries, as `thulr review` writes them.
-const review = (overrides: Record<string, unknown> = {}) => ({ case_id: "case-1", verdict: "fail", reviewer: "ada", blinded: true, ...overrides });
-// Normalized records, as resolveReviewGroup consumes them.
-const labelled = (overrides: Record<string, unknown> = {}) => ({ caseId: "case-1", dimension: "criterion", verdict: "fail", reviewer: "ada", role: "reviewer", blinded: true, ...overrides });
-
-test("a review set with no blinding recorded was not blinded", () => {
-	const { reviews, issues } = normalizeReviewSet({ schema_version: "thulr.review_set.v1", reviews: [{ case_id: "case-1", verdict: "pass", reviewer: "ada" }] });
-	assert.deepEqual(issues, []);
-	assert.equal(reviews[0].blinded, false, "assuming otherwise would launder an anchored opinion into independent evidence");
-	assert.equal(reviews[0].dimension, "criterion");
-	assert.equal(reviews[0].role, "reviewer");
-});
-
-test("malformed reviews are reported and skipped, not thrown", () => {
-	const { reviews, issues } = normalizeReviewSet({
-		reviews: [review(), { verdict: "pass" }, review({ case_id: "case-2", verdict: "maybe" }), review({ case_id: "case-3", role: "judge" }), review({ case_id: "case-4", role: "adjudicator", reviewer: null })],
-	});
-	assert.equal(reviews.length, 1, "the one good review survives");
-	assert.equal(issues.length, 4);
-	assert.match(issues.join("\n"), /must name a case_id/);
-	assert.match(issues.join("\n"), /verdict must be one of pass \| fail \| unsure/);
-	assert.match(issues.join("\n"), /adjudication with no reviewer identity/);
-});
-
-test("unanimous blinded reviewers resolve a case", () => {
-	const resolved = resolveReviewGroup([labelled({ reviewer: "ada" }), labelled({ reviewer: "grace" })]);
-	assert.deepEqual(
-		{ label: resolved.label, resolution: resolved.resolution, independentReviewers: resolved.independentReviewers },
-		{ label: "failed", resolution: "unanimous", independentReviewers: 2 },
-	);
-});
-
-test("a disagreement nobody adjudicated stays unresolved", () => {
-	const resolved = resolveReviewGroup([labelled({ reviewer: "ada", verdict: "fail" }), labelled({ reviewer: "grace", verdict: "pass" })]);
-	assert.equal(resolved.label, null);
-	assert.equal(resolved.resolution, "unadjudicated");
-});
-
-test("an adjudicator settles a disagreement and is named for it", () => {
-	const resolved = resolveReviewGroup([
-		labelled({ reviewer: "ada", verdict: "fail" }),
-		labelled({ reviewer: "grace", verdict: "pass" }),
-		labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" }),
-	]);
-	assert.deepEqual({ label: resolved.label, resolution: resolved.resolution, adjudicator: resolved.adjudicator }, { label: "failed", resolution: "adjudicated", adjudicator: "barbara" });
-});
-
-test("two adjudicators who disagree are refused, not settled by array order", () => {
-	const conflicted = resolveReviewGroup([
-		labelled({ reviewer: "ada", verdict: "fail" }),
-		labelled({ reviewer: "grace", verdict: "pass" }),
-		labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" }),
-		labelled({ reviewer: "katherine", verdict: "pass", role: "adjudicator" }),
-	]);
-	assert.equal(conflicted.label, null, "a label that overrides deterministic truth must not depend on ordering");
-	assert.equal(conflicted.resolution, "conflicting-adjudication");
-	assert.equal(conflicted.adjudicator, "barbara, katherine", "both are named so the conflict is auditable");
-
-	// Adjudicators who agree still settle it, whichever order they arrive in.
-	const agreed = [labelled({ reviewer: "ada", verdict: "fail" }), labelled({ reviewer: "grace", verdict: "pass" }), labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" }), labelled({ reviewer: "katherine", verdict: "fail", role: "adjudicator" })];
-	assert.equal(resolveReviewGroup(agreed).resolution, "adjudicated");
-	assert.equal(resolveReviewGroup([...agreed].reverse()).label, "failed");
-});
-
-test("unsure is an abstention: it never blocks, and it never corroborates", () => {
-	// One decided verdict beside an abstention is still one opinion, so the group
-	// is under-reviewed rather than resolved — but it is not a disagreement either,
-	// so it does not demand an adjudicator.
-	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada", verdict: "unsure" }), labelled({ reviewer: "grace", verdict: "fail" })]).resolution, "insufficient-reviewers");
-	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada", verdict: "unsure" }), labelled({ reviewer: "grace", verdict: "unsure" })]).resolution, "abstained");
-});
-
-test("one reviewer is one opinion, not ground truth", () => {
-	const lone = resolveReviewGroup([labelled({ reviewer: "ada", verdict: "fail" })]);
-	assert.equal(lone.label, null, "a single blinded review must not override the deterministic objective");
-	assert.equal(lone.resolution, "insufficient-reviewers");
-
-	// Two distinct reviewers corroborate; the same person twice does not.
-	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada" }), labelled({ reviewer: "ada" })]).resolution, "insufficient-reviewers");
-	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada" }), labelled({ reviewer: "grace" })]).resolution, "unanimous");
-
-	// Adjudication stays the explicit single-actor path.
-	const adjudicated = resolveReviewGroup([labelled({ reviewer: "ada", verdict: "fail" }), labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" })]);
-	assert.equal(adjudicated.resolution, "adjudicated");
-	assert.equal(adjudicated.label, "failed");
-});
-
-test("an unblinded review does not resolve anything on its own", () => {
-	const resolved = resolveReviewGroup([labelled({ blinded: false })]);
-	assert.equal(resolved.label, null);
-	assert.equal(resolved.resolution, "no-blinded-review");
-});
-
-test("Fleiss kappa reads 1 for perfect agreement and -1 for perfect disagreement", () => {
-	const perfect = reviewerAgreement([{ verdicts: ["pass", "pass"] }, { verdicts: ["fail", "fail"] }]);
-	assert.equal(perfect.observedAgreement, 1);
-	assert.equal(perfect.expectedAgreement, 0.5);
-	assert.equal(perfect.kappa, 1);
-	assert.equal(perfect.unanimousGroups, 2);
-
-	const opposed = reviewerAgreement([{ verdicts: ["pass", "fail"] }, { verdicts: ["pass", "fail"] }]);
-	assert.equal(opposed.observedAgreement, 0);
-	assert.equal(opposed.kappa, -1);
-	assert.equal(opposed.unanimousGroups, 0);
-});
-
-test("agreement over ragged reviewer counts is measured, and an unmeasurable one says so", () => {
-	const ragged = reviewerAgreement([{ verdicts: ["pass", "pass", "fail"] }, { verdicts: ["fail", "fail"] }, { verdicts: ["pass"] }]);
-	assert.equal(ragged.groups, 2, "a single-reviewer case has nothing to agree about");
-	assert.ok(ragged.kappa !== null);
-
-	const nothing = reviewerAgreement([{ verdicts: ["pass"] }]);
-	assert.deepEqual(nothing, { groups: 0, observedAgreement: null, expectedAgreement: null, kappa: null, unanimousGroups: 0 });
-});
-
-test("a review report names reviewers, resolutions, and what stayed contested", () => {
-	const report = buildReviewReport({
-		reviews: [
-			review({ case_id: "agreed", reviewer: "ada", verdict: "fail" }),
-			review({ case_id: "agreed", reviewer: "grace", verdict: "fail" }),
-			review({ case_id: "contested", reviewer: "ada", verdict: "fail" }),
-			review({ case_id: "contested", reviewer: "grace", verdict: "pass" }),
-		],
-	});
-	assert.equal(report.reviewCount, 4);
-	assert.deepEqual(report.reviewers.ada, { reviews: 2, blinded: 2, adjudications: 0 });
-	assert.deepEqual(report.unresolved.map((entry) => entry.caseId), ["contested"]);
-	assert.deepEqual(reviewGroundTruth(report), [{ caseId: "agreed", dimension: "criterion", truth: "failed", source: "human", reviewer: "ada", resolution: "unanimous" }]);
-	assert.match(formatReviewReport(report), /unresolved criterion:contested — unadjudicated/);
-});
-
 // --- Records, report assembly, and the gate rules ---------------------------
+
+/** A raw review-set entry. The full human-review contract lives in eval-review-agreement.test.ts. */
+const review = (overrides: Record<string, unknown> = {}) => ({ case_id: "case-1", verdict: "fail", reviewer: "ada", blinded: true, ...overrides });
 
 const verdictsFor = (entries: Record<string, Record<string, { verdict: boolean; score: number }>>) => new Map(Object.entries(entries));
 
@@ -629,6 +501,46 @@ test("an uncalibrated judge fails the run for a different reason than a regressi
 	assert.equal(harnessExitCode({ measured: 3, passed: 3 }), 0);
 	assert.equal(harnessExitCode({ measured: 3, passed: 3, calibrationBlocks: true }), 1);
 	assert.equal(harnessExitCode({ measured: 3, passed: 3, gateBlocks: true }), 1);
+});
+
+// --- The shipped corpus ------------------------------------------------------
+
+test("the shipped canary set can clear the gate that criterion blocks on by default", () => {
+	// `criterion` is critical by default, so the corpus has to be able to satisfy
+	// it — otherwise the gate is not strict, it is broken. This derives the
+	// deterministic ground truth the calibration canaries declare, pairs it with a
+	// perfect judge, and asserts the floor AND the miss-rate bound are reachable.
+	// A future canary edit that makes the default gate unreachable fails here
+	// rather than turning up as a red eval run nobody can fix.
+	const records = CALIBRATION_CASES.map((testCase: any) => {
+		const objective = calibrationObjective(testCase);
+		const truth = groundTruthClass(testCase, "criterion", objective);
+		return { caseId: testCase.name, dimension: "criterion", split: "calibration", truth, source: "deterministic", decision: objective.pass ? "pass" : "fail", abstained: false, score: objective.pass ? 0.95 : 0.05 };
+	});
+	assert.ok(records.every((record) => record.truth !== null), "every canary declares a criterion ground truth");
+
+	const report = buildCalibrationReport({ key: calibrationKey(KEY_INPUTS), records, criticalDimensions: ["criterion"] });
+	const coverage = report.coverage.criterion;
+	assert.ok(coverage.independent.failed >= COVERAGE_REQUIREMENT.failed, `needs ${COVERAGE_REQUIREMENT.failed} independent failed canaries, has ${coverage.independent.failed}`);
+	assert.ok(coverage.independent.partial >= COVERAGE_REQUIREMENT.partial, "needs a partial canary");
+	assert.ok(coverage.independent.passed >= COVERAGE_REQUIREMENT.passed, "needs a known-good canary, or the judge's false-alarm rate is unmeasurable from deterministic truth");
+	assert.equal(coverage.authoritative, true);
+
+	const bound = report.statistics.criterion.detection.falseNegativeRate.confidence95.upper;
+	assert.ok(bound <= DEFAULT_CRITICAL_MISS_RATE_CAP, `a perfect judge leaves a ${(bound * 100).toFixed(1)}% upper bound, above the ${(DEFAULT_CRITICAL_MISS_RATE_CAP * 100).toFixed(0)}% cap — add not-passed canaries to tighten it`);
+	assert.deepEqual(calibrationGateIssues(report), []);
+});
+
+test("one missed defect on the shipped canary set still blocks", () => {
+	// The corollary of the bound being reachable: it is reachable only by a judge
+	// that catches everything. This is what "critical" is supposed to mean.
+	const records = CALIBRATION_CASES.map((testCase: any, index: number) => {
+		const objective = calibrationObjective(testCase);
+		const missed = !objective.pass && index === CALIBRATION_CASES.findIndex((c: any) => !calibrationObjective(c).pass);
+		return { caseId: testCase.name, dimension: "criterion", split: "calibration", truth: groundTruthClass(testCase, "criterion", objective), source: "deterministic", decision: objective.pass || missed ? "pass" : "fail", abstained: false, score: 0.9 };
+	});
+	const report = buildCalibrationReport({ key: calibrationKey(KEY_INPUTS), records, criticalDimensions: ["criterion"] });
+	assert.match(calibrationGateIssues(report).join("\n"), /could be missing up to/);
 });
 
 // --- The phase, end to end --------------------------------------------------
