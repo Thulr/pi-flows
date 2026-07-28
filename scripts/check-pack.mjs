@@ -40,11 +40,14 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
   }
 }
 
-// Typed integration handoffs, runtime/eval trace linkage, and durable approval
-// receipts each add a public runtime module and its reference documentation;
-// retain explicit headroom without excluding the material users need to invoke
-// those contracts correctly. Raise this deliberately when a public surface grows,
-// never to make an accidental inclusion fit — the forbidden-path and
-// relative-import checks above are what catch those.
-assert.ok(pack.unpackedSize < 560_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Typed integration handoffs, runtime/eval trace linkage, durable approval
+// receipts, and coordination-boundary tracing each add public runtime modules
+// and their reference documentation. The tracing work alone added five —
+// trace-scope, trace-sink, trace-attributes, trace-report, and dispatch — plus
+// the flow-reference and troubleshooting sections users need to read a trace and
+// act on TRACE_INCOMPLETE. Retain explicit headroom without excluding that
+// material. Raise this deliberately when a public surface grows, never to make an
+// accidental inclusion fit — the forbidden-path and relative-import checks above
+// are what catch those, and they are the reason a bump here is safe to make.
+assert.ok(pack.unpackedSize < 680_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

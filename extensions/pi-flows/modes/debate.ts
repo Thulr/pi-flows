@@ -5,7 +5,12 @@ import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+
+/** One place every advocate key is derived, so a round's dependency links cannot drift from the spans they name. */
+function advocateKey(round: number, index: number): string {
+	return `round-${round}.advocate-${index + 1}`;
+}
 
 export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -27,6 +32,10 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const allResults: FlowRunResult[] = [];
 	const warnings = new HandoffWarnings();
 	let priorArguments: string[] = [];
+	// A failed advocate contributes a "[advocate failed]" placeholder, not an
+	// argument, so the next round and the adjudicator read nothing of its work.
+	// Linking it would credit a position that was never actually made.
+	let consumedAdvocateKeys: string[] = [];
 	for (let round = 1; round <= rounds; round += 1) {
 		const transcript = priorArguments.length
 			? priorArguments.map((argument, index) => `### Advocate ${index + 1}\n\n${argument}`).join("\n\n---\n\n")
@@ -48,11 +57,14 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: params.returnContract,
 				requireEvidence: params.requireEvidence,
 				placeholderTask: `advocate ${index + 1}, round ${round}`,
+				// Each advocate rebuts the whole prior round, so the dependency is the
+				// round, not one opponent.
+				scope: { key: advocateKey(round, index), ...(consumedAdvocateKeys.length ? { dependsOn: consumedAdvocateKeys } : {}) },
 			});
 			if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
 			items.push(planned.plan!);
 		}
-		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (done, total) => `Flow debate: round ${round}/${rounds}, ${done}/${total} advocates done`);
+		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (done, total) => `Flow debate: round ${round}/${rounds}, ${done}/${total} advocates done`, { key: `round-${round}`, name: `round ${round}` });
 		allResults.push(...roundResults);
 		const handoffError = acceptIntegrationResults(deps, items, roundResults);
 		if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: deps.makeDetails("debate")(allResults, handoffError) };
@@ -63,6 +75,9 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 			if (isFailed(result)) return "[advocate failed]";
 			return warnings.addFrom(prepareResultHandoff(result, policy)).text;
 		});
+		// The transcript is built from each advocate's validated handoff, so that is
+		// what the next round and the adjudicator actually read.
+		consumedAdvocateKeys = roundResults.flatMap((result, index) => isFailed(result) ? [] : [`${advocateKey(round, index)}.handoff`]);
 	}
 
 	const adjudicator: FlowAgentRefInput = spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" };
@@ -83,9 +98,10 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		fallbackContract: params.contract as DelegationContract | undefined,
 		returnContract: params.returnContract,
 		requireEvidence: params.requireEvidence,
+		scope: { key: "adjudicator", dependsOn: consumedAdvocateKeys },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
-	const decision = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "debate", allResults.length + 1, allResults, planned.plan!.limits);
+	const decision = await runIntegrationPlan(deps, planned.plan!, "debate", allResults.length + 1, allResults);
 	allResults.push(decision);
 	if (isFailed(decision)) return { content: [{ type: "text", text: sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(decision)}`, policy) }], details: deps.makeDetails("debate")(allResults) };
 	const handoffError = acceptIntegrationResult(deps, planned.plan!, decision);

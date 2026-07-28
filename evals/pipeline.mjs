@@ -377,8 +377,43 @@ export function gateAgainstBaseline({ baseline, candidate, gateEvalRun, extraSco
  * @param {{ measured: number, passed: number, infraExcluded?: number, gateBlocks?: boolean, calibrationBlocks?: boolean }} counts
  * @returns {0 | 1}
  */
-export function harnessExitCode({ measured, passed, infraExcluded = 0, gateBlocks = false, calibrationBlocks = false }) {
+export function harnessExitCode({ measured, passed, infraExcluded = 0, gateBlocks = false, calibrationBlocks = false, traceBlocks = false }) {
 	const infraBlocked = infraExcluded > 0;
 	const measuredPass = measured === 0 ? !infraBlocked : passed === measured;
-	return measuredPass && !gateBlocks && !calibrationBlocks && !infraBlocked ? 0 : 1;
+	return measuredPass && !gateBlocks && !calibrationBlocks && !traceBlocks && !infraBlocked ? 0 : 1;
+}
+
+/**
+ * Why this run must not become the baseline, or null when it may.
+ *
+ * A baseline is a claim that this run is the standard to beat. A run whose judge
+ * is not calibrated well enough to gate cannot make that claim — and neither can
+ * one nobody can audit, which is why the strict-trace verdict has to be known
+ * before promotion rather than after: exiting non-zero afterwards would not
+ * un-contaminate a baseline the run had already overwritten.
+ */
+export function baselinePromotionBlocker({ gateBlocks = false, calibrationBlocks = false, traceBlocks = false } = {}) {
+	if (gateBlocks) return "the gate reported a regression";
+	if (calibrationBlocks) return "judge calibration is not release-grade";
+	if (traceBlocks) return "runtime trace evidence is incomplete under --strict-trace";
+	return null;
+}
+
+/**
+ * Whether incomplete runtime-trace evidence should block this run.
+ *
+ * Only under `--strict-trace`. Best-effort tracing is the default everywhere
+ * else precisely so an exporter hiccup never masquerades as a subject failure;
+ * a run that intends to *rely* on the trace opts in and then fails loudly.
+ */
+export function traceEvidenceGate(reliability, { strict = false } = {}) {
+	const health = reliability?.overall?.traceHealth;
+	if (!strict || !health) return { blocks: false, issues: [] };
+	if (health.complete) return { blocks: false, issues: [] };
+	return {
+		blocks: true,
+		issues: [
+			`runtime trace evidence is incomplete under --strict-trace: ${health.recorded}/${health.trials} trials recorded (${health.degraded} degraded, ${health.missing} missing)`,
+		],
+	};
 }

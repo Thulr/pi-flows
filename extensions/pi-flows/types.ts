@@ -1,4 +1,21 @@
 import type { Message } from "@earendil-works/pi-ai";
+import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
+
+// The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
+// it can be re-exported here without a cycle) and is part of this module's
+// public surface: downstream consumers import trace types from types.ts.
+export type {
+	ChildSpanScope,
+	CoordinationEvent,
+	CoordinationEventKind,
+	FlowTraceContext,
+	FlowTraceHealth,
+	FlowTraceHealthStatus,
+	FlowTraceLink,
+	RecordEvent,
+	SpanStage,
+} from "./trace-scope.ts";
+export { encodeAuthorKey } from "./trace-scope.ts";
 
 export const PI_FLOWS_VERSION = "0.3.0";
 
@@ -112,6 +129,7 @@ export const FLOW_ERROR_CODES = [
 	"CHILD_ABORTED",
 	"CHILD_TIMEOUT",
 	"CHILD_PROVIDER_ERROR",
+	"TRACE_INCOMPLETE",
 ] as const;
 
 export type FlowErrorCode = (typeof FLOW_ERROR_CODES)[number];
@@ -309,24 +327,6 @@ export interface DelegationHandoffEnvelope {
 	usage?: UsageStats;
 }
 
-export interface FlowTraceContext {
-	runId: string;
-	caseId: string;
-	trialId: string;
-	trialIndex?: number;
-	arm?: string;
-	attempt?: number;
-}
-
-export interface FlowTraceLink {
-	health: "recorded" | "missing";
-	traceFile: string;
-	traceId: string;
-	rootSpanId: string;
-	context?: FlowTraceContext;
-	error?: string;
-}
-
 export interface CapturePolicy {
 	recordContent: boolean;
 	redactSecrets: boolean;
@@ -348,8 +348,14 @@ export interface FlowBudget {
 	spentGeneratedTokens: number;
 }
 
+/** Everything the sink needs beyond the run itself to place and describe a child span. */
+export interface ChildSpanContext {
+	scope?: ChildSpanScope;
+	attributes?: Record<string, unknown>;
+}
+
 /** Records one completed child run as a trace span. See makeTraceSink. */
-export type RecordSpan = (result: FlowRunResult) => void;
+export type RecordSpan = (result: FlowRunResult, span?: ChildSpanContext) => void;
 
 export function budgetExceeded(budget: FlowBudget | undefined): boolean {
 	if (activeBudgetExceeded(budget)) return true;
@@ -437,11 +443,18 @@ export interface RunChildOptions {
 	redactSecrets?: boolean;
 	captureRawOutput?: boolean;
 	contractBudget?: FlowBudget;
+	/** The typed contract this child was dispatched under, for trace identity attributes. */
+	contract?: DelegationContract;
+	/** The call's `why` — the delegation reason recorded alongside the child span. */
+	delegationReason?: string;
+	/** Where this child sits in the span tree: enclosing stage, own key, dependency links. */
+	scope?: ChildSpanScope;
 	step?: number;
 	signal?: AbortSignal;
 	onUpdate?: Update;
 	budget?: FlowBudget;
 	recordSpan?: RecordSpan;
+	recordEvent?: RecordEvent;
 	makeDetails: (results: FlowRunResult[]) => FlowDetails;
 }
 
@@ -457,6 +470,8 @@ export interface ModeDeps {
 	onUpdate?: Update;
 	budget?: FlowBudget;
 	recordSpan?: RecordSpan;
+	/** Attribute a coordination boundary (artifact, state, retry, approval, budget, validation, handoff) to the trace. */
+	recordEvent?: RecordEvent;
 	requestApproval?: (title: string, message: string) => Promise<"approved" | "required" | "denied">;
 	/** Audit label recorded as the approving actor on an approval receipt. An attribution label for the audit trail, not an authenticated identity. */
 	approvalActor?: string;

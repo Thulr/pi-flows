@@ -16,6 +16,7 @@ import {
 	type FlowAgent,
 	type FlowBudget,
 	type FlowDetails,
+	type FlowError,
 	type FlowMode,
 	type RunMode,
 	type Update,
@@ -29,7 +30,7 @@ import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
 import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
-import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
+import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
@@ -251,6 +252,39 @@ export default function (pi: ExtensionAPI) {
 			}
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 
+			// Trace evidence as a gate is opt-in. Ordinary user flows stay
+			// best-effort; an eval or release run asks for strict, and then a run
+			// that cannot prove what it did is a failed run, not a quiet pass.
+			const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
+			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
+			if (traceStrict && !traceFileParam) {
+				const error = flowError(
+					"TRACE_INCOMPLETE",
+					"Flow call refused: strict tracing is on but no trace file is configured.",
+					"traceStrict (or PI_FLOWS_TRACE_STRICT) requires coordination evidence, and nothing would have been exported.",
+					"Set traceFile (or PI_FLOWS_TRACE_FILE) to a writable JSONL path, or turn strict tracing off for ordinary best-effort runs.",
+				);
+				return {
+					content: [{ type: "text", text: formatFlowError(error) }],
+					details: catalog.errorDetails(mode, error),
+				};
+			}
+
+			// The sink is built before the human gates, not after: an approval that is
+			// *granted* changes nothing else about the run, so a gate recorded only on
+			// refusal would leave a successful checkpoint with no evidence it was ever
+			// asked for. Every refusal below finalizes it, so those events never end up
+			// orphaned without a root span.
+			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+			const refuse = async (error: FlowError) => {
+				const details = catalog.errorDetails(mode, error);
+				// The refusal's own trace exists; without the link a caller carrying a
+				// traceContext cannot correlate the refusal to the spans that describe it.
+				const link = await traceSink?.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
+				if (link) details.trace = link;
+				return { content: [{ type: "text" as const, text: formatFlowError(error) }], details };
+			};
+
 			const projectAgents = catalog.projectAgentsFor(params);
 			if ((agentScope === "project" || agentScope === "all") && (params.confirmProjectAgents ?? true) && projectAgents.length > 0) {
 				if (!ctx.hasUI) {
@@ -260,10 +294,8 @@ export default function (pi: ExtensionAPI) {
 						`Requested project-local agents: ${projectAgents.map((agent) => agent.name).join(", ")}. These prompts come from ${safePath(discovery.projectAgentsDir)} and are controlled by the repository.`,
 						"Run in an interactive UI to approve, or pass confirmProjectAgents:false only after reviewing the project-local agent files.",
 					);
-					return {
-						content: [{ type: "text", text: formatFlowError(error) }],
-						details: catalog.errorDetails(mode, error),
-					};
+					traceSink?.event({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "required", "flow.approval.interactive": false } });
+					return refuse(error);
 				}
 
 				const ok = await ctx.ui.confirm(
@@ -277,29 +309,17 @@ export default function (pi: ExtensionAPI) {
 						"The interactive approval prompt was denied.",
 						"Review the project-local agent files and retry if you trust them.",
 					);
-					return {
-						content: [{ type: "text", text: formatFlowError(error) }],
-						details: catalog.errorDetails(mode, error),
-					};
+					traceSink?.event({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "denied", "flow.approval.interactive": true } });
+					return refuse(error);
 				}
+				traceSink?.event({ kind: "approval", name: "project_agents", attributes: { "flow.approval.decision": "approved", "flow.approval.interactive": true } });
 			}
 
-			const spawnCheckpointError = await checkpointApproval(params, ctx, mode, "spawn");
-			if (spawnCheckpointError) {
-				return {
-					content: [{ type: "text", text: formatFlowError(spawnCheckpointError) }],
-					details: catalog.errorDetails(mode, spawnCheckpointError),
-				};
-			}
+			const spawnCheckpointError = await checkpointApproval(params, ctx, mode, "spawn", undefined, traceSink?.event);
+			if (spawnCheckpointError) return refuse(spawnCheckpointError);
 
 			const handler = RUN_MODE_HANDLERS[mode as RunMode];
-			if (!handler) {
-				const error = flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state.");
-				return {
-					content: [{ type: "text", text: formatFlowError(error) }],
-					details: catalog.errorDetails("list", error),
-				};
-			}
+			if (!handler) return refuse(flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state."));
 
 			// Cost ceiling (bounds the one "uncontrolled recursion" dimension iteration/time
 			// caps miss) and optional trace export (OpenInference JSONL) for the flow tree.
@@ -307,8 +327,10 @@ export default function (pi: ExtensionAPI) {
 				params.maxCostUsd !== undefined || params.maxTokens !== undefined || params.maxGeneratedTokens !== undefined
 					? { maxCostUsd: params.maxCostUsd, maxTokens: params.maxTokens, maxGeneratedTokens: params.maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 }
 					: undefined;
-			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
-			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+			// Who to credit on an approval receipt. pi does not hand the extension an
+			// authenticated operator identity, so this is an audit label: whatever
+			// PI_FLOWS_APPROVAL_ACTOR names, else the channel that answered the prompt.
+			const approvalActor = process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR;
 			let liveDetails = makeDetails(mode)([]);
 			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets);
 			updateFlowUi(ctx, liveDetails);
@@ -339,15 +361,18 @@ export default function (pi: ExtensionAPI) {
 					onUpdate: statusOnUpdate,
 					budget,
 					recordSpan: traceSink?.record,
+					recordEvent: traceSink?.event,
 					requestApproval: async (title, message) => {
-						if (!ctx.hasUI) return "required";
-						return await ctx.ui.confirm(title, message) ? "approved" : "denied";
+						const decision = !ctx.hasUI ? "required" : (await ctx.ui.confirm(title, message) ? "approved" : "denied");
+						traceSink?.event({
+							kind: "approval",
+							name: "mode.approval",
+							ok: decision === "approved",
+							attributes: { "flow.approval.decision": decision, "flow.approval.actor": approvalActor, "flow.approval.interactive": ctx.hasUI === true },
+						});
+						return decision;
 					},
-					// Who to credit on an approval receipt. pi does not hand the
-					// extension an authenticated operator identity, so this is an
-					// audit label: whatever PI_FLOWS_APPROVAL_ACTOR names, else the
-					// channel that actually answered the prompt.
-					approvalActor: process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR,
+					approvalActor,
 					makeDetails,
 					runChild: runFlowAgent,
 					concurrency,
@@ -357,7 +382,7 @@ export default function (pi: ExtensionAPI) {
 				if (output.details.results.length > 0) {
 					await appendReflexion(ctx.cwd, params, mode, output.content[0]?.text ?? "", policy);
 				}
-				const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text);
+				const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text, traceSink?.event);
 				if (finalCheckpointError) {
 					output.details.error = finalCheckpointError;
 					output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];
@@ -365,11 +390,24 @@ export default function (pi: ExtensionAPI) {
 				liveDetails = output.details;
 				liveRuns.update(toolCallId, liveDetails);
 				updateFlowUi(ctx, liveDetails);
-				appendFlowSessionEntry(pi, liveDetails);
 				if (traceSink) {
 					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
 					output.details.trace = await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
 				}
+				// Strict runs refuse to report a result they cannot evidence. An
+				// already-failed run keeps its own error: the incomplete trace is a
+				// second problem, not a better explanation of the first.
+				const traceError = strictTraceError(output.details.trace, traceStrict);
+				if (traceError && !output.details.error) {
+					output.details.error = traceError;
+					output.content = [{ type: "text", text: `${formatFlowError(traceError)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
+					liveDetails = output.details;
+					liveRuns.update(toolCallId, liveDetails);
+					updateFlowUi(ctx, liveDetails);
+				}
+				// Persisted last, so the durable history cannot record a run as `ok`
+				// that the caller was told failed — and so it carries the trace link.
+				appendFlowSessionEntry(pi, liveDetails);
 				return output;
 			} finally {
 				liveRuns.finish(toolCallId, liveDetails);

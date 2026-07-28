@@ -10,6 +10,74 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- A deterministic, model-free coordination fault-injection suite runs offline in
+  `npm test`, so failures a live run reproduces once a month are reproduced on
+  every check. A reusable adapter over the child-run seam (`ModeDeps.runChild`)
+  injects delay, loss, duplication, reordering, failure, and staleness without
+  spawning anything; latency is virtual, so a 90-second child costs the suite
+  nothing and still hits its ceiling. Scenarios cover corrupted artifacts,
+  persuasive-but-wrong children, stale and reordered responses, trace
+  suppression, exhausted budgets, shared-writer races, and partial integration
+  followed by a retry. Each declares four independent checks — outcome, process,
+  policy, residual state — because a run that returns the right refusal after
+  merging the bad work is not contained. Benign controls run through the same
+  harness, so false containment stays measurable, and every case carries explicit
+  attack-opportunity and benign-opportunity denominators: containment is reported
+  as a rate over what the scenarios actually did — 13/14 attack opportunities
+  contained, 0/8 control deliveries falsely blocked — instead of as a pile of
+  passing assertions. The one uncontained case, a replayed untyped ballot that
+  nothing in that path can distinguish from independent agreement, is kept in the
+  suite rather than dropped from it.
+
+- Coordination traces now capture the boundaries a delegated run actually
+  crosses, instead of flattening every child under one root span. Spans declare a
+  role (`root`, `stage`, `child`, `event`): children nest under the wave, round,
+  iteration, fan-out group, or workflow phase that scheduled them, and
+  dependencies are recorded as links (`flow.depends_on`,
+  `flow.depends_on_span_ids`) rather than as invented parentage — a graph node
+  that read another node's output was scheduled by its wave, not spawned by the
+  node it read. Child spans identify the authority they ran under:
+  `flow.agent_prompt_version` (a digest of the system prompt that actually ran),
+  `flow.allowed_tools`, `flow.authority_may` / `_must_not` / `_requires_approval`,
+  `flow.side_effect_class`, `flow.contract_id`, `flow.return_schema_digest`,
+  `flow.constraint_ids`, `flow.delegation_reason`, and post-run budget state. The
+  free-text halves of that identity (delegation reason, contract owner, authority
+  prose, artifact paths) follow `recordContent`, so a content-free trace still
+  tells two contracts apart by digest without recording what they said.
+  Boundaries that are not child runs — approvals, workflow state transitions,
+  retries and revision rounds, budget refusals, deterministic gates, validation
+  results, handoffs, and artifact references — become their own attributable
+  zero-duration event spans (`flow.event_kind`). Handoff events record filtering,
+  raw-vs-carried size, injection warnings, preserved constraint identifiers,
+  acceptance status, and artifact references, with the summary prose and envelope
+  `data` deliberately left out; constraint identifiers are content digests, so
+  preservation across hops is checkable without copying the constraint text.
+  Event attributes carry operator- and repo-supplied strings (an approval actor,
+  a phase id, a branch name), so they are redacted and capped like every other
+  recorded value even though they are identity rather than content.
+- Trace health is now reported as evidence in its own right. The root span
+  accounts for the export (`flow.trace.expected_spans`, `.observed_spans`,
+  `.dropped_spans`, `.redacted_spans`, `.failed_exports`, `.health`), the same
+  counters return on `details.trace.spans`, and reading a trace back compares the
+  declared expectation against the rows present — counted by unique span id, so a
+  pipeline that loses one span and duplicates another cannot pass a row-count
+  check, and a duplicate is itself reported as corruption. `/flows report` and
+  `npm run trace:report` print observed-vs-expected spans, drops, redactions,
+  failed exports, incomplete runs, and a stage/event topology line. Health is
+  kept separate from execution success on purpose: a run whose spans were dropped
+  is unauditable, not failed, and conflating the two would turn an exporter
+  hiccup into a phantom agent regression.
+- Strict tracing (`traceStrict`, `PI_FLOWS_TRACE_STRICT`) makes trace evidence a
+  gate for evaluation and release runs: a missing trace file is refused before
+  any child spawns, and an incomplete export fails the call with the new
+  `TRACE_INCOMPLETE` error code. Default user flows are unchanged — tracing stays
+  best-effort and never fails a flow. The eval harness gained the matching
+  `npm run eval -- --strict-trace`, backed by a `traceHealth` rollup in the
+  reliability artifact that is reported as its own score family, and
+  `npm run trace:report -- --strict` exits non-zero on incomplete evidence. The
+  gate applies on the `--trace-only` path too: judging is the driver's call
+  there, but evidence is not.
+
 - Workflow approvals are now durable, single-use receipts instead of a bare
   `APPROVED` marker in the resume state. A receipt binds the exact action it
   authorizes — the approval phase and the work phases it gates, at their
@@ -133,6 +201,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   success/TPSO when a verifier supplied a verdict. Legacy
   `flow.duration_ms_total` traces remain readable and are labeled compatibility
   data.
+- Contract identity is now checked at every contracted seam, not only the
+  integration adapter. `chain`, `evaluate`, and `single` previously accepted a
+  structurally valid envelope carrying a missing or stale `contractId`; such an
+  envelope is now refused with `RETURN_CONTRACT_MISMATCH` rather than being
+  passed downstream, judged by critics, or reported as a validated result for a
+  contract it never claimed. The check is unconditional — it used to be an
+  opt-in flag that three of its four call sites did not pass.
 
 ### Fixed
 
@@ -148,6 +223,63 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   case declares a portfolio suite, task family, and task structure; reports show
   case counts and exclusions across both classifications. The package-version
   selection fixture now expects the current `0.3.0` package value.
+- The trace gate no longer treats a corrupted attribute as an absent one. A
+  rewritten `flow.trace.expected_spans` read as "not a modern trace" and
+  exempted the whole file from the role, parent, dependency, and timing checks;
+  a rewritten `flow.depends_on_count` read as "no count written" and let the
+  fallback rebuild the number out of the very keys it was meant to check.
+  Presence and readability are now separate questions, and a stated value
+  nothing can read invalidates the trace.
+- Author-supplied identifiers — graph node ids, workflow phase ids, worktree
+  task ids — are escaped before becoming unit keys, so they cannot collide with
+  the keys the framework derives. A node named `source.handoff` used to answer
+  to the same key as node `source`'s handoff event, and a dependency on
+  `source` resolved to whichever registered first.
+- `parallel` validates its children's returns but no longer records handoff
+  events for them. Its outputs go into the response the caller reads and it
+  spawns nothing that consumes them, so there was no boundary to record — and
+  the bytes were measured on a handoff envelope the response never carried.
+  Validation still fails closed; only the evidence is withheld.
+- `evaluate` records a handoff only where one was crossed. A failed check on the
+  final iteration ends the run, so neither the artifact nor the check output
+  reaches another agent; a critic REVISE on the final iteration returns to the
+  caller, not to a generator. All three used to be recorded as accepted
+  inter-agent handoffs with carried-byte accounting.
+- An `evaluate` revision now links the artifact handoff it revises alongside the
+  feedback that sent it back, since its prompt carries both.
+- The trace gate no longer accepts a shortened dependency key list as capping.
+  Capping is the only thing that legitimately shortens one, so the writer now
+  marks it (`flow.depends_on_truncated`); an unmarked short list is erasure and
+  invalidates the trace, and a whole list that claims truncation does too.
+  Truncation now exempts only the final key, which the cap may have cut
+  mid-key — every key it left intact is still matched to its span id. The flag
+  describes the list as written, after redaction, so a secret-shaped author id
+  that redaction shortens back under the cap is not reported as truncated.
+- A failing `evaluate.checkCommand`'s output is now prepared like any other
+  handoff before it reaches the next generator: capped, stripped of invisible
+  characters, and injection-scanned, with the boundary recorded — and recorded
+  only when another iteration will read it. Command output can carry whatever
+  the command read, so pasting it into a prompt unchecked made the deterministic
+  gate the one unscanned path into an agent.
+- Fan-out handoff and artifact events are now attributable to the child that
+  produced them. The merged span placement reached only the child dispatch, so
+  acceptance — which runs after the fan-out returns and reads the item's own
+  scope — placed those events without a stage, and for `parallel`, without a key
+  or a producer link at all.
+- An orchestrate revision now links every handoff its prompt carries: the worker
+  findings and the prior answer alongside the verifier critique, rather than the
+  critique alone.
+- Workflow phases now link the handoff their consumers actually read, so a
+  following phase and the debrief depend on the `<phase>.work.handoff` event
+  rather than on the child span behind it, and the exported causal path runs
+  through the validation and byte accounting the text went through.
+- An orchestrate resynthesis now carries the accepted handoff of the prior
+  answer instead of raw sanitized output, so the retry prompt matches the
+  handoff evidence recorded for it and does not skip the injection scan.
+- A typed envelope refused as `partial` or `blocked` now records the artifacts
+  it claimed. The rejection previously dropped the envelope's artifact
+  references and digests, so the trace showed the refusal without showing what
+  state the child had already touched.
 - A child that reports a terminal provider error (for example "input exceeds
   the context window of this model") and then stalls no longer hangs the flow
   until `timeoutMs` (default 10 hours): pi-flows now terminates the child after

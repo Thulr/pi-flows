@@ -90,6 +90,29 @@ function portfolioReliability(cases, field, pooledTrials, k) {
 	return { ...pooled, passAtK: averageCaseMetric("passAtK"), passToK: averageCaseMetric("passToK") };
 }
 
+/**
+ * How much of the run is actually evidenced, as its own score family.
+ *
+ * Deliberately kept out of the pass rates: a trial whose spans were dropped is
+ * not a failed trial, it is an unauditable one. Rolling it into pass@1 would
+ * turn an exporter problem into a phantom subject regression, so the counts stay
+ * separate and a strict run gates on `complete` instead.
+ */
+export function traceHealthRollup(trials) {
+	const graded = trials.filter((trial) => trial.scoreFamilies?.traceHealth?.available);
+	const statusOf = (trial) => trial.scoreFamilies.traceHealth.status ?? "missing";
+	const recorded = graded.filter((trial) => statusOf(trial) === "recorded").length;
+	const degraded = graded.filter((trial) => statusOf(trial) === "degraded").length;
+	const missing = graded.length - recorded - degraded;
+	return {
+		trials: graded.length,
+		recorded,
+		degraded,
+		missing,
+		complete: graded.length > 0 && degraded === 0 && missing === 0,
+	};
+}
+
 export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, generatedAt = new Date().toISOString(), runId, runtimeTraceFile }) {
 	const byCase = new Map();
 	for (const trial of rawTrials) byCase.set(trial.caseId, [...(byCase.get(trial.caseId) ?? []), trial]);
@@ -109,6 +132,7 @@ export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples,
 			sensitivityInvalidAsFailure: portfolioReliability(cases, "sensitivityInvalidAsFailure", sensitivityTrials, subjectTrials),
 			latencyMs: distribution(nominalTrials, "durationMs"),
 			costUsd: distribution(nominalTrials, "costUsd"),
+			traceHealth: traceHealthRollup(rawTrials),
 		},
 	};
 }
@@ -122,5 +146,6 @@ export function formatReliabilitySummary(report) {
 		`Subject reliability: pass@1 ${rate(nominal.passAt1.value)} (95% CI ${nominal.passAt1.confidence95 ? `${rate(nominal.passAt1.confidence95.lower)}–${rate(nominal.passAt1.confidence95.upper)}` : "n/a"}); pass@${nominal.passAtK.k} ${rate(nominal.passAtK.value)}; pass^${nominal.passToK.k} ${rate(nominal.passToK.value)}`,
 		`Sensitivity (infrastructure-invalid trials count as failures): pass@1 ${rate(sensitivity.passAt1.value)}; pass@${sensitivity.passAtK.k} ${rate(sensitivity.passAtK.value)}; pass^${sensitivity.passToK.k} ${rate(sensitivity.passToK.value)}`,
 		`Latency: p50 ${metric(latencyMs.p50, "ms")}  p95 ${metric(latencyMs.p95, "ms")}  Cost: p50 ${metric(costUsd.p50, " USD")}  p95 ${metric(costUsd.p95, " USD")}`,
+		`Runtime trace health: ${report.overall.traceHealth.recorded}/${report.overall.traceHealth.trials} recorded (${report.overall.traceHealth.degraded} degraded, ${report.overall.traceHealth.missing} missing) — evidence completeness, not subject failure`,
 	];
 }

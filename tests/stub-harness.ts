@@ -16,6 +16,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 
+import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
+
 export const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
 
@@ -55,3 +57,24 @@ export async function runFlow(
 }
 
 export const byAgent = (calls: Call[], name: string) => calls.filter((call) => call.agent === name);
+
+/** A minimal read-only contract and a matching return envelope, shared by the
+ * tests that exercise the typed delegation path end to end. */
+export const integrationContract = {
+	objective: "Find the sample identifier.",
+	constraints: ["Read only."],
+	nonGoals: ["Do not edit."],
+	dependencies: ["settings.txt"],
+	authority: { may: ["Read files."], mustNot: ["Write files."], requiresApproval: [] },
+	sideEffectClass: "read-only",
+	budget: { maxGeneratedTokens: 2_000 },
+	acceptanceChecks: ["Return the identifier."],
+	returnSchema: { type: "object", required: ["answer"], properties: { answer: { type: "string" } } },
+	owner: "parent",
+};
+// Contract identity is not optional, so the fixture echoes the dispatched id.
+export const integrationEnvelope = (data: unknown, contract: unknown = integrationContract) => JSON.stringify({
+	schemaVersion: "pi-flows.return-envelope.v1", contractId: delegationContractId(contract as never), status: "completed", summary: "Found it.",
+	evidence: [{ claim: "Identifier found.", source: "settings.txt:1" }], artifactReferences: [], digests: [],
+	changedState: [], unresolvedQuestions: [], retry: { retryable: false }, data,
+});

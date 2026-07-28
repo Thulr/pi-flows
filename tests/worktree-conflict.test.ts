@@ -168,3 +168,65 @@ test("worktree: validates typed conflict resolver envelopes before committing", 
 		});
 	}
 });
+
+test("worktree: a conflict resolver links every input whose merge state it edits", async () => {
+	const cwd = await conflictRepo();
+	const { result, text } = await runFlow(
+		{
+			task: "Integrate both conflicting edits",
+			traceFile: "flow-trace.jsonl",
+			worktree: {
+				tasks: [
+					{ id: "a", agent: "operator", task: "Apply variant A" },
+					{ id: "b", agent: "operator", task: "Apply variant B" },
+				],
+				integrator: { agent: "debrief" },
+				checkCommand: "node -e \"process.exit(0)\"",
+			},
+		},
+		{
+			operator: [
+				{ whenTaskIncludes: "assignment (a)", reply: "A_DONE", writes: { "shared.txt": "variant a\n" } },
+				{ whenTaskIncludes: "assignment (b)", reply: "B_DONE", writes: { "shared.txt": "variant b\n" } },
+			],
+			debrief: [
+				// Writing the file is not resolving it: git keeps the path unmerged until
+				// it is staged, and the harness checks for unmerged paths after the run.
+				{ whenTaskIncludes: "Merge conflict", reply: "RESOLVED", writes: { "shared.txt": "variant a and b\n" }, gitArgs: ["add", "shared.txt"] },
+				{ reply: "REVIEWED" },
+			],
+		},
+		cwd,
+	);
+	assert.equal(result.details.error, undefined, text);
+	const spans = (await readFile(path.join(cwd, "flow-trace.jsonl"), "utf8"))
+		.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	const conflict = spans.find((span) => span.attributes?.["flow.unit_key"] === "conflict-b")!;
+	// The resolver's prompt carries both workers' reports and it edits their
+	// combined merge state, so naming only the incoming branch would understate
+	// what the resolution actually acted on.
+	// The observation it was dispatched to answer, then both workers whose merge
+	// state it edits.
+	assert.equal(conflict.attributes["flow.depends_on"], "conflict-b.observed,worker-a.handoff,worker-b.handoff");
+	assert.equal(String(conflict.attributes["flow.depends_on_span_ids"]).split(",").length, 3);
+
+	// The reviewed branch contains the resolution, so the resolver belongs in the
+	// reviewed result's provenance — and the gate that ran against that branch
+	// belongs downstream of the review it would invalidate.
+	const review = spans.find((span) => span.attributes?.["flow.unit_key"] === "integration-review")!;
+	assert.equal(review.attributes["flow.depends_on"], "worker-a.handoff,worker-b.handoff,conflict-b");
+	assert.equal(String(review.attributes["flow.depends_on_span_ids"]).split(",").length, 3);
+	const check = spans.find((span) => span.attributes?.["flow.unit_key"] === "integration-check")!;
+	assert.equal(check.attributes["flow.depends_on"], "integration-review");
+	assert.equal(check.attributes["flow.depends_on_span_ids"], review.span_id);
+
+	// The chain runs end to end with no unkeyed link in the middle: the worktrees
+	// each worker ran in, the observed conflict the resolver answered, and the
+	// resolver itself.
+	const key = (name: string) => spans.find((span) => span.attributes?.["flow.unit_key"] === name)!;
+	assert.equal(key("worker-a").attributes["flow.depends_on"], "worktrees-created");
+	assert.equal(key("worker-a").attributes["flow.depends_on_span_ids"], key("worktrees-created").span_id);
+	assert.equal(key("conflict-b.observed").attributes["flow.depends_on"], "worker-b");
+
+	await cleanupConflictRepo(cwd);
+});

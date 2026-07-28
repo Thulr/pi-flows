@@ -198,19 +198,16 @@ function validateEnvelopeAgainstContract(
 	envelope: DelegationReturnEnvelope,
 	contract: DelegationContract,
 	cwd: string,
-	requireContractIdentity: boolean,
 ): FlowError | null {
-	if (requireContractIdentity) {
-		const expected = delegationContractId(contract);
-		if (envelope.contractId !== expected) {
-			const actual = envelope.contractId ?? "(missing)";
-			return flowError(
-				"RETURN_CONTRACT_MISMATCH",
-				"Child return envelope did not match the dispatched contract.",
-				`Expected contractId ${expected}, received ${actual}.`,
-				"Discard the stale or unbound handoff and rerun the child with the current typed contract.",
-			);
-		}
+	const expected = delegationContractId(contract);
+	if (envelope.contractId !== expected) {
+		const actual = envelope.contractId ?? "(missing)";
+		return flowError(
+			"RETURN_CONTRACT_MISMATCH",
+			"Child return envelope did not match the dispatched contract.",
+			`Expected contractId ${expected}, received ${actual}.`,
+			"Discard the stale or unbound handoff and rerun the child with the current typed contract.",
+		);
 	}
 	let validator;
 	try {
@@ -241,17 +238,29 @@ function storedError(error: FlowError, policy: CapturePolicy): FlowError {
 	return { ...error, cause: redactValue(error.cause, policy) as string };
 }
 
+/**
+ * Identity is always checked. An envelope naming a different contract, or none,
+ * was not produced under the terms this child was dispatched with, and no caller
+ * has ever wanted to accept one — making it optional only created call sites
+ * that could forget.
+ *
+ * @returns on success, the stored envelope. On rejection, the error — plus
+ *   `rejected`, the child's own claims in stored form, when the envelope was at
+ *   least structurally an envelope. A digest mismatch is exactly when those
+ *   claims matter most: the artifact it named and the digest it asserted are the
+ *   evidence of what went wrong, and discarding them loses the corruption along
+ *   with the trust.
+ */
 export function validateReturnEnvelope(
 	result: FlowRunResult,
 	contract: DelegationContract,
 	cwd: string,
 	policy: CapturePolicy,
-	options: { requireContractIdentity?: boolean } = {},
-): { envelope?: DelegationReturnEnvelope; error?: FlowError } {
+): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	const parsed = extractLastJsonBlock(takeRawFinalAssistantText(result) ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
-	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd, options.requireContractIdentity ?? false);
-	if (validationError) return { error: storedError(validationError, policy) };
+	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd);
+	if (validationError) return { error: storedError(validationError, policy), rejected: storedEnvelope(parsed, policy) };
 	const envelope = storedEnvelope({ ...parsed, usage: result.usage }, policy);
 	result.envelope = envelope;
 	return { envelope };
@@ -261,7 +270,7 @@ export function canonicalEnvelope(envelope: DelegationReturnEnvelope): string {
 	return JSON.stringify(envelope);
 }
 
-function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope, contract: DelegationContract): DelegationHandoffEnvelope {
+export function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope, contract: DelegationContract): DelegationHandoffEnvelope {
 	return {
 		schemaVersion: "pi-flows.handoff-envelope.v1",
 		contractId: delegationContractId(contract),
@@ -280,7 +289,7 @@ function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope,
 	};
 }
 
-function compatibilityHandoff(result: FlowRunResult, policy: CapturePolicy): DelegationHandoffEnvelope {
+export function compatibilityHandoff(result: FlowRunResult, policy: CapturePolicy): DelegationHandoffEnvelope {
 	const text = redactValue(capModelVisibleText(resultText(result)), policy) as string;
 	return {
 		schemaVersion: "pi-flows.handoff-envelope.v1",
@@ -406,17 +415,23 @@ export function prepareIntegrationHandoff(
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
 	},
-): { handoff?: DelegationHandoffEnvelope; error?: FlowError } {
+): { handoff?: DelegationHandoffEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	let handoff: DelegationHandoffEnvelope;
+	let returned: DelegationReturnEnvelope | undefined;
 	if (options.contract) {
-		const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy, { requireContractIdentity: true });
-		if (validated.error) return { error: validated.error };
-		handoff = typedHandoff(result, validated.envelope!, options.contract);
+		const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
+		if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
+		returned = validated.envelope!;
+		handoff = typedHandoff(result, returned, options.contract);
 	} else {
 		handoff = compatibilityHandoff(result, options.policy);
 	}
 	if (handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
-		return { error: storedError(incompleteEnvelopeError(handoff), options.policy) };
+		// A partial or blocked envelope is refused, but its artifact and digest
+		// claims are the evidence of what the child touched before it stopped.
+		// Returning them as rejected evidence keeps those artifacts in the trace,
+		// exactly as a digest mismatch does.
+		return { error: storedError(incompleteEnvelopeError(handoff), options.policy), ...(returned ? { rejected: returned } : {}) };
 	}
 	result.handoff = handoff;
 	return { handoff };

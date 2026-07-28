@@ -10,26 +10,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../extensions/pi-flows/commands.ts";
-import { byAgent, flowTool, freshDir, runFlow, stubPi, type Call } from "./stub-harness.ts";
+import { byAgent, flowTool, freshDir, integrationContract, integrationEnvelope, runFlow, stubPi, type Call } from "./stub-harness.ts";
 
 const ZWSP = String.fromCharCode(0x200b);
-const integrationContract = {
-	objective: "Find the sample identifier.",
-	constraints: ["Read only."],
-	nonGoals: ["Do not edit."],
-	dependencies: ["settings.txt"],
-	authority: { may: ["Read files."], mustNot: ["Write files."], requiresApproval: [] },
-	sideEffectClass: "read-only",
-	budget: { maxGeneratedTokens: 2_000 },
-	acceptanceChecks: ["Return the identifier."],
-	returnSchema: { type: "object", required: ["answer"], properties: { answer: { type: "string" } } },
-	owner: "parent",
-};
-const integrationEnvelope = (data: unknown) => JSON.stringify({
-	schemaVersion: "pi-flows.return-envelope.v1", status: "completed", summary: "Found it.",
-	evidence: [{ claim: "Identifier found.", source: "settings.txt:1" }], artifactReferences: [], digests: [],
-	changedState: [], unresolvedQuestions: [], retry: { retryable: false }, data,
-});
 test("single: spawns the stub child, returns its text, and accumulates usage", async () => {
 	const { result, calls, text } = await runFlow({ agent: "recon", task: "find the billing routes" }, { recon: "ROUTES: /charge /refund" });
 
@@ -90,7 +73,7 @@ test("single: typed validation precedes content omission and redaction", async (
 	assert.doesNotMatch(JSON.stringify(omitted.result.details), /xyzzy-42/);
 	const homeValue = path.join(homedir(), "sample.txt");
 	const exactContract = { ...integrationContract, returnSchema: { type: "object", required: ["answer"], properties: { answer: { const: homeValue } } } };
-	const redacted = await runFlow({ agent: "recon", contract: exactContract }, { recon: integrationEnvelope({ answer: homeValue }) });
+	const redacted = await runFlow({ agent: "recon", contract: exactContract }, { recon: integrationEnvelope({ answer: homeValue }, exactContract) });
 	assert.equal(redacted.result.details.error, undefined);
 	assert.equal(redacted.result.details.results[0].envelope?.data.answer, "~/sample.txt");
 });
@@ -670,7 +653,7 @@ test("flow-scoped command timeouts prefer the mode override, then the flow timeo
 test("monitor interval keeps a standalone Node process alive while awaited", () => {
 	const modulePath = fileURLToPath(new URL("../extensions/pi-flows/modes/monitor.ts", import.meta.url));
 	const script = `import { waitForMonitorInterval } from ${JSON.stringify(modulePath)}; await waitForMonitorInterval(20); process.stdout.write("done");`;
-	const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { encoding: "utf8", timeout: 5_000 });
+	const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { encoding: "utf8", timeout: 60_000 }); // clears tsx's cold start, not the 20ms wait: an early exit fails on stdout, not the clock
 	assert.equal(child.status, 0, child.stderr);
 	assert.equal(child.stdout, "done");
 });

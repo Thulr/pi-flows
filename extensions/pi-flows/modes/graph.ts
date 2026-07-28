@@ -1,10 +1,10 @@
-import { MAX_GRAPH_NODES, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
 	let rendered = template.replace(/\{task\}/g, task ?? "");
@@ -68,6 +68,9 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: node.returnContract ?? params.returnContract,
 				requireEvidence: node.requireEvidence ?? params.requireEvidence,
 				placeholderTask: node.task,
+				// A node's dependencies are links, not parentage: node b consumed node
+				// a's output but was scheduled by the wave, not spawned by a.
+				scope: { key: encodeAuthorKey(node.id), dependsOn: (node.dependsOn ?? []).map((dependency: string) => `${encodeAuthorKey(dependency)}.handoff`) },
 			});
 			if (planned.error) {
 				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
@@ -81,6 +84,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			concurrency,
 			results,
 			(done) => `Flow graph: ${completed.size + done}/${nodes.length} nodes done`,
+			{ key: `wave-${wave}`, name: `wave ${wave}` },
 		);
 		const handoffError = acceptIntegrationResults(deps, waveItems, waveRunResults);
 		if (handoffError) {
@@ -116,9 +120,10 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			scope: { key: "debrief", dependsOn: terminalIds.map((id: string) => `${id}.handoff`) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
-		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "graph", results.length + 1, results, planned.plan!.limits);
+		const debriefed = await runIntegrationPlan(deps, planned.plan!, "graph", results.length + 1, results);
 		results.push(debriefed);
 		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
 		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);

@@ -3,13 +3,13 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 interface GitResult {
 	ok: boolean;
@@ -81,6 +81,10 @@ export function workerRecoveryDetails(workers: Array<{ branch: string; cwd: stri
 	return `\n\nWorker state retained for recovery:\n${recovery}`;
 }
 
+/** One place a worker's unit key is derived, so a dependency link cannot name a worker that was never registered. */
+const workerKey = (id: string) => `worker-${encodeAuthorKey(id)}`;
+const BRANCHES_KEY = "worktrees-created";
+
 export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
 	const spec = params.worktree ?? {};
@@ -150,11 +154,24 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: worker.task.returnContract ?? params.returnContract,
 				requireEvidence: worker.task.requireEvidence ?? true,
 				placeholderTask: worker.task.task,
+				scope: { key: workerKey(worker.id), dependsOn: [BRANCHES_KEY] },
 			});
 			if (planned.error) return modeError(deps, results, planned.error);
 			workerItems.push(planned.plan!);
 		}
-			const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (done, total) => `Flow worktree: ${done}/${total} isolated writers done`);
+			deps.recordEvent?.({
+				kind: "state",
+				name: "worktree.branches_created",
+				// Each worker runs inside a worktree this step created, so the setup is
+				// a real input to every worker rather than a bare announcement.
+				scope: { key: BRANCHES_KEY },
+				attributes: {
+					"flow.worktree.base_sha": baseSha,
+					"flow.worktree.worker_count": workers.length,
+					"flow.worktree.integration_branch": integrationBranch,
+				},
+			});
+			const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (done, total) => `Flow worktree: ${done}/${total} isolated writers done`, { key: "workers", name: "isolated writers" });
 			results.push(...workerResults);
 			const failedWorkerIds = workers.filter((_, index) => isFailed(workerResults[index])).map((worker) => worker.id);
 			if (failedWorkerIds.length > 0) {
@@ -198,6 +215,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		const integrator: FlowAgentRefInput = { ...(spec.integrator?.agent ? spec.integrator : { agent: "operator" }), cwd: integrationCwd };
 		const integratedWorkers: WorkerWorktree[] = [];
+		// The resolver edits the merge state of everything already integrated, not
+		// only the branch coming in — and its prompt carries every one of those
+		// workers' reports, so linking one input would understate what it acted on.
+		const resolvedConflictKeys: string[] = [];
 		for (const worker of usableWorkers.filter((candidate) => candidate.changed)) {
 			const preMergeHead = git(integrationCwd, ["rev-parse", "HEAD"]);
 			if (!preMergeHead.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not inspect the integration branch before merging.", preMergeHead.stderr, "Inspect the retained integration and worker branches, then retry."), `\n\nIntegration branch: \`${integrationBranch}\``);
@@ -223,11 +244,23 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Your job",
 				"Resolve every merge conflict in this integration worktree without dropping either worker's intended behavior. Use the validated handoff evidence, artifact references, and digests above to explain each conflict choice. Run focused checks. Do not commit; the harness commits the resolution.",
 			].join("\n");
+			deps.recordEvent?.({
+				kind: "state",
+				name: "worktree.merge_conflict",
+				ok: false,
+				// The observation the resolver was dispatched to answer.
+				scope: { key: `conflict-${encodeAuthorKey(worker.id)}.observed`, dependsOn: [workerKey(worker.id)] },
+				attributes: { "flow.worktree.worker_id": worker.id, "flow.worktree.conflict_file_count": unmerged.stdout.split("\n").filter(Boolean).length },
+			});
 			const conflictPlan = integrationRunPlan(deps, integrator, conflictTask, {
 				fallbackContract: params.contract as DelegationContract | undefined,
+				scope: {
+					key: `conflict-${worker.id}`,
+					dependsOn: [`conflict-${worker.id}.observed`, ...[...integratedWorkers, worker].map((source) => `${workerKey(source.id)}.handoff`), ...resolvedConflictKeys],
+				},
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
-			const resolved = await runAgentRef(deps, conflictPlan.plan!.ref, conflictPlan.plan!.task, "worktree", results.length + 1, results, conflictPlan.plan!.limits);
+			const resolved = await runIntegrationPlan(deps, conflictPlan.plan!, "worktree", results.length + 1, results);
 			results.push(resolved);
 			if (isFailed(resolved) || git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]).stdout) {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Integrator could not resolve merge conflicts from "${worker.branch}".`, resultText(resolved) || unmerged.stdout, "Inspect the retained integration and worker branches, resolve the conflicts, and verify before merging.");
@@ -245,6 +278,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			}
 			integratedWorkers.push(worker);
+			resolvedConflictKeys.push(`conflict-${worker.id}`);
 			for (const file of unmerged.stdout.split("\n").filter(Boolean)) resolvedConflictFiles.add(file);
 		}
 
@@ -268,9 +302,12 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			// The branch under review contains any conflict resolution that produced
+			// it, so the reviewed result's provenance includes the resolvers.
+			scope: { key: "integration-review", dependsOn: [...usableWorkers.map((worker) => `${workerKey(worker.id)}.handoff`), ...resolvedConflictKeys] },
 		});
 		if (reviewPlan.error) return modeError(deps, results, reviewPlan.error);
-		const reviewed = await runAgentRef(deps, reviewPlan.plan!.ref, reviewPlan.plan!.task, "worktree", results.length + 1, results, reviewPlan.plan!.limits);
+		const reviewed = await runIntegrationPlan(deps, reviewPlan.plan!, "worktree", results.length + 1, results);
 		results.push(reviewed);
 		if (isFailed(reviewed)) {
 			const error = flowError("WORKTREE_INTEGRATION_FAILED", "Integration review agent failed.", resultText(reviewed), "Inspect the retained integration branch and run review/verification manually.");
@@ -285,6 +322,15 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		let checkSummary = "No deterministic integration check requested.";
 		if (spec.checkCommand) {
 			const checked = await runCheckCommand(spec.checkCommand, integrationCwd, resolveFlowCommandTimeoutMs(spec.checkTimeoutMs, params.timeoutMs), policy, deps.signal);
+			deps.recordEvent?.({
+				kind: "validation",
+				name: "worktree.integration_check",
+				ok: checked.ok,
+				// The command ran against the reviewed branch, so a failed worktree
+				// ends at the review it invalidated rather than at a loose gate.
+				scope: { key: "integration-check", dependsOn: ["integration-review"] },
+				attributes: { "flow.check.passed": checked.ok, "flow.worktree.integration_branch": integrationBranch, "flow.worktree.changed_file_count": changedFiles.length },
+			});
 			if (!checked.ok) {
 				const error = flowError("WORKTREE_VERIFY_FAILED", "Integration branch failed its deterministic check.", checked.output || "The worktree checkCommand exited non-zero.", "Inspect the retained integration branch, fix the check failure, and rerun verification before merging.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);

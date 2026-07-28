@@ -4,7 +4,10 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+
+/** One place a section's unit key is derived, so the synthesizer's dependency links name the sections it read. */
+const sectionKey = (index: number) => `section-${index + 1}`;
 
 export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -32,11 +35,12 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 			returnContract: section.returnContract ?? params.returnContract,
 			requireEvidence: section.requireEvidence ?? true,
 			placeholderTask: section.task,
+			scope: { key: sectionKey(index) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")([], planned.error) };
 		sectionItems.push(planned.plan!);
 	}
-	const results: FlowRunResult[] = await runAgentFanout(deps, "dossier", sectionItems, concurrency, [], (done, total) => `Flow dossier: ${done}/${total} evidence sections extracted`);
+	const results: FlowRunResult[] = await runAgentFanout(deps, "dossier", sectionItems, concurrency, [], (done, total) => `Flow dossier: ${done}/${total} evidence sections extracted`, { key: "sections", name: "evidence sections" });
 	const sectionHandoffError = acceptIntegrationResults(deps, sectionItems, results);
 	if (sectionHandoffError) return { content: [{ type: "text", text: formatFlowError(sectionHandoffError) }], details: deps.makeDetails("dossier")(results, sectionHandoffError) };
 	const successful = results.filter((result) => !isFailed(result));
@@ -67,9 +71,13 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		fallbackContract: params.contract as DelegationContract | undefined,
 		returnContract: params.returnContract,
 		requireEvidence: params.requireEvidence,
+		// Only the sections that succeeded reach the synthesis prompt, so only those
+		// belong in its dependency list — claiming it consumed a failed section's
+		// output would misreport what the answer actually rests on.
+		scope: { key: "debrief", dependsOn: results.flatMap((result, index) => isFailed(result) ? [] : [`${sectionKey(index)}.handoff`]) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")(results, planned.error) };
-	const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "dossier", results.length + 1, results, planned.plan!.limits);
+	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);
 	results.push(debriefed);
 	if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow dossier: synthesizer failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("dossier")(results) };
 	const debriefHandoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);

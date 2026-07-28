@@ -13,6 +13,8 @@ import {
 	runtimeTraceEvidence,
 } from "../evals/runtime-trace.mjs";
 import { stableTraceIds, traceSummaryAttributes } from "../extensions/pi-flows/trace.ts";
+import { baselinePromotionBlocker, harnessExitCode, traceEvidenceGate } from "../evals/pipeline.mjs";
+import { traceHealthRollup } from "../evals/reliability.mjs";
 import { runFlow } from "./stub-harness.ts";
 
 test("dry-run runtime traces use separate default paths", () => {
@@ -303,4 +305,61 @@ test("eval runner dry-run reliability points at the isolated runtime trace defau
 	assert.equal(child.status, 0, child.stderr);
 	const report = JSON.parse(await readFile(reliabilityOut, "utf8"));
 	assert.equal(report.runtimeTraceFile, ".thulr/runs/runtime.dry-run.trace.jsonl");
+});
+
+test("the eval strict-trace gate blocks only when asked, and never as a subject failure", () => {
+	const trials = (statuses: string[]) => statuses.map((status, index) => ({
+		caseId: "case",
+		trialId: `case::trial-${index}`,
+		pass: true,
+		objective: { pass: true, score: 1 },
+		durationMs: 10,
+		costUsd: 0,
+		scoreFamilies: { traceHealth: { available: true, pass: status === "recorded", status } },
+	}));
+
+	const clean = traceHealthRollup(trials(["recorded", "recorded"]));
+	assert.deepEqual(clean, { trials: 2, recorded: 2, degraded: 0, missing: 0, complete: true });
+	const lossy = traceHealthRollup(trials(["recorded", "degraded", "missing"]));
+	assert.deepEqual(lossy, { trials: 3, recorded: 1, degraded: 1, missing: 1, complete: false });
+
+	const report = (health: ReturnType<typeof traceHealthRollup>) => ({ overall: { traceHealth: health } });
+	// Off by default: an exporter hiccup must not read as a regression.
+	assert.equal(traceEvidenceGate(report(lossy)).blocks, false);
+	assert.equal(traceEvidenceGate(report(lossy), { strict: false }).blocks, false);
+	const blocked = traceEvidenceGate(report(lossy), { strict: true });
+	assert.equal(blocked.blocks, true);
+	assert.match(blocked.issues[0], /1\/3 trials recorded \(1 degraded, 1 missing\)/);
+	assert.equal(traceEvidenceGate(report(clean), { strict: true }).blocks, false);
+
+	// The gate is its own exit axis: a run whose cases all passed still fails.
+	assert.equal(harnessExitCode({ measured: 2, passed: 2 }), 0);
+	assert.equal(harnessExitCode({ measured: 2, passed: 2, traceBlocks: true }), 1);
+});
+
+test("--trace-only still honours --strict-trace before it hands off to the driver", () => {
+	// A dry run produces no runtime traces at all, so the strict gate has
+	// something real to refuse. Trace-only leaves judging to the driver — but
+	// evidence is not the driver's call, and a 0 here would let an unauditable
+	// experiment proceed under a flag that explicitly asked for the opposite.
+	const run = (args: string[]) => spawnSync(process.execPath, ["--import", "tsx", "evals/run.mjs", "--dry-run", "--trace-only", "--filter=route-classifies", ...args], {
+		cwd: path.resolve(import.meta.dirname, ".."),
+		encoding: "utf8",
+	});
+	const lenient = run([]);
+	assert.equal(lenient.status, 0, `${lenient.stderr}\n${lenient.stdout}`);
+
+	const strict = run(["--strict-trace"]);
+	assert.equal(strict.status, 1, "strict trace evidence must block the trace-only exit");
+	assert.match(`${strict.stdout}\n${strict.stderr}`, /runtime trace evidence is incomplete under --strict-trace/);
+});
+
+test("a baseline is not promoted on evidence nobody can audit", () => {
+	// The order matters more than the rule: promotion happens inside judgeAndGate,
+	// so a strict verdict computed afterwards would exit non-zero having already
+	// overwritten the baseline with the unauditable run.
+	assert.equal(baselinePromotionBlocker(), null);
+	assert.equal(baselinePromotionBlocker({ traceBlocks: true }), "runtime trace evidence is incomplete under --strict-trace");
+	assert.equal(baselinePromotionBlocker({ gateBlocks: true, traceBlocks: true }), "the gate reported a regression");
+	assert.equal(baselinePromotionBlocker({ calibrationBlocks: true, traceBlocks: true }), "judge calibration is not release-grade");
 });

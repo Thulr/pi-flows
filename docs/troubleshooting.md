@@ -463,11 +463,11 @@ declared JSON Schema. The handoff is not passed downstream until it validates.
 
 ### `RETURN_CONTRACT_MISMATCH`
 
-Cause: an integration-mode child returned a typed envelope with no `contractId`,
-or with an identity from an older/different contract.
+Cause: a contracted child returned a typed envelope with no `contractId`, or
+with an identity from an older/different contract.
 
 Fix: discard the stale handoff and rerun the child with the current contract.
-Integration modes compare the echoed `sha256:` identity before dependent
+Contracted modes compare the echoed `sha256:` identity before dependent
 dispatch, synthesis, persisted state, or worktree merge.
 
 ### `RETURN_ENVELOPE_INCOMPLETE`
@@ -530,3 +530,27 @@ period rather than letting it hang until `timeoutMs`.
 Fix: narrow the task or the material the child reads (a smaller issue thread,
 fewer files), or pick a larger-context model via `tier`/`model`, then retry.
 `PI_FLOWS_ERROR_GRACE_MS` tunes the grace period (default 30000ms).
+
+### `TRACE_INCOMPLETE`
+
+Cause: the call ran with strict tracing on (`traceStrict:true` or
+`PI_FLOWS_TRACE_STRICT=1`) and the coordination trace it produced is not
+complete evidence. Either no `traceFile` was configured at all, or the export
+finished with dropped spans / failed writes — for example an unwritable trace
+path or a full disk.
+
+The in-process gate sees what the exporter failed to write. Spans lost *after* a
+successful write (a truncating concurrent writer, a rotated file) are caught on
+the read-back side instead, by comparing the root span's declared expectation
+against the rows present: `npm run trace:report -- --strict <trace-file>`.
+
+Note what this is *not*: it is never a statement about the agents. The children
+may all have succeeded. Strict mode only refuses to report the run as
+evidence-backed when the evidence is missing, which is what an evaluation or
+release gate needs.
+
+Fix: point `traceFile` (or `PI_FLOWS_TRACE_FILE`) at a writable JSONL path,
+check for a concurrent writer truncating it, and rerun. Ordinary interactive
+flows should leave `traceStrict` off — tracing is best-effort by default and
+never fails a flow. Inspect the health counters with
+`/flows report <trace-file>` or `npm run trace:report -- --strict <trace-file>`.

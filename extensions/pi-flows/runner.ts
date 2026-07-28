@@ -4,9 +4,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, activeBudgetExceeded, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, activeBudgetExceeded, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
+import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
 
 export function getPiInvocation(args: string[]): { command: string; args: string[] } {
@@ -86,6 +87,26 @@ export async function writePromptToTempFile(agentName: string, prompt: string, l
 	return { dir, filePath };
 }
 
+/**
+ * What the child span says about this dispatch: which agent and prompt version
+ * ran, what it was allowed to touch, under whose authority and contract, and
+ * where the budget stood afterwards. Built here because this is the only place
+ * that knows the *resolved* agent and tool allowlist rather than the request.
+ */
+function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefined, allowedTools: string[] | undefined, policy: CapturePolicy): Record<string, unknown> {
+	return {
+		...delegationIdentityAttributes({
+			systemPrompt: agent?.systemPrompt ?? "",
+			allowedTools,
+			contract: options.contract,
+			delegationReason: options.delegationReason,
+			policy,
+		}),
+		...budgetAttributes(options.budget),
+		...budgetAttributes(options.contractBudget, "flow.contract_budget"),
+	};
+}
+
 /** Production adapter for the child-run seam (ModeDeps.runChild): one real pi subprocess per call. */
 export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunResult> {
 	const policy: CapturePolicy = { recordContent: options.recordContent ?? true, redactSecrets: options.redactSecrets ?? true };
@@ -93,6 +114,24 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	// Cost ceiling: refuse to spawn once the flow tree's cumulative spend is spent.
 	const exhaustedBudget = budgets.find((budget) => budgetExceeded(budget));
 	if (exhaustedBudget) {
+		// A budget refusal spawns nothing, so it produces no child span. Without an
+		// event the trace would simply be missing a child and look like loss.
+		options.recordEvent?.({
+			kind: "budget",
+			name: "child.refused",
+			ok: false,
+			scope: options.scope,
+			attributes: {
+				"flow.budget.refused_agent": options.agentName,
+				// Named against the ceiling that actually refused, so a contract-bound
+				// refusal is not reported as a flow-budget one.
+				"flow.budget.authority": exhaustedBudget === options.contractBudget ? "contract" : "flow",
+				// Prefixed by the ceiling that actually refused: reporting a contract
+				// limit under `flow.budget.*` would attribute it to a budget that in a
+				// contract-only run does not exist.
+				...budgetAttributes(exhaustedBudget, exhaustedBudget === options.contractBudget ? "flow.contract_budget" : "flow.budget"),
+			},
+		});
 		return makeEmptyRunResult(options.agentName, options.task, policy, budgetExceededError(exhaustedBudget));
 	}
 	const agent = options.agents.find((candidate) => candidate.name === options.agentName);
@@ -104,6 +143,13 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			`No discovered agent matched "${options.agentName}". Available agents: ${available}.`,
 			"Run `flow` with `{\"list\": true}` or `/flows` to inspect agent names and scopes.",
 		);
+		options.recordEvent?.({
+			kind: "validation",
+			name: "dispatch.unknown_agent",
+			ok: false,
+			scope: options.scope,
+			attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": error.code },
+		});
 		return makeEmptyRunResult(options.agentName, options.task, policy, error);
 	}
 
@@ -184,6 +230,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						for (const budget of budgets) chargeBudget(budget, turnUsage);
 						if (!message.errorMessage && budgets.some((budget) => budget.maxCostUsd !== undefined) && turnUsage.costKnown === false) {
 							budgetUnobservable = true;
+							// Named here rather than left to the fallback: a contract-only cost
+							// ceiling is the one that could not be enforced, and reporting it as
+							// a flow budget would name one the run never had.
+							terminatingBudget = budgets.find((budget) => budget.maxCostUsd !== undefined);
 							controls.terminate();
 						} else if (!message.errorMessage) {
 							terminatingBudget = budgets.find((budget) => activeBudgetExceeded(budget))
@@ -328,115 +378,34 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		return result;
 	} finally {
 		result.durationMs = Date.now() - started;
-		options.recordSpan?.(result);
+		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy) });
+		if (budgetTerminated || budgetUnobservable) {
+			// Its own unit, depending on the child. Reusing the child's key would
+			// leave the event unable to rebind it — the span already owns it — so the
+			// termination would carry the same name with no link to what caused it.
+			const terminationScope = options.scope?.key
+				? { stage: options.scope.stage, key: `${options.scope.key}.budget`, dependsOn: [options.scope.key] }
+				: options.scope;
+			options.recordEvent?.({
+				kind: "budget",
+				name: budgetUnobservable ? "child.unobservable" : "child.exhausted",
+				ok: false,
+				scope: terminationScope,
+				attributes: {
+					"flow.budget.terminated_agent": agent.name,
+					"flow.budget.authority": (terminatingBudget ?? options.budget) === options.contractBudget ? "contract" : "flow",
+					...budgetAttributes(
+						terminatingBudget ?? options.budget,
+						(terminatingBudget ?? options.budget) === options.contractBudget ? "flow.contract_budget" : "flow.budget",
+					),
+				},
+			});
+		}
 		await Promise.all(tempFiles.map((tmp) => fs.rm(tmp.dir, { recursive: true, force: true }).catch(() => undefined)));
 	}
 }
 
-export async function mapWithConcurrency<TIn, TOut>(
-	items: TIn[],
-	concurrency: number,
-	fn: (item: TIn, index: number) => Promise<TOut>,
-): Promise<TOut[]> {
-	const limit = Math.max(1, Math.min(concurrency, items.length));
-	const results: TOut[] = new Array(items.length);
-	let nextIndex = 0;
 
-	const workers = new Array(limit).fill(null).map(async () => {
-		while (true) {
-			const current = nextIndex++;
-			if (current >= items.length) return;
-			results[current] = await fn(items[current], current);
-		}
-	});
-
-	await Promise.all(workers);
-	return results;
-}
-
-export interface AgentFanoutItem {
-	ref: FlowAgentRefInput;
-	task: string;
-	placeholderTask?: string;
-	limits?: AgentRunLimits;
-}
-
-export interface AgentRunLimits {
-	captureRawOutput?: boolean;
-	timeoutMs?: number;
-	contractBudget?: FlowBudget;
-}
-
-function tighterTimeout(flowTimeoutMs: number | undefined, contractTimeoutMs: number | undefined): number | undefined {
-	if (contractTimeoutMs === undefined) return flowTimeoutMs;
-	const boundedContractTimeout = Math.max(1, Math.floor(contractTimeoutMs));
-	return flowTimeoutMs === undefined ? boundedContractTimeout : Math.min(flowTimeoutMs, boundedContractTimeout);
-}
-
-/** The standard per-run plumbing (everything except onUpdate), built in exactly one place. */
-function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, limits: AgentRunLimits = {}): Omit<RunChildOptions, "onUpdate"> {
-	return {
-		defaultCwd: deps.defaultCwd,
-		agents: deps.discovery.agents,
-		agentName: ref.agent,
-		task,
-		cwd: ref.cwd,
-		model: ref.model ?? deps.params.model,
-		tier: ref.tier ?? deps.params.tier,
-		tools: ref.tools,
-		timeoutMs: tighterTimeout(deps.params.timeoutMs, limits.timeoutMs),
-		recordContent: deps.params.recordContent,
-		redactSecrets: deps.params.redactSecrets,
-		captureRawOutput: limits.captureRawOutput,
-		contractBudget: limits.contractBudget,
-		step,
-		signal: deps.signal,
-		budget: deps.budget,
-		recordSpan: deps.recordSpan,
-		makeDetails: deps.makeDetails(mode),
-	};
-}
-
-export async function runAgentFanout(
-	deps: ModeDeps,
-	mode: FlowMode,
-	items: AgentFanoutItem[],
-	concurrency: number,
-	priorResults: FlowRunResult[],
-	statusText: (done: number, total: number) => string,
-): Promise<FlowRunResult[]> {
-	const liveResults: FlowRunResult[] = items.map((item) => makeEmptyRunResult(item.ref.agent, item.placeholderTask ?? item.task, deps.policy));
-	const completed = new Set<number>();
-	const emit = () => {
-		deps.onUpdate?.({
-			content: [{ type: "text", text: statusText(completed.size, liveResults.length) }],
-			details: deps.makeDetails(mode)([...priorResults, ...liveResults]),
-		});
-	};
-	const baseStep = priorResults.length;
-	return mapWithConcurrency(items, concurrency, async (item, index) => {
-		const result = await deps.runChild({
-			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1, item.limits),
-			onUpdate: (partial) => {
-				const current = partial.details.results[0];
-				if (current) liveResults[index] = current;
-				emit();
-			},
-		});
-		liveResults[index] = result;
-		completed.add(index);
-		emit();
-		return result;
-	});
-}
-
-/** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
-export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], limits: AgentRunLimits = {}): Promise<FlowRunResult> {
-	return deps.runChild({
-		...childRunOptions(deps, ref, task, mode, step, limits),
-		onUpdate: (partial) => {
-			const current = partial.details.results[0];
-			deps.onUpdate?.({ content: partial.content, details: deps.makeDetails(mode)([...priorResults, ...(current ? [current] : [])]) });
-		},
-	});
-}
+// The fan-out/dispatch plumbing moved to dispatch.ts to keep this module focused
+// on the seam's production adapter. Handlers import both from here.
+export { mapWithConcurrency, runAgentFanout, runAgentRef, type AgentFanoutItem, type AgentRunLimits, type AgentRunPlacement } from "./dispatch.ts";

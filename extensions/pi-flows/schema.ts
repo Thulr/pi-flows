@@ -341,7 +341,7 @@ export const FlowParams = Type.Object({
 	maxCostUsd: Type.Optional(Type.Number({ description: "Cumulative USD cost ceiling across every child in this flow tree. Once reached at a completed model-response boundary, the active child stops and no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
 	maxTokens: Type.Optional(Type.Number({ description: "Cumulative input+output token ceiling across every child in this flow tree. Once reached, no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
 	maxGeneratedTokens: Type.Optional(Type.Number({ description: "Cumulative generated/output token ceiling across every child in this flow tree. Once reached at a completed model-response boundary, the active child stops and no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
-	traceFile: Type.Optional(Type.String({ description: "Append an OpenInference-shaped JSON span per child run to this file (JSONL any OpenTelemetry pipeline can ingest). One span per delegated agent plus a root span for the flow call, with redacted token/cost/model/status attributes. Also settable via PI_FLOWS_TRACE_FILE. Relative paths resolve against cwd." })),
+	traceFile: Type.Optional(Type.String({ description: "Append OpenInference-shaped JSON spans to this file (JSONL any OpenTelemetry pipeline can ingest): one per delegated child, one per stage (wave/round/iteration/phase), one per coordination event (approval, state, retry, budget, validation, handoff, artifact), plus a root span for the flow call, with redacted token/cost/model/status attributes. Also settable via PI_FLOWS_TRACE_FILE. Relative paths resolve against cwd." })),
 	traceLabel: Type.Optional(Type.String({ description: "Use-case label attached to trace spans so reports can group TPSO and success rate by journey." })),
 	traceContext: Type.Optional(Type.Object({
 		runId: Type.String({ minLength: 1, description: "Stable identifier for the enclosing eval or runtime run." }),
@@ -351,6 +351,7 @@ export const FlowParams = Type.Object({
 		arm: Type.Optional(Type.String({ minLength: 1, description: "Paired-comparison or experiment arm identity." })),
 		attempt: Type.Optional(Type.Number({ minimum: 1, description: "Execution attempt within a retried trial arm." })),
 	}, { description: "Stable runtime trace linkage supplied by eval harnesses. Identifiers are copied to every span and returned with the exact root span reference." })),
+	traceStrict: Type.Optional(Type.Boolean({ description: "Require complete trace evidence. Default false (best-effort tracing that never fails a flow). When true, a missing traceFile or a trace with dropped spans or failed exports fails the call with TRACE_INCOMPLETE — intended for evaluation and release gates, not ordinary user flows. Also settable via PI_FLOWS_TRACE_STRICT.", default: false })),
 	incompleteHandoffPolicy: Type.Optional(StringEnum(["fail", "include"] as const, {
 		description: 'How integration modes handle typed child envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
 		default: "fail",

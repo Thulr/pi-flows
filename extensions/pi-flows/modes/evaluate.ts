@@ -5,7 +5,11 @@ import { appendReturnContract, clampIterations, normalizeTimeout, resolvedCwd, v
 import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { recordStepHandoff, recordTextHandoff } from "../integration.ts";
 import { runCheckCommand } from "../commands.ts";
+
+/** One place the generator's unit key is derived, so each critic's dependency link names the draft it judged. */
+const generatorKey = (stageKey: string) => `${stageKey}.generator`;
 
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
@@ -64,14 +68,39 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	let passed = false;
 	let rounds = 0;
 	let lastCheckOk: boolean | null = null;
+	// What the next revision is answering: the critic panel that said REVISE, or
+	// the gate that failed before the critics ever ran. Without it the trace shows
+	// iteration 2 as independent of iteration 1, and a revision cannot be
+	// attributed to the verdict that caused it.
+	let feedbackKey: string | undefined;
+	let priorArtifactKey: string | undefined;
 	const contractBudget = contract ? createDelegationBudget(contract) : undefined;
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
 		rounds = iteration;
+		const stage = { key: `iteration-${iteration}`, name: `iteration ${iteration}` };
+		// A revision round is a retry of the same goal with new feedback. Recording
+		// it makes "how many attempts did this take, and why" answerable from the
+		// trace instead of from the prose header.
+		if (iteration > 1) {
+			deps.recordEvent?.({
+				kind: "retry",
+				name: "evaluate.revise",
+				// The retry is caused by the previous iteration's feedback, so it hangs
+				// off that verdict rather than off the iteration boundary alone.
+				scope: { stage, key: `${stage.key}.retry`, ...(feedbackKey ? { dependsOn: [feedbackKey] } : {}) },
+				attributes: {
+					"flow.retry.attempt": iteration,
+					"flow.retry.max_attempts": maxIterations,
+					"flow.retry.reason": lastCheckOk === false ? "check_command_failed" : "critic_revise",
+				},
+			});
+		}
 
 		// 1. Generator builds. Round 1 sees the goal; later rounds also see the prior
 		// ARTIFACT plus the critique so the generator revises in place instead of
 		// rebuilding from scratch (durable hand-off, per the harness design rules).
+		const consumed = [priorArtifactKey, feedbackKey].filter((key): key is string => Boolean(key));
 		const generatorTask =
 			iteration === 1
 				? contractedGoal
@@ -89,7 +118,13 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			"evaluate",
 			results.length + 1,
 			results,
-			contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget } : {},
+			{
+				limits: contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
+				// A revision's prompt carries the prior artifact and the feedback that
+				// sent it back. Both are declared: reachability through the panel is
+				// not the same as saying what this prompt actually contains.
+				scope: { stage, key: generatorKey(stage.key), ...(consumed.length ? { dependsOn: consumed } : {}) },
+			},
 		);
 		results.push(generated);
 		lastGenerator = generated;
@@ -113,6 +148,21 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// invisible characters and flag injection markers before reuse.
 		const artifactPrep = handoffWarnings.addFrom(envelopeText === null ? prepareResultHandoff(generated, policy) : prepareTextHandoff(envelopeText, policy));
 		const artifact = artifactPrep.text;
+		// The critics judge this text, not the generator's raw output: it has been
+		// validated, capped, and injection-scanned on the way here. Emitted only
+		// once a consumer is known — a failed check on the final iteration ends the
+		// run, and nothing ever reads this artifact.
+		const emitArtifactHandoff = () => {
+			recordStepHandoff(deps, {
+				result: generated,
+				contract,
+				envelope: generated.envelope,
+				carried: artifact,
+				warnings: artifactPrep.warnings,
+				scope: { stage, key: generatorKey(stage.key) },
+			});
+			priorArtifactKey = `${generatorKey(stage.key)}.handoff`;
+		};
 		priorArtifact = artifact;
 
 		// 2. Deterministic gate (level-1 / code assertions): a command that must exit 0.
@@ -130,12 +180,45 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")(results, error) };
 			}
 			lastCheckOk = check.ok;
+			deps.recordEvent?.({
+				kind: "validation",
+				name: "evaluate.check_command",
+				ok: check.ok,
+				// The gate ran against this iteration's draft, so a revision driven by a
+				// failed check can be traced back to the draft that failed it.
+				scope: { stage, key: `${stage.key}.check`, dependsOn: [generatorKey(stage.key)] },
+				attributes: { "flow.check.passed": check.ok, "flow.check.iteration": iteration },
+			});
 			if (!check.ok) {
-				critique = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
+				// The command's output crosses into the next generator's prompt, so it
+				// gets the same treatment as any other feedback: capped, stripped of
+				// invisible characters, and injection-scanned. A check that prints an
+				// attacker-controlled file is no more trustworthy than an agent.
+				const checkRaw = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
+				const checkPrep = handoffWarnings.addFrom(prepareTextHandoff(checkRaw, policy));
+				critique = checkPrep.text;
+				feedbackKey = `${stage.key}.check`;
+				// Only when a generator will actually read it: on the final iteration
+				// the run ends here, and recording a boundary nothing crossed would
+				// invent one. The same applies to the artifact that revision revises.
+				if (iteration < maxIterations) {
+					emitArtifactHandoff();
+					recordTextHandoff(deps, {
+						fromAgent: `checkCommand:${checkCommand}`,
+						raw: checkRaw,
+						carried: critique,
+						warnings: checkPrep.warnings,
+						scope: { stage, key: `${stage.key}.check.handoff`, dependsOn: [`${stage.key}.check`] },
+					});
+					feedbackKey = `${stage.key}.check.handoff`;
+				}
 				emitLive();
 				continue;
 			}
 		}
+
+		// The critics below read the artifact, so the boundary is real from here on.
+		emitArtifactHandoff();
 
 		// 3. Critic panel (level-2 / LLM-as-judge) judges the ARTIFACT — not the
 		// generator's reasoning trace. PASS requires every critic to pass.
@@ -156,10 +239,11 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const critics = await runAgentFanout(
 			deps,
 			"evaluate",
-			evaluatorRefs.map((ref) => ({ ref, task: evaluatorTask })),
+			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [`${generatorKey(stage.key)}.handoff`] } })),
 			concurrency,
 			results,
 			(done) => `Flow evaluate: ${results.length + done} step(s) done`,
+			stage,
 		);
 		results.push(...critics);
 		emitLive();
@@ -173,6 +257,20 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 
 		const verdicts = critics.map((critic) => ({ agent: critic.agent, pass: parseVerdict(resultText(critic)) === "pass", text: resultText(critic) }));
 		const allPass = verdicts.every((verdict) => verdict.pass);
+		deps.recordEvent?.({
+			kind: "validation",
+			name: "evaluate.panel_verdict",
+			ok: allPass,
+			// The verdict is the aggregate of these critics; without the links the
+			// revision points at a panel that points at nothing, and the attribution
+			// chain from revision back to judgement is broken in the middle.
+			scope: { stage, key: `${stage.key}.panel`, dependsOn: critics.map((_unused, index) => `${stage.key}.critic-${index + 1}`) },
+			attributes: {
+				"flow.verdict.pass": allPass,
+				"flow.verdict.critic_count": verdicts.length,
+				"flow.verdict.revise_critics": verdicts.filter((verdict) => !verdict.pass).map((verdict) => verdict.agent).join(","),
+			},
+		});
 		if (allPass) {
 			passed = true;
 			break;
@@ -183,6 +281,20 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const critiqueRaw = revising.map((verdict, index) => `### Critic ${index + 1} (${verdict.agent})\n\n${verdict.text}`).join("\n\n---\n\n");
 		const critiquePrep = handoffWarnings.addFrom(prepareTextHandoff(critiqueRaw, policy));
 		critique = critiquePrep.text;
+		// The next generator reads this combined critique, not the panel verdict:
+		// the text was aggregated, capped, and injection-scanned on the way here.
+		// A REVISE on the final iteration ends the run: the critique reaches the
+		// caller, not another agent, so no boundary was crossed.
+		if (iteration < maxIterations) {
+			recordTextHandoff(deps, {
+				fromAgent: revising.map((verdict) => verdict.agent).join(","),
+				raw: critiqueRaw,
+				carried: critique,
+				warnings: critiquePrep.warnings,
+				scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
+			});
+			feedbackKey = `${stage.key}.feedback`;
+		}
 	}
 
 	const finalArtifact = lastGenerator ? sanitizeText(resultText(lastGenerator), policy) : "(no generator output)";

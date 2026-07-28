@@ -4,7 +4,7 @@ import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 const VOTER_STANCES = [
 	"Primary solver: answer the task directly and state the strongest evidence for your conclusion.",
@@ -34,6 +34,9 @@ function voterTask(baseTask: string, index: number, total: number, diversify: bo
 		"Work independently. Do not assume other voters will catch missing cases. Return your own best answer to the original task.",
 	].join("\n");
 }
+
+/** One place a voter's unit key is derived, so the aggregator's dependency links name the ballots it read. */
+const voterKey = (index: number) => `voter-${index + 1}`;
 
 export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
@@ -100,6 +103,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
 			placeholderTask: goal,
+			scope: { key: voterKey(index) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")([], planned.error) };
 		voterPlans.push(planned.plan!);
@@ -111,6 +115,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		concurrency,
 		[],
 		(done, total) => `Flow vote: ${done}/${total} voters done`,
+		{ key: "voters", name: "voters" },
 	);
 	const voterHandoffError = acceptIntegrationResults(deps, voterPlans, voterResults);
 	if (voterHandoffError) {
@@ -126,6 +131,12 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		: "";
 
 	const succeeded = voterResults.filter((result) => !isFailed(result));
+	// Only the ballots that reached the aggregator prompt: a failed voter's output
+	// is filtered out, so naming it would claim a consensus rested on a vote that
+	// was never cast.
+	// Through each ballot's handoff: what the aggregator reads is the validated,
+	// filtered, injection-scanned text, not the voter's raw output.
+	const consumedBallotKeys = voterResults.flatMap((result, index) => isFailed(result) ? [] : [`${voterKey(index)}.handoff`]);
 	if (succeeded.length === 0) {
 		return { content: [{ type: "text", text: sanitizeText(`${diversityWarning}Flow vote: all ${voterResults.length} voters failed.`, policy) }], details: makeDetails("vote")(voterResults) };
 	}
@@ -156,9 +167,10 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			scope: { key: "aggregator", dependsOn: consumedBallotKeys },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")(results, planned.error) };
-		const aggregated = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "vote", results.length + 1, results, planned.plan!.limits);
+		const aggregated = await runIntegrationPlan(deps, planned.plan!, "vote", results.length + 1, results);
 		results.push(aggregated);
 		if (isFailed(aggregated)) {
 			return { content: [{ type: "text", text: sanitizeText(`Flow vote: aggregator "${aggregatorRef.agent}" failed.\n\n${resultText(aggregated)}`, policy) }], details: makeDetails("vote")(results) };
