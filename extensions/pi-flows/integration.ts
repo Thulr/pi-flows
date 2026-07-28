@@ -230,7 +230,10 @@ function emitHandoff(
 		handoffScope,
 		unit,
 		deps.policy,
-		!rejection,
+		// Reaching this branch means the envelope and its artifact digests already
+		// validated. A later policy refusal rejects carrying the payload, not the
+		// independently checked artifact claim.
+		true,
 	);
 }
 

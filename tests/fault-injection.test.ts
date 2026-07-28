@@ -45,6 +45,9 @@ for (const scenario of scenarios) {
 		assert.deepEqual(actual.process, scenario.expected.process, "process check");
 		assert.deepEqual(actual.policy, scenario.expected.policy, "policy check");
 		assert.deepEqual(actual.residualState, scenario.expected.residualState, "residual-state check");
+		if (scenario.expected.handoffSecurity) {
+			assert.deepEqual(actual.handoffSecurity, scenario.expected.handoffSecurity, "handoff-security check");
+		}
 	});
 }
 
