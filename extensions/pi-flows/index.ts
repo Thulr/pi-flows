@@ -399,9 +399,8 @@ export default function (pi: ExtensionAPI) {
 				// second problem, not a better explanation of the first.
 				const traceError = strictTraceError(output.details.trace, traceStrict);
 				if (traceError && !output.details.error) {
-					const error = traceError;
-					output.details.error = error;
-					output.content = [{ type: "text", text: `${formatFlowError(error)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
+					output.details.error = traceError;
+					output.content = [{ type: "text", text: `${formatFlowError(traceError)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
 					liveDetails = output.details;
 					liveRuns.update(toolCallId, liveDetails);
 					updateFlowUi(ctx, liveDetails);

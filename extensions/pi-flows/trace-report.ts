@@ -194,6 +194,7 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// Two independent views of completeness: what the exporter admitted it
 		// failed to write, and what the file is missing relative to what the root
 		// span said to expect. The second catches loss *after* a successful write.
+		const redactedSpans = numericAttr(rootSpan, "flow.trace.redacted_spans");
 		const declaredExpected = optionalNumericAttr(rootSpan, "flow.trace.expected_spans");
 		const expectedSpans = declaredExpected ?? traceSpans.length;
 		const failedExports = numericAttr(rootSpan, "flow.trace.failed_exports");
@@ -218,12 +219,12 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			expectedSpans,
 			observedSpans: traceSpans.length,
 			droppedSpans,
-			redactedSpans: numericAttr(rootSpan, "flow.trace.redacted_spans"),
+			redactedSpans,
 			failedExports,
 			// Same derivation the sink used when it stamped `flow.trace.health`, so a
 			// read-back verdict and a live one cannot disagree.
 			incompleteTraces: traceHealthStatus(
-				{ expectedSpans, observedSpans: traceSpans.length, droppedSpans, redactedSpans: 0, failedExports },
+				{ expectedSpans, observedSpans: traceSpans.length, droppedSpans, redactedSpans, failedExports },
 				Boolean(root),
 			) === "recorded" ? 0 : 1,
 			coordinationEvents: eventSpans.length,

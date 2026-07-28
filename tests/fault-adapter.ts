@@ -12,6 +12,15 @@
 // adapter models what the real runner would do with it (a delay past the
 // effective timeout becomes CHILD_TIMEOUT). That keeps a latency fault instant
 // and deterministic instead of flaky and slow.
+//
+// What this fake does NOT prove: it re-states two of the real adapter's own
+// pre-spawn rules — refuse once a ceiling is spent, and stop a child that runs
+// past its timeout — so a scenario resting on them is testing the *mode's*
+// behaviour given a seam that enforces them, not the enforcement itself. That
+// enforcement is covered where it lives, against the real runner, in
+// tests/flow-budget.test.ts and tests/provider-error.test.ts.
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type FlowAgent, type FlowBudget, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
@@ -73,9 +82,22 @@ export class FaultLedger {
 	}
 }
 
+/**
+ * A scripted child turn. `writes` lets a child actually produce workspace files,
+ * so an artifact scenario can corrupt a real file and a partial run can leave
+ * real residue for a retry — rather than the test seeding both sides itself and
+ * checking a file nothing ever wrote.
+ */
+export interface ScriptedReply {
+	reply: string;
+	writes?: Record<string, string>;
+}
+
+export type ReplyScript = string | ScriptedReply | Array<string | ScriptedReply>;
+
 export interface FaultAdapterOptions {
-	/** Reply body per agent. A list advances across repeated dispatches to that agent. */
-	replies: Record<string, string | string[]>;
+	/** Reply per agent. A list advances across repeated dispatches to that agent. */
+	replies: Record<string, ReplyScript>;
 	faults?: FaultRule[];
 	/** Per-turn usage the fake child reports, so budget scenarios can exhaust a real ceiling. */
 	usage?: { input: number; output: number; cost: number };
@@ -83,11 +105,19 @@ export interface FaultAdapterOptions {
 
 const DEFAULT_USAGE = { input: 40, output: 20, cost: 0.02 };
 
-function replyFor(replies: FaultAdapterOptions["replies"], agent: string, occurrence: number): string {
+function replyFor(replies: FaultAdapterOptions["replies"], agent: string, occurrence: number): ScriptedReply {
 	const scripted = replies[agent];
-	if (scripted === undefined) return `stub reply for ${agent}`;
-	if (!Array.isArray(scripted)) return scripted;
-	return scripted[Math.min(occurrence - 1, scripted.length - 1)];
+	if (scripted === undefined) return { reply: `stub reply for ${agent}` };
+	const turn = Array.isArray(scripted) ? scripted[Math.min(occurrence - 1, scripted.length - 1)] : scripted;
+	return typeof turn === "string" ? { reply: turn } : turn;
+}
+
+function applyWrites(cwd: string, writes: Record<string, string> | undefined): void {
+	for (const [name, content] of Object.entries(writes ?? {})) {
+		const target = path.resolve(cwd, name);
+		if (!target.startsWith(`${path.resolve(cwd)}${path.sep}`)) throw new Error(`scripted write escapes cwd: ${name}`);
+		writeFileSync(target, content, "utf8");
+	}
 }
 
 function matches(rule: FaultRule, agent: string, occurrence: number): boolean {
@@ -168,7 +198,8 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 
 		const applied: FaultKind[] = [];
 		let delivery: DispatchRecord["delivery"] = "fresh";
-		let body = replyFor(options.replies, agent, occurrence);
+		const scripted = replyFor(options.replies, agent, occurrence);
+		let body = scripted.reply;
 		let durationMs = 5;
 		let failure: { code: FlowErrorCode; message: string; cause: string; retryable: boolean } | null = null;
 
@@ -210,7 +241,7 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 				const held = pendingSwap.get(agent);
 				if (held === undefined) {
 					pendingSwap.set(agent, body);
-					body = replyFor(options.replies, agent, occurrence + 1);
+					body = replyFor(options.replies, agent, occurrence + 1).reply;
 				} else {
 					body = held;
 					pendingSwap.delete(agent);
@@ -232,6 +263,9 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 			};
 		}
 
+		// A child that reaches the model writes its files; one that never got there
+		// (lost, refused, failed before running) leaves the workspace alone.
+		if (!failure) applyWrites(path.resolve(childOptions.defaultCwd, childOptions.cwd ?? childOptions.defaultCwd), scripted.writes);
 		clockMs += durationMs;
 		const result = failure
 			? failedResult(childOptions, failure.code, failure.message, failure.cause, failure.retryable)

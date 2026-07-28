@@ -11,6 +11,7 @@ import test from "node:test";
 import { formatTraceReport, parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete, type TraceSpanRecord } from "../extensions/pi-flows/trace.ts";
 import { constraintIdentifiers, promptVersion } from "../extensions/pi-flows/trace-attributes.ts";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
+import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import type { DelegationContract } from "../extensions/pi-flows/types.ts";
 import { runFlow } from "./stub-harness.ts";
 
@@ -96,7 +97,6 @@ test("child spans identify prompt version, allowed tools, authority, contract, a
 	);
 	const spans = await readSpans(stubDir);
 	const child = byRole(spans, "child")[0];
-	const agentPrompt = await readFile(path.join(process.cwd(), "agents", "recon.md"), "utf8");
 
 	assert.equal(attr(child, "flow.allowed_tools"), "read");
 	assert.equal(attr(child, "flow.delegation_reason"), "independent scout with a typed contract");
@@ -106,11 +106,19 @@ test("child spans identify prompt version, allowed tools, authority, contract, a
 	assert.equal(attr(child, "flow.authority_requires_approval"), "install packages");
 	assert.match(String(attr(child, "flow.contract_id")), /^sha256:[a-f0-9]{64}$/);
 	assert.match(String(attr(child, "flow.return_schema_digest")), /^sha256:[a-f0-9]{64}$/);
+	// Asserted against the contract's shape, not against the helper's own output:
+	// one id per constraint plus one per acceptance check, each a content digest.
+	const constraintIds = String(attr(child, "flow.constraint_ids")).split(",");
+	assert.equal(constraintIds.length, contract.constraints.length + contract.acceptanceChecks.length);
+	assert.match(constraintIds[0], /^constraint\.1:[a-f0-9]{12}$/);
+	assert.match(constraintIds.at(-1)!, /^acceptance\.1:[a-f0-9]{12}$/);
 	assert.equal(attr(child, "flow.constraint_ids"), constraintIdentifiers(contract).join(","));
-	// The prompt version identifies the agent prompt that actually ran, so an
-	// edited prompt is visibly a different version rather than the same agent.
-	assert.match(String(attr(child, "flow.agent_prompt_version")), /^sha256:[a-f0-9]{12}$/);
-	assert.notEqual(promptVersion(agentPrompt), promptVersion(`${agentPrompt}\nedited`));
+
+	// The prompt version identifies the prompt that actually ran — compared against
+	// the discovered agent's own system prompt, so a digest of the wrong string fails.
+	const recon = discoverFlowAgents(process.cwd(), "user").agents.find((agent) => agent.name === "recon")!;
+	assert.equal(attr(child, "flow.agent_prompt_version"), promptVersion(recon.systemPrompt));
+	assert.notEqual(promptVersion(recon.systemPrompt), promptVersion(`${recon.systemPrompt}\nedited`));
 });
 
 test("handoff events record filtering, size, constraint ids, and acceptance without the payload", async () => {

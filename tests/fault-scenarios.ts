@@ -25,7 +25,7 @@ import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
 import { makeTraceSink, strictTraceError, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
 import type { DelegationContract, FlowErrorCode, FlowTraceLink, ModeOutput } from "../extensions/pi-flows/types.ts";
-import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule } from "./fault-adapter.ts";
+import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule, type ReplyScript } from "./fault-adapter.ts";
 
 export const FAULT_SUITE = "fault-injection";
 
@@ -154,7 +154,7 @@ function scenarioRun(
 // --- scenario builders -----------------------------------------------------
 
 /** Two contracted workers plus a synthesizer, run through parallel + integration acceptance. */
-function contractedFanout(replies: Record<string, string | string[]>, faults: FaultRule[], cwd: string, extraParams: Record<string, unknown> = {}) {
+function contractedFanout(replies: Record<string, ReplyScript>, faults: FaultRule[], cwd: string, extraParams: Record<string, unknown> = {}) {
 	const adapter = makeFaultAdapter({ replies, faults });
 	const deps = faultDeps(
 		{
@@ -170,16 +170,19 @@ function contractedFanout(replies: Record<string, string | string[]>, faults: Fa
 }
 
 function corruptedArtifactScenario(): FaultScenario {
-	const cwd = workspace({ "report.txt": "genuine findings\n" });
+	const cwd = workspace();
 	const corrupted = envelopeFor(BASE_CONTRACT, {
 		artifactReferences: [{ path: "report.txt" }],
 		digests: [{ artifact: "report.txt", algorithm: "sha256", value: sha256("fabricated findings\n") }],
 	});
+	// The worker writes the artifact it then misreports, so the mismatch is
+	// between a real file and a real claim about it.
+	const faults: FaultRule[] = [{ kind: "stale", agent: "recon", occurrence: 2, replay: corrupted }];
 	return {
 		id: "corrupted-artifact-digest",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults: [{ kind: "stale", agent: "recon", occurrence: 2, replay: corrupted }],
+		faults,
 		faultKind: "stale",
 		description: "A worker reports a digest for an artifact whose bytes on disk do not match it.",
 		attackOpportunities: 1,
@@ -192,7 +195,11 @@ function corruptedArtifactScenario(): FaultScenario {
 			residualState: { retryable: false, acceptedHandoffs: 1 },
 		},
 		run: scenarioRun(
-			() => contractedFanout({ recon: [envelopeFor(BASE_CONTRACT), corrupted] }, [{ kind: "stale", agent: "recon", occurrence: 2, replay: corrupted }], cwd),
+			() => contractedFanout(
+				{ recon: [{ reply: envelopeFor(BASE_CONTRACT) }, { reply: corrupted, writes: { "report.txt": "genuine findings\n" } }] },
+				faults,
+				cwd,
+			),
 			["debrief"],
 			true,
 		),
@@ -229,11 +236,12 @@ function persuasiveWrongScenario(): FaultScenario {
 function staleContractScenario(): FaultScenario {
 	const cwd = workspace();
 	const stale = envelopeFor(contractFor("Return one verified finding under the previous revision."));
+	const faults: FaultRule[] = [{ kind: "stale", agent: "recon", occurrence: 2, replay: stale }];
 	return {
 		id: "stale-contract-replay",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults: [{ kind: "stale", agent: "recon", occurrence: 2, replay: stale }],
+		faults,
 		faultKind: "stale",
 		description: "A worker returns an envelope bound to an earlier revision of the contract.",
 		attackOpportunities: 1,
@@ -245,7 +253,7 @@ function staleContractScenario(): FaultScenario {
 			residualState: { retryable: false, acceptedHandoffs: 1 },
 		},
 		run: scenarioRun(
-			() => contractedFanout({ recon: [envelopeFor(BASE_CONTRACT), stale] }, [{ kind: "stale", agent: "recon", occurrence: 2, replay: stale }], cwd),
+			() => contractedFanout({ recon: [envelopeFor(BASE_CONTRACT), stale] }, faults, cwd),
 			["debrief"],
 			true,
 		),
@@ -257,11 +265,12 @@ function reorderedResponseScenario(): FaultScenario {
 	const first = contractFor("Inspect subsystem A.");
 	const second = contractFor("Inspect subsystem B.");
 	const adapterReplies = { recon: [envelopeFor(first), envelopeFor(second)] };
+	const faults: FaultRule[] = [{ kind: "reorder", agent: "recon" }];
 	return {
 		id: "reordered-responses",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults: [{ kind: "reorder", agent: "recon" }],
+		faults,
 		faultKind: "reorder",
 		description: "Two workers' replies are delivered against each other's requests.",
 		attackOpportunities: 2,
@@ -274,7 +283,7 @@ function reorderedResponseScenario(): FaultScenario {
 			residualState: { retryable: false, acceptedHandoffs: 0 },
 		},
 		run: scenarioRun(() => {
-			const adapter = makeFaultAdapter({ replies: adapterReplies, faults: [{ kind: "reorder", agent: "recon" }] });
+			const adapter = makeFaultAdapter({ replies: adapterReplies, faults });
 			const deps = faultDeps(
 				{
 					task: "inspect both subsystems",
@@ -293,11 +302,12 @@ function reorderedResponseScenario(): FaultScenario {
 
 function lostResponseScenario(): FaultScenario {
 	const cwd = workspace();
+	const faults: FaultRule[] = [{ kind: "loss", agent: "recon", occurrence: 2 }];
 	return {
 		id: "lost-response",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults: [{ kind: "loss", agent: "recon", occurrence: 2 }],
+		faults,
 		faultKind: "loss",
 		description: "One fan-out worker's response never arrives.",
 		attackOpportunities: 1,
@@ -311,7 +321,7 @@ function lostResponseScenario(): FaultScenario {
 			residualState: { retryable: false, acceptedHandoffs: 1 },
 		},
 		run: scenarioRun(
-			() => contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, [{ kind: "loss", agent: "recon", occurrence: 2 }], cwd),
+			() => contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, faults, cwd),
 			["debrief"],
 			true,
 		),
@@ -320,11 +330,12 @@ function lostResponseScenario(): FaultScenario {
 
 function duplicateBallotScenario(): FaultScenario {
 	const cwd = workspace();
+	const faults: FaultRule[] = [{ kind: "duplicate", agent: "recon", occurrence: 2 }];
 	return {
 		id: "duplicated-ballot",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults: [{ kind: "duplicate", agent: "recon", occurrence: 2 }],
+		faults,
 		faultKind: "duplicate",
 		description: "A voter's ballot is delivered twice, so agreement is self-agreement.",
 		attackOpportunities: 1,
@@ -343,7 +354,7 @@ function duplicateBallotScenario(): FaultScenario {
 		run: scenarioRun(() => {
 			const adapter = makeFaultAdapter({
 				replies: { recon: ["the answer is 42", "the answer is 7"], debrief: "consensus: 42" },
-				faults: [{ kind: "duplicate", agent: "recon", occurrence: 2 }],
+				faults,
 			});
 			const deps = faultDeps(
 				{ task: "agree on the answer", vote: { agent: "recon", count: 2, debrief: { agent: "debrief" } } },
@@ -465,8 +476,12 @@ function retryAfterPartialControlScenario(): FaultScenario {
 		// workspace would prove nothing about whether the refusal left recoverable
 		// state — it would only prove that a clean run is clean.
 		run: async () => {
-			const cwd = workspace({ "partial-notes.txt": "subsystem A only\n" });
-			const refused = await contractedFanout({ recon: [envelopeFor(BASE_CONTRACT), partial] }, [], cwd).output;
+			const cwd = workspace();
+			const refused = await contractedFanout(
+				{ recon: [{ reply: envelopeFor(BASE_CONTRACT) }, { reply: partial, writes: { "partial-notes.txt": "subsystem A only\n" } }] },
+				[],
+				cwd,
+			).output;
 			if (refused.details.error?.code !== "RETURN_ENVELOPE_INCOMPLETE") {
 				throw new Error(`retry precondition failed: expected the partial run to be refused, got ${refused.details.error?.code ?? "no error"}`);
 			}
@@ -485,11 +500,12 @@ function retryAfterPartialControlScenario(): FaultScenario {
 
 function benignSlowChildScenario(): FaultScenario {
 	const cwd = workspace();
+	const faults: FaultRule[] = [{ kind: "delay", agent: "recon", delayMs: 4_000 }];
 	return {
 		id: "slow-but-within-budget",
 		suite: FAULT_SUITE,
 		portfolio: "control",
-		faults: [{ kind: "delay", agent: "recon", delayMs: 4_000 }],
+		faults,
 		faultKind: "delay",
 		description: "A slow child that still finishes inside its ceiling must not be contained.",
 		attackOpportunities: 0,
@@ -501,7 +517,7 @@ function benignSlowChildScenario(): FaultScenario {
 			residualState: { retryable: false, acceptedHandoffs: 2 },
 		},
 		run: scenarioRun(
-			() => contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, [{ kind: "delay", agent: "recon", delayMs: 4_000 }], cwd, { timeoutMs: 30_000 }),
+			() => contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, faults, cwd, { timeoutMs: 30_000 }),
 			["debrief"],
 			false,
 		),
@@ -510,11 +526,12 @@ function benignSlowChildScenario(): FaultScenario {
 
 function timeoutCeilingScenario(): FaultScenario {
 	const cwd = workspace();
+	const faults: FaultRule[] = [{ kind: "delay", agent: "recon", delayMs: 90_000 }];
 	return {
 		id: "delay-past-ceiling",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults: [{ kind: "delay", agent: "recon", delayMs: 90_000 }],
+		faults,
 		faultKind: "delay",
 		description: "A child that runs past its ceiling is stopped rather than waited on.",
 		attackOpportunities: 2,
@@ -526,7 +543,7 @@ function timeoutCeilingScenario(): FaultScenario {
 			residualState: { retryable: false, acceptedHandoffs: 0 },
 		},
 		run: scenarioRun(
-			() => contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, [{ kind: "delay", agent: "recon", delayMs: 90_000 }], cwd, { timeoutMs: 5_000 }),
+			() => contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, faults, cwd, { timeoutMs: 5_000 }),
 			["debrief"],
 			true,
 		),
@@ -535,11 +552,12 @@ function timeoutCeilingScenario(): FaultScenario {
 
 function failedVerifierScenario(): FaultScenario {
 	const cwd = workspace();
+	const faults: FaultRule[] = [{ kind: "failure", agent: "redteam", errorCode: "CHILD_PROVIDER_ERROR" }];
 	return {
 		id: "verifier-failure",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults: [{ kind: "failure", agent: "redteam", errorCode: "CHILD_PROVIDER_ERROR" }],
+		faults,
 		faultKind: "failure",
 		description: "The independent critic dies mid-run, so no verdict is available to read as a pass.",
 		attackOpportunities: 1,
@@ -555,7 +573,7 @@ function failedVerifierScenario(): FaultScenario {
 		run: async () => {
 			const adapter = makeFaultAdapter({
 				replies: { operator: "draft", redteam: "VERDICT: PASS" },
-				faults: [{ kind: "failure", agent: "redteam", errorCode: "CHILD_PROVIDER_ERROR" }],
+				faults,
 			});
 			const deps = faultDeps({ task: "build the thing", evaluate: { maxIterations: 2 } }, adapter, cwd);
 			const output = await handleEvaluate(deps);
@@ -708,7 +726,16 @@ export interface FaultPortfolioReport {
 	adversarial: number;
 	controls: number;
 	attackOpportunities: number;
+	/** Clean deliveries across the whole suite, adversarial cases included. */
 	benignOpportunities: number;
+	/**
+	 * The false-containment denominator: clean deliveries in *control* cases only.
+	 * A clean sibling inside an adversarial case cannot register false blocking —
+	 * that case is already expected to refuse — so counting it here would inflate
+	 * the denominator and flatter the rate. Those siblings are pinned instead by
+	 * each case's `residualState.acceptedHandoffs`.
+	 */
+	controlOpportunities: number;
 	contained: number;
 	falselyBlocked: number;
 	byFaultKind: Record<string, number>;
@@ -729,8 +756,9 @@ export function faultPortfolioReport(scenarios: FaultScenario[]): FaultPortfolio
 		controls: scenarios.filter((scenario) => scenario.portfolio === "control").length,
 		attackOpportunities: scenarios.reduce((sum, scenario) => sum + scenario.attackOpportunities, 0),
 		benignOpportunities: scenarios.reduce((sum, scenario) => sum + scenario.benignOpportunities, 0),
+		controlOpportunities: scenarios.filter((scenario) => scenario.portfolio === "control").reduce((sum, scenario) => sum + scenario.benignOpportunities, 0),
 		contained: scenarios.filter((scenario) => scenario.expected.policy.contained).reduce((sum, scenario) => sum + scenario.attackOpportunities, 0),
-		falselyBlocked: scenarios.filter((scenario) => scenario.expected.policy.falselyBlocked).reduce((sum, scenario) => sum + scenario.benignOpportunities, 0),
+		falselyBlocked: scenarios.filter((scenario) => scenario.portfolio === "control" && scenario.expected.policy.falselyBlocked).reduce((sum, scenario) => sum + scenario.benignOpportunities, 0),
 		byFaultKind,
 	};
 }
@@ -740,7 +768,7 @@ export function formatFaultPortfolioReport(report: FaultPortfolioReport): string
 	return [
 		`suite: ${report.suite} (${report.scenarios} scenarios: ${report.adversarial} adversarial, ${report.controls} control)`,
 		`containment: ${report.contained}/${report.attackOpportunities} attack opportunities (${rate(report.contained, report.attackOpportunities)})`,
-		`false containment: ${report.falselyBlocked}/${report.benignOpportunities} benign opportunities (${rate(report.falselyBlocked, report.benignOpportunities)})`,
+		`false containment: ${report.falselyBlocked}/${report.controlOpportunities} control deliveries (${rate(report.falselyBlocked, report.controlOpportunities)}); ${report.benignOpportunities - report.controlOpportunities} further clean deliveries sit alongside faults and are pinned by residual-state checks`,
 		`fault kinds: ${Object.entries(report.byFaultKind).sort(([a], [b]) => a.localeCompare(b)).map(([kind, count]) => `${kind} ${count}`).join(", ")}`,
 	].join("\n");
 }

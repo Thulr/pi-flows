@@ -52,12 +52,14 @@ test("every scenario is classified and carries explicit opportunity denominators
 test("benign controls run through the same harness so false containment stays measurable", () => {
 	const report = faultPortfolioReport(scenarios);
 	assert.ok(report.controls >= 3, `expected benign controls in the suite, saw ${report.controls}`);
-	assert.ok(report.benignOpportunities > 0, "controls must contribute a false-containment denominator");
+	assert.ok(report.controlOpportunities > 0, "controls must contribute a false-containment denominator");
+	assert.ok(report.benignOpportunities > report.controlOpportunities, "adversarial cases also carry clean deliveries alongside their faults");
 	// The suite's headline claim: no clean delivery is expected to be blocked.
 	assert.equal(report.falselyBlocked, 0, "a control that is expected to be blocked is a false-containment bug, not a passing test");
 	assert.ok(report.contained > 0 && report.contained < report.attackOpportunities, "containment must be reported as a rate, not assumed total");
 	const formatted = formatFaultPortfolioReport(report);
 	assert.match(formatted, /containment: \d+\/\d+ attack opportunities/);
+	assert.match(formatted, /false containment: \d+\/\d+ control deliveries/);
 	// Print the denominators so a run reports what the suite measured, not just
 	// that its assertions held.
 	console.log(formatted);
