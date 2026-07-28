@@ -478,3 +478,35 @@ test("a key long enough to be capped stays matchable on both sides", async () =>
 	assert.equal(attr(spans.find((span) => attr(span, "flow.unit_key") === "beta"), "flow.depends_on"), `${longId}.handoff`);
 	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });
+
+test("dependency metadata is refused in pieces, not just when it points nowhere", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "map the system",
+			traceFile: TRACE,
+			graph: { nodes: [{ id: "alpha", agent: "recon", task: "start" }, { id: "beta", agent: "recon", task: "use {node.alpha}", dependsOn: ["alpha"] }] },
+		},
+		{ recon: "node output" },
+	);
+	const spans = await readSpans(stubDir);
+	const beta = spans.find((span) => attr(span, "flow.unit_key") === "beta")!;
+	const without = (...dropped: string[]) =>
+		spans.map((span) => {
+			if (span !== beta) return span;
+			const attributes = { ...span.attributes };
+			for (const key of dropped) delete attributes[key];
+			return { ...span, attributes };
+		});
+
+	// Removing the keys while the count and resolved ids remain leaves a row that
+	// still proves it declared dependencies — corruption wearing the shape of a
+	// unit that never depended on anything.
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(without("flow.depends_on"), 0, TRACE)), false);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(without("flow.depends_on", "flow.depends_on_span_ids"), 0, TRACE)), false);
+	// Removing all of it is a unit that genuinely declared none, which is fine —
+	// alpha is such a unit in this very trace.
+	assert.equal(
+		traceReportIsComplete(summarizeTraceSpans(without("flow.depends_on", "flow.depends_on_count", "flow.depends_on_span_ids"), 0, TRACE)),
+		true,
+	);
+});

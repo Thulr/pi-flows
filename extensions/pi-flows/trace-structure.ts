@@ -108,7 +108,12 @@ function spansByKey(spans: TraceSpanRecord[]): Map<string, Set<string>> {
 
 function dependenciesHold(span: TraceSpanRecord, knownIds: Set<string>, byKey: Map<string, Set<string>>): boolean {
 	const declared = stringAttr(span, "flow.depends_on");
-	if (!declared) return true;
+	const countDeclared = optionalNumericAttr(span, "flow.depends_on_count");
+	const idsDeclared = stringAttr(span, "flow.depends_on_span_ids");
+	// No dependency metadata at all is a span that declared none. Some of it is a
+	// span whose keys were removed while the row still proves they existed, which
+	// is corruption wearing the shape of a unit that never depended on anything.
+	if (!declared) return countDeclared === undefined && idsDeclared === undefined;
 	// Counted from the attribute written for the purpose, falling back to the
 	// joined string only for producers that emit no count. Inferring it from a
 	// string any cap could have shortened would read an elision as a broken chain.

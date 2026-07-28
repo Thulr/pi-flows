@@ -22,6 +22,9 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 
 	for (let index = 0; index < params.chain.length; index += 1) {
 		const step = params.chain[index];
+		// The last step's output is the answer, not a handoff: nothing downstream
+		// receives it, so recording a boundary there would invent one.
+		const handsOff = index < params.chain.length - 1;
 		const contract = (step.contract ?? params.contract) as DelegationContract | undefined;
 		const rendered = renderTaskTemplate(step.task, params.task ?? params.contract?.objective, previous);
 		const task = contract
@@ -64,14 +67,14 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			previous = withInjectionNotice(handoff, `chain step ${index + 1} envelope`);
 			// The step validated its own envelope, so it records its own boundary:
 			// this is where one agent's output becomes the next agent's prompt.
-			recordStepHandoff(deps, { result, contract, envelope: validated.envelope, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
+			if (handsOff) recordStepHandoff(deps, { result, contract, envelope: validated.envelope, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
 			continue;
 		}
 		// {previous} is this step's output reused as the next step's prompt — a trust
 		// boundary. Strip invisible chars and flag injection markers before handoff.
 		const handoff = prepareResultHandoff(result, policy);
 		previous = withInjectionNotice(handoff, `chain step ${index + 1} output`);
-		recordStepHandoff(deps, { result, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
+		if (handsOff) recordStepHandoff(deps, { result, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
 	}
 
 	return {

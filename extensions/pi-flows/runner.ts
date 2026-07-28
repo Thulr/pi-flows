@@ -230,6 +230,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						for (const budget of budgets) chargeBudget(budget, turnUsage);
 						if (!message.errorMessage && budgets.some((budget) => budget.maxCostUsd !== undefined) && turnUsage.costKnown === false) {
 							budgetUnobservable = true;
+							// Named here rather than left to the fallback: a contract-only cost
+							// ceiling is the one that could not be enforced, and reporting it as
+							// a flow budget would name one the run never had.
+							terminatingBudget = budgets.find((budget) => budget.maxCostUsd !== undefined);
 							controls.terminate();
 						} else if (!message.errorMessage) {
 							terminatingBudget = budgets.find((budget) => activeBudgetExceeded(budget))

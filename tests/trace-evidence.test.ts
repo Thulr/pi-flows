@@ -462,7 +462,9 @@ test("a chain step records the boundary where its output becomes the next prompt
 	// chain validates its own envelopes and renders its own {previous}, so it never
 	// reaches the integration adapter — but a handoff still happens at every step.
 	const handoffs = spans.filter((span) => attr(span, "flow.event_kind") === "handoff");
-	assert.equal(handoffs.length, 2);
+	// One boundary, not two: the final step's output is the answer, and nothing
+	// downstream receives it, so recording a handoff there would invent one.
+	assert.equal(handoffs.length, 1);
 	assert.equal(attr(handoffs[0], "flow.handoff.acceptance"), "accepted");
 	assert.equal(attr(handoffs[0], "flow.handoff.from_agent"), "recon");
 	assert.equal(attr(handoffs[0], "flow.depends_on"), "step-1");
@@ -487,4 +489,27 @@ test("carried bytes count the text the next prompt received, not the envelope be
 	assert.ok(carried > raw, "the envelope does add structure around the result");
 	assert.ok(carried <= 52_000, `carried ${carried} must not exceed the cap the consumer sees`);
 	assert.equal(attr(handoff, "flow.handoff.filtered"), false);
+});
+
+test("a single-step chain records no handoff, because none happened", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "just do it", traceFile: TRACE, chain: [{ agent: "recon", task: "inspect {task}" }] },
+		{ recon: "FINDINGS" },
+	);
+	const spans = await readSpans(stubDir);
+	assert.equal(spans.filter((span) => attr(span, "flow.event_kind") === "handoff").length, 0);
+});
+
+test("an unenforceable contract ceiling is named as the contract's", async () => {
+	// The cost budget that could not be enforced is the contract's; reporting it
+	// as a flow budget would name a ceiling this run never had.
+	const { stubDir, result } = await runFlow(
+		{ agent: "recon", task: "inspect", traceFile: TRACE, contract: { ...contract, budget: { maxCostUsd: 0.5 } } },
+		{ recon: { reply: envelope(), omitCost: true } },
+	);
+	assert.equal(result.details.results[0].error?.code, "BUDGET_UNOBSERVABLE");
+	const event = (await readSpans(stubDir)).find((span) => attr(span, "flow.event_name") === "child.unobservable")!;
+	assert.equal(attr(event, "flow.budget.authority"), "contract");
+	assert.equal(attr(event, "flow.contract_budget.limit_cost_usd"), 0.5);
+	assert.equal(attr(event, "flow.budget.limit_cost_usd"), undefined);
 });
