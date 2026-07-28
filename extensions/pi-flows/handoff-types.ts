@@ -16,6 +16,6 @@ export interface PreparedHandoff {
 
 export interface HandoffGuard {
 	readonly resolution: ResolvedHandoffPolicy;
-	prepare(raw: string, cleaned: string, warnings: string[]): PreparedHandoff;
+	prepare(cleaned: string, warnings: string[]): PreparedHandoff;
 	readonly blockingError?: FlowError;
 }

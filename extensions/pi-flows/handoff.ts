@@ -32,7 +32,7 @@ export function createHandoffGuard(resolution: ResolvedHandoffPolicy): HandoffGu
 	let blockingError: ReturnType<typeof flowError> | undefined;
 	return {
 		resolution,
-		prepare(raw, cleaned, directWarnings) {
+		prepare(cleaned, directWarnings) {
 			const priorWarnings = new Set(history.flatMap((fragment) => fragment.warnings));
 			const combinedWarnings = scanForInjection([...history.map((fragment) => fragment.text), cleaned].join(" "));
 			const compositionalWarnings = combinedWarnings.filter((warning) => !directWarnings.includes(warning) && !priorWarnings.has(warning));
@@ -99,7 +99,7 @@ export function prepareHandoff(text: string, guard?: HandoffGuard): PreparedHand
 	const cleaned = stripControlChars(text);
 	const warnings = new Set([...scanForInjection(text), ...scanForInjection(cleaned)]);
 	return guard
-		? guard.prepare(text, cleaned, [...warnings])
+		? guard.prepare(cleaned, [...warnings])
 		: { text: cleaned, warnings: [...warnings], action: warnings.size ? "warn" : "allow", compositional: false };
 }
 

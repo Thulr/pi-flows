@@ -149,9 +149,11 @@ export function recordTextHandoff(deps: ModeDeps, options: {
 }): void {
 	const record = deps.recordEvent;
 	if (!record) return;
+	const rejection = options.prepared.error;
 	record({
 		kind: "handoff",
-		name: "handoff.accepted",
+		name: rejection ? "handoff.rejected" : "handoff.accepted",
+		ok: !rejection,
 		scope: options.scope,
 		attributes: handoffAttributes(
 			{
@@ -170,7 +172,8 @@ export function recordTextHandoff(deps: ModeDeps, options: {
 				provenance: { agent: options.fromAgent },
 			},
 			{
-				accepted: true,
+				accepted: !rejection,
+				rejection,
 				rawBytes: Buffer.byteLength(options.raw, "utf8"),
 				carriedBytes: Buffer.byteLength(options.prepared.text, "utf8"),
 				warnings: options.prepared.warnings,

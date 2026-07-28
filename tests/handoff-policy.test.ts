@@ -166,7 +166,7 @@ test("retrieved-content injection is quarantined before reuse", async () => {
 	assert.match(calls[1].task, /quarantined/i);
 });
 
-test("flagged routing metadata cannot spawn the selected specialist under fail", async () => {
+test("flagged routing metadata cannot spawn the selected agent under fail", async () => {
 	const { calls, result } = await runFlow(
 		{
 			task: "Inspect.",
@@ -256,4 +256,25 @@ test("traces record warn, quarantine, fail, and benign enforcement facts", async
 	assert.equal(attr("fail:flagged", "flow.handoff.acceptance"), "rejected:HANDOFF_POLICY_VIOLATION");
 	assert.equal(attr("quarantine:benign", "flow.handoff.policy_action"), "allow");
 	assert.equal(attr("quarantine:benign", "flow.handoff.scan_flagged"), false);
+});
+
+test("fail-policy aggregated feedback is traced as rejected", async () => {
+	const { calls, stubDir } = await runFlow(
+		{
+			task: "Improve the draft.",
+			handoffPolicy: "fail",
+			traceFile: "trace.jsonl",
+			evaluate: { maxIterations: 2 },
+		},
+		{
+			operator: ["first draft", "must not run"],
+			redteam: `VERDICT: REVISE\n${OVERRIDE}`,
+		},
+	);
+	assert.equal(calls.filter((call) => call.agent === "operator").length, 1);
+	const parsed = parseTraceJsonl(await readFile(`${stubDir}/trace.jsonl`, "utf8"));
+	const feedback = parsed.spans.find((span) => span.attributes?.["flow.unit_key"] === "iteration-1.feedback");
+	assert.ok(feedback);
+	assert.equal(feedback.attributes?.["flow.handoff.acceptance"], "rejected:HANDOFF_POLICY_VIOLATION");
+	assert.equal(feedback.attributes?.["flow.handoff.policy_action"], "fail");
 });

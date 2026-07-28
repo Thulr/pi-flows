@@ -66,6 +66,10 @@ test("every scenario is classified and carries explicit opportunity denominators
 		if (scenario.portfolio === "control") assert.equal(scenario.attackOpportunities, 0, `${scenario.id} is a control and must not inject a fault`);
 		const security = scenario.expected.handoffSecurity;
 		if (security) {
+			if (scenario.portfolio === "adversarial") {
+				assert.equal(scenario.benignOpportunities, 0, `${scenario.id} must not count a poisoned delivery as benign utility`);
+				assert.equal(security.benignUseful, 0, `${scenario.id} must leave benign utility to genuine control deliveries`);
+			}
 			assert.ok(security.benignUseful <= scenario.benignOpportunities, `${scenario.id} benign utility exceeds its denominator`);
 			assert.ok(security.falselyBlocked <= scenario.benignOpportunities, `${scenario.id} false-positive blocks exceed their denominator`);
 			for (const field of ["attackSucceeded", "propagated", "contained", "sensitiveExposed"] as const) {
@@ -100,6 +104,7 @@ test("benign controls run through the same harness so false containment stays me
 	assert.match(formatted, /handoff sensitive exposure: \d+\/\d+/);
 	assert.match(formatted, /handoff false-positive block: \d+\/\d+/);
 	assert.notEqual(report.handoffSecurity.attackSucceeded, report.handoffSecurity.propagated, "attack success and propagation must remain independently measured");
+	assert.notEqual(report.handoffSecurity.attackSucceeded, report.handoffSecurity.sensitiveExposed, "attack success and sensitive exposure must remain independently measured");
 	// Print the denominators so a run reports what the suite measured, not just
 	// that its assertions held.
 	console.log(formatted);
