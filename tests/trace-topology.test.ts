@@ -238,7 +238,9 @@ test("a nested stage that runs late widens its whole ancestry", async () => {
 	const stage = (key: string) => byRole(spans, "stage").find((span) => attr(span, "flow.stage_key") === key)!;
 	// The count stays a count of direct placements, not of everything underneath.
 	assert.equal(attr(stage("round-1"), "flow.stage_span_count"), 0);
-	assert.equal(attr(stage("round-1.generate"), "flow.stage_span_count"), 2);
+	// Two generators and the handoff each produced: the boundary belongs with the
+	// generation it came from, not with the round above it.
+	assert.equal(attr(stage("round-1.generate"), "flow.stage_span_count"), 4);
 
 	// Bounds are checked against controlled durations rather than against a live
 	// run: through the stub, every span lands inside the same millisecond, so a
@@ -335,8 +337,8 @@ test("iterative modes link each revision to the feedback that caused it", async 
 	);
 	const loopSpans = await readSpans(looped.stubDir);
 	const secondBody = unit(loopSpans, "iteration-2.body")!;
-	assert.equal(attr(secondBody, "flow.depends_on"), "iteration-1.judge");
-	assert.equal(attr(secondBody, "flow.depends_on_span_ids"), unit(loopSpans, "iteration-1.judge")!.span_id);
+	assert.equal(attr(secondBody, "flow.depends_on"), "iteration-1.judge.handoff");
+	assert.equal(attr(secondBody, "flow.depends_on_span_ids"), unit(loopSpans, "iteration-1.judge.handoff")!.span_id);
 
 	const searched = await runFlow(
 		{ task: "find an approach", traceFile: TRACE, search: { candidates: 1, maxRounds: 2, beamWidth: 1 } },
@@ -348,6 +350,8 @@ test("iterative modes link each revision to the feedback that caused it", async 
 	// it rather than the round as a whole.
 	assert.equal(attr(secondRoundGenerator, "flow.depends_on"), "round-1.score-1");
 	assert.equal(attr(secondRoundGenerator, "flow.depends_on_span_ids"), unit(searchSpans, "round-1.score-1")!.span_id);
+	// And the scorer reads the prepared candidate, not the generator's raw output.
+	assert.equal(attr(unit(searchSpans, "round-1.score-1"), "flow.depends_on"), "round-1.gen-1.handoff");
 });
 
 test("the monitor reactor links to the observation it is diagnosing", async () => {

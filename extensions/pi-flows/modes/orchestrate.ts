@@ -236,7 +236,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				kind: "validation",
 				name: "orchestrate.verify_verdict",
 				ok: verifyVerdict === "pass",
-				scope: { key: `${verifyKey(round)}.verdict`, dependsOn: [verifyKey(round)] },
+				scope: { key: `${verifyKey(round)}.verdict`, dependsOn: [`${verifyKey(round)}.handoff`] },
 				attributes: { "flow.verdict.value": verifyVerdict, "flow.verdict.round": round, "flow.verdict.policy": verifyPolicy },
 			});
 			verifyNote = `\n\n## Verification (${verifyRef.agent}): ${verifyVerdict === "pass" ? "PASS" : "REVISE"}\n\n${sanitizeText(resultText(verified), policy)}`;

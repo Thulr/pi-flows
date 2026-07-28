@@ -5,6 +5,7 @@ import { appendReturnContract, clampIterations, normalizeTimeout, resolvedCwd, v
 import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { recordStepHandoff } from "../integration.ts";
 import { runCheckCommand } from "../commands.ts";
 
 /** One place the generator's unit key is derived, so each critic's dependency link names the draft it judged. */
@@ -142,6 +143,16 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// invisible characters and flag injection markers before reuse.
 		const artifactPrep = handoffWarnings.addFrom(envelopeText === null ? prepareResultHandoff(generated, policy) : prepareTextHandoff(envelopeText, policy));
 		const artifact = artifactPrep.text;
+		// The critics judge this text, not the generator's raw output: it has been
+		// validated, capped, and injection-scanned on the way here.
+		recordStepHandoff(deps, {
+			result: generated,
+			contract,
+			envelope: generated.envelope,
+			carried: artifact,
+			warnings: artifactPrep.warnings,
+			scope: { stage, key: generatorKey(stage.key) },
+		});
 		priorArtifact = artifact;
 
 		// 2. Deterministic gate (level-1 / code assertions): a command that must exit 0.
@@ -195,7 +206,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const critics = await runAgentFanout(
 			deps,
 			"evaluate",
-			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [generatorKey(stage.key)] } })),
+			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [`${generatorKey(stage.key)}.handoff`] } })),
 			concurrency,
 			results,
 			(done) => `Flow evaluate: ${results.length + done} step(s) done`,

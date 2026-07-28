@@ -4,6 +4,7 @@ import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { recordStepHandoff } from "../integration.ts";
 import { searchTopology } from "../topology.ts";
 
 /** One place each search unit key is derived, so a later dependency link names a unit that exists. */
@@ -79,7 +80,13 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		const candidateEntries = generated
 			.map((result, index) => ({ result, dependency: generatorKey(roundStage.key, index) }))
 			.filter(({ result }) => !isFailed(result))
-			.map(({ result, dependency }) => ({ text: handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text, dependency }));
+			.map(({ result, dependency }) => {
+				const prepared = handoffWarnings.addFrom(prepareResultHandoff(result, policy));
+				// The scorer judges this prepared candidate; the boundary is where the
+				// generator's output became text another agent reads.
+				recordStepHandoff(deps, { result, carried: prepared.text, warnings: prepared.warnings, scope: { stage: generateStage, key: dependency } });
+				return { text: prepared.text, dependency: `${dependency}.handoff` };
+			});
 		const candidates = candidateEntries.map((entry) => entry.text);
 		if (candidates.length === 0) {
 			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");

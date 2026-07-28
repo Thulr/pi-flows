@@ -4,6 +4,7 @@ import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnContract, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentRef } from "../runner.ts";
+import { recordStepHandoff } from "../integration.ts";
 
 /** One place each loop unit key is derived, so the judge's dependency link names the body that actually ran. */
 const bodyKey = (stageKey: string) => `${stageKey}.body`;
@@ -53,8 +54,9 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
 		const bodyPrep = prepareResultHandoff(body, policy);
 		previous = withInjectionNotice(bodyPrep, `loop iteration ${iteration} output`);
+		recordStepHandoff(deps, { result: body, carried: previous, warnings: bodyPrep.warnings, scope: { stage, key: bodyKey(stage.key) } });
 
-		priorIterationKey = bodyKey(stage.key);
+		priorIterationKey = `${bodyKey(stage.key)}.handoff`;
 		if (!judgeRef) {
 			done = parseLoopStatus(resultText(body)) === "done";
 			if (done) break;
@@ -69,14 +71,15 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			verdictProtocolInstruction("actionable feedback if another iteration should run"),
 		].join("\n");
-		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, { scope: { stage, key: `${stage.key}.judge`, dependsOn: [bodyKey(stage.key)] } });
+		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, { scope: { stage, key: `${stage.key}.judge`, dependsOn: [`${bodyKey(stage.key)}.handoff`] } });
 		results.push(judged);
 		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
-		priorIterationKey = `${stage.key}.judge`;
+		priorIterationKey = `${stage.key}.judge.handoff`;
 		done = parseVerdict(resultText(judged)) === "pass";
 		if (done) break;
 		const critiquePrep = prepareResultHandoff(judged, policy);
 		critique = withInjectionNotice(critiquePrep, `loop judge iteration ${iteration}`);
+		recordStepHandoff(deps, { result: judged, carried: critique, warnings: critiquePrep.warnings, scope: { stage, key: `${stage.key}.judge` } });
 	}
 
 	if (done) {
