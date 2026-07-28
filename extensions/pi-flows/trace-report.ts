@@ -50,6 +50,8 @@ export interface TraceReportBucket {
 	malformedSpans: number;
 	/** Runs whose trace evidence is provably incomplete (dropped rows, duplicates, or failed exports). */
 	incompleteTraces: number;
+	/** Runs whose shape is corrupt: more than one root candidate, so every metric is derived from a guess. */
+	structurallyInvalidTraces: number;
 	coordinationEvents: number;
 	stageSpans: number;
 }
@@ -88,6 +90,7 @@ export function emptyTraceBucket(): TraceReportBucket {
 		duplicateSpans: 0,
 		malformedSpans: 0,
 		incompleteTraces: 0,
+		structurallyInvalidTraces: 0,
 		coordinationEvents: 0,
 		stageSpans: 0,
 	};
@@ -179,7 +182,13 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 	};
 
 	for (const traceSpans of byTrace.values()) {
-		const root = traceSpans.find((span) => span.parent_span_id === null) ?? traceSpans.find((span) => span.name && !span.name.includes(".", "flow.".length));
+		// A trace has exactly one root. With two parentless rows every number below
+		// is derived from whichever happened to be read first, so the shape is
+		// reported as corrupt rather than silently picked between.
+		const rootCandidates = traceSpans.filter((span) => span.parent_span_id === null);
+		const declaredRoot = rootCandidates.find((span) => stringAttr(span, "flow.span_role") === "root");
+		const ambiguousRoot = rootCandidates.length > 1;
+		const root = declaredRoot ?? rootCandidates[0] ?? traceSpans.find((span) => span.name && !span.name.includes(".", "flow.".length));
 		const childSpans = traceSpans.filter((span) => span !== root && spanRole(span, root) === "child");
 		const eventSpans = traceSpans.filter((span) => spanRole(span, root) === "event");
 		const stageSpans = traceSpans.filter((span) => spanRole(span, root) === "stage");
@@ -218,8 +227,12 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// its expectation, so a missing one means the counter was lost — and falling
 		// back to the row count would define away the very gap it is there to find.
 		// Traces written before span roles existed keep the fallback.
-		const expectationLost = stringAttr(rootSpan, "flow.span_role") === "root" && declaredExpected === undefined;
-		const expectedSpans = declaredExpected ?? traceSpans.length;
+		// Zero, negative, and fractional expectations are corruption, not a count: a
+		// modern root with `expected_spans: 0` would otherwise report nothing dropped
+		// no matter how many spans the file actually holds.
+		const usableExpectation = declaredExpected !== undefined && Number.isInteger(declaredExpected) && declaredExpected > 0;
+		const expectationLost = stringAttr(rootSpan, "flow.span_role") === "root" && !usableExpectation;
+		const expectedSpans = usableExpectation ? declaredExpected : traceSpans.length;
 		const failedExports = numericAttr(rootSpan, "flow.trace.failed_exports");
 		// Counted by unique span id, not by row: a pipeline that loses one span and
 		// duplicates another leaves the row count intact, and a completeness check
@@ -260,10 +273,11 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			// read-back verdict and a live one cannot disagree. A duplicated or
 			// unidentifiable row is its own disqualification: nothing downstream can
 			// tell which copy is real, or what an id-less row was meant to be.
-			incompleteTraces: expectationLost || duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
+			incompleteTraces: expectationLost || ambiguousRoot || duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
 				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
 				Boolean(root),
 			) !== "recorded" ? 1 : 0,
+			structurallyInvalidTraces: ambiguousRoot ? 1 : 0,
 			coordinationEvents: eventSpans.length,
 			stageSpans: stageSpans.length,
 		};
@@ -320,7 +334,7 @@ export function formatTraceReport(report: TraceReport): string {
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
-		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete`,
+		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} with more than one root` : ""}`,
 		`Topology: ${report.stageSpans} stage span${report.stageSpans === 1 ? "" : "s"}, ${report.coordinationEvents} coordination event${report.coordinationEvents === 1 ? "" : "s"}`,
 	];
 	if (report.parseErrors) lines.push(`Parse errors: ${report.parseErrors}`);

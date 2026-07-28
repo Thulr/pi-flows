@@ -522,3 +522,32 @@ test("a new-format trace with its expectation stripped is incomplete, not self-c
 	});
 	assert.equal(summarizeTraceSpans(legacy, 0, TRACE).incompleteTraces, 0);
 });
+
+test("the strict gate validates its own inputs, not just the spans they describe", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+	const withRoot = (expected: unknown) => spans.map((span) =>
+		span.parent_span_id === null ? { ...span, attributes: { ...span.attributes, "flow.trace.expected_spans": expected } } : span);
+
+	// A count that cannot be a count: zero would report nothing dropped no matter
+	// how many spans the file holds, and the others are not counts at all.
+	for (const corrupt of [0, -3, 2.5, "7"]) {
+		const report = summarizeTraceSpans(withRoot(corrupt) as TraceSpanRecord[], 0, TRACE);
+		assert.equal(traceReportIsComplete(report), false, `expected_spans ${JSON.stringify(corrupt)} must not pass the gate`);
+	}
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(withRoot(spans.length) as TraceSpanRecord[], 0, TRACE)), true);
+
+	// Two parentless rows: every number below is derived from whichever is read
+	// first, so the shape is reported as corrupt rather than silently picked.
+	const secondRoot = { ...spans[0], span_id: "second-root", parent_span_id: null, attributes: { "flow.mode": "parallel" } };
+	const ambiguous = summarizeTraceSpans([secondRoot, ...spans] as TraceSpanRecord[], 0, TRACE);
+	assert.equal(ambiguous.structurallyInvalidTraces, 1);
+	assert.equal(traceReportIsComplete(ambiguous), false);
+	assert.match(formatTraceReport(ambiguous), /1 with more than one root/);
+	// The declared root still wins for the metrics, so the report is diagnosable
+	// rather than merely refused.
+	assert.equal(ambiguous.executionSuccesses, 1);
+});
