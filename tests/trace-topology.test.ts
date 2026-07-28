@@ -647,3 +647,49 @@ test("a strict-trace refusal reaches the durable session history, not just the c
 	// evidence, and the history has to show both facts.
 	assert.deepEqual(run.data.results.map((child: any) => child.errorCode), [undefined]);
 });
+
+test("a report of zero runs is not evidence a strict gate can rest on", async () => {
+	const { stubDir } = await runFlow({ agent: "recon", task: "inspect", traceFile: TRACE }, { recon: "done" });
+	const real = summarizeTraceSpans(await readSpans(stubDir), 0, TRACE);
+	assert.equal(traceReportIsComplete(real), true);
+
+	// An empty file, and a file of well-formed rows that belong to no trace, both
+	// have nothing incomplete in them precisely because they have nothing in them.
+	for (const spans of [[], [{ name: "not-a-span" }, { attributes: { "flow.mode": "parallel" } }]]) {
+		const empty = summarizeTraceSpans(spans as TraceSpanRecord[], 0, TRACE);
+		assert.equal(empty.traces, 0);
+		assert.equal(empty.incompleteTraces, 0);
+		assert.equal(traceReportIsComplete(empty), false, "a release gate must not pass on an artifact nobody wrote");
+	}
+});
+
+test("a pre-spawn refusal returns the trace link for the evidence it wrote", async () => {
+	const context = { runId: "run-1", caseId: "case-1", trialId: "trial-1" };
+	const { result, calls, stubDir } = await runFlow(
+		{ agent: "recon", task: "inspect", traceFile: TRACE, traceContext: context, checkpoint: { before: "spawn", message: "Run it?" } },
+		{ recon: "done" },
+		{ hasUI: false },
+	);
+	assert.equal(result.details.error?.code, "CHECKPOINT_APPROVAL_REQUIRED");
+	assert.equal(calls.length, 0);
+	// The refusal's spans exist; without the link a caller carrying a traceContext
+	// cannot correlate the refusal to them.
+	const link = result.details.trace!;
+	assert.equal(link.health, "recorded");
+	assert.equal(link.context?.runId, "run-1");
+	const root = (await readSpans(stubDir)).find((span) => span.parent_span_id === null)!;
+	assert.equal(link.rootSpanId, root.span_id);
+	assert.equal(attr(root, "flow.refused_before_spawn"), "CHECKPOINT_APPROVAL_REQUIRED");
+});
+
+test("the monitor reactor links to the observation it is diagnosing", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "watch the file", traceFile: TRACE, monitor: { command: "echo tripped", trigger: "match", pattern: "tripped", maxChecks: 2 } },
+		{ analyst: "diagnosis" },
+	);
+	const spans = await readSpans(stubDir);
+	const trigger = spans.find((span) => attr(span, "flow.event_name") === "monitor.triggered")!;
+	const reactor = unit(spans, "reactor")!;
+	assert.equal(attr(reactor, "flow.depends_on"), "trigger");
+	assert.equal(attr(reactor, "flow.depends_on_span_ids"), trigger.span_id);
+});

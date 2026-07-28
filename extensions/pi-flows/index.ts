@@ -277,8 +277,12 @@ export default function (pi: ExtensionAPI) {
 			// orphaned without a root span.
 			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
 			const refuse = async (error: FlowError) => {
-				await traceSink?.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
-				return { content: [{ type: "text" as const, text: formatFlowError(error) }], details: catalog.errorDetails(mode, error) };
+				const details = catalog.errorDetails(mode, error);
+				// The refusal's own trace exists; without the link a caller carrying a
+				// traceContext cannot correlate the refusal to the spans that describe it.
+				const link = await traceSink?.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
+				if (link) details.trace = link;
+				return { content: [{ type: "text" as const, text: formatFlowError(error) }], details };
 			};
 
 			const projectAgents = catalog.projectAgentsFor(params);

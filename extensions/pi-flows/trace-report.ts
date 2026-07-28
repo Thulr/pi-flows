@@ -252,9 +252,14 @@ export function formatTpso(bucket: TraceReportBucket): string {
 	return bucket.outcomeSuccesses > 0 ? (bucket.tokens / bucket.outcomeSuccesses).toFixed(0) : "n/a";
 }
 
-/** True when the report contains evidence a strict (eval/release) run must refuse. */
+/**
+ * True when the report is complete evidence a strict (eval/release) run can rest
+ * on. A report of zero runs is not: an empty or trace_id-less file has nothing
+ * incomplete in it precisely because it has nothing in it, and a release gate
+ * that accepted that would pass on an artifact nobody wrote.
+ */
 export function traceReportIsComplete(report: TraceReport): boolean {
-	return report.incompleteTraces === 0 && report.parseErrors === 0;
+	return report.traces > 0 && report.incompleteTraces === 0 && report.parseErrors === 0;
 }
 
 export function formatTokens(count: number): string {
