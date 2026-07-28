@@ -114,6 +114,18 @@ export interface FlowTraceLink {
 	error?: string;
 }
 
+/**
+ * Escape a unit key for the comma-joined attribute lists.
+ *
+ * Graph node ids, workflow phase ids, and worktree task ids are author-supplied
+ * and may legitimately contain a comma. Joining those raw would make a healthy
+ * run's dependency list read as more keys than it has, so a reader — including
+ * the strict gate — would reject evidence that is perfectly sound.
+ */
+export function encodeUnitKey(key: string): string {
+	return key.replaceAll("%", "%25").replaceAll(",", "%2C");
+}
+
 export function emptyTraceHealth(): FlowTraceHealth {
 	return { expectedSpans: 0, observedSpans: 0, droppedSpans: 0, redactedSpans: 0, failedExports: 0 };
 }

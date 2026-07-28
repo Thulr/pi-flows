@@ -678,3 +678,49 @@ test("a broken attribution chain is refused even when every span survives", asyn
 		assert.equal(traceReportIsComplete(report), false, `${label} must not pass the gate`);
 	}
 });
+
+test("an id containing the list delimiter does not turn a healthy run into a refusal", async () => {
+	// Graph node ids are author-supplied and may contain a comma. Joining those raw
+	// made a sound dependency list read as more keys than it had, so the gate this
+	// PR adds would reject evidence from a run that did nothing wrong.
+	const { stubDir, result } = await runFlow(
+		{
+			task: "map it",
+			traceFile: TRACE,
+			graph: {
+				nodes: [
+					{ id: "build,linux", agent: "recon", task: "build" },
+					{ id: "test", agent: "recon", task: "use {node.build,linux}", dependsOn: ["build,linux"] },
+				],
+			},
+		},
+		{ recon: "node output" },
+	);
+	assert.equal(result.details.error, undefined);
+	const spans = await readSpans(stubDir);
+	const dependent = spans.find((span) => attr(span, "flow.unit_key") === "test")!;
+	assert.equal(attr(dependent, "flow.depends_on"), "build%2Clinux", "the delimiter is escaped, not lost");
+	assert.equal(String(attr(dependent, "flow.depends_on_span_ids")).split(",").length, 1);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+});
+
+test("a row that claims to be the root while hanging off a parent is corruption", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+	const child = spans.find((span) => role(span) === "child")!;
+	const relabel = (patch: Record<string, unknown>) =>
+		spans.map((span) => (span === child ? { ...span, attributes: { ...span.attributes, ...patch } } : span));
+
+	// It keeps its parent, so it is never a root candidate — and it silently leaves
+	// the child metrics, because those count declared children.
+	const second = summarizeTraceSpans(relabel({ "flow.span_role": "root" }), 0, TRACE);
+	assert.equal(second.structurallyInvalidTraces, 1);
+	assert.equal(traceReportIsComplete(second), false);
+
+	// A role nothing in the vocabulary defines is the same problem: the row is
+	// excluded from every bucket while looking perfectly well-formed.
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(relabel({ "flow.span_role": "sidecar" }), 0, TRACE)), false);
+});

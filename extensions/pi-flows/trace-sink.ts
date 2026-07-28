@@ -13,7 +13,7 @@ import type {
 	RecordSpan,
 	SpanStage,
 } from "./types.ts";
-import { emptyTraceHealth, traceHealthStatus } from "./trace-scope.ts";
+import { emptyTraceHealth, encodeUnitKey, traceHealthStatus } from "./trace-scope.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
 import { stableTraceIds } from "./trace-identity.mjs";
 
@@ -160,13 +160,13 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		const dependsOn = scope?.dependsOn ?? [];
 		const attributes: Record<string, unknown> = {};
 		if (dependsOn.length) {
-			attributes["flow.depends_on"] = dependsOn.join(",");
+			attributes["flow.depends_on"] = dependsOn.map(encodeUnitKey).join(",");
 			// A dependency may name a unit or a whole stage ("this debrief consumed
 			// round 2"), so both namespaces are searched, units first.
 			const resolved = dependsOn.map((key) => spanIdByKey.get(key) ?? stageSpanIdByKey.get(key)).filter((value): value is string => Boolean(value));
 			if (resolved.length) attributes["flow.depends_on_span_ids"] = resolved.join(",");
 		}
-		if (scope?.key) attributes["flow.unit_key"] = scope.key;
+		if (scope?.key) attributes["flow.unit_key"] = encodeUnitKey(scope.key);
 		return { parentSpanId, attributes };
 	};
 
@@ -272,7 +272,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 						"flow.span_role": "stage",
 						"flow.mode": mode,
 						"flow.trace_label": storedTraceLabel,
-						"flow.stage_key": storedLabel(key),
+						"flow.stage_key": storedLabel(encodeUnitKey(key)),
 						"flow.stage_span_count": stage.spans,
 						...traceContextAttributes(storedContext),
 					},

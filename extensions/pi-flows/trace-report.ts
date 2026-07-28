@@ -187,6 +187,10 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// reported as corrupt rather than silently picked between.
 		const rootCandidates = traceSpans.filter((span) => span.parent_span_id === null);
 		const declaredRoot = rootCandidates.find((span) => stringAttr(span, "flow.span_role") === "root");
+		// A row can claim to be the root while hanging off a parent, in which case it
+		// is not a root candidate at all — it just quietly leaves the child metrics,
+		// because those count declared children.
+		const declaredRoots = traceSpans.filter((span) => stringAttr(span, "flow.span_role") === "root");
 		const ambiguousRoot = rootCandidates.length > 1;
 		const root = declaredRoot ?? rootCandidates[0] ?? traceSpans.find((span) => span.name && !span.name.includes(".", "flow.".length));
 		const childSpans = traceSpans.filter((span) => span !== root && spanRole(span, root) === "child");
@@ -277,6 +281,9 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		};
 		const unreachable = modernSpans.filter((span) => span !== root && !reachesRoot(span)).length;
 		const rootless = modernSpans.length > 0 && rootCandidates.length === 0;
+		const misdeclaredRoots = modernSpans.length > 0
+			&& (declaredRoots.length !== 1 || declaredRoots[0].parent_span_id !== null);
+		const unknownRoles = modernSpans.some((span) => !["root", "child", "stage", "event"].includes(stringAttr(span, "flow.span_role") as string));
 
 		// A dependency that names a span the trace does not contain, or names fewer
 		// spans than keys, is a broken attribution chain — which is the one thing
@@ -292,6 +299,8 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const disconnected = orphanedChildren > 0
 			|| unreachable > 0
 			|| rootless
+			|| misdeclaredRoots
+			|| unknownRoles
 			|| danglingDependencies > 0
 			|| (declaredRoot !== undefined && declaredRoot.parent_span_id !== null);
 		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
