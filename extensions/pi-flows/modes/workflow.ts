@@ -34,6 +34,8 @@ function workflowDigest(task: string | undefined, spec: any): string {
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
 const phaseStageKey = (phaseId: string) => `phase-${phaseId}`;
+const phaseStateKey = (phaseId: string) => `${phaseStageKey(phaseId)}.state`;
+const phaseApprovalKey = (phaseId: string) => `${phaseStageKey(phaseId)}.approval`;
 function phaseWorkKey(phaseId: string): string {
 	return `${phaseStageKey(phaseId)}.work`;
 }
@@ -76,7 +78,7 @@ function recordPhaseState(deps: ModeDeps, phaseId: string, transition: string, s
 		kind: "state",
 		name: `workflow.${transition}`,
 		ok: state.status !== "failed",
-		scope: { key: `${phaseStageKey(phaseId)}.state`, stage: { key: phaseStageKey(phaseId), name: `phase ${phaseId}` } },
+		scope: { key: phaseStateKey(phaseId), stage: { key: phaseStageKey(phaseId), name: `phase ${phaseId}` } },
 		attributes: {
 			"flow.workflow.phase_id": phaseId,
 			"flow.workflow.status": state.status,
@@ -199,7 +201,12 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	const results: FlowRunResult[] = [];
 	const resumedHandoffs: DelegationHandoffEnvelope[] = [];
 	let previous = "";
-	let priorPhaseId: string | undefined;
+	// The unit a following phase depends on differs by how the prior phase ran: a
+	// work phase leaves a child span, an approval leaves only its approval event,
+	// and a resumed phase leaves only its state event. Assuming the work key for
+	// all three left the approval-to-work edge pointing at a span that never
+	// existed, so each branch records what it actually registered.
+	let priorPhaseKey: string | undefined;
 	for (const [phaseIndex, phase] of phases.entries()) {
 		const stage = { key: phaseStageKey(phase.id), name: `phase ${phase.id}` };
 		// Set when a completed approval is reopened, so the re-prompt can say why it
@@ -234,7 +241,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				} else {
 					previous = state.outputs[phase.id] ?? previous;
 					recordPhaseState(deps, phase.id, "approval.resumed", state, { "flow.approval.receipt_id": state.receipts[phase.id]?.receiptId ?? "(none)" });
-					priorPhaseId = phase.id;
+					priorPhaseKey = phaseStateKey(phase.id);
 					continue;
 				}
 			} else {
@@ -251,7 +258,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			state.outputs[phase.id] = validatedOutput;
 			previous = validatedOutput;
 			recordPhaseState(deps, phase.id, "phase.resumed", state, { "flow.handoff.status": persisted.status, "flow.handoff.compatibility": persisted.compatibility });
-			priorPhaseId = phase.id;
+			priorPhaseKey = phaseStateKey(phase.id);
 			continue;
 			}
 		}
@@ -314,7 +321,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			deps.recordEvent?.({
 				kind: "approval",
 				name: "workflow.approval.issued",
-				scope: { key: `${stage.key}.approval`, stage },
+				scope: { key: phaseApprovalKey(phase.id), stage },
 				attributes: {
 					"flow.approval.receipt_id": receipt.receiptId,
 					"flow.approval.action": receipt.action,
@@ -325,7 +332,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				},
 			});
 			recordPhaseState(deps, phase.id, "approval.granted", state, { "flow.approval.receipt_id": receipt.receiptId });
-			priorPhaseId = phase.id;
+			priorPhaseKey = phaseApprovalKey(phase.id);
 			continue;
 		}
 
@@ -337,7 +344,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			// The child's key must differ from its stage's: a workflow phase is both,
 			// and one shared name would leave dependency links pointing at whichever
 			// was registered last.
-			scope: { key: phaseWorkKey(phase.id), stage, ...(priorPhaseId ? { dependsOn: [phaseWorkKey(priorPhaseId)] } : {}) },
+			scope: { key: phaseWorkKey(phase.id), stage, ...(priorPhaseKey ? { dependsOn: [priorPhaseKey] } : {}) },
 		});
 		if (planned.error) return stateError(deps, results, planned.error, state);
 		const run = await runIntegrationPlan(deps, planned.plan!, "workflow", results.length + 1, results);
@@ -387,7 +394,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		state.updatedAt = new Date().toISOString();
 		await persistState(stateFile, state);
 		recordPhaseState(deps, phase.id, "phase.completed", state, { "flow.handoff.status": run.handoff!.status, "flow.handoff.compatibility": run.handoff!.compatibility });
-		priorPhaseId = phase.id;
+		priorPhaseKey = phaseWorkKey(phase.id);
 	}
 
 	// A trailing approval gates the workflow's own completion (and its debrief),

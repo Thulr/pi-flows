@@ -60,6 +60,9 @@ interface StageRecord {
 
 const spanId = () => randomUUID().replace(/-/g, "");
 
+/** Bound on any one span attribute. Attributes are identifiers and structure, not payloads. */
+const ATTRIBUTE_CAP = 1024;
+
 /**
  * Emit redacted OpenInference-shaped spans to JSONL: a root span, one span per
  * child run, lazily-created stage spans that keep waves/rounds/phases from
@@ -87,6 +90,27 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	const stageSpanIdByKey = new Map<string, string>();
 	const pending: Array<Promise<void>> = [];
 	let writeError: string | undefined;
+
+	const storedLabel = (value: string) => sanitizeText(value, { ...policy, recordContent: true }, ATTRIBUTE_CAP);
+
+	/**
+	 * Redact and cap every string an attribute map carries.
+	 *
+	 * Attributes reach the sink from mode handlers, and several are operator- or
+	 * repo-supplied: an approval actor from PI_FLOWS_APPROVAL_ACTOR, a workflow
+	 * phase id, a graph node id, a branch name. They are identity rather than
+	 * content, so `recordContent:false` does not withhold them — but there is no
+	 * reason a configured actor of `token=…`, or a home path, should reach the
+	 * file verbatim when the same string is redacted everywhere else.
+	 */
+	const storedAttributes = (attributes: Record<string, unknown> | undefined): Record<string, unknown> => {
+		if (!attributes) return {};
+		const stored: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(attributes)) {
+			stored[key] = typeof value === "string" ? storedLabel(value) : value;
+		}
+		return stored;
+	};
 
 	const append = (obj: unknown): Promise<void> => {
 		health.expectedSpans += 1;
@@ -160,8 +184,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				"flow.duration_ms": result.durationMs,
 				"flow.stop_reason": result.stopReason,
 				"flow.error_code": result.error?.code,
-				...placementAttributes,
-				...(span?.attributes ?? {}),
+				...storedAttributes(placementAttributes),
+				...storedAttributes(span?.attributes),
 				...traceContextAttributes(storedContext),
 				"llm.model_name": result.model,
 				"llm.token_count.prompt": result.usage.input,
@@ -195,9 +219,16 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		event(coordination) {
 			const now = Date.now();
 			const { parentSpanId, attributes: placementAttributes } = placement(coordination.scope, now, now);
+			const id = spanId();
+			// Events are linkable units too: an approval is the thing a gated phase
+			// actually depends on, and it spawns no child, so without registering its
+			// key that edge resolves to nothing. A child's key always wins, though —
+			// an event must never quietly rebind a name a run already answers to.
+			const key = coordination.scope?.key;
+			if (key && !spanIdByKey.has(key)) spanIdByKey.set(key, id);
 			void append({
 				trace_id: traceId,
-				span_id: spanId(),
+				span_id: id,
 				parent_span_id: parentSpanId,
 				name: `flow.${mode}.event.${coordination.name}`,
 				start_time_unix_ms: now,
@@ -210,8 +241,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.event_name": coordination.name,
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
-					...placementAttributes,
-					...(coordination.attributes ?? {}),
+					...storedAttributes(placementAttributes),
+					...storedAttributes(coordination.attributes),
 					...traceContextAttributes(storedContext),
 				},
 			});
@@ -226,7 +257,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					trace_id: traceId,
 					span_id: stage.spanId,
 					parent_span_id: stage.parentSpanId,
-					name: `flow.${mode}.stage.${stage.name}`,
+					name: `flow.${mode}.stage.${storedLabel(stage.name)}`,
 					start_time_unix_ms: stage.startMs,
 					end_time_unix_ms: stage.endMs,
 					status: { code: "OK" },
@@ -235,7 +266,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 						"flow.span_role": "stage",
 						"flow.mode": mode,
 						"flow.trace_label": storedTraceLabel,
-						"flow.stage_key": key,
+						"flow.stage_key": storedLabel(key),
 						"flow.stage_span_count": stage.spans,
 						...traceContextAttributes(storedContext),
 					},

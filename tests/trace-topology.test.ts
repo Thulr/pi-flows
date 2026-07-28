@@ -6,6 +6,7 @@
 // writes — not a hand-built fixture.
 import { strict as assert } from "node:assert";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { formatTraceReport, parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete, type TraceSpanRecord } from "../extensions/pi-flows/trace.ts";
@@ -452,4 +453,58 @@ test("a validation failure and a budget refusal are attributable without a child
 	const budget = cappedSpans.find((span) => attr(span, "flow.event_kind") === "budget")!;
 	assert.equal(attr(budget, "flow.event_name"), "child.refused");
 	assert.equal(byRole(cappedSpans, "child").length, 1);
+});
+
+test("an approval-gated phase links to the approval that let it run", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "ship it",
+			traceFile: TRACE,
+			workflow: {
+				stateFile: ".pi/flow-workflows/approval-edge.json",
+				phases: [
+					{ id: "gate", approval: { message: "Ship?" } },
+					{ id: "release", agent: "operator", task: "release {task}" },
+				],
+			},
+		},
+		{ operator: "released" },
+		{ hasUI: true },
+	);
+	const spans = await readSpans(stubDir);
+	const approval = spans.find((span) => attr(span, "flow.event_name") === "workflow.approval.issued")!;
+	const work = unit(spans, "phase-release.work")!;
+	// An approval spawns no child, so the gated phase's dependency has to name the
+	// approval event — and that edge has to actually resolve, not just be declared.
+	assert.equal(attr(work, "flow.depends_on"), "phase-gate.approval");
+	assert.equal(attr(work, "flow.depends_on_span_ids"), approval.span_id);
+});
+
+test("coordination event attributes are redacted like everything else on the trace", async () => {
+	const previous = process.env.PI_FLOWS_APPROVAL_ACTOR;
+	const fakeSecret = "sk-not-a-real-key-0000000000000000000000000000000000"; // privacy-scan: allow deliberate redaction fixture
+	process.env.PI_FLOWS_APPROVAL_ACTOR = `release-bot token=${fakeSecret} at ${path.join(homedir(), "keys")}`; // privacy-scan: allow deliberate redaction fixture
+	try {
+		const { stubDir } = await runFlow(
+			{
+				task: "ship it",
+				traceFile: TRACE,
+				workflow: {
+					stateFile: ".pi/flow-workflows/redacted-actor.json",
+					phases: [{ id: "gate", approval: { message: "Ship?" } }, { id: "release", agent: "operator", task: "go" }],
+				},
+			},
+			{ operator: "released" },
+			{ hasUI: true },
+		);
+		const serialized = JSON.stringify(await readSpans(stubDir));
+		// The approver label is operator-supplied and reaches the trace as identity,
+		// not content — which is exactly why it still has to be redacted.
+		assert.match(serialized, /release-bot/, "the actor is still recorded");
+		assert.ok(!serialized.includes(fakeSecret), "a secret-shaped actor must not reach the file verbatim");
+		assert.doesNotMatch(serialized, new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	} finally {
+		if (previous === undefined) delete process.env.PI_FLOWS_APPROVAL_ACTOR;
+		else process.env.PI_FLOWS_APPROVAL_ACTOR = previous;
+	}
 });

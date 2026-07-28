@@ -52,6 +52,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   acceptance status, and artifact references, with the summary prose and envelope
   `data` deliberately left out; constraint identifiers are content digests, so
   preservation across hops is checkable without copying the constraint text.
+  Event attributes carry operator- and repo-supplied strings (an approval actor,
+  a phase id, a branch name), so they are redacted and capped like every other
+  recorded value even though they are identity rather than content.
 - Trace health is now reported as evidence in its own right. The root span
   accounts for the export (`flow.trace.expected_spans`, `.observed_spans`,
   `.dropped_spans`, `.redacted_spans`, `.failed_exports`, `.health`), the same

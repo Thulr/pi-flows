@@ -87,7 +87,14 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 	const record = deps.recordEvent;
 	if (!record) return;
 	const handoff = result.handoff;
-	const scope = plan.scope;
+	// The handoff is its own unit, not the child again: it nests in the same stage
+	// and depends on the child that produced it. Reusing the child's key would
+	// make both spans answer to one name, and whichever registered last would win
+	// every dependency link pointed at that child.
+	const unit = plan.scope?.key;
+	const scope: ChildSpanScope | undefined = plan.scope
+		? { stage: plan.scope.stage, ...(unit ? { key: `${unit}.handoff`, dependsOn: [unit] } : {}) }
+		: undefined;
 	if (!handoff) {
 		record({
 			kind: "validation",
@@ -120,11 +127,11 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 			policy: deps.policy,
 		}),
 	});
-	for (const reference of handoff.artifactReferences) {
+	for (const [index, reference] of handoff.artifactReferences.entries()) {
 		record({
 			kind: "artifact",
 			name: "artifact.referenced",
-			scope,
+			scope: scope && unit ? { stage: scope.stage, key: `${unit}.artifact-${index + 1}`, dependsOn: [`${unit}.handoff`] } : scope,
 			attributes: artifactAttributes(handoff, reference.path, deps.policy),
 		});
 	}
