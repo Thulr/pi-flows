@@ -23,9 +23,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   merging the bad work is not contained. Benign controls run through the same
   harness, so false containment stays measurable, and every case carries explicit
   attack-opportunity and benign-opportunity denominators: containment is reported
-  as a rate (currently 11/12, with the one uncontained case — a replayed untyped
-  ballot — kept in the suite rather than dropped from it) instead of as a pile of
-  passing assertions.
+  as a rate over what the scenarios actually did — 13/14 attack opportunities
+  contained, 0/8 control deliveries falsely blocked — instead of as a pile of
+  passing assertions. The one uncontained case, a replayed untyped ballot that
+  nothing in that path can distinguish from independent agreement, is kept in the
+  suite rather than dropped from it.
 
 - Coordination traces now capture the boundaries a delegated run actually
   crosses, instead of flattening every child under one root span. Spans declare a
