@@ -376,11 +376,17 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		result.durationMs = Date.now() - started;
 		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy) });
 		if (budgetTerminated || budgetUnobservable) {
+			// Its own unit, depending on the child. Reusing the child's key would
+			// leave the event unable to rebind it — the span already owns it — so the
+			// termination would carry the same name with no link to what caused it.
+			const terminationScope = options.scope?.key
+				? { stage: options.scope.stage, key: `${options.scope.key}.budget`, dependsOn: [options.scope.key] }
+				: options.scope;
 			options.recordEvent?.({
 				kind: "budget",
 				name: budgetUnobservable ? "child.unobservable" : "child.exhausted",
 				ok: false,
-				scope: options.scope,
+				scope: terminationScope,
 				attributes: {
 					"flow.budget.terminated_agent": agent.name,
 					"flow.budget.authority": (terminatingBudget ?? options.budget) === options.contractBudget ? "contract" : "flow",

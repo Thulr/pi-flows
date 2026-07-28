@@ -64,14 +64,14 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			previous = withInjectionNotice(handoff, `chain step ${index + 1} envelope`);
 			// The step validated its own envelope, so it records its own boundary:
 			// this is where one agent's output becomes the next agent's prompt.
-			recordStepHandoff(deps, { result, contract, envelope: validated.envelope, carried: previous, scope: { key: stepKey(index) } });
+			recordStepHandoff(deps, { result, contract, envelope: validated.envelope, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
 			continue;
 		}
 		// {previous} is this step's output reused as the next step's prompt — a trust
 		// boundary. Strip invisible chars and flag injection markers before handoff.
 		const handoff = prepareResultHandoff(result, policy);
 		previous = withInjectionNotice(handoff, `chain step ${index + 1} output`);
-		recordStepHandoff(deps, { result, carried: previous, scope: { key: stepKey(index) } });
+		recordStepHandoff(deps, { result, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
 	}
 
 	return {

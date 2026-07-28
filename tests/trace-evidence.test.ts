@@ -436,6 +436,13 @@ test("a contract-bound termination is reported against the contract, not a budge
 	// contract's limit to something the run never had.
 	assert.equal(attr(event, "flow.contract_budget.limit_generated_tokens"), 4);
 	assert.equal(attr(event, "flow.budget.limit_generated_tokens"), undefined);
+	// Its own unit, linked to the child it stopped. Reusing the child's key would
+	// leave the termination unable to claim it — the span already owns it — and so
+	// unable to say what caused it.
+	const spans = await readSpans(stubDir);
+	assert.equal(attr(event, "flow.unit_key"), "single.budget");
+	assert.equal(attr(event, "flow.depends_on"), "single");
+	assert.equal(attr(event, "flow.depends_on_span_ids"), unit(spans, "single")!.span_id);
 });
 
 test("a chain step records the boundary where its output becomes the next prompt", async () => {
@@ -461,4 +468,23 @@ test("a chain step records the boundary where its output becomes the next prompt
 	assert.equal(attr(handoffs[0], "flow.depends_on"), "step-1");
 	assert.match(String(attr(handoffs[0], "flow.handoff.injection_warnings")), /instruction|zero-width|invisible/i);
 	assert.ok((attr(handoffs[0], "flow.handoff.raw_bytes") as number) > 0);
+});
+
+test("carried bytes count the text the next prompt received, not the envelope behind it", async () => {
+	// A legacy compatibility envelope repeats the result in both `summary` and
+	// `data`, so it outgrows the model-visible cap well before the result does.
+	// What crosses is the capped text; measuring the envelope would report far more
+	// bytes carried than any consumer ever saw.
+	const bulky = "x".repeat(30_000);
+	const { stubDir } = await runFlow(
+		{ task: "collect", traceFile: TRACE, tasks: [{ agent: "recon", task: "inspect" }] },
+		{ recon: bulky },
+	);
+	const handoff = (await readSpans(stubDir)).find((span) => attr(span, "flow.event_kind") === "handoff")!;
+	const raw = attr(handoff, "flow.handoff.raw_bytes") as number;
+	const carried = attr(handoff, "flow.handoff.carried_bytes") as number;
+	assert.equal(raw, 30_000);
+	assert.ok(carried > raw, "the envelope does add structure around the result");
+	assert.ok(carried <= 52_000, `carried ${carried} must not exceed the cap the consumer sees`);
+	assert.equal(attr(handoff, "flow.handoff.filtered"), false);
 });

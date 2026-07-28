@@ -8,7 +8,7 @@ import {
 	validateDelegationContract,
 } from "./delegation.ts";
 import { capModelVisibleText, resultText } from "./sanitize.ts";
-import { scanForInjection } from "./sanitize.ts";
+import { prepareResultHandoff } from "./handoff.ts";
 import { artifactAttributes, handoffAttributes, type ArtifactSource } from "./trace-attributes.ts";
 import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner.ts";
 import type {
@@ -114,6 +114,8 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 	contract?: DelegationContract;
 	envelope?: DelegationReturnEnvelope;
 	carried: string;
+	/** The injection labels the mode raised on the text it carried. */
+	warnings: string[];
 	scope?: ChildSpanScope;
 }): void {
 	const record = deps.recordEvent;
@@ -121,7 +123,7 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 	const handoff = options.contract && options.envelope
 		? typedHandoff(options.result, options.envelope, options.contract)
 		: compatibilityHandoff(options.result, deps.policy);
-	emitHandoff(record, deps, handoff, options.result, options.scope, options.carried, options.contract, undefined);
+	emitHandoff(record, deps, handoff, options.result, options.scope, options.carried, options.warnings, options.contract, undefined);
 }
 
 /** The one place a handoff boundary becomes spans, so every mode records the same shape. */
@@ -132,6 +134,7 @@ function emitHandoff(
 	result: FlowRunResult,
 	scope: ChildSpanScope | undefined,
 	carried: string,
+	warnings: string[],
 	contract: DelegationContract | undefined,
 	rejection: FlowError | undefined,
 ): void {
@@ -150,7 +153,7 @@ function emitHandoff(
 			rejection,
 			rawBytes: Buffer.byteLength(raw, "utf8"),
 			carriedBytes: Buffer.byteLength(carried, "utf8"),
-			warnings: scanForInjection(raw),
+			warnings,
 			contract,
 			policy: deps.policy,
 		}),
@@ -208,7 +211,12 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 		}
 		return;
 	}
-	emitHandoff(record, deps, handoff, result, plan.scope, canonicalHandoff(handoff), plan.contract, rejection);
+	// Measured on the text the consumer is actually handed, not on the envelope
+	// behind it: the compatibility envelope repeats the result in both `summary`
+	// and `data`, so an ordinary large output would report far more bytes crossing
+	// than the capped text the next prompt received.
+	const prepared = prepareResultHandoff(result, deps.policy);
+	emitHandoff(record, deps, handoff, result, plan.scope, prepared.text, prepared.warnings, plan.contract, rejection);
 }
 
 export function acceptIntegrationResult(
