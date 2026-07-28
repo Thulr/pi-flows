@@ -75,7 +75,9 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 			if (isFailed(result)) return "[advocate failed]";
 			return warnings.addFrom(prepareResultHandoff(result, policy)).text;
 		});
-		consumedAdvocateKeys = roundResults.flatMap((result, index) => isFailed(result) ? [] : [advocateKey(round, index)]);
+		// The transcript is built from each advocate's validated handoff, so that is
+		// what the next round and the adjudicator actually read.
+		consumedAdvocateKeys = roundResults.flatMap((result, index) => isFailed(result) ? [] : [`${advocateKey(round, index)}.handoff`]);
 	}
 
 	const adjudicator: FlowAgentRefInput = spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" };

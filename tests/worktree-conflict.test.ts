@@ -207,14 +207,14 @@ test("worktree: a conflict resolver links every input whose merge state it edits
 	// what the resolution actually acted on.
 	// The observation it was dispatched to answer, then both workers whose merge
 	// state it edits.
-	assert.equal(conflict.attributes["flow.depends_on"], "conflict-b.observed,worker-a,worker-b");
+	assert.equal(conflict.attributes["flow.depends_on"], "conflict-b.observed,worker-a.handoff,worker-b.handoff");
 	assert.equal(String(conflict.attributes["flow.depends_on_span_ids"]).split(",").length, 3);
 
 	// The reviewed branch contains the resolution, so the resolver belongs in the
 	// reviewed result's provenance — and the gate that ran against that branch
 	// belongs downstream of the review it would invalidate.
 	const review = spans.find((span) => span.attributes?.["flow.unit_key"] === "integration-review")!;
-	assert.equal(review.attributes["flow.depends_on"], "worker-a,worker-b,conflict-b");
+	assert.equal(review.attributes["flow.depends_on"], "worker-a.handoff,worker-b.handoff,conflict-b");
 	assert.equal(String(review.attributes["flow.depends_on_span_ids"]).split(",").length, 3);
 	const check = spans.find((span) => span.attributes?.["flow.unit_key"] === "integration-check")!;
 	assert.equal(check.attributes["flow.depends_on"], "integration-review");

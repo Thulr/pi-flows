@@ -40,7 +40,11 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 					: {},
 				// A chain step consumed the previous step's output; the link records
 				// that without pretending the earlier step spawned this one.
-				scope: { key: stepKey(index), ...(index > 0 ? { dependsOn: [stepKey(index - 1)] } : {}) },
+				// Through the handoff, not around it: what the previous step *produced*
+				// is not what this step received — validation, filtering, and the
+				// injection scan sit in between, and that boundary is where the
+				// carried text was actually decided.
+				scope: { key: stepKey(index), ...(index > 0 ? { dependsOn: [`${stepKey(index - 1)}.handoff`] } : {}) },
 			},
 		);
 		results.push(result);

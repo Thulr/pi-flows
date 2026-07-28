@@ -107,6 +107,8 @@ Every span declares its role in `flow.span_role`:
 
 Children nest under the stage that scheduled them rather than hanging flat off the root, so a critic belongs to a visible revision round and a graph node to a visible wave. `flow.unit_key` names the unit (`alpha`, `worker-2`, `phase-deploy`), and `flow.stage_key` / `flow.stage_span_count` describe the stage.
 
+Consumers link through the boundary that produced what they read, not around it: a synthesizer that consumes a validated handoff depends on `<unit>.handoff` rather than on `<unit>`, because validation, filtering, and the injection scan sit between a child's output and what the next prompt actually carried.
+
 Dependencies are recorded as **links, not parentage**: a graph node that consumed another node's output was scheduled by its wave, not spawned by the node it read. `flow.depends_on` lists the unit keys and `flow.depends_on_span_ids` the resolved span ids. Both are comma-joined, and because node/phase/task ids are author-supplied, `%` and `,` inside a key are percent-escaped (`build,linux` → `build%2Clinux`) — decode before matching a key against `flow.unit_key`, which is escaped the same way.
 
 #### Coordination events

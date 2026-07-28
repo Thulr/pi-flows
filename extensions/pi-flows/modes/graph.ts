@@ -70,7 +70,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				placeholderTask: node.task,
 				// A node's dependencies are links, not parentage: node b consumed node
 				// a's output but was scheduled by the wave, not spawned by a.
-				scope: { key: node.id, dependsOn: node.dependsOn ?? [] },
+				scope: { key: node.id, dependsOn: (node.dependsOn ?? []).map((dependency: string) => `${dependency}.handoff`) },
 			});
 			if (planned.error) {
 				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
@@ -120,7 +120,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "debrief", dependsOn: terminalIds },
+			scope: { key: "debrief", dependsOn: terminalIds.map((id: string) => `${id}.handoff`) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
 		const debriefed = await runIntegrationPlan(deps, planned.plan!, "graph", results.length + 1, results);

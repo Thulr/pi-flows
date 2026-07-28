@@ -100,7 +100,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(subtask), {
 			returnContract: spec.workerReturnContract,
 			placeholderTask: subtask,
-			scope: { key: workerKey(index), dependsOn: [DECOMPOSE_KEY] },
+			scope: { key: workerKey(index), dependsOn: [`${DECOMPOSE_KEY}.handoff`] },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("orchestrate")(results, planned.error) };
 		workerPlans.push(planned.plan!);
@@ -125,7 +125,9 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 
 	// 3. Synthesize the worker findings into one answer. Findings feed the
 	// synthesizer prompt — another trust boundary, so clean + scan each.
-	const consumedWorkerKeys = workerResults.flatMap((result, index) => isFailed(result) ? [] : [workerKey(index)]);
+	// The synthesis prompt carries each worker's validated handoff, so the link
+	// names the boundary that produced that text rather than the run behind it.
+	const consumedWorkerKeys = workerResults.flatMap((result, index) => isFailed(result) ? [] : [`${workerKey(index)}.handoff`]);
 	const findings = workerResults
 		.map((result, index) => ({ result, index }))
 		.filter(({ result }) => !isFailed(result))
@@ -164,7 +166,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				// Only the workers whose findings reached the prompt: a failed worker's
 				// output is filtered out, so naming it would claim the answer rests on
 				// evidence the synthesizer never saw.
-				dependsOn: synthesisRound === 1 ? consumedWorkerKeys : [verifyKey(synthesisRound - 1)],
+				dependsOn: synthesisRound === 1 ? consumedWorkerKeys : [`${verifyKey(synthesisRound - 1)}.handoff`],
 			},
 		});
 	};
@@ -207,7 +209,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Your job",
 				`Judge whether the synthesized answer fully and correctly addresses the goal/contract. ${verdictProtocolInstruction("specific, actionable gaps")} Judge only the answer above.`,
 			].join("\n");
-			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: verifyKey(round), dependsOn: [synthesisKey(synthesisRound)] } });
+			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: verifyKey(round), dependsOn: [`${synthesisKey(synthesisRound)}.handoff`] } });
 			if (verifyPlan.error) return { content: [{ type: "text", text: formatFlowError(verifyPlan.error) }], details: makeDetails("orchestrate")(results, verifyPlan.error) };
 			const verified = await runIntegrationPlan(deps, verifyPlan.plan!, "orchestrate", results.length + 1, results);
 			results.push(verified);

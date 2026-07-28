@@ -320,7 +320,7 @@ test("an id containing the list delimiter does not turn a healthy run into a ref
 	assert.equal(result.details.error, undefined);
 	const spans = await readSpans(stubDir);
 	const dependent = spans.find((span) => attr(span, "flow.unit_key") === "test")!;
-	assert.equal(attr(dependent, "flow.depends_on"), "build%2Clinux", "the delimiter is escaped, not lost");
+	assert.equal(attr(dependent, "flow.depends_on"), "build%2Clinux.handoff", "the delimiter is escaped, not lost");
 	assert.equal(String(attr(dependent, "flow.depends_on_span_ids")).split(",").length, 1);
 	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });
@@ -475,6 +475,6 @@ test("a key long enough to be capped stays matchable on both sides", async () =>
 	);
 	assert.equal(result.details.error, undefined);
 	const spans = await readSpans(stubDir);
-	assert.equal(attr(spans.find((span) => attr(span, "flow.unit_key") === "beta"), "flow.depends_on"), longId);
+	assert.equal(attr(spans.find((span) => attr(span, "flow.unit_key") === "beta"), "flow.depends_on"), `${longId}.handoff`);
 	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });

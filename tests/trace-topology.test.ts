@@ -86,9 +86,9 @@ test("graph spans nest under their wave and link dependencies instead of flatten
 	assert.equal(wave1.parent_span_id, root.span_id, "stages hang off the root");
 
 	// A dependency is a link, not parentage: beta consumed alpha but was not spawned by it.
-	assert.equal(attr(beta, "flow.depends_on"), "alpha");
-	assert.equal(attr(beta, "flow.depends_on_span_ids"), alpha.span_id);
-	assert.equal(attr(unit(spans, "debrief"), "flow.depends_on"), "beta");
+	assert.equal(attr(beta, "flow.depends_on"), "alpha.handoff", "beta consumed alpha's validated handoff, not its raw output");
+	assert.equal(attr(beta, "flow.depends_on_span_ids"), spans.find((span) => attr(span, "flow.unit_key") === "alpha.handoff")!.span_id);
+	assert.equal(attr(unit(spans, "debrief"), "flow.depends_on"), "beta.handoff");
 });
 
 test("retries, state transitions, and approvals are attributable events", async () => {
@@ -379,7 +379,7 @@ test("dossier synthesis links only the sections it actually read", async () => {
 	const spans = await readSpans(stubDir);
 	// The failed section was filtered out of the synthesis prompt, so claiming the
 	// debrief consumed it would misreport what the answer rests on.
-	assert.equal(attr(unit(spans, "debrief"), "flow.depends_on"), "section-1,section-2");
+	assert.equal(attr(unit(spans, "debrief"), "flow.depends_on"), "section-1.handoff,section-2.handoff");
 });
 
 test("synthesis and verdict spans link only the units they actually aggregate", async () => {
@@ -394,7 +394,7 @@ test("synthesis and verdict spans link only the units they actually aggregate", 
 	);
 	const orchestrateSpans = await readSpans(orchestrated.stubDir);
 	// Worker 2 failed, so its output never reached the synthesis prompt.
-	assert.equal(attr(unit(orchestrateSpans, "synthesis-1"), "flow.depends_on"), "worker-1");
+	assert.equal(attr(unit(orchestrateSpans, "synthesis-1"), "flow.depends_on"), "worker-1.handoff");
 
 	const evaluated = await runFlow(
 		// concurrency 1: two write-capable critics sharing a cwd is refused outright,
@@ -418,7 +418,7 @@ test("aggregators across every fan-out mode link only what reached their prompt"
 		{ task: "agree", traceFile: TRACE, concurrency: 1, vote: { agent: "recon", count: 3, debrief: { agent: "debrief" } } },
 		{ recon: ["yes", "yes", { reply: "boom", exitCode: 1 }], debrief: "consensus" },
 	);
-	assert.equal(attr(unit(await readSpans(voted.stubDir), "aggregator"), "flow.depends_on"), "voter-1,voter-2");
+	assert.equal(attr(unit(await readSpans(voted.stubDir), "aggregator"), "flow.depends_on"), "voter-1.handoff,voter-2.handoff");
 
 	const debated = await runFlow(
 		{
@@ -430,7 +430,7 @@ test("aggregators across every fan-out mode link only what reached their prompt"
 		{ recon: "for", analyst: "against", strategist: { reply: "boom", exitCode: 1 }, debrief: "decision" },
 	);
 	const debateSpans = await readSpans(debated.stubDir);
-	assert.equal(attr(unit(debateSpans, "adjudicator"), "flow.depends_on"), "round-1.advocate-1,round-1.advocate-2");
+	assert.equal(attr(unit(debateSpans, "adjudicator"), "flow.depends_on"), "round-1.advocate-1.handoff,round-1.advocate-2.handoff");
 	assert.equal(String(attr(unit(debateSpans, "adjudicator"), "flow.depends_on_span_ids")).split(",").length, 2);
 });
 
@@ -462,4 +462,27 @@ test("route dispatch runs through the recorded selection, not around it", async 
 	assert.equal(attr(selection, "flow.depends_on_span_ids"), unit(spans, "router")!.span_id);
 	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on"), "selection");
 	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on_span_ids"), selection.span_id);
+});
+
+test("a chain step consumes the handoff, not the step that produced it", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "add caching",
+			traceFile: TRACE,
+			chain: [
+				{ agent: "recon", task: "research {task}" },
+				{ agent: "strategist", task: "plan from:\n{previous}" },
+			],
+		},
+		{ recon: "RECON_FINDINGS", strategist: "STRATEGY" },
+	);
+	const spans = await readSpans(stubDir);
+	const handoff = spans.find((span) => attr(span, "flow.unit_key") === "step-1.handoff")!;
+	const second = unit(spans, "step-2")!;
+	// What step 1 produced is not what step 2 received: validation, filtering, and
+	// the injection scan sit between them. Depending on the child would route the
+	// exported chain around the boundary that decided what was carried.
+	assert.equal(attr(handoff, "flow.depends_on"), "step-1");
+	assert.equal(attr(second, "flow.depends_on"), "step-1.handoff");
+	assert.equal(attr(second, "flow.depends_on_span_ids"), handoff.span_id);
 });

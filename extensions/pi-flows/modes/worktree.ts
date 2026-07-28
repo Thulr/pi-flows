@@ -256,7 +256,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				fallbackContract: params.contract as DelegationContract | undefined,
 				scope: {
 					key: `conflict-${worker.id}`,
-					dependsOn: [`conflict-${worker.id}.observed`, ...[...integratedWorkers, worker].map((source) => workerKey(source.id)), ...resolvedConflictKeys],
+					dependsOn: [`conflict-${worker.id}.observed`, ...[...integratedWorkers, worker].map((source) => `${workerKey(source.id)}.handoff`), ...resolvedConflictKeys],
 				},
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
@@ -304,7 +304,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			requireEvidence: params.requireEvidence,
 			// The branch under review contains any conflict resolution that produced
 			// it, so the reviewed result's provenance includes the resolvers.
-			scope: { key: "integration-review", dependsOn: [...usableWorkers.map((worker) => workerKey(worker.id)), ...resolvedConflictKeys] },
+			scope: { key: "integration-review", dependsOn: [...usableWorkers.map((worker) => `${workerKey(worker.id)}.handoff`), ...resolvedConflictKeys] },
 		});
 		if (reviewPlan.error) return modeError(deps, results, reviewPlan.error);
 		const reviewed = await runIntegrationPlan(deps, reviewPlan.plan!, "worktree", results.length + 1, results);
