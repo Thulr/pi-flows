@@ -230,6 +230,14 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   fallback rebuild the number out of the very keys it was meant to check.
   Presence and readability are now separate questions, and a stated value
   nothing can read invalidates the trace.
+- Fan-out handoff and artifact events are now attributable to the child that
+  produced them. The merged span placement reached only the child dispatch, so
+  acceptance — which runs after the fan-out returns and reads the item's own
+  scope — placed those events without a stage, and for `parallel`, without a key
+  or a producer link at all.
+- An orchestrate revision now links every handoff its prompt carries: the worker
+  findings and the prior answer alongside the verifier critique, rather than the
+  critique alone.
 - Workflow phases now link the handoff their consumers actually read, so a
   following phase and the debrief depend on the `<phase>.work.handoff` event
   rather than on the child span behind it, and the exported causal path runs

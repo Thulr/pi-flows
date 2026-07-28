@@ -496,3 +496,44 @@ test("a chain step consumes the handoff, not the step that produced it", async (
 	assert.equal(attr(second, "flow.depends_on"), "step-1.handoff");
 	assert.equal(attr(second, "flow.depends_on_span_ids"), handoff.span_id);
 });
+
+test("a fan-out handoff is attributable to the child that produced it", async () => {
+	// Acceptance records the handoff after the fan-out returns, from the item's
+	// own scope. If the merged placement never reached the item, these events land
+	// at the root with no key and no producer.
+	const { stubDir } = await runFlow(
+		{ task: "collect", traceFile: TRACE, concurrency: 1, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "finding" },
+	);
+	const spans = await readSpans(stubDir);
+	const stage = byRole(spans, "stage").find((span) => attr(span, "flow.stage_key") === "tasks")!;
+	for (const index of [1, 2]) {
+		const child = unit(spans, `tasks.${index}`)!;
+		const handoff = unit(spans, `tasks.${index}.handoff`);
+		assert.ok(handoff, `tasks.${index} must record a keyed handoff`);
+		assert.equal(handoff.parent_span_id, stage.span_id, "the handoff belongs to the fan-out stage, not the root");
+		assert.equal(attr(handoff, "flow.depends_on_span_ids"), child.span_id);
+	}
+});
+
+test("a revised synthesis links every handoff its prompt carries", async () => {
+	// The revision prompt repeats the worker findings and the prior answer beside
+	// the verifier critique. Naming only the critique would export a revision that
+	// rests on a verdict alone.
+	const { stubDir } = await runFlow(
+		{
+			task: "map the system",
+			traceFile: TRACE,
+			concurrency: 1,
+			orchestrate: {
+				commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" }, verify: { agent: "overwatch" },
+				maxSubtasks: 1, verifyPolicy: "revise", verifyMaxIterations: 2,
+			},
+		},
+		{ commander: '["only"]', recon: "finding", debrief: ["first pass", "revised"], overwatch: ["VERDICT: REVISE", "VERDICT: PASS"] },
+	);
+	const spans = await readSpans(stubDir);
+	const revision = unit(spans, "synthesis-2")!;
+	assert.equal(attr(revision, "flow.depends_on"), "worker-1.handoff,synthesis-1.handoff,verify-1.handoff");
+	assert.equal(String(attr(revision, "flow.depends_on_span_ids")).split(",").length, 3, "every declared link must resolve");
+});

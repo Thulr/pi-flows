@@ -163,10 +163,14 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			requireEvidence: params.requireEvidence,
 			scope: {
 				key: synthesisKey(synthesisRound),
-				// Only the workers whose findings reached the prompt: a failed worker's
-				// output is filtered out, so naming it would claim the answer rests on
-				// evidence the synthesizer never saw.
-				dependsOn: synthesisRound === 1 ? consumedWorkerKeys : [`${verifyKey(synthesisRound - 1)}.handoff`],
+				// Everything the prompt actually carries. Only the workers whose
+				// findings reached it — a failed worker's output is filtered out, so
+				// naming it would claim the answer rests on evidence the synthesizer
+				// never saw. A revision still carries those same findings, plus the
+				// prior answer it revises and the critique that sent it back.
+				dependsOn: synthesisRound === 1
+					? consumedWorkerKeys
+					: [...consumedWorkerKeys, `${synthesisKey(synthesisRound - 1)}.handoff`, `${verifyKey(synthesisRound - 1)}.handoff`],
 			},
 		});
 	};

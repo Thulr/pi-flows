@@ -106,8 +106,13 @@ export async function runAgentFanout(
 	};
 	const baseStep = priorResults.length;
 	return mapWithConcurrency(items, concurrency, async (item, index) => {
+		// One placement per unit. The merged scope is written back onto the item
+		// because the item outlives this call: acceptance reads its scope later to
+		// place the handoff and artifact events, and a scope only `runChild` saw
+		// would leave those events stageless, or unkeyed and linked to nothing.
+		item.scope = fanoutScope(stage, item, index);
 		const result = await deps.runChild({
-			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1, item.limits, fanoutScope(stage, item, index)),
+			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1, item.limits, item.scope),
 			onUpdate: (partial) => {
 				const current = partial.details.results[0];
 				if (current) liveResults[index] = current;
