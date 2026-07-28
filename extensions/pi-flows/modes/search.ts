@@ -38,7 +38,10 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
 	const results: FlowRunResult[] = [];
 	const handoffWarnings = new HandoffWarnings();
-	let beam: Array<{ text: string; score: number }> = [];
+	// The beam carries the score unit that selected each candidate, so the next
+	// round's generators can link to the evidence they are refining rather than
+	// appearing as unrelated siblings.
+	let beam: Array<{ text: string; score: number; scoreKey: string }> = [];
 
 	for (let round = 1; round <= rounds; round += 1) {
 		const roundStage = { key: roundKey(round), name: `round ${round}` };
@@ -53,7 +56,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			"search",
 			Array.from({ length: candidateCount }, (_unused, index) => ({
 				ref: generatorRef,
-				scope: { key: generatorKey(roundStage.key, index) },
+				scope: { key: generatorKey(roundStage.key, index), ...(beam.length ? { dependsOn: beam.map((candidate) => candidate.scoreKey) } : {}) },
 				task: [
 					"## Goal / contract",
 					contractedGoal,
@@ -88,7 +91,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			"search",
 			candidateEntries.map(({ text: candidate, dependency }, index) => ({
 				ref: scorerRef,
-				scope: { key: `${roundStage.key}.score-${index + 1}`, dependsOn: [dependency] },
+				scope: { key: `${scoreStage.key}-${index + 1}`, dependsOn: [dependency] },
 				task: [
 					"## Goal / contract",
 					contractedGoal,
@@ -107,10 +110,10 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		const scored = candidates.map((candidate, index) => {
 			const result = scoreResults[index];
 			const score = isFailed(result) ? 0 : parseScore(resultText(result)) ?? 0;
-			return { candidate, score, result };
+			return { candidate, score, result, scoreKey: `${scoreStage.key}-${index + 1}` };
 		});
 		results.push(...scored.map((item) => item.result));
-		beam = scored.sort((a, b) => b.score - a.score).slice(0, beamWidth).map((item) => ({ text: item.candidate, score: item.score }));
+		beam = scored.sort((a, b) => b.score - a.score).slice(0, beamWidth).map((item) => ({ text: item.candidate, score: item.score, scoreKey: item.scoreKey }));
 	}
 
 	if (beam.length === 0) {

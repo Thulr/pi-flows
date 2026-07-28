@@ -595,3 +595,55 @@ test("the workflow debrief links every phase, including those that ran no child"
 	assert.equal(attr(debrief, "flow.depends_on"), "phase-build.work,phase-gate.approval,phase-release.work");
 	assert.equal(String(attr(debrief, "flow.depends_on_span_ids")).split(",").length, 3, "every declared debrief link must resolve");
 });
+
+test("iterative modes link each revision to the feedback that caused it", async () => {
+	const evaluated = await runFlow(
+		{ task: "build the thing", traceFile: TRACE, evaluate: { maxIterations: 2 } },
+		{ operator: ["first draft", "revised draft"], redteam: ["VERDICT: REVISE\nmissing tests", "VERDICT: PASS"] },
+	);
+	const evaluateSpans = await readSpans(evaluated.stubDir);
+	const secondDraft = unit(evaluateSpans, "iteration-2.generator")!;
+	const panel = evaluateSpans.find((span) => attr(span, "flow.unit_key") === "iteration-1.panel")!;
+	// Without the link, iteration 2 reads as independent work rather than as an
+	// answer to the verdict that sent it back.
+	assert.equal(attr(secondDraft, "flow.depends_on"), "iteration-1.panel");
+	assert.equal(attr(secondDraft, "flow.depends_on_span_ids"), panel.span_id);
+
+	const looped = await runFlow(
+		{ task: "converge", traceFile: TRACE, loop: { body: { agent: "operator" }, judge: { agent: "redteam" }, maxIterations: 2 } },
+		{ operator: ["draft", "revision"], redteam: ["VERDICT: REVISE\nnot yet", "VERDICT: PASS"] },
+	);
+	const loopSpans = await readSpans(looped.stubDir);
+	const secondBody = unit(loopSpans, "iteration-2.body")!;
+	assert.equal(attr(secondBody, "flow.depends_on"), "iteration-1.judge");
+	assert.equal(attr(secondBody, "flow.depends_on_span_ids"), unit(loopSpans, "iteration-1.judge")!.span_id);
+
+	const searched = await runFlow(
+		{ task: "find an approach", traceFile: TRACE, search: { candidates: 1, maxRounds: 2, beamWidth: 1 } },
+		{ strategist: "candidate", redteam: "SCORE: 8", debrief: "final" },
+	);
+	const searchSpans = await readSpans(searched.stubDir);
+	const secondRoundGenerator = unit(searchSpans, "round-2.gen-1")!;
+	// A round refines a specific beam, so the link names the score that selected
+	// it rather than the round as a whole.
+	assert.equal(attr(secondRoundGenerator, "flow.depends_on"), "round-1.score-1");
+	assert.equal(attr(secondRoundGenerator, "flow.depends_on_span_ids"), unit(searchSpans, "round-1.score-1")!.span_id);
+});
+
+test("a strict-trace refusal reaches the durable session history, not just the caller", async () => {
+	const entries: Array<{ customType: string; data: any }> = [];
+	const { result } = await runFlow(
+		{ agent: "recon", task: "inspect", traceStrict: true, traceFile: "nested/missing-dir/trace.jsonl" },
+		{ recon: "done" },
+		{ api: { appendEntry: (customType: string, data: any) => entries.push({ customType, data }) } },
+	);
+	assert.equal(result.details.error?.code, "TRACE_INCOMPLETE");
+	// The run history is what an audit reads later; it must not record `ok` for a
+	// run the caller was told had failed.
+	const run = entries.find((entry) => entry.customType === "pi-flows.run")!;
+	assert.equal(run.data.status, "error");
+	assert.equal(run.data.errorCode, "TRACE_INCOMPLETE");
+	// The children themselves are still recorded as clean: the refusal is about
+	// evidence, and the history has to show both facts.
+	assert.deepEqual(run.data.results.map((child: any) => child.errorCode), [undefined]);
+});

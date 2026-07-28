@@ -386,7 +386,6 @@ export default function (pi: ExtensionAPI) {
 				liveDetails = output.details;
 				liveRuns.update(toolCallId, liveDetails);
 				updateFlowUi(ctx, liveDetails);
-				appendFlowSessionEntry(pi, liveDetails);
 				if (traceSink) {
 					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
 					output.details.trace = await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
@@ -402,6 +401,9 @@ export default function (pi: ExtensionAPI) {
 					liveRuns.update(toolCallId, liveDetails);
 					updateFlowUi(ctx, liveDetails);
 				}
+				// Persisted last, so the durable history cannot record a run as `ok`
+				// that the caller was told failed — and so it carries the trace link.
+				appendFlowSessionEntry(pi, liveDetails);
 				return output;
 			} finally {
 				liveRuns.finish(toolCallId, liveDetails);

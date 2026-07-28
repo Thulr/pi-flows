@@ -24,6 +24,9 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 	let previous = "";
 	let critique = "";
 	let done = false;
+	// Each body after the first revises the previous output against the previous
+	// critique, so it depends on whichever unit produced that feedback.
+	let priorIterationKey: string | undefined;
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
 		const stage = { key: `iteration-${iteration}`, name: `iteration ${iteration}` };
@@ -45,12 +48,13 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			judgeRef ? "Produce the next artifact for this loop iteration." : `Produce the next artifact. ${loopProtocolInstruction()}`,
 		].filter(Boolean).join("\n");
-		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results, { scope: { stage, key: bodyKey(stage.key) } });
+		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results, { scope: { stage, key: bodyKey(stage.key), ...(priorIterationKey ? { dependsOn: [priorIterationKey] } : {}) } });
 		results.push(body);
 		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
 		const bodyPrep = prepareResultHandoff(body, policy);
 		previous = withInjectionNotice(bodyPrep, `loop iteration ${iteration} output`);
 
+		priorIterationKey = bodyKey(stage.key);
 		if (!judgeRef) {
 			done = parseLoopStatus(resultText(body)) === "done";
 			if (done) break;
@@ -68,6 +72,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, { scope: { stage, key: `${stage.key}.judge`, dependsOn: [bodyKey(stage.key)] } });
 		results.push(judged);
 		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
+		priorIterationKey = `${stage.key}.judge`;
 		done = parseVerdict(resultText(judged)) === "pass";
 		if (done) break;
 		const critiquePrep = prepareResultHandoff(judged, policy);

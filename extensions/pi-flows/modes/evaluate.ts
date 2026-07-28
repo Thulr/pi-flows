@@ -67,6 +67,11 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	let passed = false;
 	let rounds = 0;
 	let lastCheckOk: boolean | null = null;
+	// What the next revision is answering: the critic panel that said REVISE, or
+	// the gate that failed before the critics ever ran. Without it the trace shows
+	// iteration 2 as independent of iteration 1, and a revision cannot be
+	// attributed to the verdict that caused it.
+	let feedbackKey: string | undefined;
 	const contractBudget = contract ? createDelegationBudget(contract) : undefined;
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -110,7 +115,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			results,
 			{
 				limits: contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
-				scope: { stage, key: generatorKey(stage.key) },
+				scope: { stage, key: generatorKey(stage.key), ...(feedbackKey ? { dependsOn: [feedbackKey] } : {}) },
 			},
 		);
 		results.push(generated);
@@ -160,6 +165,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				attributes: { "flow.check.passed": check.ok, "flow.check.iteration": iteration },
 			});
 			if (!check.ok) {
+				feedbackKey = `${stage.key}.check`;
 				critique = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
 				emitLive();
 				continue;
@@ -220,6 +226,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		// Critique fed back = the REVISE critics' output (a handoff: clean + scan).
+		feedbackKey = `${stage.key}.panel`;
 		const revising = verdicts.filter((verdict) => !verdict.pass);
 		const critiqueRaw = revising.map((verdict, index) => `### Critic ${index + 1} (${verdict.agent})\n\n${verdict.text}`).join("\n\n---\n\n");
 		const critiquePrep = handoffWarnings.addFrom(prepareTextHandoff(critiqueRaw, policy));
