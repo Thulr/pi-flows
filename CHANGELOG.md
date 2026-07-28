@@ -73,7 +73,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   best-effort and never fails a flow. The eval harness gained the matching
   `npm run eval -- --strict-trace`, backed by a `traceHealth` rollup in the
   reliability artifact that is reported as its own score family, and
-  `npm run trace:report -- --strict` exits non-zero on incomplete evidence.
+  `npm run trace:report -- --strict` exits non-zero on incomplete evidence. The
+  gate applies on the `--trace-only` path too: judging is the driver's call
+  there, but evidence is not.
 
 - Workflow approvals are now durable, single-use receipts instead of a bare
   `APPROVED` marker in the resume state. A receipt binds the exact action it

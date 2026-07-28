@@ -9,12 +9,12 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { formatTraceReport, parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete, type TraceSpanRecord } from "../extensions/pi-flows/trace.ts";
+import { formatTraceReport, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete, type TraceSpanRecord } from "../extensions/pi-flows/trace.ts";
 import { constraintIdentifiers, promptVersion } from "../extensions/pi-flows/trace-attributes.ts";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import type { DelegationContract } from "../extensions/pi-flows/types.ts";
-import { runFlow } from "./stub-harness.ts";
+import { freshDir, runFlow } from "./stub-harness.ts";
 
 const TRACE = "flow-trace.jsonl";
 
@@ -507,4 +507,91 @@ test("coordination event attributes are redacted like everything else on the tra
 		if (previous === undefined) delete process.env.PI_FLOWS_APPROVAL_ACTOR;
 		else process.env.PI_FLOWS_APPROVAL_ACTOR = previous;
 	}
+});
+
+test("a nested stage that runs late widens its whole ancestry", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "find an approach", traceFile: TRACE, search: { candidates: 2, maxRounds: 1 } },
+		{ strategist: "candidate", redteam: "SCORE: 8", debrief: "final" },
+	);
+	const spans = await readSpans(stubDir);
+	const stage = (key: string) => byRole(spans, "stage").find((span) => attr(span, "flow.stage_key") === key)!;
+	// The count stays a count of direct placements, not of everything underneath.
+	assert.equal(attr(stage("round-1"), "flow.stage_span_count"), 0);
+	assert.equal(attr(stage("round-1.generate"), "flow.stage_span_count"), 2);
+
+	// Bounds are checked against controlled durations rather than against a live
+	// run: through the stub, every span lands inside the same millisecond, so a
+	// round that never widened would still look like it covered its children.
+	const dir = await freshDir();
+	const sink = makeTraceSink(path.join(dir, TRACE), "search", { recordContent: false, redactSecrets: true });
+	const round = { key: "round-1", name: "round 1" };
+	const generate = { key: "round-1.generate", name: "round 1 generate", parent: round };
+	const child = (durationMs: number) => ({
+		agent: "strategist", agentSource: "package" as const, task: "t", exitCode: 0, messages: [], stderr: "",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 }, durationMs,
+	});
+	sink.record(child(10), { scope: { stage: generate, key: "gen-1" } });
+	// The second placement finds the stage already open, which is the path that
+	// used to widen only the stage itself and leave its ancestry behind.
+	sink.record(child(5_000), { scope: { stage: generate, key: "gen-2" } });
+	await sink.finalize({ ok: true });
+	const direct = await readSpans(dir);
+	const roundSpan = direct.find((span) => attr(span, "flow.stage_key") === "round-1")!;
+	const generateSpan = direct.find((span) => attr(span, "flow.stage_key") === "round-1.generate")!;
+	assert.ok(roundSpan.start_time_unix_ms! <= generateSpan.start_time_unix_ms!, "a round must not start after its own sub-stage");
+	assert.ok(roundSpan.end_time_unix_ms! >= generateSpan.end_time_unix_ms!, "a round must not end before its own sub-stage");
+});
+
+test("an approved top-level checkpoint leaves evidence it was asked for", async () => {
+	const approved = await runFlow(
+		{ agent: "recon", task: "inspect", traceFile: TRACE, checkpoint: { before: "spawn", message: "Run it?" } },
+		{ recon: "done" },
+		{ hasUI: true },
+	);
+	assert.equal(approved.result.details.error, undefined);
+	const approvedEvent = (await readSpans(approved.stubDir)).find((span) => attr(span, "flow.event_name") === "checkpoint.spawn")!;
+	assert.equal(attr(approvedEvent, "flow.approval.decision"), "approved");
+	assert.equal(attr(approvedEvent, "flow.event_kind"), "approval");
+
+	// A refusal is recorded too — and its trace is still complete, because the
+	// refusal path finalizes the sink instead of orphaning the event.
+	const refused = await runFlow(
+		{ agent: "recon", task: "inspect", traceFile: TRACE, checkpoint: { before: "spawn", message: "Run it?" } },
+		{ recon: "done" },
+		{ hasUI: false },
+	);
+	assert.equal(refused.result.details.error?.code, "CHECKPOINT_APPROVAL_REQUIRED");
+	assert.equal(refused.calls.length, 0);
+	const refusedSpans = await readSpans(refused.stubDir);
+	assert.equal(attr(refusedSpans.find((span) => attr(span, "flow.event_name") === "checkpoint.spawn"), "flow.approval.decision"), "required");
+	const root = refusedSpans.find((span) => span.parent_span_id === null)!;
+	assert.equal(attr(root, "flow.refused_before_spawn"), "CHECKPOINT_APPROVAL_REQUIRED");
+	assert.equal(summarizeTraceSpans(refusedSpans, 0, TRACE).incompleteTraces, 0, "a refusal must still export a complete trace");
+});
+
+test("the workflow debrief links every phase, including those that ran no child", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "ship it",
+			traceFile: TRACE,
+			workflow: {
+				stateFile: ".pi/flow-workflows/debrief-links.json",
+				phases: [
+					{ id: "build", agent: "operator", task: "build {task}" },
+					{ id: "gate", approval: { message: "Ship?" } },
+					{ id: "release", agent: "operator", task: "release" },
+				],
+				debrief: { agent: "debrief" },
+			},
+		},
+		{ operator: "built", debrief: "summary" },
+		{ hasUI: true },
+	);
+	const spans = await readSpans(stubDir);
+	const debrief = unit(spans, "debrief")!;
+	// The approval phase produced no work span, so a link built from work keys
+	// would name a unit that never existed.
+	assert.equal(attr(debrief, "flow.depends_on"), "phase-build.work,phase-gate.approval,phase-release.work");
+	assert.equal(String(attr(debrief, "flow.depends_on_span_ids")).split(",").length, 3, "every declared debrief link must resolve");
 });

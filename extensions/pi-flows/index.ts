@@ -16,6 +16,7 @@ import {
 	type FlowAgent,
 	type FlowBudget,
 	type FlowDetails,
+	type FlowError,
 	type FlowMode,
 	type RunMode,
 	type Update,
@@ -269,6 +270,17 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			// The sink is built before the human gates, not after: an approval that is
+			// *granted* changes nothing else about the run, so a gate recorded only on
+			// refusal would leave a successful checkpoint with no evidence it was ever
+			// asked for. Every refusal below finalizes it, so those events never end up
+			// orphaned without a root span.
+			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+			const refuse = async (error: FlowError) => {
+				await traceSink?.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
+				return { content: [{ type: "text" as const, text: formatFlowError(error) }], details: catalog.errorDetails(mode, error) };
+			};
+
 			const projectAgents = catalog.projectAgentsFor(params);
 			if ((agentScope === "project" || agentScope === "all") && (params.confirmProjectAgents ?? true) && projectAgents.length > 0) {
 				if (!ctx.hasUI) {
@@ -278,10 +290,8 @@ export default function (pi: ExtensionAPI) {
 						`Requested project-local agents: ${projectAgents.map((agent) => agent.name).join(", ")}. These prompts come from ${safePath(discovery.projectAgentsDir)} and are controlled by the repository.`,
 						"Run in an interactive UI to approve, or pass confirmProjectAgents:false only after reviewing the project-local agent files.",
 					);
-					return {
-						content: [{ type: "text", text: formatFlowError(error) }],
-						details: catalog.errorDetails(mode, error),
-					};
+					traceSink?.event({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "required", "flow.approval.interactive": false } });
+					return refuse(error);
 				}
 
 				const ok = await ctx.ui.confirm(
@@ -295,29 +305,17 @@ export default function (pi: ExtensionAPI) {
 						"The interactive approval prompt was denied.",
 						"Review the project-local agent files and retry if you trust them.",
 					);
-					return {
-						content: [{ type: "text", text: formatFlowError(error) }],
-						details: catalog.errorDetails(mode, error),
-					};
+					traceSink?.event({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "denied", "flow.approval.interactive": true } });
+					return refuse(error);
 				}
+				traceSink?.event({ kind: "approval", name: "project_agents", attributes: { "flow.approval.decision": "approved", "flow.approval.interactive": true } });
 			}
 
-			const spawnCheckpointError = await checkpointApproval(params, ctx, mode, "spawn");
-			if (spawnCheckpointError) {
-				return {
-					content: [{ type: "text", text: formatFlowError(spawnCheckpointError) }],
-					details: catalog.errorDetails(mode, spawnCheckpointError),
-				};
-			}
+			const spawnCheckpointError = await checkpointApproval(params, ctx, mode, "spawn", undefined, traceSink?.event);
+			if (spawnCheckpointError) return refuse(spawnCheckpointError);
 
 			const handler = RUN_MODE_HANDLERS[mode as RunMode];
-			if (!handler) {
-				const error = flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state.");
-				return {
-					content: [{ type: "text", text: formatFlowError(error) }],
-					details: catalog.errorDetails("list", error),
-				};
-			}
+			if (!handler) return refuse(flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state."));
 
 			// Cost ceiling (bounds the one "uncontrolled recursion" dimension iteration/time
 			// caps miss) and optional trace export (OpenInference JSONL) for the flow tree.
@@ -325,7 +323,6 @@ export default function (pi: ExtensionAPI) {
 				params.maxCostUsd !== undefined || params.maxTokens !== undefined || params.maxGeneratedTokens !== undefined
 					? { maxCostUsd: params.maxCostUsd, maxTokens: params.maxTokens, maxGeneratedTokens: params.maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 }
 					: undefined;
-			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
 			// Who to credit on an approval receipt. pi does not hand the extension an
 			// authenticated operator identity, so this is an audit label: whatever
 			// PI_FLOWS_APPROVAL_ACTOR names, else the channel that answered the prompt.
@@ -381,7 +378,7 @@ export default function (pi: ExtensionAPI) {
 				if (output.details.results.length > 0) {
 					await appendReflexion(ctx.cwd, params, mode, output.content[0]?.text ?? "", policy);
 				}
-				const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text);
+				const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text, traceSink?.event);
 				if (finalCheckpointError) {
 					output.details.error = finalCheckpointError;
 					output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];

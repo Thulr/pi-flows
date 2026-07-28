@@ -134,16 +134,22 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	 * nested stage can never end up reparented to the root just because nothing
 	 * had opened its parent yet.
 	 */
-	const ensureStage = (stage: SpanStage, startMs: number, endMs: number): string => {
+	const ensureStage = (stage: SpanStage, startMs: number, endMs: number, counted = true): string => {
 		const existing = stages.get(stage.key);
 		if (existing) {
 			existing.startMs = Math.min(existing.startMs, startMs);
 			existing.endMs = Math.max(existing.endMs, endMs);
-			existing.spans += 1;
+			if (counted) existing.spans += 1;
+			// Widen ancestors too. A scorer that finishes after its round stage was
+			// last touched would otherwise leave the round ending before its own
+			// descendant — a span tree that cannot be true.
+			if (stage.parent) ensureStage(stage.parent, startMs, endMs, false);
 			return existing.spanId;
 		}
-		const parentSpanId = stage.parent ? ensureStage(stage.parent, startMs, endMs) : rootSpanId;
-		const record: StageRecord = { spanId: spanId(), name: stage.name, parentSpanId, startMs, endMs, spans: 1 };
+		// `spans` counts what was placed directly in a stage, so an ancestor created
+		// on a descendant's behalf is not credited with that descendant's placement.
+		const parentSpanId = stage.parent ? ensureStage(stage.parent, startMs, endMs, false) : rootSpanId;
+		const record: StageRecord = { spanId: spanId(), name: stage.name, parentSpanId, startMs, endMs, spans: counted ? 1 : 0 };
 		stages.set(stage.key, record);
 		stageSpanIdByKey.set(stage.key, record.spanId);
 		return record.spanId;

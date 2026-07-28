@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PI_FLOWS_VERSION, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode } from "./types.ts";
+import { PI_FLOWS_VERSION, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type RecordEvent } from "./types.ts";
 import { isFailed, sanitizeText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 
@@ -51,13 +51,28 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 	});
 }
 
-export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, when: "spawn" | "finalize", preview?: string): Promise<FlowError | null> {
+/**
+ * A human checkpoint, recorded on the trace like any other approval.
+ *
+ * `recordEvent` is not optional decoration: a checkpoint that is *approved*
+ * changes nothing else about the run, so without the event a successful human
+ * gate leaves no evidence it was ever asked for.
+ */
+export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, when: "spawn" | "finalize", preview?: string, recordEvent?: RecordEvent): Promise<FlowError | null> {
 	const checkpoint = params.checkpoint;
 	if (!checkpoint) return null;
 	const target = checkpoint.before ?? "spawn";
 	if (target !== when) return null;
+	const record = (decision: "approved" | "required" | "denied") => recordEvent?.({
+		kind: "approval",
+		name: `checkpoint.${when}`,
+		ok: decision === "approved",
+		scope: { key: `checkpoint.${when}` },
+		attributes: { "flow.approval.decision": decision, "flow.approval.when": when, "flow.approval.interactive": ctx.hasUI === true },
+	});
 	const message = checkpoint.message ?? (when === "spawn" ? `Run flow mode "${mode}" now?` : `Return the final result from flow mode "${mode}"?`);
 	if (!ctx.hasUI) {
+		record("required");
 		return flowError(
 			"CHECKPOINT_APPROVAL_REQUIRED",
 			`Human checkpoint required before ${when}.`,
@@ -70,6 +85,7 @@ export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, 
 		preview ? `${message}\n\n${sanitizeText(preview, { recordContent: true, redactSecrets: true }, 2048)}` : message,
 	);
 	if (!ok) {
+		record("denied");
 		return flowError(
 			"CHECKPOINT_APPROVAL_DENIED",
 			`Human checkpoint denied before ${when}.`,
@@ -77,6 +93,7 @@ export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, 
 			"Review the flow request/result and retry if it should proceed.",
 		);
 	}
+	record("approved");
 	return null;
 }
 

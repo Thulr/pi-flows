@@ -336,3 +336,20 @@ test("the eval strict-trace gate blocks only when asked, and never as a subject 
 	assert.equal(harnessExitCode({ measured: 2, passed: 2 }), 0);
 	assert.equal(harnessExitCode({ measured: 2, passed: 2, traceBlocks: true }), 1);
 });
+
+test("--trace-only still honours --strict-trace before it hands off to the driver", () => {
+	// A dry run produces no runtime traces at all, so the strict gate has
+	// something real to refuse. Trace-only leaves judging to the driver — but
+	// evidence is not the driver's call, and a 0 here would let an unauditable
+	// experiment proceed under a flag that explicitly asked for the opposite.
+	const run = (args: string[]) => spawnSync(process.execPath, ["--import", "tsx", "evals/run.mjs", "--dry-run", "--trace-only", "--filter=route-classifies", ...args], {
+		cwd: path.resolve(import.meta.dirname, ".."),
+		encoding: "utf8",
+	});
+	const lenient = run([]);
+	assert.equal(lenient.status, 0, `${lenient.stderr}\n${lenient.stdout}`);
+
+	const strict = run(["--strict-trace"]);
+	assert.equal(strict.status, 1, "strict trace evidence must block the trace-only exit");
+	assert.match(`${strict.stdout}\n${strict.stderr}`, /runtime trace evidence is incomplete under --strict-trace/);
+});

@@ -444,8 +444,12 @@ async function main() {
 		// ranks, and selects. Exit 0 iff a judgeable trace was emitted — objective
 		// misses are labels in the trace, not a candidate failure.
 		console.log(`\n(trace-only) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; judge/gate left to the driver.`);
-		writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: false });
-		process.exit(productJudgedCount > 0 ? 0 : 1);
+		const traceOnlyReliability = writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: false });
+		// Judging is the driver's job here, but evidence is not: a caller that asked
+		// for strict traces must not be handed a 0 for an unauditable experiment.
+		const traceOnlyGate = traceEvidenceGate(traceOnlyReliability, { strict: strictTrace });
+		for (const issue of traceOnlyGate.issues) console.log(`✗ ${issue}`);
+		process.exit(productJudgedCount > 0 && !traceOnlyGate.blocks ? 0 : 1);
 	}
 
 	if (dryRun) {
