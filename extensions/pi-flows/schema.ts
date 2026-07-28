@@ -8,6 +8,7 @@ const TierDescription = 'Capability tier for this child, portable across provide
 export const FlowTier = StringEnum(["fast", "capable", "deep"] as const, { description: TierDescription });
 
 const StringList = Type.Array(Type.String({ minLength: 1 }));
+const HandoffPolicy = StringEnum(["warn", "quarantine", "fail"] as const);
 
 export const FlowDelegationContract = Type.Object({
 	objective: Type.String({ minLength: 1, description: "The outcome the child owns." }),
@@ -352,6 +353,29 @@ export const FlowParams = Type.Object({
 		attempt: Type.Optional(Type.Number({ minimum: 1, description: "Execution attempt within a retried trial arm." })),
 	}, { description: "Stable runtime trace linkage supplied by eval harnesses. Identifiers are copied to every span and returned with the exact root span reference." })),
 	traceStrict: Type.Optional(Type.Boolean({ description: "Require complete trace evidence. Default false (best-effort tracing that never fails a flow). When true, a missing traceFile or a trace with dropped spans or failed exports fails the call with TRACE_INCOMPLETE — intended for evaluation and release gates, not ordinary user flows. Also settable via PI_FLOWS_TRACE_STRICT.", default: false })),
+	handoffPolicy: Type.Optional(StringEnum(["warn", "quarantine", "fail"] as const, {
+		description: 'Call-level handling for injection warnings at inter-agent boundaries. "warn" preserves compatibility, "quarantine" withholds flagged payloads, and "fail" stops before the recipient is spawned. Default "warn".',
+		default: "warn",
+	})),
+	modeHandoffPolicy: Type.Optional(Type.Object({
+		single: Type.Optional(HandoffPolicy),
+		parallel: Type.Optional(HandoffPolicy),
+		chain: Type.Optional(HandoffPolicy),
+		evaluate: Type.Optional(HandoffPolicy),
+		vote: Type.Optional(HandoffPolicy),
+		route: Type.Optional(HandoffPolicy),
+		orchestrate: Type.Optional(HandoffPolicy),
+		graph: Type.Optional(HandoffPolicy),
+		loop: Type.Optional(HandoffPolicy),
+		search: Type.Optional(HandoffPolicy),
+		workflow: Type.Optional(HandoffPolicy),
+		worktree: Type.Optional(HandoffPolicy),
+		debate: Type.Optional(HandoffPolicy),
+		dossier: Type.Optional(HandoffPolicy),
+		monitor: Type.Optional(HandoffPolicy),
+	}, {
+		description: "Minimum handoff policy required by each mode. The effective policy is the stricter of this mode requirement and handoffPolicy, so a high-consequence mode cannot be downgraded by a call-level override.",
+	})),
 	incompleteHandoffPolicy: Type.Optional(StringEnum(["fail", "include"] as const, {
 		description: 'How integration modes handle typed child envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
 		default: "fail",

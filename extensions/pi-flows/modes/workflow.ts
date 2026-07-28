@@ -373,7 +373,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			return stateError(deps, results, handoffError, state);
 		}
 
-		const output = prepareResultHandoff(run, policy).text;
+		const output = prepareResultHandoff(run, policy, undefined, deps.handoffGuard).text;
 		if (phase.checkCommand) {
 			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, resolveFlowCommandTimeoutMs(undefined, params.timeoutMs), policy, deps.signal);
 			deps.recordEvent?.({

@@ -145,7 +145,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	const ballotWarnings = new HandoffWarnings();
 	const ballots = succeeded
 		.map((result, i) => {
-			const prep = ballotWarnings.addFrom(prepareResultHandoff(result, policy));
+			const prep = ballotWarnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
 			return `### Voter ${i + 1} (${result.agent})\n\n${prep.text}`;
 		})
 		.join("\n\n---\n\n");

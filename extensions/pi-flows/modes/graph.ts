@@ -98,7 +98,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			if (isFailed(result)) {
 				return { content: [{ type: "text", text: sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy) }], details: makeDetails("graph")(results) };
 			}
-			const prep = prepareResultHandoff(result, policy);
+			const prep = prepareResultHandoff(result, policy, undefined, deps.handoffGuard);
 			outputs.set(node.id, withInjectionNotice(prep, `graph node ${node.id} output`));
 			completed.add(node.id);
 		}

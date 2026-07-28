@@ -234,7 +234,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			}
 			const conflictProvenance = [...integratedWorkers, worker].map((source) => {
 				const index = workers.indexOf(source);
-				return `### ${source.id} (${source.branch})\n${prepareResultHandoff(workerResults[index], policy).text}`;
+				return `### ${source.id} (${source.branch})\n${prepareResultHandoff(workerResults[index], policy, undefined, deps.handoffGuard).text}`;
 			}).join("\n\n");
 			const conflictTask = [
 				"## Integration goal", params.task ?? "Integrate the worker branches.",
@@ -284,7 +284,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		const summaries = usableWorkers.map((worker) => {
 			const index = workers.indexOf(worker);
-			const prepared = prepareResultHandoff(workerResults[index], policy);
+			const prepared = prepareResultHandoff(workerResults[index], policy, undefined, deps.handoffGuard);
 			return `### ${worker.id} (${worker.branch}; ${worker.changed ? "changed" : "no changes"})\n\n${prepared.text}`;
 		}).join("\n\n---\n\n");
 		const diffStat = git(integrationCwd, ["diff", "--stat", `${baseSha}...HEAD`]).stdout;

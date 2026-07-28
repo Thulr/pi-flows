@@ -11,7 +11,7 @@
  */
 import { canonicalSha256, delegationContractId } from "./delegation.ts";
 import { sanitizeText } from "./sanitize.ts";
-import type { CapturePolicy, DelegationContract, DelegationHandoffEnvelope, FlowError } from "./types.ts";
+import type { CapturePolicy, DelegationContract, DelegationHandoffEnvelope, FlowError, HandoffPolicy, PreparedHandoff } from "./types.ts";
 
 const LABEL_CAP = 512;
 const LIST_CAP = 1024;
@@ -101,6 +101,9 @@ export interface HandoffAccounting {
 	carriedBytes?: number;
 	/** Injection-scan labels raised while preparing the content for reuse. */
 	warnings?: string[];
+	handoffPolicy?: HandoffPolicy;
+	policyAction?: PreparedHandoff["action"];
+	compositional?: boolean;
 	contract?: DelegationContract;
 	policy: CapturePolicy;
 }
@@ -134,6 +137,19 @@ export function handoffAttributes(handoff: DelegationHandoffEnvelope, accounting
 	// corrupted artifact attributable.
 	if (artifacts.length && policy.recordContent) attributes["flow.handoff.artifact_refs"] = list(artifacts, policy);
 	if (accounting.warnings?.length) attributes["flow.handoff.injection_warnings"] = list(accounting.warnings, policy);
+	if (accounting.handoffPolicy) attributes["flow.handoff.policy"] = accounting.handoffPolicy;
+	if (accounting.policyAction) attributes["flow.handoff.policy_action"] = accounting.policyAction;
+	const attackDetected = Boolean(accounting.warnings?.length);
+	const blocked = accounting.policyAction === "quarantine" || accounting.policyAction === "fail";
+	const propagated = attackDetected && accounting.policyAction === "warn";
+	const contained = attackDetected && blocked;
+	attributes["flow.handoff.attack_detected"] = attackDetected;
+	attributes["flow.handoff.benign"] = !attackDetected;
+	attributes["flow.handoff.propagated"] = propagated;
+	attributes["flow.handoff.contained"] = contained;
+	attributes["flow.handoff.sensitive_exposure"] = propagated && Boolean(accounting.warnings?.some((warning) => warning.includes("secret-exfiltration")));
+	attributes["flow.handoff.false_positive_block"] = !attackDetected && blocked;
+	attributes["flow.handoff.compositional"] = accounting.compositional ?? false;
 	if (accounting.contract) attributes["flow.handoff.preserved_constraint_ids"] = list(constraintIdentifiers(accounting.contract), policy);
 	if (accounting.rawBytes !== undefined) attributes["flow.handoff.raw_bytes"] = accounting.rawBytes;
 	if (accounting.carriedBytes !== undefined) {

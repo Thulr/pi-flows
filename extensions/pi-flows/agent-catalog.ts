@@ -80,6 +80,7 @@ export function makeFlowDetails(discovery: FlowDiscovery, agentScope: AgentScope
 			defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
 			recordContentDefault: true,
 			redactSecretsDefault: true,
+			handoffPolicyDefault: "warn",
 		},
 		agentsDir: {
 			package: safePath(discovery.packageAgentsDir) ?? discovery.packageAgentsDir,
@@ -109,6 +110,7 @@ export function configSummary(discovery: FlowDiscovery, agentScope: AgentScope):
 		`modelVisibleOutputCapBytes: ${MODEL_VISIBLE_OUTPUT_CAP}`,
 		`recordContentDefault: true`,
 		`redactSecretsDefault: true`,
+		`handoffPolicyDefault: warn`,
 		"",
 		"Agents:",
 		summarizeAgents(discovery.agents, discovery.issues),

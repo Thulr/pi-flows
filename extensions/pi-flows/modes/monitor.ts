@@ -86,7 +86,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: `${formatFlowError(error)}\n\n${sanitizeText(observations.join("\n\n"), policy)}` }], details: deps.makeDetails("monitor")([], error) };
 	}
 
-	const prepared = prepareTextHandoff(triggered.output, policy);
+	const prepared = prepareTextHandoff(triggered.output, policy, undefined, deps.handoffGuard);
 	const reactor: FlowAgentRefInput = spec.reactor?.agent ? spec.reactor : { agent: "analyst" };
 	const reactTask = [
 		"## Monitor goal",

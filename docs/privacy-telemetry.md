@@ -12,7 +12,7 @@ pi-flows starts child `pi` processes. It does not add a separate analytics SDK, 
 | Usage/cost/tokens | Stored structurally | Kept even when content capture is disabled. |
 | stderr/stdout samples | Captured with caps and redaction | Used for recovery diagnostics. |
 | Agent paths | Home path redacted to `~` | Project-relative context may still appear in task/output content. |
-| Inter-agent handoffs | Stripped of invisible/bidi chars + scanned | Child output reused as another child's prompt is checked for injection markers before reuse; a warning is surfaced, content is not silently trusted. |
+| Inter-agent handoffs | Stripped of invisible/bidi chars + scanned | A bounded flow-scoped history also detects injection assembled across several boundaries. `warn` preserves flagged text with a notice, `quarantine` withholds it, and `fail` refuses the recipient before spawn. |
 | Trace spans (`traceFile`) | **Off by default**; written only when set | OpenInference-shaped JSON spans appended to the file: one per child run, one per stage (wave/round/phase), one per coordination event (approval, state, retry, budget, validation, handoff, artifact), plus a root span. Subject to the same redaction/cap policy; `input.value`/`output.value` are omitted when `recordContent:false`. Coordination-event spans carry shapes, sizes, digests, and identifiers — never handoff summaries, envelope `data`, approved parameters, or constraint text. Constraint identifiers are content digests, so preservation is checkable without recording the constraint. `traceLabel` is copied into span attributes. The file is **not** auto-redacted at rest — treat it as you would any trace export. |
 | Eval reliability report (`--reliability-out`) | Written by `npm run eval`; defaults under ignored `.thulr/runs/` | Retains each subject trial's answer, objective/judge outcome, costs, tokens, duration, exclusion, and infrastructure failure so reliability statistics remain auditable. This is a local raw eval artifact; do not commit or share it without reviewing its contents. |
 | Flow UI status/session entry | UI only | During a flow run, interactive pi sessions get a transient `pi-flows` status/widget summary. When the run completes, pi-flows appends a `pi-flows.run` session entry with mode, status, usage, model, duration, and error codes — not full child content. |
@@ -22,6 +22,9 @@ pi-flows starts child `pi` processes. It does not add a separate analytics SDK, 
 
 - `redactSecrets:true` (default): redacts secret-shaped strings, emails, and home paths.
 - `recordContent:true` (default): returns child content after redaction. Set `false` for structural-only details (also omits trace `input.value`/`output.value`).
+- `handoffPolicy:"warn" | "quarantine" | "fail"`: call-level handling for
+  injection-shaped handoffs. `modeHandoffPolicy` can require a stricter minimum
+  for named modes; the stricter value wins.
 - `timeoutMs`: bounds child runtime.
 - `maxCostUsd` / `maxGeneratedTokens`: bound cumulative spend by stopping the
   active child at completed model-response accounting boundaries.

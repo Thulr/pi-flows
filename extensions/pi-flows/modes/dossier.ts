@@ -54,7 +54,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		.map((result, index) => ({ result, index }))
 		.filter(({ result }) => !isFailed(result))
 		.map(({ result, index }) => {
-			const prepared = warnings.addFrom(prepareResultHandoff(result, policy));
+			const prepared = warnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
 			return `### Evidence section ${index + 1}: ${sanitizeText(sections[index]?.task ?? "", policy, 1024)}\n\n${prepared.text}`;
 		})
 		.join("\n\n---\n\n");

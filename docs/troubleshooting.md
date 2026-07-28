@@ -488,6 +488,20 @@ referenced artifact's bytes.
 Fix: treat the artifact and envelope as untrusted, regenerate them together,
 then retry. Do not copy the failed handoff into a downstream child.
 
+### `HANDOFF_POLICY_VIOLATION`
+
+Cause: an inter-agent handoff matched an injection marker while the effective
+`handoffPolicy` was `fail`, or individually benign fragments combined into an
+injection-shaped instruction across multiple handoff boundaries. The effective
+policy is the stricter of the call's `handoffPolicy` and the current entry in
+`modeHandoffPolicy`.
+
+Fix: remove or isolate the flagged content. If the workflow can continue
+without that payload, explicitly use `handoffPolicy:"quarantine"` so the
+recipient receives only a fixed quarantine marker. Use `warn` only when
+compatibility is more important than enforced withholding. Under `fail`, the
+recipient is refused at the dispatch seam before a child process spawns.
+
 ### `CHILD_PROTOCOL_ERROR`
 
 Cause: the child pi process did not emit valid `--mode json` events, or exited

@@ -96,6 +96,9 @@ export async function runAgentFanout(
 	statusText: (done: number, total: number) => string,
 	stage?: SpanStage,
 ): Promise<FlowRunResult[]> {
+	if (deps.handoffGuard.blockingError) {
+		return items.map((item) => makeEmptyRunResult(item.ref.agent, item.placeholderTask ?? item.task, deps.policy, deps.handoffGuard.blockingError));
+	}
 	const liveResults: FlowRunResult[] = items.map((item) => makeEmptyRunResult(item.ref.agent, item.placeholderTask ?? item.task, deps.policy));
 	const completed = new Set<number>();
 	const emit = () => {
@@ -134,6 +137,7 @@ export interface AgentRunPlacement {
 
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
 export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], placement: AgentRunPlacement = {}): Promise<FlowRunResult> {
+	if (deps.handoffGuard.blockingError) return Promise.resolve(makeEmptyRunResult(ref.agent, task, deps.policy, deps.handoffGuard.blockingError));
 	return deps.runChild({
 		...childRunOptions(deps, ref, task, mode, step, placement.limits ?? {}, placement.scope),
 		onUpdate: (partial) => {

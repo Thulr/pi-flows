@@ -10,6 +10,19 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Inter-agent injection handling is now an enforceable, flow-scoped policy.
+  `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding
+  `quarantine`, and `fail` before the recipient process spawns;
+  `modeHandoffPolicy` declares non-downgradable per-mode minimums for
+  high-consequence flows and workflow approval receipts bind the resolved
+  policy. Bounded cross-handoff state detects conjunctive attacks assembled from
+  individually benign fragments. The deterministic fault manifest now covers
+  malicious child output, retrieved content, poisoned routing metadata,
+  repeated poisoned consensus, and multi-boundary composition, while trace
+  reports keep benign utility, attack success, propagation, containment,
+  sensitive exposure, and false-positive block rates separate. New structured
+  error: `HANDOFF_POLICY_VIOLATION`.
+
 - A deterministic, model-free coordination fault-injection suite runs offline in
   `npm test`, so failures a live run reproduces once a month are reproduced on
   every check. A reusable adapter over the child-run seam (`ModeDeps.runChild`)

@@ -75,7 +75,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	// Strip invisible characters and flag injection markers before fan-out.
 	const handoffWarnings = new HandoffWarnings();
 	for (let i = 0; i < subtasks.length; i += 1) {
-		const prep = handoffWarnings.addFrom(prepareHandoff(subtasks[i]));
+		const prep = handoffWarnings.addFrom(prepareHandoff(subtasks[i], deps.handoffGuard));
 		subtasks[i] = prep.text;
 	}
 	if (subtasks.length > 1) {
@@ -132,7 +132,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		.map((result, index) => ({ result, index }))
 		.filter(({ result }) => !isFailed(result))
 		.map(({ result, index }) => {
-			const prep = handoffWarnings.addFrom(prepareResultHandoff(result, policy));
+			const prep = handoffWarnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
 			return `### Subtask ${index + 1}: ${sanitizeText(subtasks[index] ?? "", policy, 2 * 1024)}\n\n${prep.text}`;
 		})
 		.join("\n\n---\n\n");
@@ -204,7 +204,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const maxVerifyRounds = verifyPolicy === "revise" ? verifyMaxIterations : 1;
 		for (let round = 1; round <= maxVerifyRounds; round += 1) {
 			verifyRounds = round;
-			const synthArtifact = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy));
+			const synthArtifact = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy, undefined, deps.handoffGuard));
 			const verifyTask = [
 				"## Goal / contract",
 				contractedGoal,
@@ -260,7 +260,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				};
 			}
 
-			const critiquePrep = handoffWarnings.addFrom(prepareResultHandoff(verified, policy));
+			const critiquePrep = handoffWarnings.addFrom(prepareResultHandoff(verified, policy, undefined, deps.handoffGuard));
 			deps.recordEvent?.({
 				kind: "retry",
 				name: "orchestrate.resynthesize",
@@ -272,7 +272,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			// warnings the handoff event recorded. `sanitizeText` alone skips the
 			// injection scan and, for a typed return, hands over the raw output
 			// rather than the validated canonical envelope.
-			const priorPrep = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy));
+			const priorPrep = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy, undefined, deps.handoffGuard));
 			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(priorPrep.text, critiquePrep.text));
 			if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
 			synthesized = await runIntegrationPlan(deps, synthesisPlan.plan!, "orchestrate", results.length + 1, results);

@@ -73,7 +73,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 		priorArguments = roundResults.map((result) => {
 			if (isFailed(result)) return "[advocate failed]";
-			return warnings.addFrom(prepareResultHandoff(result, policy)).text;
+			return warnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard)).text;
 		});
 		// The transcript is built from each advocate's validated handoff, so that is
 		// what the next round and the adjudicator actually read.

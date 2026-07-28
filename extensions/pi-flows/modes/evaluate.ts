@@ -146,7 +146,9 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 
 		// The artifact crosses a trust boundary into the critic prompt: strip
 		// invisible characters and flag injection markers before reuse.
-		const artifactPrep = handoffWarnings.addFrom(envelopeText === null ? prepareResultHandoff(generated, policy) : prepareTextHandoff(envelopeText, policy));
+		const artifactPrep = handoffWarnings.addFrom(envelopeText === null
+			? prepareResultHandoff(generated, policy, undefined, deps.handoffGuard)
+			: prepareTextHandoff(envelopeText, policy, undefined, deps.handoffGuard));
 		const artifact = artifactPrep.text;
 		// The critics judge this text, not the generator's raw output: it has been
 		// validated, capped, and injection-scanned on the way here. Emitted only
@@ -159,6 +161,8 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				envelope: generated.envelope,
 				carried: artifact,
 				warnings: artifactPrep.warnings,
+				action: artifactPrep.action,
+				compositional: artifactPrep.compositional,
 				scope: { stage, key: generatorKey(stage.key) },
 			});
 			priorArtifactKey = `${generatorKey(stage.key)}.handoff`;
@@ -195,7 +199,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				// invisible characters, and injection-scanned. A check that prints an
 				// attacker-controlled file is no more trustworthy than an agent.
 				const checkRaw = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
-				const checkPrep = handoffWarnings.addFrom(prepareTextHandoff(checkRaw, policy));
+				const checkPrep = handoffWarnings.addFrom(prepareTextHandoff(checkRaw, policy, undefined, deps.handoffGuard));
 				critique = checkPrep.text;
 				feedbackKey = `${stage.key}.check`;
 				// Only when a generator will actually read it: on the final iteration
@@ -208,6 +212,8 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 						raw: checkRaw,
 						carried: critique,
 						warnings: checkPrep.warnings,
+						action: checkPrep.action,
+						compositional: checkPrep.compositional,
 						scope: { stage, key: `${stage.key}.check.handoff`, dependsOn: [`${stage.key}.check`] },
 					});
 					feedbackKey = `${stage.key}.check.handoff`;
@@ -279,7 +285,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// Critique fed back = the REVISE critics' output (a handoff: clean + scan).
 		const revising = verdicts.filter((verdict) => !verdict.pass);
 		const critiqueRaw = revising.map((verdict, index) => `### Critic ${index + 1} (${verdict.agent})\n\n${verdict.text}`).join("\n\n---\n\n");
-		const critiquePrep = handoffWarnings.addFrom(prepareTextHandoff(critiqueRaw, policy));
+		const critiquePrep = handoffWarnings.addFrom(prepareTextHandoff(critiqueRaw, policy, undefined, deps.handoffGuard));
 		critique = critiquePrep.text;
 		// The next generator reads this combined critique, not the panel verdict:
 		// the text was aggregated, capped, and injection-scanned on the way here.
@@ -291,6 +297,8 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				raw: critiqueRaw,
 				carried: critique,
 				warnings: critiquePrep.warnings,
+				action: critiquePrep.action,
+				compositional: critiquePrep.compositional,
 				scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
 			});
 			feedbackKey = `${stage.key}.feedback`;

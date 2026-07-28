@@ -116,6 +116,8 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 	carried: string;
 	/** The injection labels the mode raised on the text it carried. */
 	warnings: string[];
+	action?: "allow" | "warn" | "quarantine" | "fail";
+	compositional?: boolean;
 	scope?: ChildSpanScope;
 }): void {
 	const record = deps.recordEvent;
@@ -123,7 +125,16 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 	const handoff = options.contract && options.envelope
 		? typedHandoff(options.result, options.envelope, options.contract)
 		: compatibilityHandoff(options.result, deps.policy);
-	emitHandoff(record, deps, handoff, options.result, options.scope, options.carried, options.warnings, options.contract, undefined);
+	emitHandoff(
+		record,
+		deps,
+		handoff,
+		options.result,
+		options.scope,
+		{ text: options.carried, warnings: options.warnings, action: options.action ?? (options.warnings.length ? "warn" : "allow"), compositional: options.compositional ?? false },
+		options.contract,
+		undefined,
+	);
 }
 
 /**
@@ -137,6 +148,8 @@ export function recordTextHandoff(deps: ModeDeps, options: {
 	raw: string;
 	carried: string;
 	warnings: string[];
+	action?: "allow" | "warn" | "quarantine" | "fail";
+	compositional?: boolean;
 	scope: ChildSpanScope;
 }): void {
 	const record = deps.recordEvent;
@@ -166,6 +179,9 @@ export function recordTextHandoff(deps: ModeDeps, options: {
 				rawBytes: Buffer.byteLength(options.raw, "utf8"),
 				carriedBytes: Buffer.byteLength(options.carried, "utf8"),
 				warnings: options.warnings,
+				handoffPolicy: deps.handoffGuard.resolution.effective,
+				policyAction: options.action ?? (options.warnings.length ? "warn" : "allow"),
+				compositional: options.compositional,
 				policy: deps.policy,
 			},
 		),
@@ -179,8 +195,7 @@ function emitHandoff(
 	handoff: DelegationHandoffEnvelope,
 	result: FlowRunResult,
 	scope: ChildSpanScope | undefined,
-	carried: string,
-	warnings: string[],
+	prepared: { text: string; warnings: string[]; action: "allow" | "warn" | "quarantine" | "fail"; compositional: boolean },
 	contract: DelegationContract | undefined,
 	rejection: FlowError | undefined,
 ): void {
@@ -201,8 +216,11 @@ function emitHandoff(
 			accepted: !rejection,
 			rejection,
 			rawBytes: Buffer.byteLength(raw, "utf8"),
-			carriedBytes: Buffer.byteLength(carried, "utf8"),
-			warnings,
+			carriedBytes: Buffer.byteLength(prepared.text, "utf8"),
+			warnings: prepared.warnings,
+			handoffPolicy: deps.handoffGuard.resolution.effective,
+			policyAction: prepared.action,
+			compositional: prepared.compositional,
 			contract,
 			policy: deps.policy,
 		}),
@@ -218,9 +236,8 @@ function emitHandoff(
 	);
 }
 
-function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult, rejection?: FlowError, rejected?: DelegationReturnEnvelope): void {
+function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult, rejection?: FlowError, rejected?: DelegationReturnEnvelope): FlowError | undefined {
 	const record = deps.recordEvent;
-	if (!record) return;
 	const handoff = result.handoff;
 	// The handoff is its own unit, not the child again: it nests in the same stage
 	// and depends on the child that produced it. Reusing the child's key would
@@ -231,7 +248,7 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 		? { stage: plan.scope.stage, ...(unit ? { key: `${unit}.handoff`, dependsOn: [unit] } : {}) }
 		: undefined;
 	if (!handoff) {
-		record({
+		record?.({
 			kind: "validation",
 			name: "handoff.rejected",
 			ok: false,
@@ -248,7 +265,7 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 		// so they are recorded — marked unverified, because the digest is exactly
 		// what failed.
 		if (rejected) {
-			recordArtifacts(
+			if (record) recordArtifacts(
 				record,
 				{ agent: result.agent, contractId: rejected.contractId ?? null, digests: rejected.digests },
 				rejected.artifactReferences.map((reference) => reference.path),
@@ -258,14 +275,15 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 				false,
 			);
 		}
-		return;
+		return rejection;
 	}
 	// Measured on the text the consumer is actually handed, not on the envelope
 	// behind it: the compatibility envelope repeats the result in both `summary`
 	// and `data`, so an ordinary large output would report far more bytes crossing
 	// than the capped text the next prompt received.
-	const prepared = prepareResultHandoff(result, deps.policy);
-	emitHandoff(record, deps, handoff, result, plan.scope, prepared.text, prepared.warnings, plan.contract, rejection);
+	const prepared = prepareResultHandoff(result, deps.policy, undefined, deps.handoffGuard);
+	if (record) emitHandoff(record, deps, handoff, result, plan.scope, prepared, plan.contract, prepared.error ?? rejection);
+	return prepared.error ?? rejection;
 }
 
 /**
@@ -293,8 +311,8 @@ export function acceptIntegrationResult(
 		policy: deps.policy,
 		incompletePolicy,
 	});
-	if (options.consumed !== false) recordHandoffEvidence(deps, plan, result, prepared.error, prepared.rejected);
-	return prepared.error ?? null;
+	const policyError = options.consumed !== false ? recordHandoffEvidence(deps, plan, result, prepared.error, prepared.rejected) : undefined;
+	return prepared.error ?? policyError ?? null;
 }
 
 /**
@@ -304,8 +322,8 @@ export function acceptIntegrationResult(
  * the output — an orchestrate verdict is a handoff when it sends the answer back
  * for revision, and the end of the run when it passes.
  */
-export function recordIntegrationHandoff(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult): void {
-	recordHandoffEvidence(deps, plan, result);
+export function recordIntegrationHandoff(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult): FlowError | null {
+	return recordHandoffEvidence(deps, plan, result) ?? null;
 }
 
 /** @see acceptIntegrationResult for what `consumed:false` withholds, and why. */
