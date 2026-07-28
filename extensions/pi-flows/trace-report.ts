@@ -214,6 +214,11 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// span said to expect. The second catches loss *after* a successful write.
 		const redactedSpans = numericAttr(rootSpan, "flow.trace.redacted_spans");
 		const declaredExpected = optionalNumericAttr(rootSpan, "flow.trace.expected_spans");
+		// A root that declares a span role was written by a sink that always stamps
+		// its expectation, so a missing one means the counter was lost — and falling
+		// back to the row count would define away the very gap it is there to find.
+		// Traces written before span roles existed keep the fallback.
+		const expectationLost = stringAttr(rootSpan, "flow.span_role") === "root" && declaredExpected === undefined;
 		const expectedSpans = declaredExpected ?? traceSpans.length;
 		const failedExports = numericAttr(rootSpan, "flow.trace.failed_exports");
 		// Counted by unique span id, not by row: a pipeline that loses one span and
@@ -255,7 +260,7 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			// read-back verdict and a live one cannot disagree. A duplicated or
 			// unidentifiable row is its own disqualification: nothing downstream can
 			// tell which copy is real, or what an id-less row was meant to be.
-			incompleteTraces: duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
+			incompleteTraces: expectationLost || duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
 				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
 				Boolean(root),
 			) !== "recorded" ? 1 : 0,

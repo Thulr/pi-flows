@@ -258,6 +258,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			deps.recordEvent?.({
 				kind: "retry",
 				name: "orchestrate.resynthesize",
+				scope: { key: `${synthesisKey(synthesisRound)}.retry`, dependsOn: [`${verifyKey(round)}.verdict`] },
 				attributes: { "flow.retry.attempt": round + 1, "flow.retry.max_attempts": maxVerifyRounds, "flow.retry.reason": "verifier_revise" },
 			});
 			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(sanitizeText(resultText(synthesized), policy), critiquePrep.text));

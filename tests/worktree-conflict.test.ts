@@ -205,8 +205,10 @@ test("worktree: a conflict resolver links every input whose merge state it edits
 	// The resolver's prompt carries both workers' reports and it edits their
 	// combined merge state, so naming only the incoming branch would understate
 	// what the resolution actually acted on.
-	assert.equal(conflict.attributes["flow.depends_on"], "worker-a,worker-b");
-	assert.equal(String(conflict.attributes["flow.depends_on_span_ids"]).split(",").length, 2);
+	// The observation it was dispatched to answer, then both workers whose merge
+	// state it edits.
+	assert.equal(conflict.attributes["flow.depends_on"], "conflict-b.observed,worker-a,worker-b");
+	assert.equal(String(conflict.attributes["flow.depends_on_span_ids"]).split(",").length, 3);
 
 	// The reviewed branch contains the resolution, so the resolver belongs in the
 	// reviewed result's provenance — and the gate that ran against that branch
@@ -217,5 +219,14 @@ test("worktree: a conflict resolver links every input whose merge state it edits
 	const check = spans.find((span) => span.attributes?.["flow.unit_key"] === "integration-check")!;
 	assert.equal(check.attributes["flow.depends_on"], "integration-review");
 	assert.equal(check.attributes["flow.depends_on_span_ids"], review.span_id);
+
+	// The chain runs end to end with no unkeyed link in the middle: the worktrees
+	// each worker ran in, the observed conflict the resolver answered, and the
+	// resolver itself.
+	const key = (name: string) => spans.find((span) => span.attributes?.["flow.unit_key"] === name)!;
+	assert.equal(key("worker-a").attributes["flow.depends_on"], "worktrees-created");
+	assert.equal(key("worker-a").attributes["flow.depends_on_span_ids"], key("worktrees-created").span_id);
+	assert.equal(key("conflict-b.observed").attributes["flow.depends_on"], "worker-b");
+
 	await cleanupConflictRepo(cwd);
 });

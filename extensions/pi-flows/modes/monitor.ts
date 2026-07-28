@@ -77,6 +77,9 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 			kind: "state",
 			name: "monitor.exhausted",
 			ok: false,
+			// Keyed even though nothing follows it: a bounded wait that never fired is
+			// the run's terminal observation, and an unkeyed one cannot be referenced.
+			scope: { key: TRIGGER_KEY },
 			attributes: { "flow.monitor.trigger": trigger, "flow.monitor.max_checks": maxChecks },
 		});
 		const error = flowError("MONITOR_NOT_TRIGGERED", `Monitor reached its bound (${maxChecks} checks) without firing.`, observations.at(-1) ?? "No probe observation was produced.", "Raise maxChecks/intervalMs only when the bounded wait is intentional, adjust the trigger, or use durable automation outside pi-flows.", true);

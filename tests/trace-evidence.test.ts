@@ -492,3 +492,33 @@ test("a workflow gate links to the phase output it validated", async () => {
 	assert.equal(attr(gate, "flow.depends_on"), "phase-build.work");
 	assert.equal(attr(gate, "flow.depends_on_span_ids"), unit(spans, "phase-build.work")!.span_id);
 });
+
+test("a new-format trace with its expectation stripped is incomplete, not self-consistent", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+
+	// Lose a child AND the counter that would have revealed it: the survivors are
+	// perfectly self-consistent, which is exactly the state a gate must not accept.
+	const child = spans.find((span) => role(span) === "child")!;
+	const stripped = spans.filter((span) => span !== child).map((span) => {
+		if (span.parent_span_id !== null) return span;
+		const { "flow.trace.expected_spans": _lost, ...rest } = span.attributes!;
+		return { ...span, attributes: rest };
+	});
+	const report = summarizeTraceSpans(stripped, 0, TRACE);
+	assert.equal(report.droppedSpans, 0, "with the counter gone there is nothing left to compare against");
+	assert.equal(report.incompleteTraces, 1, "a sink-written root always stamps its expectation, so a missing one is loss");
+	assert.equal(traceReportIsComplete(report), false);
+
+	// A trace written before span roles existed has no expectation to lose, so the
+	// row-count fallback still applies and it is readable as before.
+	const legacy = stripped.map(({ attributes, ...span }) => {
+		const { "flow.span_role": _role, ...rest } = attributes!;
+		return { ...span, attributes: rest };
+	});
+	assert.equal(summarizeTraceSpans(legacy, 0, TRACE).incompleteTraces, 0);
+});

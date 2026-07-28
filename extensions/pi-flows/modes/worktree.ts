@@ -83,6 +83,7 @@ export function workerRecoveryDetails(workers: Array<{ branch: string; cwd: stri
 
 /** One place a worker's unit key is derived, so a dependency link cannot name a worker that was never registered. */
 const workerKey = (id: string) => `worker-${id}`;
+const BRANCHES_KEY = "worktrees-created";
 
 export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -153,7 +154,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: worker.task.returnContract ?? params.returnContract,
 				requireEvidence: worker.task.requireEvidence ?? true,
 				placeholderTask: worker.task.task,
-				scope: { key: workerKey(worker.id) },
+				scope: { key: workerKey(worker.id), dependsOn: [BRANCHES_KEY] },
 			});
 			if (planned.error) return modeError(deps, results, planned.error);
 			workerItems.push(planned.plan!);
@@ -161,6 +162,9 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			deps.recordEvent?.({
 				kind: "state",
 				name: "worktree.branches_created",
+				// Each worker runs inside a worktree this step created, so the setup is
+				// a real input to every worker rather than a bare announcement.
+				scope: { key: BRANCHES_KEY },
 				attributes: {
 					"flow.worktree.base_sha": baseSha,
 					"flow.worktree.worker_count": workers.length,
@@ -244,13 +248,15 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				kind: "state",
 				name: "worktree.merge_conflict",
 				ok: false,
+				// The observation the resolver was dispatched to answer.
+				scope: { key: `conflict-${worker.id}.observed`, dependsOn: [workerKey(worker.id)] },
 				attributes: { "flow.worktree.worker_id": worker.id, "flow.worktree.conflict_file_count": unmerged.stdout.split("\n").filter(Boolean).length },
 			});
 			const conflictPlan = integrationRunPlan(deps, integrator, conflictTask, {
 				fallbackContract: params.contract as DelegationContract | undefined,
 				scope: {
 					key: `conflict-${worker.id}`,
-					dependsOn: [...[...integratedWorkers, worker].map((source) => workerKey(source.id)), ...resolvedConflictKeys],
+					dependsOn: [`conflict-${worker.id}.observed`, ...[...integratedWorkers, worker].map((source) => workerKey(source.id)), ...resolvedConflictKeys],
 				},
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);

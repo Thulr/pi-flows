@@ -84,7 +84,9 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			deps.recordEvent?.({
 				kind: "retry",
 				name: "evaluate.revise",
-				scope: { stage, key: `${stage.key}.retry` },
+				// The retry is caused by the previous iteration's feedback, so it hangs
+				// off that verdict rather than off the iteration boundary alone.
+				scope: { stage, key: `${stage.key}.retry`, ...(feedbackKey ? { dependsOn: [feedbackKey] } : {}) },
 				attributes: {
 					"flow.retry.attempt": iteration,
 					"flow.retry.max_attempts": maxIterations,

@@ -34,7 +34,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			deps.recordEvent?.({
 				kind: "retry",
 				name: "loop.iterate",
-				scope: { stage, key: `${stage.key}.retry` },
+				scope: { stage, key: `${stage.key}.retry`, ...(priorIterationKey ? { dependsOn: [priorIterationKey] } : {}) },
 				attributes: { "flow.retry.attempt": iteration, "flow.retry.max_attempts": maxIterations, "flow.retry.reason": judgeRef ? "judge_revise" : "stop_condition_unmet" },
 			});
 		}
