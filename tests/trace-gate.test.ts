@@ -686,3 +686,28 @@ test("a dependency list past the structural cap is marked truncated and still pa
 	assert.ok(String(attr(sink, "flow.depends_on")).split(",").length < wide.length, "the list must actually be shorter");
 	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });
+
+test("redaction that shortens a dependency list is not truncation", async () => {
+	// A node id can be anything an author writes, including something
+	// secret-shaped. Over the structural cap before redaction, well under it
+	// after: a flag derived from the raw string would claim a truncation the
+	// reader cannot see, and refuse a run that is entirely sound.
+	// privacy-scan: allow
+	const secretish = `token=${"z".repeat(9_000)}`;
+	const { stubDir, result } = await runFlow(
+		{
+			task: "map it",
+			traceFile: TRACE,
+			graph: { nodes: [{ id: secretish, agent: "recon", task: "start" }, { id: "beta", agent: "recon", task: "next", dependsOn: [secretish] }] },
+		},
+		{ recon: "node output" },
+	);
+	assert.equal(result.details.error, undefined);
+	const spans = await readSpans(stubDir);
+	const beta = spans.find((span) => attr(span, "flow.unit_key") === "beta")!;
+	const declared = String(attr(beta, "flow.depends_on"));
+	assert.match(declared, /REDACTED/, "the secret-shaped id is redacted on the way out");
+	assert.ok(declared.length < 200, "redaction brought the list well under the cap");
+	assert.equal(attr(beta, "flow.depends_on_truncated"), undefined, "a complete stored list is not truncated");
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+});

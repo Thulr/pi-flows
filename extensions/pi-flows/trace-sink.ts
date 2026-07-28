@@ -121,6 +121,9 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	 * reason a configured actor of `token=…`, or a home path, should reach the
 	 * file verbatim when the same string is redacted everywhere else.
 	 */
+	/** How a structural key list looks once written: redacted, then capped. */
+	const storedStructural = (value: string) => sanitizeText(value, { ...policy, recordContent: true }, STRUCTURAL_CAP);
+
 	const storedAttributes = (attributes: Record<string, unknown> | undefined): Record<string, unknown> => {
 		if (!attributes) return {};
 		const stored: Record<string, unknown> = {};
@@ -189,12 +192,17 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// The authoritative count. A reader must not have to infer it from a
 			// string that any cap or transform could have shortened.
 			attributes["flow.depends_on_count"] = dependsOn.length;
-			const joined = dependsOn.map(encodeUnitKey).join(",");
-			attributes["flow.depends_on"] = joined;
+			// Stored first, then measured. The flag has to describe the list that
+			// reaches the file: redaction can shorten an over-cap list back under the
+			// cap, and a flag derived from the raw string would then claim a
+			// truncation the reader cannot see — failing a healthy run.
+			const stored = storedStructural(dependsOn.map(encodeUnitKey).join(","));
+			attributes["flow.depends_on"] = stored;
 			// Capping is the one reason a healthy run's key list is shorter than its
 			// count, so the writer says when it happens. Without that signal a reader
-			// cannot tell capping from erasure, and has to let both through.
-			if (Buffer.byteLength(joined, "utf8") > STRUCTURAL_CAP) attributes["flow.depends_on_truncated"] = true;
+			// cannot tell capping from erasure, and has to let both through. Counting
+			// keys rather than bytes states exactly what the reader checks.
+			if (stored.split(",").filter(Boolean).length < dependsOn.length) attributes["flow.depends_on_truncated"] = true;
 			// A dependency may name a unit or a whole stage ("this debrief consumed
 			// round 2"), so both namespaces are searched, units first.
 			const resolved = dependsOn.map((key) => spanIdByKey.get(key) ?? stageSpanIdByKey.get(key)).filter((value): value is string => Boolean(value));

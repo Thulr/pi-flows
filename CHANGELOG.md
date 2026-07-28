@@ -230,12 +230,21 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   fallback rebuild the number out of the very keys it was meant to check.
   Presence and readability are now separate questions, and a stated value
   nothing can read invalidates the trace.
+- `evaluate` records a handoff only where one was crossed. A failed check on the
+  final iteration ends the run, so neither the artifact nor the check output
+  reaches another agent; a critic REVISE on the final iteration returns to the
+  caller, not to a generator. All three used to be recorded as accepted
+  inter-agent handoffs with carried-byte accounting.
+- An `evaluate` revision now links the artifact handoff it revises alongside the
+  feedback that sent it back, since its prompt carries both.
 - The trace gate no longer accepts a shortened dependency key list as capping.
   Capping is the only thing that legitimately shortens one, so the writer now
   marks it (`flow.depends_on_truncated`); an unmarked short list is erasure and
   invalidates the trace, and a whole list that claims truncation does too.
   Truncation now exempts only the final key, which the cap may have cut
-  mid-key — every key it left intact is still matched to its span id.
+  mid-key — every key it left intact is still matched to its span id. The flag
+  describes the list as written, after redaction, so a secret-shaped author id
+  that redaction shortens back under the cap is not reported as truncated.
 - A failing `evaluate.checkCommand`'s output is now prepared like any other
   handoff before it reaches the next generator: capped, stripped of invisible
   characters, and injection-scanned, with the boundary recorded — and recorded

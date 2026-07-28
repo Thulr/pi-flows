@@ -332,9 +332,10 @@ test("iterative modes link each revision to the feedback that caused it", async 
 	const secondDraft = unit(evaluateSpans, "iteration-2.generator")!;
 	const feedback = evaluateSpans.find((span) => attr(span, "flow.unit_key") === "iteration-1.feedback")!;
 	// Through the feedback boundary: what the revision reads is the aggregated,
-	// capped, scanned critique, and the verdict is what produced it.
-	assert.equal(attr(secondDraft, "flow.depends_on"), "iteration-1.feedback");
-	assert.equal(attr(secondDraft, "flow.depends_on_span_ids"), feedback.span_id);
+	// capped, scanned critique, and the verdict is what produced it — alongside
+	// the artifact handoff it revises in place.
+	assert.equal(attr(secondDraft, "flow.depends_on"), "iteration-1.generator.handoff,iteration-1.feedback");
+	assert.equal(String(attr(secondDraft, "flow.depends_on_span_ids")).split(",")[1], feedback.span_id);
 	assert.equal(attr(feedback, "flow.depends_on"), "iteration-1.panel");
 
 	const looped = await runFlow(
@@ -457,7 +458,9 @@ test("a failed gate links back to the draft that failed it", async () => {
 	assert.equal(attr(check, "flow.depends_on_span_ids"), unit(spans, "iteration-1.generator")!.span_id);
 	// The revision reads the *prepared* check output, so it links the handoff that
 	// carried it, which in turn links the check that produced it.
-	assert.equal(attr(unit(spans, "iteration-2.generator"), "flow.depends_on"), "iteration-1.check.handoff");
+	// The revision reads both the artifact it revises and the feedback that sent
+	// it back, so both are declared.
+	assert.equal(attr(unit(spans, "iteration-2.generator"), "flow.depends_on"), "iteration-1.generator.handoff,iteration-1.check.handoff");
 	assert.equal(attr(unit(spans, "iteration-1.check.handoff"), "flow.depends_on"), "iteration-1.check");
 });
 

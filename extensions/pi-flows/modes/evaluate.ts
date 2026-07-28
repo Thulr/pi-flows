@@ -73,6 +73,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	// iteration 2 as independent of iteration 1, and a revision cannot be
 	// attributed to the verdict that caused it.
 	let feedbackKey: string | undefined;
+	let priorArtifactKey: string | undefined;
 	const contractBudget = contract ? createDelegationBudget(contract) : undefined;
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
@@ -99,6 +100,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// 1. Generator builds. Round 1 sees the goal; later rounds also see the prior
 		// ARTIFACT plus the critique so the generator revises in place instead of
 		// rebuilding from scratch (durable hand-off, per the harness design rules).
+		const consumed = [priorArtifactKey, feedbackKey].filter((key): key is string => Boolean(key));
 		const generatorTask =
 			iteration === 1
 				? contractedGoal
@@ -118,7 +120,10 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			results,
 			{
 				limits: contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
-				scope: { stage, key: generatorKey(stage.key), ...(feedbackKey ? { dependsOn: [feedbackKey] } : {}) },
+				// A revision's prompt carries the prior artifact and the feedback that
+				// sent it back. Both are declared: reachability through the panel is
+				// not the same as saying what this prompt actually contains.
+				scope: { stage, key: generatorKey(stage.key), ...(consumed.length ? { dependsOn: consumed } : {}) },
 			},
 		);
 		results.push(generated);
@@ -144,15 +149,20 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const artifactPrep = handoffWarnings.addFrom(envelopeText === null ? prepareResultHandoff(generated, policy) : prepareTextHandoff(envelopeText, policy));
 		const artifact = artifactPrep.text;
 		// The critics judge this text, not the generator's raw output: it has been
-		// validated, capped, and injection-scanned on the way here.
-		recordStepHandoff(deps, {
-			result: generated,
-			contract,
-			envelope: generated.envelope,
-			carried: artifact,
-			warnings: artifactPrep.warnings,
-			scope: { stage, key: generatorKey(stage.key) },
-		});
+		// validated, capped, and injection-scanned on the way here. Emitted only
+		// once a consumer is known — a failed check on the final iteration ends the
+		// run, and nothing ever reads this artifact.
+		const emitArtifactHandoff = () => {
+			recordStepHandoff(deps, {
+				result: generated,
+				contract,
+				envelope: generated.envelope,
+				carried: artifact,
+				warnings: artifactPrep.warnings,
+				scope: { stage, key: generatorKey(stage.key) },
+			});
+			priorArtifactKey = `${generatorKey(stage.key)}.handoff`;
+		};
 		priorArtifact = artifact;
 
 		// 2. Deterministic gate (level-1 / code assertions): a command that must exit 0.
@@ -190,8 +200,9 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				feedbackKey = `${stage.key}.check`;
 				// Only when a generator will actually read it: on the final iteration
 				// the run ends here, and recording a boundary nothing crossed would
-				// invent one.
+				// invent one. The same applies to the artifact that revision revises.
 				if (iteration < maxIterations) {
+					emitArtifactHandoff();
 					recordTextHandoff(deps, {
 						fromAgent: `checkCommand:${checkCommand}`,
 						raw: checkRaw,
@@ -205,6 +216,9 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				continue;
 			}
 		}
+
+		// The critics below read the artifact, so the boundary is real from here on.
+		emitArtifactHandoff();
 
 		// 3. Critic panel (level-2 / LLM-as-judge) judges the ARTIFACT — not the
 		// generator's reasoning trace. PASS requires every critic to pass.
@@ -269,14 +283,18 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		critique = critiquePrep.text;
 		// The next generator reads this combined critique, not the panel verdict:
 		// the text was aggregated, capped, and injection-scanned on the way here.
-		recordTextHandoff(deps, {
-			fromAgent: revising.map((verdict) => verdict.agent).join(","),
-			raw: critiqueRaw,
-			carried: critique,
-			warnings: critiquePrep.warnings,
-			scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
-		});
-		feedbackKey = `${stage.key}.feedback`;
+		// A REVISE on the final iteration ends the run: the critique reaches the
+		// caller, not another agent, so no boundary was crossed.
+		if (iteration < maxIterations) {
+			recordTextHandoff(deps, {
+				fromAgent: revising.map((verdict) => verdict.agent).join(","),
+				raw: critiqueRaw,
+				carried: critique,
+				warnings: critiquePrep.warnings,
+				scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
+			});
+			feedbackKey = `${stage.key}.feedback`;
+		}
 	}
 
 	const finalArtifact = lastGenerator ? sanitizeText(resultText(lastGenerator), policy) : "(no generator output)";

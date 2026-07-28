@@ -669,3 +669,28 @@ test("a failing check command's output is treated as untrusted feedback", async 
 	assert.ok(terminalSpans.some((span) => attr(span, "flow.unit_key") === "iteration-1.check"), "the check itself is still recorded");
 	assert.equal(terminalSpans.some((span) => attr(span, "flow.unit_key") === "iteration-1.check.handoff"), false);
 });
+
+test("evaluate records no handoff for feedback or artifacts nothing will read", async () => {
+	// A failed check on the final iteration ends the run. Neither the artifact nor
+	// the check output reaches another agent, so neither crossed a boundary.
+	const gated = await runFlow(
+		{ task: "build it", traceFile: TRACE, evaluate: { maxIterations: 1, checkCommand: "node -e \"process.exit(1)\"" } },
+		{ operator: "only draft", redteam: "VERDICT: PASS" },
+	);
+	const gatedSpans = await readSpans(gated.stubDir);
+	assert.deepEqual(gatedSpans.filter((span) => attr(span, "flow.event_kind") === "handoff").map((span) => attr(span, "flow.unit_key")), []);
+	assert.ok(gatedSpans.some((span) => attr(span, "flow.unit_key") === "iteration-1.check"), "the check itself is still evidence");
+
+	// A REVISE on the final iteration is the same: the critique goes to the
+	// caller, not to another generator. The artifact did cross — the critics read
+	// it — so that boundary stays.
+	const refused = await runFlow(
+		{ task: "build it", traceFile: TRACE, evaluate: { maxIterations: 1 } },
+		{ operator: "draft", redteam: "VERDICT: REVISE\nnot yet" },
+	);
+	const refusedSpans = await readSpans(refused.stubDir);
+	assert.deepEqual(
+		refusedSpans.filter((span) => attr(span, "flow.event_kind") === "handoff").map((span) => attr(span, "flow.unit_key")),
+		["iteration-1.generator.handoff"],
+	);
+});
