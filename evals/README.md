@@ -482,6 +482,13 @@ npm run eval:review -- --case pattern-dossier-holdout-auth --verdict fail \
 judge's call is anchored by it, so an unblinded verdict is recorded but does not
 count as independent ground truth.
 
+Human ground truth needs corroboration: **two distinct blinded reviewers** must
+agree before a case resolves, because a resolved human label overrides the
+deterministic objective and one opinion is one opinion however confidently held.
+A lone verdict leaves the case `insufficient-reviewers`. `--role adjudicator` is
+the explicit single-actor path, for settling a disagreement or making the call
+alone when that is the intent.
+
 **Rank failure modes across every stored trace**:
 
 ```bash

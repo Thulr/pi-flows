@@ -449,7 +449,9 @@ different action is a replay and returns `APPROVAL_RECEIPT_CONSUMED`.
 The binding covers what the workflow digest cannot see: the gated phases'
 effective definitions after flow-level fallbacks (`returnContract`,
 `requireEvidence`, the resolved contract) plus `agentScope` and
-`incompleteHandoffPolicy`. Changing `agentScope` between approval and resume
+`incompleteHandoffPolicy`. When the gated run reaches the end of the workflow the
+binding also covers the debrief's resolved `contract`, `returnContract`, and
+`requireEvidence`, since a trailing approval gates the debrief too. Changing `agentScope` between approval and resume
 swaps which repo-controlled prompt runs, so it invalidates the approval with
 `APPROVAL_RECEIPT_STALE`.
 

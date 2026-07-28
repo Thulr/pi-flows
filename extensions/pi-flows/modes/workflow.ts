@@ -92,15 +92,33 @@ function normalizeGatedPhase(phase: any, params: any): Record<string, unknown> {
 }
 
 /**
+ * The debrief's EFFECTIVE parameters. Bound only when the approval gates the
+ * workflow's completion, because only then does the debrief run under it — and
+ * these three resolve from top-level params the workflow digest never sees, so
+ * without this a trailing approval could be granted and the debrief then run
+ * under a contract the operator never approved.
+ */
+function normalizeGatedDebrief(params: any): Record<string, unknown> | null {
+	if (!params.workflow?.debrief?.agent) return null;
+	return {
+		contract: params.contract ?? null,
+		returnContract: params.returnContract ?? null,
+		requireEvidence: params.requireEvidence ?? false,
+	};
+}
+
+/**
  * What an approval phase actually authorizes: the contiguous run of work phases
- * between it and the next approval, under the agent scope and handoff policy in
- * force when consent was given. Recomputed from the live spec on every use, so
- * the receipt is checked against what would run now — not against whatever the
- * state file claims was approved.
+ * between it and the next approval — plus the debrief, when that run reaches the
+ * end of the workflow — under the agent scope and handoff policy in force when
+ * consent was given. Recomputed from the live spec on every use, so the receipt
+ * is checked against what would run now, not against whatever the state file
+ * claims was approved.
  */
 function approvalBindingFor(phases: any[], index: number, deps: ModeDeps, digest: string): ApprovalBinding {
 	const gated: any[] = [];
-	for (let next = index + 1; next < phases.length && !phases[next]?.approval?.message; next += 1) gated.push(phases[next]);
+	let next = index + 1;
+	for (; next < phases.length && !phases[next]?.approval?.message; next += 1) gated.push(phases[next]);
 	return {
 		action: approvalActionId(phases[index]),
 		parameters: {
@@ -108,6 +126,7 @@ function approvalBindingFor(phases: any[], index: number, deps: ModeDeps, digest
 			agentScope: deps.agentScope,
 			incompleteHandoffPolicy: deps.params.incompleteHandoffPolicy ?? "fail",
 			gatedPhases: gated.map((phase) => normalizeGatedPhase(phase, deps.params)),
+			debrief: next >= phases.length ? normalizeGatedDebrief(deps.params) : null,
 		},
 		requestedBy: "flow:workflow",
 		workflowDigest: digest,

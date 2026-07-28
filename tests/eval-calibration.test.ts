@@ -397,9 +397,27 @@ test("an adjudicator settles a disagreement and is named for it", () => {
 	assert.deepEqual({ label: resolved.label, resolution: resolved.resolution, adjudicator: resolved.adjudicator }, { label: "failed", resolution: "adjudicated", adjudicator: "barbara" });
 });
 
-test("unsure is an abstention, so it neither blocks nor carries a resolution", () => {
-	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada", verdict: "unsure" }), labelled({ reviewer: "grace", verdict: "fail" })]).resolution, "unanimous");
+test("unsure is an abstention: it never blocks, and it never corroborates", () => {
+	// One decided verdict beside an abstention is still one opinion, so the group
+	// is under-reviewed rather than resolved — but it is not a disagreement either,
+	// so it does not demand an adjudicator.
+	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada", verdict: "unsure" }), labelled({ reviewer: "grace", verdict: "fail" })]).resolution, "insufficient-reviewers");
 	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada", verdict: "unsure" }), labelled({ reviewer: "grace", verdict: "unsure" })]).resolution, "abstained");
+});
+
+test("one reviewer is one opinion, not ground truth", () => {
+	const lone = resolveReviewGroup([labelled({ reviewer: "ada", verdict: "fail" })]);
+	assert.equal(lone.label, null, "a single blinded review must not override the deterministic objective");
+	assert.equal(lone.resolution, "insufficient-reviewers");
+
+	// Two distinct reviewers corroborate; the same person twice does not.
+	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada" }), labelled({ reviewer: "ada" })]).resolution, "insufficient-reviewers");
+	assert.equal(resolveReviewGroup([labelled({ reviewer: "ada" }), labelled({ reviewer: "grace" })]).resolution, "unanimous");
+
+	// Adjudication stays the explicit single-actor path.
+	const adjudicated = resolveReviewGroup([labelled({ reviewer: "ada", verdict: "fail" }), labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" })]);
+	assert.equal(adjudicated.resolution, "adjudicated");
+	assert.equal(adjudicated.label, "failed");
 });
 
 test("an unblinded review does not resolve anything on its own", () => {

@@ -111,8 +111,16 @@ export function resolveReviewGroup(reviews) {
 	const distinct = new Set(decided.map((review) => review.verdict));
 	const reviewers = [...new Set(independent.map((review) => review.reviewer ?? "anonymous"))];
 
-	if (distinct.size === 1 && decided.length > 0) {
+	// Corroboration, not just a verdict. One decided opinion is one opinion however
+	// confidently it is held, and `reviewGroundTruth` lets a resolved label override
+	// the deterministic objective — so a lone review must not become ground truth.
+	// Adjudication below stays the explicit single-actor resolution path.
+	const decidedReviewers = new Set(decided.map((review) => review.reviewer ?? "anonymous"));
+	if (distinct.size === 1 && decidedReviewers.size >= MIN_INDEPENDENT_REVIEWERS) {
 		return { label: VERDICT_TO_CLASS[[...distinct][0]], resolution: "unanimous", reviewers, adjudicator: null, independentReviewers: reviewers.length };
+	}
+	if (distinct.size === 1 && !adjudication) {
+		return { label: null, resolution: "insufficient-reviewers", reviewers, adjudicator: null, independentReviewers: reviewers.length };
 	}
 	if (distinct.size > 1) {
 		if (!adjudication || adjudication.verdict === "unsure") {
@@ -120,8 +128,9 @@ export function resolveReviewGroup(reviews) {
 		}
 		return { label: VERDICT_TO_CLASS[adjudication.verdict], resolution: "adjudicated", reviewers, adjudicator: adjudication.reviewer, independentReviewers: reviewers.length };
 	}
-	// Nothing decided: every blinded reviewer abstained, or none was blinded.
-	const resolution = independent.length === 0 ? "no-blinded-review" : "abstained";
+	// Nothing decided by enough reviewers: none was blinded, every blinded reviewer
+	// abstained, or a lone decided verdict lacked corroboration.
+	const resolution = independent.length === 0 ? "no-blinded-review" : decided.length === 0 ? "abstained" : "insufficient-reviewers";
 	if (adjudication && adjudication.verdict !== "unsure") {
 		return { label: VERDICT_TO_CLASS[adjudication.verdict], resolution: "adjudicated", reviewers, adjudicator: adjudication.reviewer, independentReviewers: reviewers.length };
 	}

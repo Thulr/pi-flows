@@ -15,7 +15,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   authorizes — the approval phase and the work phases it gates, at their
   effective parameters after flow-level fallbacks, plus `agentScope` and
   `incompleteHandoffPolicy` — along with the requesting and approving actors, the
-  workflow digest, the state schema version, an issue time, and an expiry
+  workflow digest, the state schema version, an issue time, and an expiry, plus
+  the debrief's resolved parameters when the approval gates the workflow's tail
   (`workflow.approvalTtlMs`, 24h by default). Receipts are re-verified against the
   live spec immediately before the gated action runs and spent once it has run, so
   a crash-resume re-uses consent it already had while a different action is
@@ -48,8 +49,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 - `npm run eval:review` records blinded independent labels, per-dimension
   verdicts, reviewer identity, and adjudications to an extended
   `pi-flows.review-set.v1` set alongside thulr's. Unanimous blinded reviewers
-  resolve a case, disagreements need an adjudicator, and an unadjudicated
-  disagreement stays unresolved rather than being settled by whoever labeled last.
+  resolve a case — two distinct blinded reviewers must agree, since a resolved
+  human label overrides the deterministic objective — disagreements need an
+  adjudicator, and an unadjudicated disagreement stays unresolved rather than
+  being settled by whoever labeled last.
   Inter-reviewer agreement is reported as observed/expected agreement and Fleiss
   kappa.
 - Parallel, orchestrate, graph, workflow, worktree, vote, debate, and dossier

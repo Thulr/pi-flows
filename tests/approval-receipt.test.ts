@@ -390,6 +390,39 @@ test("every phase an approval gates re-verifies, not just the first", async () =
 	assert.equal(resumed.result.details.error, undefined, "the unchanged action still resumes on the already-spent receipt");
 });
 
+test("a trailing approval binds the debrief it gates, not just the phases", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Sign off, then synthesize.",
+		requireEvidence: false,
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze" },
+				{ id: "signoff", approval: { message: "Sign off on the analysis" } },
+			],
+			debrief: { agent: "debrief" },
+		},
+	};
+	const resume = (overrides: Record<string, any> = {}) => ({ ...params, ...overrides, workflow: { ...params.workflow, resume: true } });
+
+	const paused = await runFlow(params, { recon: "ANALYSIS" }, { cwd });
+	assert.equal(paused.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	// Approve, then fail the debrief so the receipt survives unspent into a resume.
+	await runFlow(resume(), { debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+	const debriefCalls = (calls: Call[]) => calls.filter((call) => call.agent === "debrief").length;
+
+	// requireEvidence is not in the workflow digest, and the debrief resolves it
+	// from the top-level params — so changing it after approval must not ride the
+	// old consent.
+	const changed = await runFlow(resume({ requireEvidence: true }), { debrief: "SUMMARY" }, { cwd });
+	assert.equal(changed.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
+
+	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd });
+	assert.equal(unchanged.result.details.error, undefined);
+	assert.ok(debriefCalls(unchanged.calls) > debriefCalls(changed.calls), "the approved debrief still runs");
+});
+
 test("a trailing approval gates the workflow's own completion", async () => {
 	const cwd = await freshDir();
 	const params = {
