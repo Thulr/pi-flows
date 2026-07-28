@@ -30,6 +30,7 @@ import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
 import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
+import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
@@ -342,6 +343,11 @@ export default function (pi: ExtensionAPI) {
 						if (!ctx.hasUI) return "required";
 						return await ctx.ui.confirm(title, message) ? "approved" : "denied";
 					},
+					// Who to credit on an approval receipt. pi does not hand the
+					// extension an authenticated operator identity, so this is an
+					// audit label: whatever PI_FLOWS_APPROVAL_ACTOR names, else the
+					// channel that actually answered the prompt.
+					approvalActor: process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR,
 					makeDetails,
 					runChild: runFlowAgent,
 					concurrency,

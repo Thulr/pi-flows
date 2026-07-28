@@ -599,14 +599,22 @@ test("eval CLIs reject non-positive arm-timeout overrides", () => {
 	}
 });
 
-test("eval calibration canaries are fixed true-negative judge fixtures", () => {
-	assert.ok(CALIBRATION_CASES.length >= 3, "TNR needs more than two negative data points");
+test("eval calibration canaries are fixed judge fixtures covering all three classes", () => {
+	const negatives = CALIBRATION_CASES.filter((c) => !c.objective.pass);
+	assert.ok(negatives.length >= 3, "TNR needs more than two negative data points");
 	assert.ok(
 		CALIBRATION_CASES.some((c) => c.objective.score > 0 && c.objective.score < 1),
 		"at least one canary should be partial to give score-delta machinery headroom",
 	);
+	// A canary set with no positives makes a judge that fails everything look
+	// perfect at catching defects, and leaves its false-alarm rate measurable only
+	// against live cases whose outcome varies run to run.
+	assert.ok(
+		CALIBRATION_CASES.some((c) => c.objective.pass),
+		"at least one canary must be a known-GOOD answer",
+	);
 	for (const testCase of CALIBRATION_CASES) {
-		assert.equal(testCase.objective.pass, false, `${testCase.name} must remain a deterministic negative label`);
+		assert.equal(typeof testCase.objective.pass, "boolean", `${testCase.name} must declare a deterministic label`);
 		assert.ok(testCase.task, `${testCase.name} carries judge task context`);
 		assert.ok(testCase.answer, `${testCase.name} carries the answer thulr judges`);
 		assert.ok(testCase.criterion, `${testCase.name} carries an inline criterion`);

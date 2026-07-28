@@ -10,6 +10,66 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Workflow approvals are now durable, single-use receipts instead of a bare
+  `APPROVED` marker in the resume state. A receipt binds the exact action it
+  authorizes — the approval phase and the work phases it gates, at their
+  effective parameters after flow-level fallbacks, plus `agentScope` and
+  `incompleteHandoffPolicy` — along with the requesting and approving actors, the
+  workflow digest, the state schema version, an issue time, and an expiry, plus
+  the debrief's resolved parameters when the approval gates the workflow's tail
+  (`workflow.approvalTtlMs`, 24h by default). Receipts are re-verified against the
+  live spec immediately before the gated action runs and spent once it has run, so
+  a crash-resume re-uses consent it already had while a different action is
+  refused as a replay. Headless workflows still fail closed. New error codes:
+  `APPROVAL_RECEIPT_INVALID`, `APPROVAL_RECEIPT_STALE`, `APPROVAL_RECEIPT_EXPIRED`,
+  `APPROVAL_RECEIPT_CONSUMED`. Receipt identity and status reach
+  `details.approvals`, the final answer, and the trace root span
+  (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
+  `flow.approval_consumed_count`, `flow.approval_blocked`) without exposing the
+  approved parameters. Version-2 workflow state migrates to
+  `legacy-compatibility` receipts that still bind the gated action. A completed
+  approval whose receipt lapsed or was superseded reopens and asks again rather
+  than stranding the state file; a consumed or malformed receipt, or a gated run
+  that already part-executed, stays a hard refusal. Every recorded
+  field is additionally covered by a `receiptDigest`, so a partial write or a tool
+  that rewrites one field is caught rather than honoured.
+- Judge calibration is now evidence a release decision can rest on. Every run
+  writes a versioned `pi-flows.calibration.v1` report with per-dimension coverage,
+  truth-class x decision confusion matrices, per-class precision/recall,
+  false-positive and false-negative rates, and Wilson 95% bounds on each. A
+  dimension is authoritative only with three independent *decided* failed labels
+  plus passed and partial examples and an abstention rate under 25% — repeat
+  trials of one case collapse to one observation (disagreeing trials collapse to
+  an abstention), and an abstention never counts as coverage. Only the
+  `calibration` and `held-out` splits count toward that authority, so cases the
+  rubric was tuned against are reported but never gate, and the gate reads the
+  95% upper bound on missed defects rather than the point estimate — zero misses
+  out of four is not evidence of a zero miss rate.
+  `criterion` is critical **by default** — gating a release on a judge whose
+  accuracy nothing checks was the hole this closes — and a critical dimension
+  that falls short blocks the release gate and refuses `--write-baseline`. The
+  calibration canary set gains known-GOOD and additional known-bad fixtures so
+  the default is satisfiable: it previously held no positive example at all, so a
+  judge that failed everything scored perfectly on defect detection. Name other
+  dimensions, or opt out, with `--critical-dimension` (`=none` to report without
+  gating). Judge verdicts within
+  `--abstention-band` of the decision boundary abstain and escalate to human review
+  instead of voting. Cases are versioned in separately-digested
+  `rubric-development`, `calibration`, and `held-out` splits, validated in
+  preflight before any model runs. A calibration key over the judge, prompt,
+  config, rubric text, thresholds, and trace-attribute shape invalidates a prior
+  calibration automatically and names what changed.
+- `npm run eval:review` records blinded independent labels, per-dimension
+  verdicts, reviewer identity, and adjudications to an extended
+  `pi-flows.review-set.v1` set alongside thulr's. Unanimous blinded reviewers
+  resolve a case — two distinct blinded reviewers must agree, since a resolved
+  human label overrides the deterministic objective — disagreements need an
+  adjudicator, an unadjudicated disagreement stays unresolved rather than being
+  settled by whoever labeled last, and two adjudicators who disagree leave the
+  case unresolved rather than letting record order pick a winner. Named-dimension
+  verdicts stay in the extended set, since thulr's review store is dimensionless.
+  Inter-reviewer agreement is reported as observed/expected agreement and Fleiss
+  kappa.
 - Parallel, orchestrate, graph, workflow, worktree, vote, debate, and dossier
   now validate typed return envelopes before every dependent dispatch,
   synthesis, persistence, or merge. Stable contract identities reject missing

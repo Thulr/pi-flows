@@ -8,16 +8,23 @@
 // so it can be unit-tested without spawning a CLI.
 //
 // Phase ownership:
-//   selectMeasurementCases  both
-//   caseSpanFields          both (the case -> thulr span projection)
-//   inspectTraceReport      both
-//   judgeTraceRun           both
-//   printScoreDeltas        both (run.mjs passes thulr.gate, compare.mjs thulr.compare)
-//   gateAgainstBaseline     run.mjs only — the release gate + JUnit artifact
-//   harnessExitCode         run.mjs only — the two-axis exit policy
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+//   selectMeasurementCases    both
+//   caseSpanFields            both (the case -> thulr span projection)
+//   inspectTraceReport        both
+//   judgeTraceRun             both
+//   printScoreDeltas          both (run.mjs passes thulr.gate, compare.mjs thulr.compare)
+//   writeReliabilityArtifact  run.mjs only — the per-trial reliability artifact
+//   assessCalibration         run.mjs only — judge calibration + its gate rules
+//   gateAgainstBaseline       run.mjs only — the release gate + JUnit artifact
+//   harnessExitCode           run.mjs only — the two-axis exit policy
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as thulr from "./thulr.mjs";
+import { caseSplit, splitVersions, COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
+import { buildCalibrationReport, calibrationGateIssues, calibrationRecords, formatCalibrationReport, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
+import { calibrationKey, groundTruthDigest, rubricDigest, thresholdFingerprint, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
+import { buildReviewReport, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
+import { buildReliabilityReport, formatReliabilitySummary } from "./reliability.mjs";
 
 /** Absolute path for a repo-relative path. */
 export const repoPath = (relPath) => resolve(process.cwd(), relPath);
@@ -164,6 +171,162 @@ export function printScoreDeltas({ run, options, heading, unavailable, log = con
 	}
 }
 
+// --- Phase: reliability artifact -------------------------------------------
+/**
+ * Project the run's per-case summaries onto raw trials, build the reliability
+ * report, write it, and print its headline. A phase rather than a statistics
+ * helper: it does IO and prints, so it lives here and `reliability.mjs` stays a
+ * pure builder plus formatter.
+ *
+ * `judgeAvailable` is false in dry runs and in runs with nothing judgeable: with
+ * no judge verdict, a trial passes on its objective check alone rather than on a
+ * verdict that was never rendered.
+ */
+export function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable, out, subjectTrials, judgeSamples, runId, runtimeTraceFile, displayPath = out, log = console.log }) {
+	const rawTrials = summaries.map((summary) => {
+		const judge = verdicts.get(summary.traceCaseId) ?? null;
+		return {
+			caseId: summary.caseId,
+			trialId: summary.trialId,
+			traceCaseId: summary.traceCaseId,
+			trialIndex: summary.trialIndex,
+			pass: !summary.exclusion && summary.objective.pass && (!judgeAvailable || judge?.criterion?.verdict === true),
+			objective: summary.objective,
+			judge,
+			answer: summary.answer,
+			costUsd: summary.costUsd,
+			tokens: summary.tokens,
+			durationMs: summary.durationMs,
+			exclusion: summary.exclusion,
+			infraFailure: summary.infraFailure,
+			runtimeTrace: summary.runtimeTrace,
+			scoreFamilies: summary.scoreFamilies,
+		};
+	});
+	const report = buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, runId, runtimeTraceFile });
+	mkdirSync(dirname(out), { recursive: true });
+	writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+	for (const line of formatReliabilitySummary(report)) log(line);
+	log(`Raw trial reliability report: ${displayPath} (subject trials ${subjectTrials}; judge-noise samples ${judgeSamples})`);
+	return report;
+}
+
+// --- Phase: judge calibration ----------------------------------------------
+
+const readJsonOrNull = (path) => {
+	try {
+		return path && existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+	} catch {
+		return null;
+	}
+};
+
+/** The trace's span shapes, so a changed case -> span projection invalidates calibration on its own. */
+function traceSpans(trace) {
+	if (!existsSync(trace)) return [];
+	return readFileSync(trace, "utf8")
+		.split("\n")
+		.filter((line) => line.trim())
+		.flatMap((line) => {
+			try {
+				return [JSON.parse(line)];
+			} catch {
+				return [];
+			}
+		});
+}
+
+/**
+ * Calibrate the judge against ground truth, then decide whether that calibration
+ * is good enough to gate a release.
+ *
+ * The stored calibration from the previous run is read back purely to detect
+ * drift: if this run's judge, rubric, thresholds, or trace projection differ, the
+ * old numbers are reported as stale rather than silently carried forward.
+ *
+ * @param {{ path: string|null, explicit: boolean }} reviews the human review set to
+ *   read. An explicitly chosen `--reviews` file wins over the trace-local
+ *   extended set, so this pass and `thulr calibrate` never resolve from
+ *   different human ground truth.
+ * @returns {{ report: object, issues: string[], blocks: boolean, path: string|null }}
+ */
+export function assessCalibration({
+	corpus,
+	summaries,
+	verdicts,
+	keyInputs,
+	reviews = {},
+	criticalDimensions = [],
+	criticalMissRateCap = DEFAULT_CRITICAL_MISS_RATE_CAP,
+	abstentionBand,
+	guardrails = {},
+	trace,
+	out = null,
+	log = console.log,
+}) {
+	const groups = { measurement: corpus.measurement ?? [], calibration: corpus.calibration ?? [] };
+	const allCases = [...groups.measurement, ...groups.calibration];
+	const byId = new Map(allCases.map((testCase) => [testCase.id ?? testCase.name, testCase]));
+	const splitEntries = Object.entries(groups).flatMap(([group, cases]) => cases.map((testCase) => ({ testCase, split: caseSplit(testCase, { group }) })));
+
+	// Two identities, deliberately. `caseId` is the BASE case, which is what
+	// coverage counts — five trials of one case are one observation, and keying
+	// coverage on the per-trial id would let `--trials=3` manufacture three
+	// "independent" labels out of one. `verdictKey` is the per-trial id the judge
+	// actually rendered a verdict against.
+	const cases = summaries
+		.filter((summary) => !summary.excludedReason)
+		.map((summary) => {
+			const testCase = byId.get(summary.caseId ?? summary.name);
+			return testCase && {
+				testCase,
+				caseId: summary.caseId ?? summary.name,
+				verdictKey: summary.traceCaseId ?? summary.name,
+				objective: summary.objective,
+				split: caseSplit(testCase, { group: summary.calibration ? "calibration" : "measurement" }),
+			};
+		})
+		.filter(Boolean);
+
+	// An explicitly chosen `--reviews` file wins, so this pass and `thulr calibrate`
+	// never resolve from different human ground truth. Absent that, prefer the
+	// extended set `npm run eval:review` writes — it carries the dimension,
+	// blinding, and adjudication thulr's schema has no room for. Falling back to
+	// thulr's own set costs only those fields: it normalizes as unblinded criterion
+	// verdicts, which is exactly what it is.
+	const extended = reviewSetPath(trace);
+	const chosen = reviews.explicit ? reviews.path : existsSync(extended) ? extended : reviews.path ?? null;
+	const reviewSet = readJsonOrNull(chosen);
+	const humanTruth = reviewGroundTruth(buildReviewReport(reviewSet ?? { reviews: [] }));
+	const records = calibrationRecords({ cases, verdicts, humanTruth, abstentionBand });
+	const splits = splitVersions(splitEntries);
+	const key = calibrationKey({
+		...keyInputs,
+		thresholds: thresholdFingerprint({ ...guardrails, abstentionBand, criticalDimensions, criticalMissRateCap, coverage: COVERAGE_REQUIREMENT }),
+		rubric: rubricDigest(allCases),
+		// Relabelling a case must not read as an unchanged calibration just because
+		// no criterion text moved. Separate from `rubric` so drift can name which.
+		groundTruth: groundTruthDigest(allCases),
+		traceSchemaVersion: EVAL_TRACE_SCHEMA_VERSION,
+		traceSerialization: traceAttributeDigest(traceSpans(trace)),
+	});
+	const report = buildCalibrationReport({ key, storedKey: readJsonOrNull(out)?.key ?? null, splitEntries, splits, records, reviewSet, criticalDimensions, abstentionBand });
+	const issues = calibrationGateIssues(report, { criticalMissRateCap });
+
+	log("\njudge calibration:");
+	log(formatCalibrationReport(report));
+	if (issues.length) {
+		log("\ncalibration blocks the release gate:");
+		for (const issue of issues) log(`  ✗ ${issue}`);
+	}
+	if (out) {
+		mkdirSync(dirname(out), { recursive: true });
+		writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+		log(`calibration report written to ${relativeToRepo(out)}`);
+	}
+	return { report, issues, blocks: issues.length > 0, path: out };
+}
+
 /**
  * The release gate: compare the candidate against the baseline on the dimensions
  * BOTH runs carry (a dimension the baseline has never seen cannot regress), then
@@ -200,17 +363,22 @@ export function gateAgainstBaseline({ baseline, candidate, gateEvalRun, extraSco
 
 /**
  * The harness exit code. A run is green only when every MEASURED behaviour case
- * passed both axes, the gate found no regression, and nothing was excluded as
+ * passed both axes, the gate found no regression, the judge is calibrated well
+ * enough on every dimension trusted to block, and nothing was excluded as
  * infrastructure. A run with zero measured cases is green only if infra was not
  * the reason there are none — otherwise a total auth failure would exit 0.
  *
+ * `calibrationBlocks` is separate from `gateBlocks` so the reason a run is red
+ * stays legible: a regression and an uncalibrated judge are different problems
+ * with different fixes.
+ *
  * Pure so the policy can be read and tested without running an eval.
  *
- * @param {{ measured: number, passed: number, infraExcluded?: number, gateBlocks?: boolean }} counts
+ * @param {{ measured: number, passed: number, infraExcluded?: number, gateBlocks?: boolean, calibrationBlocks?: boolean }} counts
  * @returns {0 | 1}
  */
-export function harnessExitCode({ measured, passed, infraExcluded = 0, gateBlocks = false }) {
+export function harnessExitCode({ measured, passed, infraExcluded = 0, gateBlocks = false, calibrationBlocks = false }) {
 	const infraBlocked = infraExcluded > 0;
 	const measuredPass = measured === 0 ? !infraBlocked : passed === measured;
-	return measuredPass && !gateBlocks && !infraBlocked ? 0 : 1;
+	return measuredPass && !gateBlocks && !calibrationBlocks && !infraBlocked ? 0 : 1;
 }

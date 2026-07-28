@@ -273,6 +273,63 @@ Cause: the interactive approval phase was declined.
 Fix: review the persisted phase outputs, revise the workflow inputs if needed,
 then resume when the approval can be granted.
 
+### `APPROVAL_RECEIPT_INVALID`
+
+Cause: the step about to run is gated by an approval, but the resume state
+carries no usable receipt for it — the state file was truncated, hand-edited, or
+written by a tool that does not understand `pi-flows.approval-receipt.v1`. This
+also fires when a recorded field (approver, issue time, expiry, or consumption
+record) was changed without re-stamping the receipt's `receiptDigest`.
+
+Fix: re-run the workflow in an interactive Pi UI so the phase is approved again.
+A malformed receipt cannot be repaired in place; approvals are only minted by an
+actual approval.
+
+### `APPROVAL_RECEIPT_STALE`
+
+Cause: an approval was granted, then the action it authorizes changed. A receipt
+binds the gated phases' effective definitions — agent, task template, cwd, model,
+tier, tools, checkCommand, delegation contract — plus the `agentScope`,
+`returnContract`, `requireEvidence`, and `incompleteHandoffPolicy` in force when
+consent was given. Editing any of them between approval and resume means the
+approval no longer covers what would run. Flipping `agentScope` to `project` is
+the case worth naming: it swaps which repo-controlled prompt executes.
+
+Fix: resume in an interactive Pi UI — the approval phase reopens automatically
+and asks again, naming what changed. Restoring the approved parameters is not
+enough on its own: reopening discards consent that no longer held, so the phase
+still needs a fresh approval.
+
+If part of the gated run already executed, the approval is **not** reopened and
+this stays a hard refusal naming the phases that ran. Restore the parameters that
+were approved and resume, or start a fresh run so the whole gated sequence
+executes under one approval.
+
+### `APPROVAL_RECEIPT_EXPIRED`
+
+Cause: the resume arrived after the approval's window closed, before the
+authorized action had begun. Receipts expire so consent cannot be banked
+indefinitely; the default window is 24 hours from the moment approval was
+granted. The window gates *starting* the action — a gated run already under way
+finishes rather than aborting halfway when the clock passes.
+
+Fix: resume in an interactive Pi UI — the approval phase reopens and asks again,
+so a lapsed window never strands the state file. Set
+`workflow.approvalTtlMs` (60000..2592000000 ms) to a longer window *before*
+approving if the gap is expected; widening it afterwards does not revive a spent
+window, since the expiry is stamped into the receipt at issue time.
+
+### `APPROVAL_RECEIPT_CONSUMED`
+
+Cause: a receipt that was already spent by one action was presented to authorize
+a different one. Approvals are single use: one approval authorizes one action,
+spanning every step between it and the next consent point.
+
+Fix: give the second action its own approval phase. Retrying a failed phase
+inside the gated run the approval already covers is not a replay and is allowed —
+this error only fires when the action differs from the one recorded on the
+receipt.
+
 ### `WORKTREE_NOT_GIT`
 
 Cause: `worktree` mode was invoked outside a Git repository or with an invalid

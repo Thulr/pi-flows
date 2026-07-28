@@ -263,6 +263,82 @@ export const CALIBRATION_CASES = defineCases([
 		objective: { pass: false, score: 0.5, notes: "known-partial fixture: names 2/4 webhook defects" },
 		failureModes: ["final_answer.incomplete"],
 	},
+	// The positive half of the canary set. Without a known-GOOD fixture the
+	// deterministic ground truth is all negative, so a judge that fails everything
+	// scores perfectly on defect detection and its false-alarm rate is measurable
+	// only against live cases whose outcome varies run to run.
+	{
+		name: "calibration-known-value-correct",
+		task: "Find the value assigned to SAMPLE_IDENTIFIER in this repo and report exactly that value.",
+		answer: "SAMPLE_IDENTIFIER is xyzzy-42.",
+		criterion: "The response contains the exact SAMPLE_IDENTIFIER value `xyzzy-42`; no near-miss spelling or alternate value is acceptable.",
+		criteria: {
+			exactness: "Reports the exact value `xyzzy-42` with no near-miss spelling.",
+		},
+		expectedBehavior: "A correct answer must report exactly `xyzzy-42`.",
+		objective: { pass: true, score: 1, notes: "known-good fixture: exact SAMPLE_IDENTIFIER value" },
+	},
+	{
+		name: "calibration-consensus-correct-answer",
+		task: "Is the regex /^(a+)+$/ vulnerable to catastrophic backtracking? Answer YES or NO and give a one-line reason.",
+		answer: "YES. The nested quantifier `(a+)+` lets the engine split a run of `a`s exponentially many ways, so a non-matching input backtracks catastrophically.",
+		criterion: "The response concludes YES — the regex /^(a+)+$/ IS vulnerable to catastrophic backtracking (ReDoS).",
+		criteria: {
+			correctness: "Concludes YES: `/^(a+)+$/` is vulnerable to catastrophic backtracking / ReDoS.",
+			reason_quality: "Mentions the nested quantifier or catastrophic backtracking mechanism.",
+		},
+		expectedBehavior: "A correct answer must conclude YES and mention the nested quantifier/backtracking risk.",
+		objective: { pass: true, score: 1, notes: "known-good fixture: correct ReDoS conclusion and mechanism" },
+	},
+	{
+		name: "calibration-webhook-complete-review",
+		task: "Review billing-webhook.js in this repo for ALL production-correctness defects. Name each distinct defect you find and why it matters.",
+		answer: "Four defects. (1) recordPayment references `ledger`, which is never declared, so every call throws a ReferenceError and the endpoint 500s. (2) There is no idempotency or deduplication key, so Stripe's at-least-once retries double-count a payment. (3) The webhook signature is never verified, so anyone who can reach the endpoint can forge a paid invoice. (4) `req.body.data.object` is read without validation or error handling, so a malformed payload throws unhandled and 500s.",
+		criterion: "The review identifies ALL FOUR distinct defects: (1) recordPayment references `ledger`, which is never declared/initialized, so every call throws a ReferenceError (500); (2) no idempotency/deduplication, so a duplicate or retried delivery double-counts the payment; (3) no verification of the webhook's signature/authenticity, so a forged request is accepted as a real payment; (4) no input validation or error handling, so a malformed `req.body.data.object` throws unhandled and 500s. Fewer than four is incomplete.",
+		criteria: {
+			completeness: "Identifies all four webhook defects: undeclared `ledger`, missing idempotency/deduplication, missing signature/authenticity verification, and missing payload validation/error handling.",
+			evidence_quality: "Connects each reported defect to concrete code behavior in `billing-webhook.js` instead of listing generic webhook risks.",
+		},
+		judgeOnlyDimensions: ["evidence_quality"],
+		expectedBehavior: "A correct answer must name all four webhook defects.",
+		objective: { pass: true, score: 1, notes: "known-good fixture: names 4/4 webhook defects" },
+	},
+	{
+		name: "calibration-session-cache-partial-review",
+		task: "Review session-cache.js in this repo for ALL production-correctness defects. Name each distinct defect you find and why it matters.",
+		answer: "getSession reads `entry.expiresAt` without checking that `entry` exists, so looking up an unknown id throws a TypeError.",
+		criterion: "The review identifies ALL THREE distinct defects: (1) getSession dereferences `entry.expiresAt` without an existence check, so an unknown id throws a TypeError; (2) expired entries are never deleted from `sessions`, so the map grows without bound; (3) `ttlSeconds` is never validated, so a missing or non-numeric TTL yields a NaN expiry that never expires. Fewer than three is incomplete.",
+		criteria: {
+			completeness: "Identifies all three session-cache defects: missing existence check, unbounded growth from never deleting expired entries, and unvalidated `ttlSeconds`.",
+		},
+		expectedBehavior: "A correct answer must name all three defects; naming only the existence check is partial.",
+		objective: { pass: false, score: 0.5, notes: "known-partial fixture: names 1/3 session-cache defects" },
+		failureModes: ["final_answer.incomplete"],
+	},
+	{
+		name: "calibration-session-cache-fabricated-defect",
+		task: "Review session-cache.js in this repo for ALL production-correctness defects. Name each distinct defect you find and why it matters.",
+		answer: "The main defect is that setSession writes to a shared Redis connection without a retry policy, so a dropped socket silently loses the session. It also awaits `sessions.flush()` on every write, which serializes throughput.",
+		criterion: "The review must describe defects that actually exist in `session-cache.js`, a plain in-memory object store. Claims about Redis, network sockets, retry policies, or a `flush()` call describe code that is not there and are fabrications, not findings.",
+		criteria: {
+			groundedness: "Every reported defect corresponds to code that actually appears in `session-cache.js`.",
+		},
+		expectedBehavior: "A correct answer must report only defects present in the file; inventing infrastructure that does not exist is a hard failure.",
+		objective: { pass: false, score: 0, notes: "known-bad fixture: fabricated defects in code that does not exist" },
+		failureModes: ["final_answer.fabricated_evidence"],
+	},
+	{
+		name: "calibration-nonanswer-restates-task",
+		task: "Find the value assigned to SAMPLE_IDENTIFIER in this repo and report exactly that value.",
+		answer: "To answer this, you would search the repository for SAMPLE_IDENTIFIER, locate the file that assigns it, and then report the exact value found there.",
+		criterion: "The response contains the exact SAMPLE_IDENTIFIER value `xyzzy-42`. Describing how one would find the value, without reporting it, does not answer the question.",
+		criteria: {
+			exactness: "Reports the exact value `xyzzy-42` with no near-miss spelling.",
+		},
+		expectedBehavior: "A correct answer must report exactly `xyzzy-42`; a description of the method is not an answer.",
+		objective: { pass: false, score: 0, notes: "known-bad fixture: restates the method instead of answering" },
+		failureModes: ["final_answer.non_responsive"],
+	},
 	{
 		name: "calibration-consensus-wrong-answer",
 		task: "Is the regex /^(a+)+$/ vulnerable to catastrophic backtracking? Answer YES or NO and give a one-line reason.",

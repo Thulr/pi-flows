@@ -10,7 +10,8 @@ export function trialIdentity(caseId, trialIndex, subjectTrials) {
 	};
 }
 
-function wilson95(successes, samples) {
+/** Wilson 95% score interval. Shared with calibration so every confidence bound in the harness is computed the same way. */
+export function wilson95(successes, samples) {
 	if (samples === 0) return null;
 	const z = 1.96;
 	const rate = successes / samples;

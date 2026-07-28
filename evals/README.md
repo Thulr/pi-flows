@@ -46,6 +46,9 @@ npm run eval -- --eval-set=.thulr/eval-sets/release.json   # overlay promoted cr
 npm run eval -- --reviews=.thulr/reviews/thulr-trace.reviews.json   # fold human SME verdicts into calibration (judge-vs-human TPR/TNR)
 npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/token regressions
 npm run eval -- --noise-band=0.10  # regression tolerance for score/pass-rate/efficiency guardrails (default 0.05)
+npm run eval -- --critical-dimension=criterion  # let a calibrated dimension block the gate (see Calibration)
+npm run eval -- --critical-miss-rate=0.1        # cap the 95% upper bound on missed defects (default 0.35)
+npm run eval -- --abstention-band=0.15          # judge scores this close to 0.5 abstain and escalate (default 0.1)
 npm run eval -- --cap=1.00         # per-case USD ceiling on flow delegations (default 0.50)
 npm run eval -- --arm-timeout=30000 # smoke/debug only; every row is excluded from quality verdicts
 npm run eval -- --write-baseline   # promote this run to evals/thulr-baseline.json (the gate baseline)
@@ -460,6 +463,38 @@ Verdicts land in `.thulr/reviews/thulr-trace.reviews.json`, which the next
 `npm run eval` auto-discovers. `calibrate` then reports judge-vs-human TPR/TNR.
 Point at an explicit set with `npm run eval -- --reviews=<path>`.
 
+Each verdict is also written to an extended pi-flows review set beside the trace
+it describes (`evals/.thulr/reviews/thulr-trace.pi-flows.json`), carrying three
+fields thulr's schema has no room for, and which the calibration pass below
+reads:
+
+```bash
+# a blinded, independent verdict on a named dimension
+npm run eval:review -- --case pattern-dossier-holdout-auth --verdict fail \
+  --dimension evidence_quality --blinded --reviewer ada
+
+# an adjudication settling two reviewers who disagreed
+npm run eval:review -- --case pattern-dossier-holdout-auth --verdict fail \
+  --role adjudicator --reviewer barbara
+```
+
+`--blinded` is opt-in and not the default. A reviewer who has already seen the
+judge's call is anchored by it, so an unblinded verdict is recorded but does not
+count as independent ground truth.
+
+Human ground truth needs corroboration: **two distinct blinded reviewers** must
+agree before a case resolves, because a resolved human label overrides the
+deterministic objective and one opinion is one opinion however confidently held.
+A lone verdict leaves the case `insufficient-reviewers`. `--role adjudicator` is
+the explicit single-actor path, for settling a disagreement or making the call
+alone when that is the intent; two adjudicators who disagree leave the case
+`conflicting-adjudication` rather than letting record order pick a winner.
+
+A named `--dimension` verdict is recorded only in the extended set. thulr's own
+review store is dimensionless, so forwarding an `evidence_quality: fail` there
+would tell thulr's criterion calibration the whole answer failed. Only
+`criterion` verdicts (the default) are forwarded.
+
 **Rank failure modes across every stored trace**:
 
 ```bash
@@ -467,6 +502,104 @@ npm run eval:pareto
 npm run eval:pareto -- --by=config-version
 npm run eval:pareto -- --limit=10
 ```
+
+## Calibration
+
+Calibration answers one question: how well does this judge track ground truth?
+Every run writes a versioned `pi-flows.calibration.v1` report to
+`.thulr/runs/calibration.json` and prints its summary.
+
+### What earns a dimension the right to block
+
+Only the `calibration` and `held-out` splits count toward gate authority. Cases
+the rubric was tuned against (`rubric-development`) are reported separately and
+never gate — a rubric tuned until it agrees with those cases agrees with them by
+construction.
+
+A dimension is `authoritative` only when it has, in this run:
+
+- **three independent failed labels**, plus at least one passed and one partial.
+  Independence is by case, not by label: five repeat trials of one case, or three
+  reviewers agreeing on it, is one observation. Three failures and nothing else
+  does not show a judge separates good from bad, only that it agrees with three
+  data points.
+  Abstentions never count: a dimension that declined to call every defect has
+  demonstrated nothing about catching defects.
+- **no runaway abstention** — at most 25% of its labelled cases, so a judge
+  cannot score perfectly by declining everything.
+
+Everything else is `provisional`: measured and reported, but not trusted to say
+no. A critical dimension additionally blocks on **contested human labels** —
+reviewers who disagreed and were never adjudicated leave the ground truth
+unsettled, not silently settled — and on a missed-defect upper bound above
+`--critical-miss-rate`.
+
+**`criterion` is critical by default**, because it is already the always-on
+release guardrail: gating a release on a judge whose accuracy nothing checks is
+the hole this exists to close. The calibration canaries carry deterministic
+ground truth in all three classes so the default is satisfiable, and a test
+asserts the shipped set can clear it. Name additional dimensions, or opt out
+entirely, with `--critical-dimension`:
+
+```bash
+npm run eval -- --critical-dimension=evidence_quality   # also let a named dimension block
+npm run eval -- --critical-dimension=none              # report calibration without gating on it
+npm run eval -- --critical-miss-rate=0.1                # cap the 95% UPPER BOUND on missed defects (default 0.35)
+npm run eval -- --abstention-band=0.15                  # widen the too-close-to-call band (default 0.1)
+```
+
+A critical dimension that fails any requirement blocks the release gate and
+refuses `--write-baseline` — a run whose judge is not calibrated cannot claim to
+be the standard to beat. The report is printed either way.
+
+### What the report says
+
+The positive class is **"this answer should not pass"**, so a false negative is a
+missed defect — the error a release gate exists to prevent. The report carries
+the full truth-class x decision confusion matrix, per-class precision and recall,
+false-positive and false-negative rates, and Wilson 95% bounds on each. The bound
+matters more than the point estimate at these sample sizes, and the gate reads the
+**upper bound**, so clearing `--critical-miss-rate` deliberately needs more
+evidence than the coverage floor alone: a judge that missed 0
+of 4 defects has a 0% miss rate and a 95% upper bound near 49%.
+
+A verdict **abstains** rather than voting when the judge's score sits within
+`--abstention-band` of the 0.5 decision boundary, when repeat trials disagree on
+the verdict without a majority, or when repeat trials disagree on the *ground
+truth* — a stochastic case with no stable label cannot calibrate anything.
+Abstentions leave the confusion matrix and enter an escalation list naming the
+cause and the `eval:review` command that resolves it, so the judge is never
+scored on a coin flip.
+
+### Corpus splits
+
+Cases are versioned in three separately-digested splits, so "the held-out set has
+not moved" is checkable rather than promised:
+
+| Split | Contains |
+|---|---|
+| `rubric-development` | Cases the rubric was tuned against. |
+| `calibration` | The fixed known-bad/partial canaries. |
+| `held-out` | Final measurement. Cases named `*-holdout-*`, or any case declaring `calibrationSplit: "held-out"`. |
+
+A case may declare `calibrationSplit` and a three-valued
+`calibrationLabels: { <dimension>: "passed" | "partial" | "failed" }`. Both are
+validated in preflight, before any model is invoked.
+
+### Invalidation
+
+Calibration numbers describe the exact judge, rubric, thresholds, and trace
+projection they were measured with. The report carries a key over all of them —
+judge model, sample count, judge binary, eval set, prompt and config version, a
+digest of every rubric, the threshold configuration, and a digest of the trace
+attribute keys — and a prior calibration whose key does not match is reported as
+stale with the changed inputs named.
+
+Two inputs are computed rather than declared, so a change cannot slip past by
+nobody editing a constant: the rubric digest hashes the criteria text, and the
+trace-serialization digest hashes the span attribute keys the projection actually
+emits. Add, remove, or rename what the judge is told about a case and the prior
+calibration invalidates itself.
 
 ## Tool selection
 
