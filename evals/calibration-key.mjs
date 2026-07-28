@@ -84,13 +84,16 @@ export function traceAttributeDigest(spans) {
 }
 
 /** The threshold configuration a gate would apply. Loosening any of it changes what calibration means for the gate. */
-export function thresholdFingerprint({ noiseBand, scoreGuardrails = [], efficiencyGuardrails = [], abstentionBand, criticalDimensions = [], coverage } = {}) {
+export function thresholdFingerprint({ noiseBand, scoreGuardrails = [], efficiencyGuardrails = [], abstentionBand, criticalDimensions = [], criticalMissRateCap, coverage } = {}) {
 	return {
 		noiseBand: noiseBand ?? null,
 		scoreGuardrails: [...scoreGuardrails].sort(),
 		efficiencyGuardrails: [...efficiencyGuardrails].sort(),
 		abstentionBand: abstentionBand ?? null,
 		criticalDimensions: [...criticalDimensions].sort(),
+		// Decides whether the same calibration blocks a release, so two runs at
+		// caps of 0 and 0.5 must not share a key and claim the same policy.
+		criticalMissRateCap: criticalMissRateCap ?? null,
 		coverage: coverage ?? null,
 	};
 }

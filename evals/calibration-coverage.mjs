@@ -67,6 +67,12 @@ export function splitVersions(entries) {
 			id: testCase.id ?? testCase.name,
 			criterion: testCase.criterion ?? null,
 			criteria: testCase.criteria ?? null,
+			// Ground truth is half of what a split IS. A digest over the rubric alone
+			// would call a held-out set untouched while its labels moved underneath.
+			calibrationLabels: testCase.calibrationLabels ?? null,
+			labels: testCase.labels ?? null,
+			objective: testCase.objective ?? null,
+			judgeOnlyDimensions: [...(testCase.judgeOnlyDimensions ?? [])].sort(),
 		});
 	}
 	return Object.fromEntries(

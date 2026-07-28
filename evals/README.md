@@ -487,7 +487,13 @@ agree before a case resolves, because a resolved human label overrides the
 deterministic objective and one opinion is one opinion however confidently held.
 A lone verdict leaves the case `insufficient-reviewers`. `--role adjudicator` is
 the explicit single-actor path, for settling a disagreement or making the call
-alone when that is the intent.
+alone when that is the intent; two adjudicators who disagree leave the case
+`conflicting-adjudication` rather than letting record order pick a winner.
+
+A named `--dimension` verdict is recorded only in the extended set. thulr's own
+review store is dimensionless, so forwarding an `evidence_quality: fail` there
+would tell thulr's criterion calibration the whole answer failed. Only
+`criterion` verdicts (the default) are forwarded.
 
 **Rank failure modes across every stored trace**:
 

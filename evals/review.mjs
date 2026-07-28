@@ -65,8 +65,15 @@ if (!list) {
 	if (role === "adjudicator" && !reviewer) refuse("✗ --role adjudicator needs --reviewer <name>: an adjudicated label must say who adjudicated it.");
 }
 
+// thulr's review store is dimensionless: a verdict recorded there is read as a
+// verdict on the whole case. Forwarding an `evidence_quality: fail` there would
+// tell thulr's criterion calibration the answer failed outright, distorting its
+// TPR/TNR and the gate that reads them. Named-dimension verdicts stay in the
+// extended set, which knows what dimension they are about.
+const forwardToThulr = list || dimension === "criterion";
+
 try {
-	process.stdout.write(thulr.review({ trace, list, caseId, verdict, failureMode, note, reviewer }));
+	if (forwardToThulr) process.stdout.write(thulr.review({ trace, list, caseId, verdict, failureMode, note, reviewer }));
 	if (list) process.exit(0);
 
 	const setPath = reviewSetPath(trace);
@@ -80,7 +87,9 @@ try {
 		note,
 		reviewed_at: new Date().toISOString(),
 	});
-	console.log(`\n✓ Recorded. thulr calibration picks this up on the next \`npm run eval\` (judge-vs-human TPR/TNR).`);
+	console.log(forwardToThulr
+		? "\n✓ Recorded. thulr calibration picks this up on the next `npm run eval` (judge-vs-human TPR/TNR)."
+		: `\n✓ Recorded for dimension ${dimension}. Not forwarded to thulr, whose review store is dimensionless — a named-dimension verdict there would read as a verdict on the whole case.`);
 	console.log(`  Extended verdict written to ${relative(process.cwd(), setPath)} — dimension ${dimension}, role ${role}, ${blinded ? "blinded" : "NOT blinded"}.`);
 	if (!blinded) console.log("  Unblinded verdicts are recorded but do not count as independent ground truth. Pass --blinded when the judge's call was not in view.");
 } catch (error) {

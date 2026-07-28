@@ -354,7 +354,7 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }
 		corpus: EVAL_CORPUS,
 		summaries: [...summaries, ...calibrationSummaries],
 		verdicts,
-		keyInputs: { judgeModel, judgeSamples: samples, judgeBin, evalSet, promptVersion: PROMPT_VERSION, configVersion: CONFIG_VERSION, thresholds: thresholdFingerprint({ noiseBand, scoreGuardrails: extraScoreGuardrails, efficiencyGuardrails, abstentionBand, criticalDimensions, coverage: COVERAGE_REQUIREMENT }) },
+		keyInputs: { judgeModel, judgeSamples: samples, judgeBin, evalSet, promptVersion: PROMPT_VERSION, configVersion: CONFIG_VERSION, thresholds: thresholdFingerprint({ noiseBand, scoreGuardrails: extraScoreGuardrails, efficiencyGuardrails, abstentionBand, criticalDimensions, criticalMissRateCap, coverage: COVERAGE_REQUIREMENT }) },
 		reviewsPath: reviews,
 		criticalDimensions,
 		criticalMissRateCap,

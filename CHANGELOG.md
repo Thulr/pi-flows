@@ -51,8 +51,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `pi-flows.review-set.v1` set alongside thulr's. Unanimous blinded reviewers
   resolve a case — two distinct blinded reviewers must agree, since a resolved
   human label overrides the deterministic objective — disagreements need an
-  adjudicator, and an unadjudicated disagreement stays unresolved rather than
-  being settled by whoever labeled last.
+  adjudicator, an unadjudicated disagreement stays unresolved rather than being
+  settled by whoever labeled last, and two adjudicators who disagree leave the
+  case unresolved rather than letting record order pick a winner. Named-dimension
+  verdicts stay in the extended set, since thulr's review store is dimensionless.
   Inter-reviewer agreement is reported as observed/expected agreement and Fleiss
   kappa.
 - Parallel, orchestrate, graph, workflow, worktree, vote, debate, and dossier

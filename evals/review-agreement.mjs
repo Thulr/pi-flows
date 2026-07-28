@@ -106,7 +106,13 @@ function groupReviews(reviews) {
  */
 export function resolveReviewGroup(reviews) {
 	const independent = reviews.filter((review) => review.role === "reviewer" && review.blinded);
-	const adjudication = reviews.find((review) => review.role === "adjudicator");
+	// Adjudications are stored per reviewer, so two of them can coexist. Picking
+	// whichever came first would let array order decide a label that overrides the
+	// deterministic objective — the same trap as ordering ground truth by trial.
+	const adjudications = reviews.filter((review) => review.role === "adjudicator" && review.verdict !== "unsure");
+	const adjudicated = new Set(adjudications.map((review) => review.verdict));
+	const adjudication = adjudicated.size === 1 ? adjudications[0] : null;
+	const conflictingAdjudication = adjudicated.size > 1;
 	const decided = independent.filter((review) => review.verdict !== "unsure");
 	const distinct = new Set(decided.map((review) => review.verdict));
 	const reviewers = [...new Set(independent.map((review) => review.reviewer ?? "anonymous"))];
@@ -122,8 +128,17 @@ export function resolveReviewGroup(reviews) {
 	if (distinct.size === 1 && !adjudication) {
 		return { label: null, resolution: "insufficient-reviewers", reviewers, adjudicator: null, independentReviewers: reviewers.length };
 	}
+	if (conflictingAdjudication) {
+		return {
+			label: null,
+			resolution: "conflicting-adjudication",
+			reviewers,
+			adjudicator: adjudications.map((review) => review.reviewer).sort().join(", "),
+			independentReviewers: reviewers.length,
+		};
+	}
 	if (distinct.size > 1) {
-		if (!adjudication || adjudication.verdict === "unsure") {
+		if (!adjudication) {
 			return { label: null, resolution: "unadjudicated", reviewers, adjudicator: adjudication?.reviewer ?? null, independentReviewers: reviewers.length };
 		}
 		return { label: VERDICT_TO_CLASS[adjudication.verdict], resolution: "adjudicated", reviewers, adjudicator: adjudication.reviewer, independentReviewers: reviewers.length };
@@ -131,7 +146,7 @@ export function resolveReviewGroup(reviews) {
 	// Nothing decided by enough reviewers: none was blinded, every blinded reviewer
 	// abstained, or a lone decided verdict lacked corroboration.
 	const resolution = independent.length === 0 ? "no-blinded-review" : decided.length === 0 ? "abstained" : "insufficient-reviewers";
-	if (adjudication && adjudication.verdict !== "unsure") {
+	if (adjudication) {
 		return { label: VERDICT_TO_CLASS[adjudication.verdict], resolution: "adjudicated", reviewers, adjudicator: adjudication.reviewer, independentReviewers: reviewers.length };
 	}
 	return { label: null, resolution, reviewers, adjudicator: adjudication?.reviewer ?? null, independentReviewers: reviewers.length };

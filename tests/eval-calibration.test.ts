@@ -205,6 +205,26 @@ test("splits are versioned independently of each other", () => {
 	assert.deepEqual(before["held-out"].caseIds, ["hold-a"]);
 });
 
+test("a split digest moves when its ground truth moves, not only its rubric", () => {
+	const held = { id: "hold-a", criterion: "Held rubric.", labels: { criterion: false } };
+	const entries = (testCase: Record<string, unknown>) => [{ testCase, split: "held-out" }];
+	const base = splitVersions(entries(held))["held-out"].digest;
+	// Ground truth is half of what a split is; a digest over rubric text alone
+	// would call the held-out set untouched while its labels moved underneath.
+	assert.notEqual(splitVersions(entries({ ...held, labels: { criterion: true } }))["held-out"].digest, base);
+	assert.notEqual(splitVersions(entries({ ...held, calibrationLabels: { criterion: "partial" } }))["held-out"].digest, base);
+	assert.notEqual(splitVersions(entries({ ...held, objective: { pass: false, score: 0.5 } }))["held-out"].digest, base);
+	assert.notEqual(splitVersions(entries({ ...held, judgeOnlyDimensions: ["evidence_quality"] }))["held-out"].digest, base);
+	assert.equal(splitVersions(entries({ ...held, task: "not read by the judge" }))["held-out"].digest, base);
+});
+
+test("a threshold that decides whether a run blocks moves the calibration key", () => {
+	const stored = calibrationKey({ ...KEY_INPUTS, thresholds: thresholdFingerprint({ noiseBand: 0.05, criticalMissRateCap: 0 }) });
+	const loosened = calibrationKey({ ...KEY_INPUTS, thresholds: thresholdFingerprint({ noiseBand: 0.05, criticalMissRateCap: 0.5 }) });
+	assert.equal(calibrationKeyDrift(stored, loosened).status, "stale", "two caps must not share a key and claim the same policy");
+	assert.deepEqual(calibrationKeyDrift(stored, loosened).changed, ["thresholds"]);
+});
+
 test("split assignment prefers an explicit declaration, then the corpus naming convention", () => {
 	assert.equal(caseSplit({ id: "anything", calibrationSplit: "held-out" }), "held-out");
 	assert.equal(caseSplit({ id: "pattern-debate-holdout-audit" }), "held-out");
@@ -395,6 +415,23 @@ test("an adjudicator settles a disagreement and is named for it", () => {
 		labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" }),
 	]);
 	assert.deepEqual({ label: resolved.label, resolution: resolved.resolution, adjudicator: resolved.adjudicator }, { label: "failed", resolution: "adjudicated", adjudicator: "barbara" });
+});
+
+test("two adjudicators who disagree are refused, not settled by array order", () => {
+	const conflicted = resolveReviewGroup([
+		labelled({ reviewer: "ada", verdict: "fail" }),
+		labelled({ reviewer: "grace", verdict: "pass" }),
+		labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" }),
+		labelled({ reviewer: "katherine", verdict: "pass", role: "adjudicator" }),
+	]);
+	assert.equal(conflicted.label, null, "a label that overrides deterministic truth must not depend on ordering");
+	assert.equal(conflicted.resolution, "conflicting-adjudication");
+	assert.equal(conflicted.adjudicator, "barbara, katherine", "both are named so the conflict is auditable");
+
+	// Adjudicators who agree still settle it, whichever order they arrive in.
+	const agreed = [labelled({ reviewer: "ada", verdict: "fail" }), labelled({ reviewer: "grace", verdict: "pass" }), labelled({ reviewer: "barbara", verdict: "fail", role: "adjudicator" }), labelled({ reviewer: "katherine", verdict: "fail", role: "adjudicator" })];
+	assert.equal(resolveReviewGroup(agreed).resolution, "adjudicated");
+	assert.equal(resolveReviewGroup([...agreed].reverse()).label, "failed");
 });
 
 test("unsure is an abstention: it never blocks, and it never corroborates", () => {
