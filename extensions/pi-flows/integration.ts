@@ -1,11 +1,16 @@
 import {
 	createDelegationBudget,
+	canonicalHandoff,
 	prepareIntegrationHandoff,
 	renderDelegationTask,
 	validateDelegationContract,
 } from "./delegation.ts";
+import { capModelVisibleText, resultText } from "./sanitize.ts";
+import { scanForInjection } from "./sanitize.ts";
+import { artifactAttributes, handoffAttributes } from "./trace-attributes.ts";
 import type { AgentFanoutItem, AgentRunLimits } from "./runner.ts";
 import type {
+	ChildSpanScope,
 	DelegationContract,
 	FlowAgentRefInput,
 	FlowError,
@@ -26,6 +31,7 @@ function runLimits(contract?: DelegationContract): AgentRunLimits | undefined {
 		captureRawOutput: true,
 		timeoutMs: contract.budget.timeoutMs,
 		contractBudget: createDelegationBudget(contract),
+		contract,
 	};
 }
 
@@ -38,6 +44,7 @@ export function integrationRunPlan(
 		returnContract?: string;
 		requireEvidence?: boolean;
 		placeholderTask?: string;
+		scope?: ChildSpanScope;
 	} = {},
 ): { plan?: IntegrationRunPlan; error?: FlowError } {
 	const contract = ref.contract ?? options.fallbackContract;
@@ -54,8 +61,63 @@ export function integrationRunPlan(
 			limits: runLimits(contract),
 			contract,
 			cwd: resolvedCwd(deps.defaultCwd, ref.cwd),
+			...(options.scope ? { scope: options.scope } : {}),
 		},
 	};
+}
+
+/**
+ * Attribute one handoff boundary. The event records what crossed — filtering,
+ * size, injection warnings, preserved constraint ids, acceptance status, and
+ * artifact references — plus one artifact event per referenced file, so a
+ * corrupted or unverifiable artifact is attributable to the hop that carried it
+ * rather than to the synthesis that later used it.
+ */
+function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult, rejection?: FlowError): void {
+	const record = deps.recordEvent;
+	if (!record) return;
+	const handoff = result.handoff;
+	const scope = plan.scope;
+	if (!handoff) {
+		record({
+			kind: "validation",
+			name: "handoff.rejected",
+			ok: false,
+			scope,
+			attributes: {
+				"flow.handoff.from_agent": result.agent,
+				"flow.handoff.acceptance": `rejected:${rejection?.code ?? "unknown"}`,
+				"flow.error_code": rejection?.code,
+				"flow.handoff.retryable": rejection?.retryable ?? false,
+			},
+		});
+		return;
+	}
+	const raw = capModelVisibleText(resultText(result));
+	const carried = canonicalHandoff(handoff);
+	record({
+		kind: "handoff",
+		name: rejection ? "handoff.rejected" : "handoff.accepted",
+		ok: !rejection,
+		scope,
+		attributes: handoffAttributes(handoff, {
+			accepted: !rejection,
+			rejection,
+			rawBytes: Buffer.byteLength(raw, "utf8"),
+			carriedBytes: Buffer.byteLength(carried, "utf8"),
+			warnings: scanForInjection(raw),
+			contract: plan.contract,
+			policy: deps.policy,
+		}),
+	});
+	for (const reference of handoff.artifactReferences) {
+		record({
+			kind: "artifact",
+			name: "artifact.referenced",
+			scope,
+			attributes: artifactAttributes(handoff, reference.path, deps.policy),
+		});
+	}
 }
 
 export function acceptIntegrationResult(
@@ -70,6 +132,7 @@ export function acceptIntegrationResult(
 		policy: deps.policy,
 		incompletePolicy,
 	});
+	recordHandoffEvidence(deps, plan, result, prepared.error);
 	return prepared.error ?? null;
 }
 

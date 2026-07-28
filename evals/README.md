@@ -54,6 +54,7 @@ npm run eval -- --arm-timeout=30000 # smoke/debug only; every row is excluded fr
 npm run eval -- --write-baseline   # promote this run to evals/thulr-baseline.json (the gate baseline)
 npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
 npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as JUnit XML (CI test ingestion)
+npm run eval -- --strict-trace     # block the run when its runtime trace evidence is incomplete (off by default)
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --run-id=release-123 --runtime-trace=/tmp/runtime.jsonl # stable eval/runtime linkage
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls

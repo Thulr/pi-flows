@@ -48,11 +48,14 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: params.returnContract,
 				requireEvidence: params.requireEvidence,
 				placeholderTask: `advocate ${index + 1}, round ${round}`,
+				// Each advocate rebuts the whole prior round, so the dependency is the
+				// round, not one opponent.
+				scope: { key: `round-${round}.advocate-${index + 1}`, ...(round > 1 ? { dependsOn: participants.map((_unused, prior) => `round-${round - 1}.advocate-${prior + 1}`) } : {}) },
 			});
 			if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
 			items.push(planned.plan!);
 		}
-		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (done, total) => `Flow debate: round ${round}/${rounds}, ${done}/${total} advocates done`);
+		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (done, total) => `Flow debate: round ${round}/${rounds}, ${done}/${total} advocates done`, { key: `round-${round}`, name: `round ${round}` });
 		allResults.push(...roundResults);
 		const handoffError = acceptIntegrationResults(deps, items, roundResults);
 		if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: deps.makeDetails("debate")(allResults, handoffError) };
@@ -83,9 +86,10 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		fallbackContract: params.contract as DelegationContract | undefined,
 		returnContract: params.returnContract,
 		requireEvidence: params.requireEvidence,
+		scope: { key: "adjudicator", dependsOn: participants.map((_unused, index) => `round-${rounds}.advocate-${index + 1}`) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
-	const decision = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "debate", allResults.length + 1, allResults, planned.plan!.limits);
+	const decision = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "debate", allResults.length + 1, allResults, planned.plan!.limits, planned.plan!.scope);
 	allResults.push(decision);
 	if (isFailed(decision)) return { content: [{ type: "text", text: sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(decision)}`, policy) }], details: deps.makeDetails("debate")(allResults) };
 	const handoffError = acceptIntegrationResult(deps, planned.plan!, decision);

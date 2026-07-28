@@ -44,7 +44,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		`Pick the single best-fit agent for this task. ${routeProtocolInstruction()}`,
 	].join("\n");
-	const routed = await runAgentRef(deps, routerRef, routerTask, "route", 1, results);
+	const routed = await runAgentRef(deps, routerRef, routerTask, "route", 1, results, {}, { key: "router" });
 	results.push(routed);
 	if (isFailed(routed)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow route: router "${routerRef.agent}" failed.\n\n${resultText(routed)}`, policy) }], details: makeDetails("route")(results) };
@@ -62,7 +62,8 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
 
-	const specialist = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results);
+	deps.recordEvent?.({ kind: "state", name: "route.selected", attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(resultText(routed), candidates) } });
+	const specialist = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results, {}, { key: "specialist", dependsOn: ["router"] });
 	results.push(specialist);
 	if (isFailed(specialist)) {
 		return {

@@ -22,8 +22,9 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 		undefined,
 		[],
 		params.contract
-			? { captureRawOutput: true, timeoutMs: params.contract.budget.timeoutMs, contractBudget: createDelegationBudget(params.contract) }
+			? { captureRawOutput: true, timeoutMs: params.contract.budget.timeoutMs, contractBudget: createDelegationBudget(params.contract), contract: params.contract }
 			: {},
+		{ key: "single" },
 	);
 	if (params.contract && !isFailed(result)) {
 		const validated = validateReturnEnvelope(result, params.contract, resolvedCwd(defaultCwd, params.cwd), policy);

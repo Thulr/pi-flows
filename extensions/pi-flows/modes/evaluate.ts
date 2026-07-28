@@ -68,6 +68,22 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
 		rounds = iteration;
+		const stage = { key: `iteration-${iteration}`, name: `iteration ${iteration}` };
+		// A revision round is a retry of the same goal with new feedback. Recording
+		// it makes "how many attempts did this take, and why" answerable from the
+		// trace instead of from the prose header.
+		if (iteration > 1) {
+			deps.recordEvent?.({
+				kind: "retry",
+				name: "evaluate.revise",
+				scope: { stage, key: `${stage.key}.retry` },
+				attributes: {
+					"flow.retry.attempt": iteration,
+					"flow.retry.max_attempts": maxIterations,
+					"flow.retry.reason": lastCheckOk === false ? "check_command_failed" : "critic_revise",
+				},
+			});
+		}
 
 		// 1. Generator builds. Round 1 sees the goal; later rounds also see the prior
 		// ARTIFACT plus the critique so the generator revises in place instead of
@@ -89,7 +105,8 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			"evaluate",
 			results.length + 1,
 			results,
-			contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget } : {},
+			contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
+			{ stage, key: `${stage.key}.generator` },
 		);
 		results.push(generated);
 		lastGenerator = generated;
@@ -130,6 +147,13 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")(results, error) };
 			}
 			lastCheckOk = check.ok;
+			deps.recordEvent?.({
+				kind: "validation",
+				name: "evaluate.check_command",
+				ok: check.ok,
+				scope: { stage, key: `${stage.key}.check` },
+				attributes: { "flow.check.passed": check.ok, "flow.check.iteration": iteration },
+			});
 			if (!check.ok) {
 				critique = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
 				emitLive();
@@ -156,10 +180,11 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const critics = await runAgentFanout(
 			deps,
 			"evaluate",
-			evaluatorRefs.map((ref) => ({ ref, task: evaluatorTask })),
+			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [`${stage.key}.generator`] } })),
 			concurrency,
 			results,
 			(done) => `Flow evaluate: ${results.length + done} step(s) done`,
+			stage,
 		);
 		results.push(...critics);
 		emitLive();
@@ -173,6 +198,17 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 
 		const verdicts = critics.map((critic) => ({ agent: critic.agent, pass: parseVerdict(resultText(critic)) === "pass", text: resultText(critic) }));
 		const allPass = verdicts.every((verdict) => verdict.pass);
+		deps.recordEvent?.({
+			kind: "validation",
+			name: "evaluate.panel_verdict",
+			ok: allPass,
+			scope: { stage, key: `${stage.key}.panel` },
+			attributes: {
+				"flow.verdict.pass": allPass,
+				"flow.verdict.critic_count": verdicts.length,
+				"flow.verdict.revise_critics": verdicts.filter((verdict) => !verdict.pass).map((verdict) => verdict.agent).join(","),
+			},
+		});
 		if (allPass) {
 			passed = true;
 			break;

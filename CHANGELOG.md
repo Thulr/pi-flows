@@ -10,6 +10,46 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Coordination traces now capture the boundaries a delegated run actually
+  crosses, instead of flattening every child under one root span. Spans declare a
+  role (`root`, `stage`, `child`, `event`): children nest under the wave, round,
+  iteration, fan-out group, or workflow phase that scheduled them, and
+  dependencies are recorded as links (`flow.depends_on`,
+  `flow.depends_on_span_ids`) rather than as invented parentage — a graph node
+  that read another node's output was scheduled by its wave, not spawned by the
+  node it read. Child spans identify the authority they ran under:
+  `flow.agent_prompt_version` (a digest of the system prompt that actually ran),
+  `flow.allowed_tools`, `flow.authority_may` / `_must_not` / `_requires_approval`,
+  `flow.side_effect_class`, `flow.contract_id`, `flow.return_schema_digest`,
+  `flow.constraint_ids`, `flow.delegation_reason`, and post-run budget state.
+  Boundaries that are not child runs — approvals, workflow state transitions,
+  retries and revision rounds, budget refusals, deterministic gates, validation
+  results, handoffs, and artifact references — become their own attributable
+  zero-duration event spans (`flow.event_kind`). Handoff events record filtering,
+  raw-vs-carried size, injection warnings, preserved constraint identifiers,
+  acceptance status, and artifact references, with the summary prose and envelope
+  `data` deliberately left out; constraint identifiers are content digests, so
+  preservation across hops is checkable without copying the constraint text.
+- Trace health is now reported as evidence in its own right. The root span
+  accounts for the export (`flow.trace.expected_spans`, `.observed_spans`,
+  `.dropped_spans`, `.redacted_spans`, `.failed_exports`, `.health`), the same
+  counters return on `details.trace.spans`, and reading a trace back compares the
+  declared expectation against the rows present — so spans lost after a
+  successful write still register as dropped. `/flows report` and
+  `npm run trace:report` print observed-vs-expected spans, drops, redactions,
+  failed exports, incomplete runs, and a stage/event topology line. Health is
+  kept separate from execution success on purpose: a run whose spans were dropped
+  is unauditable, not failed, and conflating the two would turn an exporter
+  hiccup into a phantom agent regression.
+- Strict tracing (`traceStrict`, `PI_FLOWS_TRACE_STRICT`) makes trace evidence a
+  gate for evaluation and release runs: a missing trace file is refused before
+  any child spawns, and an incomplete export fails the call with the new
+  `TRACE_INCOMPLETE` error code. Default user flows are unchanged — tracing stays
+  best-effort and never fails a flow. The eval harness gained the matching
+  `npm run eval -- --strict-trace`, backed by a `traceHealth` rollup in the
+  reliability artifact that is reported as its own score family, and
+  `npm run trace:report -- --strict` exits non-zero on incomplete evidence.
+
 - Workflow approvals are now durable, single-use receipts instead of a bare
   `APPROVED` marker in the resume state. A receipt binds the exact action it
   authorizes — the approval phase and the work phases it gates, at their

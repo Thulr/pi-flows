@@ -59,6 +59,29 @@ async function persistState(file: string, state: WorkflowState): Promise<void> {
 	await rename(temporary, file);
 }
 
+/**
+ * Every durable state change is attributable. A workflow's failure mode is
+ * usually "which phase left the state where", and that question is unanswerable
+ * from child spans alone because approvals, gates, and resumes move state
+ * without spawning anything.
+ */
+function recordPhaseState(deps: ModeDeps, phaseId: string, transition: string, state: WorkflowState, extra: Record<string, unknown> = {}): void {
+	deps.recordEvent?.({
+		kind: "state",
+		name: `workflow.${transition}`,
+		ok: state.status !== "failed",
+		scope: { key: `phase-${phaseId}.state`, stage: { key: `phase-${phaseId}`, name: `phase ${phaseId}` } },
+		attributes: {
+			"flow.workflow.phase_id": phaseId,
+			"flow.workflow.status": state.status,
+			"flow.workflow.completed_phases": state.completedPhaseIds.length,
+			"flow.workflow.digest": state.digest,
+			"flow.workflow.state_version": state.version,
+			...extra,
+		},
+	});
+}
+
 function freshState(digest: string): WorkflowState {
 	return { version: WORKFLOW_STATE_VERSION, digest, status: "running", completedPhaseIds: [], outputs: {}, handoffs: {}, attestations: {}, receipts: {}, updatedAt: new Date().toISOString() };
 }
@@ -170,7 +193,9 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	const results: FlowRunResult[] = [];
 	const resumedHandoffs: DelegationHandoffEnvelope[] = [];
 	let previous = "";
+	let priorPhaseId: string | undefined;
 	for (const [phaseIndex, phase] of phases.entries()) {
+		const stage = { key: `phase-${phase.id}`, name: `phase ${phase.id}` };
 		// Set when a completed approval is reopened, so the re-prompt can say why it
 		// is being asked again instead of looking like a fresh pause.
 		let reapprovalCause: string | null = null;
@@ -202,6 +227,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 					), state);
 				} else {
 					previous = state.outputs[phase.id] ?? previous;
+					recordPhaseState(deps, phase.id, "approval.resumed", state, { "flow.approval.receipt_id": state.receipts[phase.id]?.receiptId ?? "(none)" });
+					priorPhaseId = phase.id;
 					continue;
 				}
 			} else {
@@ -217,6 +244,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			const validatedOutput = params.recordContent === false ? "[content not recorded]" : canonicalHandoff(persisted);
 			state.outputs[phase.id] = validatedOutput;
 			previous = validatedOutput;
+			recordPhaseState(deps, phase.id, "phase.resumed", state, { "flow.handoff.status": persisted.status, "flow.handoff.compatibility": persisted.compatibility });
+			priorPhaseId = phase.id;
 			continue;
 			}
 		}
@@ -240,6 +269,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		state.status = "running";
 		state.updatedAt = new Date().toISOString();
 		await persistState(stateFile, state);
+		recordPhaseState(deps, phase.id, "phase.started", state, { "flow.workflow.phase_kind": phase.approval?.message ? "approval" : "work" });
 
 		if (phase.approval?.message) {
 			const prompt = reapprovalCause ? `${phase.approval.message}\n\nRe-approval needed: ${reapprovalCause}` : phase.approval.message;
@@ -257,6 +287,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 						: `The interactive approval prompt was denied.${reapprovalCause ? ` It was re-asked because ${reapprovalCause}` : ""}`,
 					decision === "required" ? `Resume in an interactive Pi UI with workflow.resume:true and stateFile:"${spec.stateFile ?? path.relative(defaultCwd, stateFile)}".` : "Review the persisted artifacts, update the workflow if needed, then retry.",
 				);
+				recordPhaseState(deps, phase.id, "approval.blocked", state, { "flow.approval.decision": decision, "flow.error_code": code, "flow.approval.reopened": Boolean(reapprovalCause) });
 				return stateError(deps, results, error, state);
 			}
 			// Consent becomes a receipt bound to exactly what it authorizes. It is
@@ -272,6 +303,23 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			previous = state.outputs[phase.id];
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
+			// Receipt identity and status only — the approved parameters stay inside
+			// the binding digest, so the trace can name the consent without leaking it.
+			deps.recordEvent?.({
+				kind: "approval",
+				name: "workflow.approval.issued",
+				scope: { key: `${stage.key}.approval`, stage },
+				attributes: {
+					"flow.approval.receipt_id": receipt.receiptId,
+					"flow.approval.action": receipt.action,
+					"flow.approval.approved_by": receipt.approvedBy,
+					"flow.approval.expires_at": receipt.expiresAt ?? "(none)",
+					"flow.approval.validation": receipt.validation,
+					"flow.approval.reopened": Boolean(reapprovalCause),
+				},
+			});
+			recordPhaseState(deps, phase.id, "approval.granted", state, { "flow.approval.receipt_id": receipt.receiptId });
+			priorPhaseId = phase.id;
 			continue;
 		}
 
@@ -280,14 +328,16 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		const planned = integrationRunPlan(deps, ref, renderPhaseTask(phase.task, params.task, previous, state.outputs), {
 			returnContract: phase.returnContract ?? params.returnContract,
 			requireEvidence: phase.requireEvidence ?? params.requireEvidence,
+			scope: { key: stage.key, stage, ...(priorPhaseId ? { dependsOn: [`phase-${priorPhaseId}`] } : {}) },
 		});
 		if (planned.error) return stateError(deps, results, planned.error, state);
-		const run = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits);
+		const run = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
 		results.push(run);
 		if (isFailed(run)) {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
+			recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": run.error?.code ?? "(none)" });
 			return { content: [{ type: "text", text: sanitizeText(`Flow workflow stopped in phase "${phase.id}" (${phase.agent}).\n\n${resultText(run)}`, policy) }], details: workflowDetails(deps, results, state) };
 		}
 		const handoffError = acceptIntegrationResult(deps, planned.plan!, run);
@@ -295,16 +345,25 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
+			recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": handoffError.code });
 			return stateError(deps, results, handoffError, state);
 		}
 
 		const output = prepareResultHandoff(run, policy).text;
 		if (phase.checkCommand) {
 			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, resolveFlowCommandTimeoutMs(undefined, params.timeoutMs), policy, deps.signal);
+			deps.recordEvent?.({
+				kind: "validation",
+				name: "workflow.gate",
+				ok: gate.ok,
+				scope: { key: `${stage.key}.gate`, stage },
+				attributes: { "flow.workflow.phase_id": phase.id, "flow.check.passed": gate.ok },
+			});
 			if (!gate.ok) {
 				state.status = "failed";
 				state.updatedAt = new Date().toISOString();
 				await persistState(stateFile, state);
+				recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": "WORKFLOW_GATE_FAILED" });
 				const error = flowError("WORKFLOW_GATE_FAILED", `Workflow gate failed after phase "${phase.id}".`, gate.output || "The phase checkCommand exited non-zero.", "Fix the phase artifact or check command, then resume with an updated workflow or start a fresh run.");
 				return stateError(deps, results, error, state);
 			}
@@ -318,6 +377,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		previous = state.outputs[phase.id];
 		state.updatedAt = new Date().toISOString();
 		await persistState(stateFile, state);
+		recordPhaseState(deps, phase.id, "phase.completed", state, { "flow.handoff.status": run.handoff!.status, "flow.handoff.compatibility": run.handoff!.compatibility });
+		priorPhaseId = phase.id;
 	}
 
 	// A trailing approval gates the workflow's own completion (and its debrief),
@@ -353,9 +414,10 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			scope: { key: "debrief", dependsOn: phases.map((phase: any) => `phase-${phase.id}`) },
 		});
 		if (planned.error) return stateError(deps, results, planned.error, state);
-		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits);
+		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
 		results.push(debriefed);
 		if (isFailed(debriefed)) {
 			state.status = "failed";

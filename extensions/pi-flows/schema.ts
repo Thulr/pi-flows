@@ -351,6 +351,7 @@ export const FlowParams = Type.Object({
 		arm: Type.Optional(Type.String({ minLength: 1, description: "Paired-comparison or experiment arm identity." })),
 		attempt: Type.Optional(Type.Number({ minimum: 1, description: "Execution attempt within a retried trial arm." })),
 	}, { description: "Stable runtime trace linkage supplied by eval harnesses. Identifiers are copied to every span and returned with the exact root span reference." })),
+	traceStrict: Type.Optional(Type.Boolean({ description: "Require complete trace evidence. Default false (best-effort tracing that never fails a flow). When true, a missing traceFile or a trace with dropped spans or failed exports fails the call with TRACE_INCOMPLETE — intended for evaluation and release gates, not ordinary user flows. Also settable via PI_FLOWS_TRACE_STRICT.", default: false })),
 	incompleteHandoffPolicy: Type.Optional(StringEnum(["fail", "include"] as const, {
 		description: 'How integration modes handle typed child envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
 		default: "fail",

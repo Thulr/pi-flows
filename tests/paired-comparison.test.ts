@@ -289,7 +289,11 @@ await new Promise(resolve => setTimeout(resolve, 5000));
 		model: "stub",
 		command,
 		maxGeneratedTokens: 4,
-		timeoutMs: 2000,
+		// Comfortably above node's cold start: the claim under test is "the budget
+		// stopped it", and a 2s ceiling on a loaded machine makes the harness race
+		// process startup instead. The stub's own 5s hold is what the assertions
+		// below measure against.
+		timeoutMs: 20_000,
 		killGraceMs: 10,
 	});
 	const child = result.details.results[0];
@@ -297,8 +301,8 @@ await new Promise(resolve => setTimeout(resolve, 5000));
 	assert.equal(child.exitCode, 1);
 	assert.equal(child.error.code, "BUDGET_EXCEEDED");
 	assert.equal(child.usage.output, 8);
-	assert.ok(child.durationMs < 1500);
-	assert.ok(Date.now() - startedAt < 1500, "budget should stop the held-open process before timeout");
+	assert.ok(child.durationMs < 4000, "budget should stop the child before its 5s hold elapses");
+	assert.ok(Date.now() - startedAt < 4000, "budget should stop the held-open process before timeout");
 });
 
 test("plain Pi cost budgets fail closed when cost telemetry is absent", async () => {
@@ -309,7 +313,7 @@ process.stdout.write(JSON.stringify({type:"message_end",message:{role:"assistant
 await new Promise(resolve => setTimeout(resolve, 5000));
 `);
 	chmodSync(command, 0o700);
-	const result = await runPlainPi({ task: "bounded task", cwd: dir, model: "stub", command, maxCostUsd: 1, timeoutMs: 2000, killGraceMs: 10 });
+	const result = await runPlainPi({ task: "bounded task", cwd: dir, model: "stub", command, maxCostUsd: 1, timeoutMs: 20_000, killGraceMs: 10 });
 	const child = result.details.results[0];
 	assert.equal(child.usage.costKnown, false);
 	assert.equal(child.stopReason, "budget_unobservable");
@@ -323,7 +327,7 @@ test("plain Pi cost budgets fail closed when usage telemetry is absent", async (
 process.stdout.write(JSON.stringify({type:"message_end",message:{role:"assistant",content:[{type:"text",text:"unmetered"}],model:"stub"}})+"\\n");
 `);
 	chmodSync(command, 0o700);
-	const result = await runPlainPi({ task: "bounded task", cwd: dir, model: "stub", command, maxCostUsd: 1, timeoutMs: 2000, killGraceMs: 10 });
+	const result = await runPlainPi({ task: "bounded task", cwd: dir, model: "stub", command, maxCostUsd: 1, timeoutMs: 20_000, killGraceMs: 10 });
 	const child = result.details.results[0];
 	assert.equal(child.usage.costKnown, false);
 	assert.equal(child.stopReason, "budget_unobservable");

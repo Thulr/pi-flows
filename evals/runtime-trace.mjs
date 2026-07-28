@@ -32,12 +32,19 @@ export function runtimeTraceEvidence(result, traceFile, context) {
 	if (link?.health === "recorded" && link.traceId && link.rootSpanId) {
 		return { ...link, traceFile, context };
 	}
+	// A trace that exists but is provably incomplete is not the same as no trace:
+	// it still points at real spans a diagnosis can read, and it must not be
+	// silently promoted to healthy either. Keep the distinction and the counters.
+	if (link?.health === "degraded" && link.traceId && link.rootSpanId) {
+		return { ...link, traceFile, context };
+	}
 	return {
 		health: "missing",
 		traceFile,
 		traceId: link?.traceId ?? null,
 		rootSpanId: link?.rootSpanId ?? null,
 		context,
+		...(link?.spans ? { spans: link.spans } : {}),
 		...(link?.error ? { error: link.error } : {}),
 	};
 }
@@ -100,6 +107,7 @@ export function runtimeScoreFamilies({ result, thrown, objective, trace }) {
 			pass: trace?.health === "recorded",
 			status: trace?.health ?? "missing",
 			reason: trace?.error ?? null,
+			...(trace?.spans ? { spans: trace.spans } : {}),
 		},
 	};
 }

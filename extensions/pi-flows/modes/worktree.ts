@@ -150,11 +150,21 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: worker.task.returnContract ?? params.returnContract,
 				requireEvidence: worker.task.requireEvidence ?? true,
 				placeholderTask: worker.task.task,
+				scope: { key: `worker-${worker.id}` },
 			});
 			if (planned.error) return modeError(deps, results, planned.error);
 			workerItems.push(planned.plan!);
 		}
-			const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (done, total) => `Flow worktree: ${done}/${total} isolated writers done`);
+			deps.recordEvent?.({
+				kind: "state",
+				name: "worktree.branches_created",
+				attributes: {
+					"flow.worktree.base_sha": baseSha,
+					"flow.worktree.worker_count": workers.length,
+					"flow.worktree.integration_branch": integrationBranch,
+				},
+			});
+			const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (done, total) => `Flow worktree: ${done}/${total} isolated writers done`, { key: "workers", name: "isolated writers" });
 			results.push(...workerResults);
 			const failedWorkerIds = workers.filter((_, index) => isFailed(workerResults[index])).map((worker) => worker.id);
 			if (failedWorkerIds.length > 0) {
@@ -223,11 +233,18 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Your job",
 				"Resolve every merge conflict in this integration worktree without dropping either worker's intended behavior. Use the validated handoff evidence, artifact references, and digests above to explain each conflict choice. Run focused checks. Do not commit; the harness commits the resolution.",
 			].join("\n");
+			deps.recordEvent?.({
+				kind: "state",
+				name: "worktree.merge_conflict",
+				ok: false,
+				attributes: { "flow.worktree.worker_id": worker.id, "flow.worktree.conflict_file_count": unmerged.stdout.split("\n").filter(Boolean).length },
+			});
 			const conflictPlan = integrationRunPlan(deps, integrator, conflictTask, {
 				fallbackContract: params.contract as DelegationContract | undefined,
+				scope: { key: `conflict-${worker.id}`, dependsOn: [`worker-${worker.id}`] },
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
-			const resolved = await runAgentRef(deps, conflictPlan.plan!.ref, conflictPlan.plan!.task, "worktree", results.length + 1, results, conflictPlan.plan!.limits);
+			const resolved = await runAgentRef(deps, conflictPlan.plan!.ref, conflictPlan.plan!.task, "worktree", results.length + 1, results, conflictPlan.plan!.limits, conflictPlan.plan!.scope);
 			results.push(resolved);
 			if (isFailed(resolved) || git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]).stdout) {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Integrator could not resolve merge conflicts from "${worker.branch}".`, resultText(resolved) || unmerged.stdout, "Inspect the retained integration and worker branches, resolve the conflicts, and verify before merging.");
@@ -268,9 +285,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			scope: { key: "integration-review", dependsOn: usableWorkers.map((worker) => `worker-${worker.id}`) },
 		});
 		if (reviewPlan.error) return modeError(deps, results, reviewPlan.error);
-		const reviewed = await runAgentRef(deps, reviewPlan.plan!.ref, reviewPlan.plan!.task, "worktree", results.length + 1, results, reviewPlan.plan!.limits);
+		const reviewed = await runAgentRef(deps, reviewPlan.plan!.ref, reviewPlan.plan!.task, "worktree", results.length + 1, results, reviewPlan.plan!.limits, reviewPlan.plan!.scope);
 		results.push(reviewed);
 		if (isFailed(reviewed)) {
 			const error = flowError("WORKTREE_INTEGRATION_FAILED", "Integration review agent failed.", resultText(reviewed), "Inspect the retained integration branch and run review/verification manually.");
@@ -285,6 +303,12 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		let checkSummary = "No deterministic integration check requested.";
 		if (spec.checkCommand) {
 			const checked = await runCheckCommand(spec.checkCommand, integrationCwd, resolveFlowCommandTimeoutMs(spec.checkTimeoutMs, params.timeoutMs), policy, deps.signal);
+			deps.recordEvent?.({
+				kind: "validation",
+				name: "worktree.integration_check",
+				ok: checked.ok,
+				attributes: { "flow.check.passed": checked.ok, "flow.worktree.integration_branch": integrationBranch, "flow.worktree.changed_file_count": changedFiles.length },
+			});
 			if (!checked.ok) {
 				const error = flowError("WORKTREE_VERIFY_FAILED", "Integration branch failed its deterministic check.", checked.output || "The worktree checkCommand exited non-zero.", "Inspect the retained integration branch, fix the check failure, and rerun verification before merging.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);

@@ -100,6 +100,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
 			placeholderTask: goal,
+			scope: { key: `voter-${index + 1}` },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")([], planned.error) };
 		voterPlans.push(planned.plan!);
@@ -111,6 +112,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		concurrency,
 		[],
 		(done, total) => `Flow vote: ${done}/${total} voters done`,
+		{ key: "voters", name: "voters" },
 	);
 	const voterHandoffError = acceptIntegrationResults(deps, voterPlans, voterResults);
 	if (voterHandoffError) {
@@ -156,9 +158,10 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			scope: { key: "aggregator", dependsOn: voters.map((_unused, index) => `voter-${index + 1}`) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")(results, planned.error) };
-		const aggregated = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "vote", results.length + 1, results, planned.plan!.limits);
+		const aggregated = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "vote", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
 		results.push(aggregated);
 		if (isFailed(aggregated)) {
 			return { content: [{ type: "text", text: sanitizeText(`Flow vote: aggregator "${aggregatorRef.agent}" failed.\n\n${resultText(aggregated)}`, policy) }], details: makeDetails("vote")(results) };

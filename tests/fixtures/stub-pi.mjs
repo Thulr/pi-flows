@@ -35,13 +35,25 @@ const agent = taskPath ? path.basename(taskPath).replace(/-task\.md$/, "") : "un
 
 // Per-agent call counter (persisted) so list-valued plan entries advance across
 // repeated calls to the same agent within one flow (evaluate loops, retries).
+//
+// Claimed by exclusive create, not by read-modify-write: fan-out spawns several
+// children of the same agent at once, and a read-then-write counter lets two of
+// them read the same value and both serve reply[0]. That turns a scripted
+// "second worker returns a bad envelope" plan into a coin flip.
 let callIndex = 0;
 const stubDir = process.env.PI_STUB_DIR;
 if (stubDir) {
 	mkdirSync(stubDir, { recursive: true });
-	const counterFile = path.join(stubDir, `count-${agent}.txt`);
-	callIndex = existsSync(counterFile) ? Number(readFileSync(counterFile, "utf8")) || 0 : 0;
-	writeFileSync(counterFile, String(callIndex + 1));
+	const slotDir = path.join(stubDir, `slots-${agent}`);
+	mkdirSync(slotDir, { recursive: true });
+	for (;;) {
+		try {
+			writeFileSync(path.join(slotDir, String(callIndex)), "", { flag: "wx" });
+			break;
+		} catch {
+			callIndex += 1;
+		}
+	}
 	appendFileSync(path.join(stubDir, "calls.jsonl"), `${JSON.stringify({ agent, callIndex, task, systemPrompt, args: argv, cwd: process.cwd() })}\n`);
 }
 

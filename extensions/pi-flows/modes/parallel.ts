@@ -50,6 +50,7 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 		concurrency,
 		[],
 		(done, total) => `Flow parallel: ${done}/${total} done`,
+		{ key: "tasks", name: "parallel tasks" },
 	);
 	const handoffError = acceptIntegrationResults(deps, plans, results);
 	if (handoffError) {

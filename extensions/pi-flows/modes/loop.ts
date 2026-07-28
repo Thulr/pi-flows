@@ -23,6 +23,15 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 	let done = false;
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+		const stage = { key: `iteration-${iteration}`, name: `iteration ${iteration}` };
+		if (iteration > 1) {
+			deps.recordEvent?.({
+				kind: "retry",
+				name: "loop.iterate",
+				scope: { stage, key: `${stage.key}.retry` },
+				attributes: { "flow.retry.attempt": iteration, "flow.retry.max_attempts": maxIterations, "flow.retry.reason": judgeRef ? "judge_revise" : "stop_condition_unmet" },
+			});
+		}
 		const bodyTask = [
 			"## Goal / contract",
 			contractedGoal,
@@ -33,7 +42,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			judgeRef ? "Produce the next artifact for this loop iteration." : `Produce the next artifact. ${loopProtocolInstruction()}`,
 		].filter(Boolean).join("\n");
-		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results);
+		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results, {}, { stage, key: `${stage.key}.body` });
 		results.push(body);
 		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
 		const bodyPrep = prepareResultHandoff(body, policy);
@@ -53,7 +62,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			verdictProtocolInstruction("actionable feedback if another iteration should run"),
 		].join("\n");
-		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results);
+		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, {}, { stage, key: `${stage.key}.judge`, dependsOn: [`${stage.key}.body`] });
 		results.push(judged);
 		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
 		done = parseVerdict(resultText(judged)) === "pass";

@@ -4,7 +4,7 @@ import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { searchTopology, successfulRuns } from "../topology.ts";
+import { searchTopology } from "../topology.ts";
 
 export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, makeDetails } = deps;
@@ -33,12 +33,14 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	let beam: Array<{ text: string; score: number }> = [];
 
 	for (let round = 1; round <= rounds; round += 1) {
+		const roundStage = { key: `round-${round}`, name: `round ${round}` };
 		const parentContext = beam.length ? beam.map((candidate, index) => `### Prior beam ${index + 1} (score ${candidate.score})\n\n${candidate.text}`).join("\n\n---\n\n") : "(none yet)";
 		const generated = await runAgentFanout(
 			deps,
 			"search",
 			Array.from({ length: candidateCount }, (_unused, index) => ({
 				ref: generatorRef,
+				scope: { key: `${roundStage.key}.gen-${index + 1}` },
 				task: [
 					"## Goal / contract",
 					contractedGoal,
@@ -53,9 +55,16 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			concurrency,
 			results,
 			(done, total) => `Flow search: round ${round} generated ${done}/${total}`,
+			roundStage,
 		);
 		results.push(...generated);
-		const candidates = successfulRuns(generated).map((result) => handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text);
+		// Keep each surviving candidate tied to the generator span that produced it,
+		// so its score links back to the right candidate rather than to the round.
+		const candidateEntries = generated
+			.map((result, index) => ({ result, generatorKey: `${roundStage.key}.gen-${index + 1}` }))
+			.filter(({ result }) => !isFailed(result))
+			.map(({ result, generatorKey }) => ({ text: handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text, generatorKey }));
+		const candidates = candidateEntries.map((entry) => entry.text);
 		if (candidates.length === 0) {
 			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");
 			return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("search")(results, error) };
@@ -64,8 +73,9 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		const scoreResults = await runAgentFanout(
 			deps,
 			"search",
-			candidates.map((candidate, index) => ({
+			candidateEntries.map(({ text: candidate, generatorKey }, index) => ({
 				ref: scorerRef,
+				scope: { key: `${roundStage.key}.score-${index + 1}`, dependsOn: [generatorKey] },
 				task: [
 					"## Goal / contract",
 					contractedGoal,
@@ -79,6 +89,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			concurrency,
 			results,
 			(done, total) => `Flow search: round ${round} scored ${done}/${total}`,
+			roundStage,
 		);
 		const scored = candidates.map((candidate, index) => {
 			const result = scoreResults[index];
@@ -101,7 +112,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		"Return the best final answer/artifact. Mention the score and any important caveats.",
 	].join("\n");
-	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results);
+	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results, {}, { key: "debrief", dependsOn: [`round-${rounds}`] });
 	results.push(final);
 	if (isFailed(final)) return { content: [{ type: "text", text: sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy) }], details: makeDetails("search")(results) };
 	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${handoffWarnings.summary()}\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };

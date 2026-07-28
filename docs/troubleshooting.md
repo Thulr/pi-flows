@@ -530,3 +530,22 @@ period rather than letting it hang until `timeoutMs`.
 Fix: narrow the task or the material the child reads (a smaller issue thread,
 fewer files), or pick a larger-context model via `tier`/`model`, then retry.
 `PI_FLOWS_ERROR_GRACE_MS` tunes the grace period (default 30000ms).
+
+### `TRACE_INCOMPLETE`
+
+Cause: the call ran with strict tracing on (`traceStrict:true` or
+`PI_FLOWS_TRACE_STRICT=1`) and the coordination trace it produced is not
+complete evidence. Either no `traceFile` was configured at all, or the export
+finished with dropped spans / failed writes — for example an unwritable trace
+path, a full disk, or a truncated file.
+
+Note what this is *not*: it is never a statement about the agents. The children
+may all have succeeded. Strict mode only refuses to report the run as
+evidence-backed when the evidence is missing, which is what an evaluation or
+release gate needs.
+
+Fix: point `traceFile` (or `PI_FLOWS_TRACE_FILE`) at a writable JSONL path,
+check for a concurrent writer truncating it, and rerun. Ordinary interactive
+flows should leave `traceStrict` off — tracing is best-effort by default and
+never fails a flow. Inspect the health counters with
+`/flows report <trace-file>` or `npm run trace:report -- --strict <trace-file>`.

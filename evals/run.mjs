@@ -7,31 +7,15 @@
 //
 //   npm run eval                          # use your pi default model/provider
 //   npm run eval -- --filter=route        # only matching cases
-//   npm run eval -- --model=openai-codex/gpt-5.5   # provider/id (OAuth providers need the prefix)
-//   npm run eval -- --model=agent         # use each agent's own frontmatter model
-//   npm run eval -- --cap=1.00            # per-case USD ceiling on flow delegations (default 0.50)
-//   npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default below)
-//   npm run eval -- --judge-bin=/path/to/judge-wrapper   # override thulr's judge command
-//   npm run eval -- --samples=3           # judge each case 3x: majority verdict, mean score, judge-noise stddev + flake warnings
-//   npm run eval -- --trials=5            # run each stochastic subject case 5x in isolated workspaces
-//   npm run eval -- --eval-set=.thulr/eval-sets/smoke.json   # overlay promoted criteria/authority metadata
-//   npm run eval -- --reviews=.thulr/reviews/thulr-trace.reviews.json   # fold human SME verdicts into calibration (judge-vs-human TPR/TNR)
-//   npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/size regressions
-//   npm run eval -- --score-guardrail=evidence_quality   # also gate a named-criteria dimension's score (criterion is always gated)
-//   npm run eval -- --noise-band=0.10    # judge/efficiency regression tolerance (default 0.05)
-//   npm run eval -- --critical-dimension=evidence_quality   # also let a named dimension block the gate
-//   npm run eval -- --critical-dimension=none   # opt out: report calibration without gating on it
-//                                         # (criterion gates by default; it needs 3 independent failed labels
-//                                         #  plus passed/partial examples and a miss-rate bound under the cap)
-//   npm run eval -- --critical-miss-rate=0.1   # cap on the 95% UPPER BOUND of missed defects (default 0.35)
-//   npm run eval -- --abstention-band=0.15   # judge scores this close to 0.5 abstain and escalate (default 0.1)
-//   npm run eval -- --write-baseline      # promote this run to evals/thulr-baseline.json (the gate baseline)
-//   npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
-//   npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as a JUnit XML testsuite (CI ingestion)
+//   npm run eval -- --dry-run             # framework smoke (canned results, no model, no thulr calls)
 //   npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate — the
 //                                         # command-template mode for `thulr run-experiment` / `thulr optimize`
-//   npm run eval -- --dry-run             # framework smoke (canned results, no model, no thulr calls)
+//   npm run eval -- --strict-trace        # fail the run when its runtime trace evidence is incomplete
 //   npm run eval:select                   # parent-model tool-selection discipline
+//
+// Every flag (subject/judge model, trials, samples, guardrails, calibration caps,
+// baselines, JUnit output) is documented with its default in evals/README.md —
+// the single place they are described, so this header cannot drift from it.
 //
 // For the flows-vs-plain A/B ("does pi-flows beat plain pi?") see `npm run eval:compare`.
 // For "should the parent model call flow at all?" see `npm run eval:select`.
@@ -70,7 +54,7 @@ import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { calibrationPreflightStep, resolveCriticalDimensions, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
-import { assessCalibration, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases, writeReliabilityArtifact } from "./pipeline.mjs";
+import { assessCalibration, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases, traceEvidenceGate, writeReliabilityArtifact } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
 import { MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
@@ -96,6 +80,10 @@ const capUsd = Number(flag("cap", "0.50"));
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "120000"));
 const armTimeoutMs = positiveNumberFlag("arm-timeout");
 const dryRun = bool("dry-run");
+// Release-gate switch: block the run when the runtime traces backing it are
+// incomplete. Off by default — tracing is best-effort, and an exporter hiccup
+// must never be reported as a subject regression.
+const strictTrace = bool("strict-trace");
 const filter = flag("filter", "");
 const includeControls = has("include-controls") || filter.length > 0;
 // Cross-model judge: a different vendor than the subject under test breaks
@@ -467,7 +455,9 @@ async function main() {
 	} else {
 		({ gateResult, calibration: calibrationResult } = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }));
 	}
-	writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: !dryRun && productJudgedCount > 0 });
+	const reliability = writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: !dryRun && productJudgedCount > 0 });
+	const traceGate = traceEvidenceGate(reliability, { strict: strictTrace });
+	for (const issue of traceGate.issues) console.log(`✗ ${issue}`);
 
 	// A behaviour case passes only when its objective check AND thulr's criterion
 	// agree (the two-axis contract). Hard cases are score-tracked, not pass-gated —
@@ -490,6 +480,7 @@ async function main() {
 		infraExcluded: excludedByReason("infra"),
 		gateBlocks: !!gateResult?.blocks,
 		calibrationBlocks: !!calibrationResult?.blocks,
+		traceBlocks: traceGate.blocks,
 	}));
 }
 

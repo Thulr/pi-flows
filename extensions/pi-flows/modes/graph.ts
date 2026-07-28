@@ -68,6 +68,9 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: node.returnContract ?? params.returnContract,
 				requireEvidence: node.requireEvidence ?? params.requireEvidence,
 				placeholderTask: node.task,
+				// A node's dependencies are links, not parentage: node b consumed node
+				// a's output but was scheduled by the wave, not spawned by a.
+				scope: { key: node.id, dependsOn: node.dependsOn ?? [] },
 			});
 			if (planned.error) {
 				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
@@ -81,6 +84,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			concurrency,
 			results,
 			(done) => `Flow graph: ${completed.size + done}/${nodes.length} nodes done`,
+			{ key: `wave-${wave}`, name: `wave ${wave}` },
 		);
 		const handoffError = acceptIntegrationResults(deps, waveItems, waveRunResults);
 		if (handoffError) {
@@ -116,9 +120,10 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			scope: { key: "debrief", dependsOn: terminalIds },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
-		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "graph", results.length + 1, results, planned.plan!.limits);
+		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "graph", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
 		results.push(debriefed);
 		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
 		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);

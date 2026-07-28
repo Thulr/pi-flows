@@ -70,6 +70,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `traceFile` | (none) | Append an OpenInference-shaped JSON span per child (plus a root span) to this JSONL file — trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
 | `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. Redacted, bounded identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
+| `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, or failed writes fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates; ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
 | `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
 | `contract` | (none) | Typed delegation contract. It may replace prose `task` in single/evaluate, acts as the final-role fallback in integration modes, and requires a validated `pi-flows.return-envelope.v1` response. Fan-out tasks, graph nodes, workflow phases, worktree tasks, voters/participants, dossier sections, and agent refs can set role-specific contracts. |
@@ -91,7 +92,38 @@ not a per-call input. It is enforced by the runtime and surfaced read-only in
 
 ### Trace export (observability)
 
-Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`; root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. When `traceContext` is supplied, redacted `flow.run_id`, `flow.case_id`, `flow.trial_id`, `flow.trial_index`, and `flow.arm` values are copied to every span; `details.trace` reports `recorded` or `missing` health and the exact trace/root identifiers while redacting and bounding the displayed trace path, context, and write error. Export is best-effort and never fails a flow.
+Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`; root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. When `traceContext` is supplied, redacted `flow.run_id`, `flow.case_id`, `flow.trial_id`, `flow.trial_index`, and `flow.arm` values are copied to every span; `details.trace` reports health and the exact trace/root identifiers while redacting and bounding the displayed trace path, context, and write error. Export is best-effort and never fails a flow.
+
+#### Span topology
+
+Every span declares its role in `flow.span_role`:
+
+| Role | What it is |
+| --- | --- |
+| `root` | The whole flow call. |
+| `stage` | A wave, round, iteration, fan-out group, or workflow phase. |
+| `child` | One delegated child run. |
+| `event` | A zero-duration coordination boundary (see below). |
+
+Children nest under the stage that scheduled them rather than hanging flat off the root, so a critic belongs to a visible revision round and a graph node to a visible wave. `flow.unit_key` names the unit (`alpha`, `worker-2`, `phase-deploy`), and `flow.stage_key` / `flow.stage_span_count` describe the stage.
+
+Dependencies are recorded as **links, not parentage**: a graph node that consumed another node's output was scheduled by its wave, not spawned by the node it read. `flow.depends_on` lists the unit keys and `flow.depends_on_span_ids` the resolved span ids.
+
+#### Coordination events
+
+Not every failure happens inside a child run. Approvals, state transitions, budget refusals, gate results, and handoff acceptance move the flow without spawning anything, so each is written as its own zero-duration span with `flow.event_kind` ∈ `artifact`, `state`, `retry`, `approval`, `budget`, `validation`, `handoff`.
+
+Handoff events record what crossed the boundary — `flow.handoff.status`, `.compatibility`, `.acceptance` (`accepted` or `rejected:<CODE>`), `.raw_bytes` / `.carried_bytes` / `.filtered`, `.injection_warnings`, `.artifact_refs`, and `.preserved_constraint_ids` — but never the summary prose or the envelope `data`. Constraint ids are content-derived (`constraint.1:<digest>`), so the same constraint keeps the same id at every hop and "was this preserved?" is answerable without copying the constraint text into the trace.
+
+Child spans additionally identify the authority they ran under: `flow.agent_prompt_version` (a digest of the system prompt that actually ran), `flow.allowed_tools`, `flow.authority_may` / `_must_not` / `_requires_approval`, `flow.side_effect_class`, `flow.contract_id`, `flow.return_schema_digest`, `flow.constraint_ids`, `flow.delegation_reason` (the call's `why`), and the budget state after the run.
+
+#### Trace health and strict mode
+
+The root span accounts for the export itself: `flow.trace.expected_spans`, `.observed_spans`, `.dropped_spans`, `.redacted_spans`, `.failed_exports`, and `.health` (`recorded` / `degraded` / `missing`). The same counters come back on `details.trace.spans`. Reading a trace back compares the declared expectation against the rows actually present, so spans lost *after* a successful write still register as dropped.
+
+Trace health is deliberately not folded into execution success. A run whose spans were dropped is not a failed run — it is an unauditable one, and conflating the two turns every exporter hiccup into a phantom agent regression.
+
+Tracing stays best-effort by default. Set `traceStrict:true` (or `PI_FLOWS_TRACE_STRICT=1`) to make evidence a gate: a missing trace file, dropped spans, or failed writes then fail the call with `TRACE_INCOMPLETE`. Use it for evaluation and release runs, not for ordinary user flows. The eval harness has the matching switch — `npm run eval -- --strict-trace` blocks a run whose runtime traces are incomplete, reported as its own score family rather than as subject failures.
 
 Summarize a trace file from inside pi:
 
@@ -103,9 +135,10 @@ Or from a checkout:
 
 ```bash
 npm run trace:report -- flow-trace.jsonl
+npm run trace:report -- --strict flow-trace.jsonl   # exit 1 on incomplete evidence
 ```
 
-The report groups runs by `flow.mode` and `traceLabel`. It labels a clean child/process run as **execution success**. **Verified outcome success** and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence; ordinary process completion is never promoted to task success. Elapsed, worker, and critical-path time remain separate. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data.
+The report groups runs by `flow.mode` and `traceLabel`. It labels a clean child/process run as **execution success**. **Verified outcome success** and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence; ordinary process completion is never promoted to task success. Elapsed, worker, and critical-path time remain separate. A trace-health line reports observed-vs-expected spans, drops, redactions, failed exports, and how many runs are incomplete, plus a topology line counting stage spans and coordination events. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data; traces written before span roles existed are read as root-plus-children.
 
 ## Return contracts and write isolation
 
