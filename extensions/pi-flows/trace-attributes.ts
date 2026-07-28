@@ -47,8 +47,6 @@ function list(values: string[], policy: CapturePolicy): string {
 }
 
 export interface DelegationIdentity {
-	agentName: string;
-	agentSource: string;
 	systemPrompt: string;
 	/** Resolved tool allowlist: `undefined` means the child inherits pi's builtin tools. */
 	allowedTools?: string[];
@@ -61,6 +59,13 @@ export interface DelegationIdentity {
  * Who was allowed to do what, under which contract. Recorded on every child
  * span so an audit can answer "was this child permitted to do that?" without
  * re-deriving the dispatch decision from the parameters.
+ *
+ * Structure — counts, digests, class names, tool names — is always recorded:
+ * it is what makes the span attributable and it carries no payload. The
+ * free-text halves (the delegation reason, the contract owner, the authority
+ * prose) are content, so `recordContent:false` withholds them exactly as it
+ * withholds child input/output. Their digests still identify the contract, so a
+ * content-free trace can still tell two contracts apart.
  */
 export function delegationIdentityAttributes(identity: DelegationIdentity): Record<string, unknown> {
 	const { contract, policy } = identity;
@@ -68,16 +73,21 @@ export function delegationIdentityAttributes(identity: DelegationIdentity): Reco
 		"flow.agent_prompt_version": promptVersion(identity.systemPrompt),
 		"flow.allowed_tools": identity.allowedTools === undefined ? "(pi builtin tools)" : identity.allowedTools.length === 0 ? "(none)" : list(identity.allowedTools, policy),
 	};
-	if (identity.delegationReason?.trim()) attributes["flow.delegation_reason"] = label(identity.delegationReason, policy);
+	if (identity.delegationReason?.trim() && policy.recordContent) attributes["flow.delegation_reason"] = label(identity.delegationReason, policy);
 	if (!contract) return attributes;
 	attributes["flow.contract_id"] = delegationContractId(contract);
-	attributes["flow.contract_owner"] = label(contract.owner, policy);
 	attributes["flow.side_effect_class"] = contract.sideEffectClass;
-	attributes["flow.authority_may"] = list(contract.authority.may, policy);
-	attributes["flow.authority_must_not"] = list(contract.authority.mustNot, policy);
-	attributes["flow.authority_requires_approval"] = list(contract.authority.requiresApproval, policy);
 	attributes["flow.return_schema_digest"] = canonicalSha256(contract.returnSchema);
 	attributes["flow.constraint_ids"] = list(constraintIdentifiers(contract), policy);
+	attributes["flow.authority_may_count"] = contract.authority.may.length;
+	attributes["flow.authority_must_not_count"] = contract.authority.mustNot.length;
+	attributes["flow.authority_requires_approval_count"] = contract.authority.requiresApproval.length;
+	if (policy.recordContent) {
+		attributes["flow.contract_owner"] = label(contract.owner, policy);
+		attributes["flow.authority_may"] = list(contract.authority.may, policy);
+		attributes["flow.authority_must_not"] = list(contract.authority.mustNot, policy);
+		attributes["flow.authority_requires_approval"] = list(contract.authority.requiresApproval, policy);
+	}
 	return attributes;
 }
 
@@ -119,7 +129,10 @@ export function handoffAttributes(handoff: DelegationHandoffEnvelope, accounting
 		"flow.handoff.redaction_enabled": policy.redactSecrets,
 	};
 	if (handoff.provenance.step !== undefined) attributes["flow.handoff.from_step"] = handoff.provenance.step;
-	if (artifacts.length) attributes["flow.handoff.artifact_refs"] = list(artifacts, policy);
+	// Artifact paths are workspace content, so they follow the content policy; the
+	// count and the digests below stay either way, because they are what make a
+	// corrupted artifact attributable.
+	if (artifacts.length && policy.recordContent) attributes["flow.handoff.artifact_refs"] = list(artifacts, policy);
 	if (accounting.warnings?.length) attributes["flow.handoff.injection_warnings"] = list(accounting.warnings, policy);
 	if (accounting.contract) attributes["flow.handoff.preserved_constraint_ids"] = list(constraintIdentifiers(accounting.contract), policy);
 	if (accounting.rawBytes !== undefined) attributes["flow.handoff.raw_bytes"] = accounting.rawBytes;
@@ -134,7 +147,7 @@ export function handoffAttributes(handoff: DelegationHandoffEnvelope, accounting
 export function artifactAttributes(handoff: DelegationHandoffEnvelope, artifactPath: string, policy: CapturePolicy): Record<string, unknown> {
 	const digest = handoff.digests.find((entry) => entry.artifact === artifactPath);
 	return {
-		"flow.artifact.path": label(artifactPath, policy, LIST_CAP),
+		...(policy.recordContent ? { "flow.artifact.path": label(artifactPath, policy, LIST_CAP) } : {}),
 		"flow.artifact.from_agent": label(handoff.provenance.agent, policy),
 		"flow.artifact.contract_id": handoff.contractId ?? "(legacy)",
 		"flow.artifact.digest_declared": Boolean(digest),

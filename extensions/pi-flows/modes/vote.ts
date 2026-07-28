@@ -4,7 +4,7 @@ import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 const VOTER_STANCES = [
 	"Primary solver: answer the task directly and state the strongest evidence for your conclusion.",
@@ -161,7 +161,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			scope: { key: "aggregator", dependsOn: voters.map((_unused, index) => `voter-${index + 1}`) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")(results, planned.error) };
-		const aggregated = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "vote", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
+		const aggregated = await runIntegrationPlan(deps, planned.plan!, "vote", results.length + 1, results);
 		results.push(aggregated);
 		if (isFailed(aggregated)) {
 			return { content: [{ type: "text", text: sanitizeText(`Flow vote: aggregator "${aggregatorRef.agent}" failed.\n\n${resultText(aggregated)}`, policy) }], details: makeDetails("vote")(results) };

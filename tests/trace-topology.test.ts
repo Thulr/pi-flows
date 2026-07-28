@@ -266,6 +266,68 @@ test("content-omitting runs are reported as redacted rather than complete eviden
 	assert.equal(result.details.trace!.health, "recorded", "withheld content is still a complete export");
 });
 
+test("recordContent:false withholds authority prose but keeps the identity that makes a span attributable", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "collect findings",
+			contract,
+			traceFile: TRACE,
+			recordContent: false,
+			why: "a reason the operator did not want recorded",
+			tasks: [{ agent: "recon", task: "inspect A" }],
+		},
+		{ recon: envelope() },
+	);
+	const spans = await readSpans(stubDir);
+	const child = byRole(spans, "child")[0];
+	// Free text is content and follows the content policy.
+	assert.equal(attr(child, "flow.delegation_reason"), undefined);
+	assert.equal(attr(child, "flow.authority_may"), undefined);
+	assert.equal(attr(child, "flow.contract_owner"), undefined);
+	// Structure is what makes the span attributable and carries no payload.
+	assert.equal(attr(child, "flow.contract_id"), delegationContractId(contract));
+	assert.equal(attr(child, "flow.side_effect_class"), "read-only");
+	assert.equal(attr(child, "flow.authority_may_count"), 1);
+	assert.equal(attr(child, "flow.constraint_ids"), constraintIdentifiers(contract).join(","));
+	assert.doesNotMatch(JSON.stringify(spans), /a reason the operator did not want recorded/);
+	assert.doesNotMatch(JSON.stringify(spans), /push to a remote/);
+});
+
+test("stages nest, and a unit key never overwrites the stage that shares its name", async () => {
+	const search = await runFlow(
+		{ task: "find an approach", traceFile: TRACE, search: { candidates: 2, maxRounds: 1 } },
+		{ strategist: "candidate", redteam: "SCORE: 8", debrief: "final" },
+	);
+	const searchSpans = await readSpans(search.stubDir);
+	const stageByKey = (spans: TraceSpanRecord[], key: string) => byRole(spans, "stage").find((stage) => attr(stage, "flow.stage_key") === key)!;
+	const round = stageByKey(searchSpans, "round-1");
+	const generate = stageByKey(searchSpans, "round-1.generate");
+	const score = stageByKey(searchSpans, "round-1.score");
+	assert.equal(generate.parent_span_id, round.span_id, "generate nests inside its round");
+	assert.equal(score.parent_span_id, round.span_id);
+	assert.equal(round.parent_span_id, searchSpans.find((span) => span.parent_span_id === null)!.span_id);
+
+	// A workflow phase is both a stage and the child that runs it. The two keys
+	// live in separate namespaces, so the stage span survives its own child.
+	const workflow = await runFlow(
+		{
+			task: "ship it",
+			traceFile: TRACE,
+			workflow: {
+				stateFile: ".pi/flow-workflows/nesting.json",
+				phases: [{ id: "build", agent: "operator", task: "build {task}" }],
+				debrief: { agent: "debrief" },
+			},
+		},
+		{ operator: "built", debrief: "summary" },
+	);
+	const workflowSpans = await readSpans(workflow.stubDir);
+	const phaseStage = stageByKey(workflowSpans, "phase-build");
+	const phaseChild = unit(workflowSpans, "phase-build.work")!;
+	assert.equal(phaseChild.parent_span_id, phaseStage.span_id);
+	assert.equal(attr(unit(workflowSpans, "debrief"), "flow.depends_on_span_ids"), phaseChild.span_id);
+});
+
 test("strict tracing refuses a run with no trace file and passes an intact one", async () => {
 	const refused = await runFlow({ agent: "recon", task: "inspect", traceStrict: true }, { recon: "done" });
 	assert.equal(refused.result.details.error?.code, "TRACE_INCOMPLETE");

@@ -5,7 +5,7 @@ import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary, integrationControlText } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
@@ -46,7 +46,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	].join("\n");
 	const orchestratorPlan = integrationRunPlan(deps, orchestratorRef, orchestratorTask, { scope: { key: "decompose" } });
 	if (orchestratorPlan.error) return { content: [{ type: "text", text: formatFlowError(orchestratorPlan.error) }], details: makeDetails("orchestrate")([], orchestratorPlan.error) };
-	const decomposed = await runAgentRef(deps, orchestratorPlan.plan!.ref, orchestratorPlan.plan!.task, "orchestrate", 1, results, orchestratorPlan.plan!.limits, orchestratorPlan.plan!.scope);
+	const decomposed = await runIntegrationPlan(deps, orchestratorPlan.plan!, "orchestrate", 1, results);
 	results.push(decomposed);
 	if (isFailed(decomposed)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: orchestrator "${orchestratorRef.agent}" failed.\n\n${resultText(decomposed)}`, policy) }], details: makeDetails("orchestrate")(results) };
@@ -160,7 +160,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	};
 	let synthesisPlan = makeSynthesisPlan(makeSynthesisTask());
 	if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
-	let synthesized = await runAgentRef(deps, synthesisPlan.plan!.ref, synthesisPlan.plan!.task, "orchestrate", results.length + 1, results, synthesisPlan.plan!.limits, synthesisPlan.plan!.scope);
+	let synthesized = await runIntegrationPlan(deps, synthesisPlan.plan!, "orchestrate", results.length + 1, results);
 	results.push(synthesized);
 	if (isFailed(synthesized)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed.\n\n${resultText(synthesized)}`, policy) }], details: makeDetails("orchestrate")(results) };
@@ -199,7 +199,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			].join("\n");
 			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: `verify-${round}`, dependsOn: [`synthesis-${synthesisRound}`] } });
 			if (verifyPlan.error) return { content: [{ type: "text", text: formatFlowError(verifyPlan.error) }], details: makeDetails("orchestrate")(results, verifyPlan.error) };
-			const verified = await runAgentRef(deps, verifyPlan.plan!.ref, verifyPlan.plan!.task, "orchestrate", results.length + 1, results, verifyPlan.plan!.limits, verifyPlan.plan!.scope);
+			const verified = await runIntegrationPlan(deps, verifyPlan.plan!, "orchestrate", results.length + 1, results);
 			results.push(verified);
 
 			if (isFailed(verified)) {
@@ -252,7 +252,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			});
 			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(sanitizeText(resultText(synthesized), policy), critiquePrep.text));
 			if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
-			synthesized = await runAgentRef(deps, synthesisPlan.plan!.ref, synthesisPlan.plan!.task, "orchestrate", results.length + 1, results, synthesisPlan.plan!.limits, synthesisPlan.plan!.scope);
+			synthesized = await runIntegrationPlan(deps, synthesisPlan.plan!, "orchestrate", results.length + 1, results);
 			results.push(synthesized);
 			if (isFailed(synthesized)) {
 				return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed while revising after verifier feedback.\n\n${resultText(synthesized)}`, policy) }], details: makeDetails("orchestrate")(results) };

@@ -5,7 +5,12 @@ import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+
+/** One place every advocate key is derived, so a round's dependency links cannot drift from the spans they name. */
+function advocateKey(round: number, index: number): string {
+	return `round-${round}.advocate-${index + 1}`;
+}
 
 export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -50,7 +55,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 				placeholderTask: `advocate ${index + 1}, round ${round}`,
 				// Each advocate rebuts the whole prior round, so the dependency is the
 				// round, not one opponent.
-				scope: { key: `round-${round}.advocate-${index + 1}`, ...(round > 1 ? { dependsOn: participants.map((_unused, prior) => `round-${round - 1}.advocate-${prior + 1}`) } : {}) },
+				scope: { key: advocateKey(round, index), ...(round > 1 ? { dependsOn: participants.map((_unused, prior) => advocateKey(round - 1, prior)) } : {}) },
 			});
 			if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
 			items.push(planned.plan!);
@@ -86,10 +91,10 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		fallbackContract: params.contract as DelegationContract | undefined,
 		returnContract: params.returnContract,
 		requireEvidence: params.requireEvidence,
-		scope: { key: "adjudicator", dependsOn: participants.map((_unused, index) => `round-${rounds}.advocate-${index + 1}`) },
+		scope: { key: "adjudicator", dependsOn: participants.map((_unused, index) => advocateKey(rounds, index)) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
-	const decision = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "debate", allResults.length + 1, allResults, planned.plan!.limits, planned.plan!.scope);
+	const decision = await runIntegrationPlan(deps, planned.plan!, "debate", allResults.length + 1, allResults);
 	allResults.push(decision);
 	if (isFailed(decision)) return { content: [{ type: "text", text: sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(decision)}`, policy) }], details: deps.makeDetails("debate")(allResults) };
 	const handoffError = acceptIntegrationResult(deps, planned.plan!, decision);

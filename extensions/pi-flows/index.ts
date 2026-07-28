@@ -251,25 +251,25 @@ export default function (pi: ExtensionAPI) {
 			}
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 
-				// Trace evidence as a gate is opt-in. Ordinary user flows stay
-				// best-effort; an eval or release run asks for strict and then a run
-				// that cannot prove what it did is a failed run, not a quiet pass.
-				const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
-				const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
-				if (traceStrict && !traceFileParam) {
-					const error = flowError(
-						"TRACE_INCOMPLETE",
-						"Flow call refused: strict tracing is on but no trace file is configured.",
-						"traceStrict (or PI_FLOWS_TRACE_STRICT) requires coordination evidence, and nothing would have been exported.",
-						"Set traceFile (or PI_FLOWS_TRACE_FILE) to a writable JSONL path, or turn strict tracing off for ordinary best-effort runs.",
-					);
-					return {
-						content: [{ type: "text", text: formatFlowError(error) }],
-						details: catalog.errorDetails(mode, error),
-					};
-				}
+			// Trace evidence as a gate is opt-in. Ordinary user flows stay
+			// best-effort; an eval or release run asks for strict, and then a run
+			// that cannot prove what it did is a failed run, not a quiet pass.
+			const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
+			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
+			if (traceStrict && !traceFileParam) {
+				const error = flowError(
+					"TRACE_INCOMPLETE",
+					"Flow call refused: strict tracing is on but no trace file is configured.",
+					"traceStrict (or PI_FLOWS_TRACE_STRICT) requires coordination evidence, and nothing would have been exported.",
+					"Set traceFile (or PI_FLOWS_TRACE_FILE) to a writable JSONL path, or turn strict tracing off for ordinary best-effort runs.",
+				);
+				return {
+					content: [{ type: "text", text: formatFlowError(error) }],
+					details: catalog.errorDetails(mode, error),
+				};
+			}
 
-				const projectAgents = catalog.projectAgentsFor(params);
+			const projectAgents = catalog.projectAgentsFor(params);
 			if ((agentScope === "project" || agentScope === "all") && (params.confirmProjectAgents ?? true) && projectAgents.length > 0) {
 				if (!ctx.hasUI) {
 					const error = flowError(
@@ -403,7 +403,7 @@ export default function (pi: ExtensionAPI) {
 						"TRACE_INCOMPLETE",
 						"Flow completed but its coordination trace is incomplete, and strict tracing is on.",
 						`${traceIssue}. Under traceStrict the run cannot be reported as evidence-backed.`,
-						"Check that the trace path is writable and not truncated by a concurrent writer, then rerun. Set traceStrict:false to accept best-effort tracing.",
+						"Check that the trace path is writable and has space, then rerun. This gate sees what the exporter failed to write; for spans lost after a successful write, read the file back with `npm run trace:report -- --strict`. Set traceStrict:false to accept best-effort tracing.",
 					);
 					output.details.error = error;
 					output.content = [{ type: "text", text: `${formatFlowError(error)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];

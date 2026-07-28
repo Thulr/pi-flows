@@ -537,7 +537,12 @@ Cause: the call ran with strict tracing on (`traceStrict:true` or
 `PI_FLOWS_TRACE_STRICT=1`) and the coordination trace it produced is not
 complete evidence. Either no `traceFile` was configured at all, or the export
 finished with dropped spans / failed writes — for example an unwritable trace
-path, a full disk, or a truncated file.
+path or a full disk.
+
+The in-process gate sees what the exporter failed to write. Spans lost *after* a
+successful write (a truncating concurrent writer, a rotated file) are caught on
+the read-back side instead, by comparing the root span's declared expectation
+against the rows present: `npm run trace:report -- --strict <trace-file>`.
 
 Note what this is *not*: it is never a statement about the agents. The children
 may all have succeeded. Strict mode only refuses to report the run as

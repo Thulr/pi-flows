@@ -8,12 +8,13 @@ import {
 import { capModelVisibleText, resultText } from "./sanitize.ts";
 import { scanForInjection } from "./sanitize.ts";
 import { artifactAttributes, handoffAttributes } from "./trace-attributes.ts";
-import type { AgentFanoutItem, AgentRunLimits } from "./runner.ts";
+import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner.ts";
 import type {
 	ChildSpanScope,
 	DelegationContract,
 	FlowAgentRefInput,
 	FlowError,
+	FlowMode,
 	FlowRunResult,
 	IncompleteHandoffPolicy,
 	ModeDeps,
@@ -64,6 +65,15 @@ export function integrationRunPlan(
 			...(options.scope ? { scope: options.scope } : {}),
 		},
 	};
+}
+
+/**
+ * Run a planned child. The plan already carries the ref, the rendered task, the
+ * contract-derived limits, and the span scope, so callers pass the plan whole
+ * instead of unpacking the same four fields at every dispatch site.
+ */
+export function runIntegrationPlan(deps: ModeDeps, plan: IntegrationRunPlan, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[]): Promise<FlowRunResult> {
+	return runAgentRef(deps, plan.ref, plan.task, mode, step, priorResults, plan.limits, plan.scope);
 }
 
 /**

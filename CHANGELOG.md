@@ -38,7 +38,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `flow.agent_prompt_version` (a digest of the system prompt that actually ran),
   `flow.allowed_tools`, `flow.authority_may` / `_must_not` / `_requires_approval`,
   `flow.side_effect_class`, `flow.contract_id`, `flow.return_schema_digest`,
-  `flow.constraint_ids`, `flow.delegation_reason`, and post-run budget state.
+  `flow.constraint_ids`, `flow.delegation_reason`, and post-run budget state. The
+  free-text halves of that identity (delegation reason, contract owner, authority
+  prose, artifact paths) follow `recordContent`, so a content-free trace still
+  tells two contracts apart by digest without recording what they said.
   Boundaries that are not child runs — approvals, workflow state transitions,
   retries and revision rounds, budget refusals, deterministic gates, validation
   results, handoffs, and artifact references — become their own attributable

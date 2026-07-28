@@ -18,8 +18,13 @@ export interface SpanStage {
 	key: string;
 	/** Human-readable stage name; becomes the span name suffix. */
 	name: string;
-	/** Enclosing stage key, so stages nest (search round -> generate/score). */
-	parent?: string;
+	/**
+	 * Enclosing stage, so stages nest (a search round holds its generate and
+	 * score sub-stages). Carried as the stage itself rather than as a bare key so
+	 * an ancestor is always creatable — a key alone could name a stage nothing
+	 * had opened, and the span would silently reparent to the root.
+	 */
+	parent?: SpanStage;
 }
 
 /** Where one child run (or coordination event) belongs in the span tree. */

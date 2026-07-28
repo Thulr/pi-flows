@@ -7,7 +7,7 @@ import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText }
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
-import { acceptIntegrationResult, integrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, integrationRunPlan, runIntegrationPlan } from "../integration.ts";
 import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 
@@ -30,6 +30,11 @@ function workflowDigest(task: string | undefined, spec: any): string {
 		.update(JSON.stringify({ task: task ?? "", phases: spec.phases ?? [], debrief: spec.debrief ?? null }))
 		.digest("hex")
 		.slice(0, 16);
+}
+
+/** One place both sides of a phase dependency link derive the key, so they cannot drift. */
+function phaseWorkKey(phaseId: string): string {
+	return `phase-${phaseId}.work`;
 }
 
 function renderPhaseTask(template: string, task: string | undefined, previous: string, outputs: Record<string, string>): string {
@@ -328,10 +333,13 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		const planned = integrationRunPlan(deps, ref, renderPhaseTask(phase.task, params.task, previous, state.outputs), {
 			returnContract: phase.returnContract ?? params.returnContract,
 			requireEvidence: phase.requireEvidence ?? params.requireEvidence,
-			scope: { key: stage.key, stage, ...(priorPhaseId ? { dependsOn: [`phase-${priorPhaseId}`] } : {}) },
+			// The child's key must differ from its stage's: a workflow phase is both,
+			// and one shared name would leave dependency links pointing at whichever
+			// was registered last.
+			scope: { key: phaseWorkKey(phase.id), stage, ...(priorPhaseId ? { dependsOn: [phaseWorkKey(priorPhaseId)] } : {}) },
 		});
 		if (planned.error) return stateError(deps, results, planned.error, state);
-		const run = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
+		const run = await runIntegrationPlan(deps, planned.plan!, "workflow", results.length + 1, results);
 		results.push(run);
 		if (isFailed(run)) {
 			state.status = "failed";
@@ -414,10 +422,10 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "debrief", dependsOn: phases.map((phase: any) => `phase-${phase.id}`) },
+			scope: { key: "debrief", dependsOn: phases.map((phase: any) => phaseWorkKey(phase.id)) },
 		});
 		if (planned.error) return stateError(deps, results, planned.error, state);
-		const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "workflow", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
+		const debriefed = await runIntegrationPlan(deps, planned.plan!, "workflow", results.length + 1, results);
 		results.push(debriefed);
 		if (isFailed(debriefed)) {
 			state.status = "failed";

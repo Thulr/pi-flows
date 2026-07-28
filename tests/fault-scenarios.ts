@@ -430,13 +430,13 @@ function partialThenRetryScenario(): FaultScenario {
 }
 
 function retryAfterPartialControlScenario(): FaultScenario {
-	const cwd = workspace();
+	const partial = envelopeFor(BASE_CONTRACT, { status: "partial", unresolvedQuestions: ["subsystem B was unreachable"], retry: { retryable: true, reason: "transient" } });
 	return {
 		id: "retry-after-partial-succeeds",
 		suite: FAULT_SUITE,
 		portfolio: "control",
 		faultKind: "none",
-		description: "The retry of a previously partial fan-out completes and integrates.",
+		description: "Retrying the refused fan-out in the same workspace completes and integrates.",
 		attackOpportunities: 0,
 		benignOpportunities: 2,
 		expected: {
@@ -445,7 +445,18 @@ function retryAfterPartialControlScenario(): FaultScenario {
 			policy: { contained: false, falselyBlocked: false },
 			residualState: { retryable: false, acceptedHandoffs: 2 },
 		},
-		run: scenarioRun(() => contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, [], cwd), ["debrief"], false),
+		// The retry is a real retry: the same workspace that a refused partial run
+		// left behind, re-dispatched. A fresh workspace would prove nothing about
+		// whether the refusal left recoverable state.
+		run: async () => {
+			const cwd = workspace();
+			const refused = await contractedFanout({ recon: [envelopeFor(BASE_CONTRACT), partial] }, [], cwd).output;
+			if (refused.details.error?.code !== "RETURN_ENVELOPE_INCOMPLETE") {
+				throw new Error(`retry precondition failed: expected the partial run to be refused, got ${refused.details.error?.code ?? "no error"}`);
+			}
+			const retried = contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, [], cwd);
+			return observe(await retried.output, retried.adapter.ledger, ["debrief"], { attack: false });
+		},
 	};
 }
 
@@ -530,16 +541,20 @@ function evaluateRetryControlScenario(): FaultScenario {
  * Trace suppression: the run coordinates correctly but its evidence never
  * reaches disk. Containment for this one lives outside a mode handler — the
  * export fails silently by design, and the strict-mode gate is what refuses to
- * treat the run as evidenced — so the scenario drives a real fan-out through a
- * poisoned sink and then asks the same policy function the dispatch core uses.
+ * treat the run as evidenced — so it drives a real fan-out through a poisoned
+ * sink and then applies the same policy function the dispatch core applies.
  */
-export async function runTraceSuppression(): Promise<{
+export interface TraceSuppressionRun {
 	coordinationError: string | null;
 	childrenSucceeded: number;
 	spansAttempted: number;
 	health: string;
 	strictIssue: string | null;
-}> {
+	output: ModeOutput;
+	adapter: FaultAdapter;
+}
+
+export async function runTraceSuppression(): Promise<TraceSuppressionRun> {
 	const cwd = workspace();
 	const sink = makeTraceSink(path.join(cwd, "missing-dir", "trace.jsonl"), "parallel", { recordContent: true, redactSecrets: true });
 	const adapter = makeFaultAdapter({ replies: { recon: envelopeFor(BASE_CONTRACT) } });
@@ -561,6 +576,42 @@ export async function runTraceSuppression(): Promise<{
 		spansAttempted: link.spans?.expectedSpans ?? 0,
 		health: link.health,
 		strictIssue: traceEvidenceIssue(link),
+		output,
+		adapter,
+	};
+}
+
+function traceSuppressionScenario(): FaultScenario {
+	return {
+		id: "trace-suppression-under-strict",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		faultKind: "loss",
+		description: "The trace export is suppressed; strict mode refuses the run rather than the agents.",
+		attackOpportunities: 1,
+		benignOpportunities: 2,
+		expected: {
+			// Under strict tracing the missing evidence is the refusal, exactly as the
+			// dispatch core reports it.
+			outcome: { errorCode: "TRACE_INCOMPLETE" },
+			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
+			policy: { contained: true, falselyBlocked: false },
+			// Both children still completed and both handoffs were banked: what was
+			// lost is the evidence, not the work.
+			residualState: { retryable: false, acceptedHandoffs: 2 },
+		},
+		run: async () => {
+			const suppressed = await runTraceSuppression();
+			const checks = observe(suppressed.output, suppressed.adapter.ledger, ["debrief"], { attack: true });
+			// Apply the strict gate the way index.ts does: an otherwise clean run
+			// whose evidence is incomplete becomes TRACE_INCOMPLETE.
+			const strictOutcome: FlowErrorCode | null = checks.outcome.errorCode ?? (suppressed.strictIssue ? "TRACE_INCOMPLETE" : null);
+			return {
+				...checks,
+				outcome: { errorCode: strictOutcome },
+				policy: { contained: strictOutcome !== null, falselyBlocked: false },
+			};
+		},
 	};
 }
 
@@ -576,6 +627,7 @@ export function faultScenarios(): FaultScenario[] {
 		duplicateBallotScenario(),
 		exhaustedBudgetScenario(),
 		sharedWriterRaceScenario(),
+		traceSuppressionScenario(),
 		partialThenRetryScenario(),
 		timeoutCeilingScenario(),
 		retryAfterPartialControlScenario(),

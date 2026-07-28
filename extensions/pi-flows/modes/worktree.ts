@@ -9,7 +9,7 @@ import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } fro
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 interface GitResult {
 	ok: boolean;
@@ -244,7 +244,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				scope: { key: `conflict-${worker.id}`, dependsOn: [`worker-${worker.id}`] },
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
-			const resolved = await runAgentRef(deps, conflictPlan.plan!.ref, conflictPlan.plan!.task, "worktree", results.length + 1, results, conflictPlan.plan!.limits, conflictPlan.plan!.scope);
+			const resolved = await runIntegrationPlan(deps, conflictPlan.plan!, "worktree", results.length + 1, results);
 			results.push(resolved);
 			if (isFailed(resolved) || git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]).stdout) {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Integrator could not resolve merge conflicts from "${worker.branch}".`, resultText(resolved) || unmerged.stdout, "Inspect the retained integration and worker branches, resolve the conflicts, and verify before merging.");
@@ -288,7 +288,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			scope: { key: "integration-review", dependsOn: usableWorkers.map((worker) => `worker-${worker.id}`) },
 		});
 		if (reviewPlan.error) return modeError(deps, results, reviewPlan.error);
-		const reviewed = await runAgentRef(deps, reviewPlan.plan!.ref, reviewPlan.plan!.task, "worktree", results.length + 1, results, reviewPlan.plan!.limits, reviewPlan.plan!.scope);
+		const reviewed = await runIntegrationPlan(deps, reviewPlan.plan!, "worktree", results.length + 1, results);
 		results.push(reviewed);
 		if (isFailed(reviewed)) {
 			const error = flowError("WORKTREE_INTEGRATION_FAILED", "Integration review agent failed.", resultText(reviewed), "Inspect the retained integration branch and run review/verification manually.");

@@ -52,7 +52,7 @@ function traceContextAttributes(context?: FlowTraceContext): Record<string, unkn
 interface StageRecord {
 	spanId: string;
 	name: string;
-	parent?: string;
+	parentSpanId: string;
 	startMs: number;
 	endMs: number;
 	spans: number;
@@ -80,7 +80,11 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	const rootStart = Date.now();
 	const health: FlowTraceHealth = emptyTraceHealth();
 	const stages = new Map<string, StageRecord>();
+	// Unit keys and stage keys live in separate namespaces. They collide in
+	// practice — a workflow phase is both a stage and the child that runs it — and
+	// one shared map let the child's span id overwrite its own stage's.
 	const spanIdByKey = new Map<string, string>();
+	const stageSpanIdByKey = new Map<string, string>();
 	const pending: Array<Promise<void>> = [];
 	let writeError: string | undefined;
 
@@ -100,7 +104,12 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		return write;
 	};
 
-	/** Stage spans are created on first use and closed at finalize over the bounds of what ran inside them. */
+	/**
+	 * Stage spans are created on first use and closed at finalize over the bounds
+	 * of what ran inside them. Ancestors are created with their descendant, so a
+	 * nested stage can never end up reparented to the root just because nothing
+	 * had opened its parent yet.
+	 */
 	const ensureStage = (stage: SpanStage, startMs: number, endMs: number): string => {
 		const existing = stages.get(stage.key);
 		if (existing) {
@@ -109,9 +118,10 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			existing.spans += 1;
 			return existing.spanId;
 		}
-		const record: StageRecord = { spanId: spanId(), name: stage.name, parent: stage.parent, startMs, endMs, spans: 1 };
+		const parentSpanId = stage.parent ? ensureStage(stage.parent, startMs, endMs) : rootSpanId;
+		const record: StageRecord = { spanId: spanId(), name: stage.name, parentSpanId, startMs, endMs, spans: 1 };
 		stages.set(stage.key, record);
-		spanIdByKey.set(stage.key, record.spanId);
+		stageSpanIdByKey.set(stage.key, record.spanId);
 		return record.spanId;
 	};
 
@@ -121,7 +131,9 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		const attributes: Record<string, unknown> = {};
 		if (dependsOn.length) {
 			attributes["flow.depends_on"] = dependsOn.join(",");
-			const resolved = dependsOn.map((key) => spanIdByKey.get(key)).filter((value): value is string => Boolean(value));
+			// A dependency may name a unit or a whole stage ("this debrief consumed
+			// round 2"), so both namespaces are searched, units first.
+			const resolved = dependsOn.map((key) => spanIdByKey.get(key) ?? stageSpanIdByKey.get(key)).filter((value): value is string => Boolean(value));
 			if (resolved.length) attributes["flow.depends_on_span_ids"] = resolved.join(",");
 		}
 		if (scope?.key) attributes["flow.unit_key"] = scope.key;
@@ -213,7 +225,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				void append({
 					trace_id: traceId,
 					span_id: stage.spanId,
-					parent_span_id: (stage.parent && spanIdByKey.get(stage.parent)) || rootSpanId,
+					parent_span_id: stage.parentSpanId,
 					name: `flow.${mode}.stage.${stage.name}`,
 					start_time_unix_ms: stage.startMs,
 					end_time_unix_ms: stage.endMs,

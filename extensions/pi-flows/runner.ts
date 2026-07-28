@@ -96,8 +96,6 @@ export async function writePromptToTempFile(agentName: string, prompt: string, l
 function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefined, allowedTools: string[] | undefined, policy: CapturePolicy): Record<string, unknown> {
 	return {
 		...delegationIdentityAttributes({
-			agentName: options.agentName,
-			agentSource: agent?.source ?? "unknown",
 			systemPrompt: agent?.systemPrompt ?? "",
 			allowedTools,
 			contract: options.contract,

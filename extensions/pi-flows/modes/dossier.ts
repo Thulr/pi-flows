@@ -4,7 +4,7 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
@@ -71,7 +71,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		scope: { key: "debrief", dependsOn: sections.map((_unused: unknown, index: number) => `section-${index + 1}`) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")(results, planned.error) };
-	const debriefed = await runAgentRef(deps, planned.plan!.ref, planned.plan!.task, "dossier", results.length + 1, results, planned.plan!.limits, planned.plan!.scope);
+	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);
 	results.push(debriefed);
 	if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow dossier: synthesizer failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("dossier")(results) };
 	const debriefHandoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);

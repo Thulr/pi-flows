@@ -34,6 +34,11 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 
 	for (let round = 1; round <= rounds; round += 1) {
 		const roundStage = { key: `round-${round}`, name: `round ${round}` };
+		// Two-level topology: the round holds a generate stage and a score stage, so
+		// a reader can tell "which scorer judged which candidate in which round"
+		// without reconstructing it from ordering.
+		const generateStage = { key: `${roundStage.key}.generate`, name: `round ${round} generate`, parent: roundStage };
+		const scoreStage = { key: `${roundStage.key}.score`, name: `round ${round} score`, parent: roundStage };
 		const parentContext = beam.length ? beam.map((candidate, index) => `### Prior beam ${index + 1} (score ${candidate.score})\n\n${candidate.text}`).join("\n\n---\n\n") : "(none yet)";
 		const generated = await runAgentFanout(
 			deps,
@@ -55,7 +60,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			concurrency,
 			results,
 			(done, total) => `Flow search: round ${round} generated ${done}/${total}`,
-			roundStage,
+			generateStage,
 		);
 		results.push(...generated);
 		// Keep each surviving candidate tied to the generator span that produced it,
@@ -89,7 +94,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			concurrency,
 			results,
 			(done, total) => `Flow search: round ${round} scored ${done}/${total}`,
-			roundStage,
+			scoreStage,
 		);
 		const scored = candidates.map((candidate, index) => {
 			const result = scoreResults[index];

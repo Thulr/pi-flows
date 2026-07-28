@@ -67,7 +67,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached at a completed model-response boundary, the active child stops and no further child spawns. |
 | `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached, no further child spawns. |
 | `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across the flow tree. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
-| `traceFile` | (none) | Append an OpenInference-shaped JSON span per child (plus a root span) to this JSONL file — trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
+| `traceFile` | (none) | Append OpenInference-shaped JSON spans to this JSONL file — one per child run, one per stage (wave/round/phase), one per coordination event, plus a root span. Trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
 | `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. Redacted, bounded identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
 | `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, or failed writes fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates; ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
@@ -123,7 +123,7 @@ The root span accounts for the export itself: `flow.trace.expected_spans`, `.obs
 
 Trace health is deliberately not folded into execution success. A run whose spans were dropped is not a failed run — it is an unauditable one, and conflating the two turns every exporter hiccup into a phantom agent regression.
 
-Tracing stays best-effort by default. Set `traceStrict:true` (or `PI_FLOWS_TRACE_STRICT=1`) to make evidence a gate: a missing trace file, dropped spans, or failed writes then fail the call with `TRACE_INCOMPLETE`. Use it for evaluation and release runs, not for ordinary user flows. The eval harness has the matching switch — `npm run eval -- --strict-trace` blocks a run whose runtime traces are incomplete, reported as its own score family rather than as subject failures.
+Tracing stays best-effort by default. Set `traceStrict:true` (or `PI_FLOWS_TRACE_STRICT=1`) to make evidence a gate: a missing trace file, dropped spans, or failed writes then fail the call with `TRACE_INCOMPLETE`. The in-process gate covers what the exporter failed to write; spans lost after a successful write are caught on read-back by `npm run trace:report -- --strict`. Use it for evaluation and release runs, not for ordinary user flows. The eval harness has the matching switch — `npm run eval -- --strict-trace` blocks a run whose runtime traces are incomplete, reported as its own score family rather than as subject failures.
 
 Summarize a trace file from inside pi:
 

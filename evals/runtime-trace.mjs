@@ -29,13 +29,11 @@ export function runtimeTraceContext(runId, { caseId, trialId, trialIndex, arm, a
 
 export function runtimeTraceEvidence(result, traceFile, context) {
 	const link = result?.details?.trace;
-	if (link?.health === "recorded" && link.traceId && link.rootSpanId) {
-		return { ...link, traceFile, context };
-	}
-	// A trace that exists but is provably incomplete is not the same as no trace:
-	// it still points at real spans a diagnosis can read, and it must not be
-	// silently promoted to healthy either. Keep the distinction and the counters.
-	if (link?.health === "degraded" && link.traceId && link.rootSpanId) {
+	// `degraded` is kept distinct from `missing`: a provably incomplete trace still
+	// points at real spans a diagnosis can read, and must not be silently promoted
+	// to healthy either. Only a link with no usable identifiers is `missing`.
+	const usable = link?.health === "recorded" || link?.health === "degraded";
+	if (usable && link.traceId && link.rootSpanId) {
 		return { ...link, traceFile, context };
 	}
 	return {
