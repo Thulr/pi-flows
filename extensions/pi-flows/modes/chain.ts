@@ -59,7 +59,11 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			};
 		}
 		if (contract) {
-			const validated = validateReturnEnvelope(result, contract, resolvedCwd(defaultCwd, step.cwd), policy);
+			// Identity required, as every other contracted path requires it. Without
+			// it a structurally valid but unbound envelope passes, the next step
+			// consumes it, and `typedHandoff` stamps the dispatched contract's id —
+			// the trace attributing a binding nothing verified.
+			const validated = validateReturnEnvelope(result, contract, resolvedCwd(defaultCwd, step.cwd), policy, { requireContractIdentity: true });
 			if (validated.error) {
 				return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("chain")(results, validated.error) };
 			}

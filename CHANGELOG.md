@@ -201,6 +201,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   success/TPSO when a verifier supplied a verdict. Legacy
   `flow.duration_ms_total` traces remain readable and are labeled compatibility
   data.
+- Contracted `chain` steps now require the child to echo the dispatched
+  contract's `sha256:` identity, as every other contracted mode already did. A
+  structurally valid envelope carrying a missing or stale `contractId` is
+  refused with `RETURN_CONTRACT_MISMATCH` instead of being passed to the next
+  step as though it were bound to the contract that step was dispatched under.
 
 ### Fixed
 

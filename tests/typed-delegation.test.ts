@@ -163,15 +163,20 @@ test("artifact validation errors obey redaction and content-omission policy", as
 	assert.doesNotMatch(JSON.stringify(mismatch.result), new RegExp(wrongDigest));
 });
 
+const secondStepContract = { ...contract, objective: "Explain the validated identifier." };
+
 test("chain validates each envelope before passing canonical data downstream", async () => {
 	const { result, calls } = await runFlow(
 		{
 			chain: [
 				{ agent: "recon", task: "Find the identifier.", contract },
-				{ agent: "strategist", task: "Use this validated handoff:\n{previous}", contract: { ...contract, objective: "Explain the validated identifier." } },
+				{ agent: "strategist", task: "Use this validated handoff:\n{previous}", contract: secondStepContract },
 			],
 		},
-		{ recon: envelope(), strategist: envelope({ summary: "Explained it." }) },
+		// Each step's envelope must name the contract that step was dispatched
+		// under: chain requires contract identity, as every other contracted path
+		// does, so an envelope bound to the first step cannot satisfy the second.
+		{ recon: envelope(), strategist: envelope({ contractId: delegationContractId(secondStepContract), summary: "Explained it." }) },
 	);
 
 	assert.equal(result.details.error, undefined);
@@ -237,4 +242,21 @@ test("evaluate fails closed before critic dispatch when the generator envelope i
 
 	assert.deepEqual(calls.map((call) => call.agent), ["operator"]);
 	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+});
+
+test("chain refuses an envelope that is not bound to the contract it was dispatched under", async () => {
+	// Structurally valid, and claiming no contract at all. Accepting it would let
+	// the next step consume an unbound envelope while `typedHandoff` stamped the
+	// dispatched contract's id onto the trace — a binding nothing verified.
+	const { result, calls } = await runFlow(
+		{
+			chain: [
+				{ agent: "recon", task: "Find the identifier.", contract },
+				{ agent: "strategist", task: "Use {previous}", contract },
+			],
+		},
+		{ recon: envelope({ contractId: undefined }), strategist: envelope() },
+	);
+	assert.equal(result.details.error?.code, "RETURN_CONTRACT_MISMATCH");
+	assert.equal(calls.length, 1, "the unbound envelope must not reach the next step");
 });

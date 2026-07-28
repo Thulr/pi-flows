@@ -575,3 +575,39 @@ test("an aggregated critique is a boundary with its own accounting", async () =>
 	assert.ok((attr(feedback, "flow.handoff.carried_bytes") as number) > 0);
 	assert.match(String(attr(feedback, "flow.handoff.injection_warnings")), /instruction|zero-width|invisible/i);
 });
+
+test("a loop records no handoff when nothing downstream reads the output", async () => {
+	// No judge and an immediate DONE: the body's output is the answer, so there is
+	// no inter-agent boundary to record.
+	const settled = await runFlow(
+		{ task: "converge", traceFile: TRACE, loop: { body: { agent: "operator" }, maxIterations: 3 } },
+		{ operator: "LOOP: DONE" },
+	);
+	assert.equal((await readSpans(settled.stubDir)).filter((span) => attr(span, "flow.event_kind") === "handoff").length, 0);
+
+	// Exhausting maxIterations is the same terminal case: the third body's output
+	// reaches nobody, so only the two consumed outputs are boundaries.
+	const exhausted = await runFlow(
+		{ task: "converge", traceFile: TRACE, loop: { body: { agent: "operator" }, maxIterations: 3 } },
+		{ operator: "still working" },
+	);
+	assert.equal((await readSpans(exhausted.stubDir)).filter((span) => attr(span, "flow.event_kind") === "handoff").length, 2);
+
+	// A judge does read it, so that boundary is real.
+	const judged = await runFlow(
+		{ task: "converge", traceFile: TRACE, loop: { body: { agent: "operator" }, judge: { agent: "redteam" }, maxIterations: 1 } },
+		{ operator: "draft", redteam: "VERDICT: PASS" },
+	);
+	const judgedSpans = await readSpans(judged.stubDir);
+	assert.equal(judgedSpans.filter((span) => attr(span, "flow.event_kind") === "handoff").length, 1);
+	assert.equal(attr(unit(judgedSpans, "iteration-1.body.handoff"), "flow.depends_on"), "iteration-1.body");
+
+	// A judge that refuses on the final iteration ends the loop, so its critique
+	// reaches no reviser: only the body's crossing to the judge is a boundary.
+	const refused = await runFlow(
+		{ task: "converge", traceFile: TRACE, loop: { body: { agent: "operator" }, judge: { agent: "redteam" }, maxIterations: 1 } },
+		{ operator: "draft", redteam: "VERDICT: FAIL" },
+	);
+	const refusedHandoffs = (await readSpans(refused.stubDir)).filter((span) => attr(span, "flow.event_kind") === "handoff");
+	assert.deepEqual(refusedHandoffs.map((span) => attr(span, "flow.unit_key")), ["iteration-1.body.handoff"]);
+});

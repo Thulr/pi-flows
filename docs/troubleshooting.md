@@ -463,11 +463,11 @@ declared JSON Schema. The handoff is not passed downstream until it validates.
 
 ### `RETURN_CONTRACT_MISMATCH`
 
-Cause: an integration-mode child returned a typed envelope with no `contractId`,
-or with an identity from an older/different contract.
+Cause: a contracted child returned a typed envelope with no `contractId`, or
+with an identity from an older/different contract.
 
 Fix: discard the stale handoff and rerun the child with the current contract.
-Integration modes compare the echoed `sha256:` identity before dependent
+Contracted modes compare the echoed `sha256:` identity before dependent
 dispatch, synthesis, persisted state, or worktree merge.
 
 ### `RETURN_ENVELOPE_INCOMPLETE`

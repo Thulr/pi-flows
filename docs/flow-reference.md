@@ -157,8 +157,8 @@ It contains `objective`, `constraints`, `nonGoals`, `dependencies`, `authority`
 (`may`, `mustNot`, `requiresApproval`), `sideEffectClass`, `budget`,
 `acceptanceChecks`, a JSON Schema `returnSchema`, and `owner`. All fields are
 required; arrays and the budget object may be empty. Each dispatched contract has
-a canonical `sha256:` identity. Integration modes require the child to echo that
-identity as `contractId`, so missing/stale returns fail with
+a canonical `sha256:` identity. Every contracted mode, chain steps included, requires the child to echo
+that identity as `contractId`, so missing/stale returns fail with
 `RETURN_CONTRACT_MISMATCH` before a dependent child, synthesizer, or worktree
 merge can consume them. JSON Schema, artifact-boundary, and digest validation
 also happen before integration.
