@@ -155,16 +155,33 @@ export function artifactAttributes(handoff: DelegationHandoffEnvelope, artifactP
 	};
 }
 
-/** Budget state after a child charged it, recorded on the span that caused the change. */
-export function budgetAttributes(budget: { maxCostUsd?: number; maxTokens?: number; maxGeneratedTokens?: number; spentCost: number; spentTokens: number; spentGeneratedTokens: number } | undefined): Record<string, unknown> {
+interface BudgetState {
+	maxCostUsd?: number;
+	maxTokens?: number;
+	maxGeneratedTokens?: number;
+	spentCost: number;
+	spentTokens: number;
+	spentGeneratedTokens: number;
+}
+
+/**
+ * Budget state after a child charged it, recorded on the span that caused the
+ * change.
+ *
+ * @param prefix which ceiling this is. A contracted child is bounded by two
+ *   independent budgets — the flow tree's and the contract's — and the contract's
+ *   is usually the tighter one, so recording only the flow budget would name a
+ *   limit that did not stop the child and omit the one that did.
+ */
+export function budgetAttributes(budget: BudgetState | undefined, prefix = "flow.budget"): Record<string, unknown> {
 	if (!budget) return {};
 	const attributes: Record<string, unknown> = {
-		"flow.budget.spent_cost_usd": budget.spentCost,
-		"flow.budget.spent_tokens": budget.spentTokens,
-		"flow.budget.spent_generated_tokens": budget.spentGeneratedTokens,
+		[`${prefix}.spent_cost_usd`]: budget.spentCost,
+		[`${prefix}.spent_tokens`]: budget.spentTokens,
+		[`${prefix}.spent_generated_tokens`]: budget.spentGeneratedTokens,
 	};
-	if (budget.maxCostUsd !== undefined) attributes["flow.budget.limit_cost_usd"] = budget.maxCostUsd;
-	if (budget.maxTokens !== undefined) attributes["flow.budget.limit_tokens"] = budget.maxTokens;
-	if (budget.maxGeneratedTokens !== undefined) attributes["flow.budget.limit_generated_tokens"] = budget.maxGeneratedTokens;
+	if (budget.maxCostUsd !== undefined) attributes[`${prefix}.limit_cost_usd`] = budget.maxCostUsd;
+	if (budget.maxTokens !== undefined) attributes[`${prefix}.limit_tokens`] = budget.maxTokens;
+	if (budget.maxGeneratedTokens !== undefined) attributes[`${prefix}.limit_generated_tokens`] = budget.maxGeneratedTokens;
 	return attributes;
 }

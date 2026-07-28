@@ -32,6 +32,10 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const allResults: FlowRunResult[] = [];
 	const warnings = new HandoffWarnings();
 	let priorArguments: string[] = [];
+	// A failed advocate contributes a "[advocate failed]" placeholder, not an
+	// argument, so the next round and the adjudicator read nothing of its work.
+	// Linking it would credit a position that was never actually made.
+	let consumedAdvocateKeys: string[] = [];
 	for (let round = 1; round <= rounds; round += 1) {
 		const transcript = priorArguments.length
 			? priorArguments.map((argument, index) => `### Advocate ${index + 1}\n\n${argument}`).join("\n\n---\n\n")
@@ -55,7 +59,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 				placeholderTask: `advocate ${index + 1}, round ${round}`,
 				// Each advocate rebuts the whole prior round, so the dependency is the
 				// round, not one opponent.
-				scope: { key: advocateKey(round, index), ...(round > 1 ? { dependsOn: participants.map((_unused, prior) => advocateKey(round - 1, prior)) } : {}) },
+				scope: { key: advocateKey(round, index), ...(consumedAdvocateKeys.length ? { dependsOn: consumedAdvocateKeys } : {}) },
 			});
 			if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
 			items.push(planned.plan!);
@@ -71,6 +75,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 			if (isFailed(result)) return "[advocate failed]";
 			return warnings.addFrom(prepareResultHandoff(result, policy)).text;
 		});
+		consumedAdvocateKeys = roundResults.flatMap((result, index) => isFailed(result) ? [] : [advocateKey(round, index)]);
 	}
 
 	const adjudicator: FlowAgentRefInput = spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" };
@@ -91,7 +96,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		fallbackContract: params.contract as DelegationContract | undefined,
 		returnContract: params.returnContract,
 		requireEvidence: params.requireEvidence,
-		scope: { key: "adjudicator", dependsOn: participants.map((_unused, index) => advocateKey(rounds, index)) },
+		scope: { key: "adjudicator", dependsOn: consumedAdvocateKeys },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
 	const decision = await runIntegrationPlan(deps, planned.plan!, "debate", allResults.length + 1, allResults);

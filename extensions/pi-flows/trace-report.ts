@@ -46,6 +46,8 @@ export interface TraceReportBucket {
 	failedExports: number;
 	/** Rows sharing a span id. A duplicate is corruption, and it can hide a drop. */
 	duplicateSpans: number;
+	/** Rows carrying no usable span id. Unusable as evidence, and they can stand in for a dropped row. */
+	malformedSpans: number;
 	/** Runs whose trace evidence is provably incomplete (dropped rows, duplicates, or failed exports). */
 	incompleteTraces: number;
 	coordinationEvents: number;
@@ -84,6 +86,7 @@ export function emptyTraceBucket(): TraceReportBucket {
 		redactedSpans: 0,
 		failedExports: 0,
 		duplicateSpans: 0,
+		malformedSpans: 0,
 		incompleteTraces: 0,
 		coordinationEvents: 0,
 		stageSpans: 0,
@@ -212,7 +215,10 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const identified = traceSpans.filter((span) => typeof span.span_id === "string" && span.span_id.trim());
 		const uniqueIds = new Set(identified.map((span) => span.span_id as string)).size;
 		const duplicateSpans = identified.length - uniqueIds;
-		const observedSpans = uniqueIds + (traceSpans.length - identified.length);
+		// A row with no span id is not a span anyone can use, and counting it would
+		// let a stripped row stand in for the one that went missing.
+		const malformedSpans = traceSpans.length - identified.length;
+		const observedSpans = uniqueIds;
 		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
 
 		const delta: TraceReportBucket = {
@@ -237,10 +243,12 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			redactedSpans,
 			failedExports,
 			duplicateSpans,
+			malformedSpans,
 			// Same derivation the sink used when it stamped `flow.trace.health`, so a
-			// read-back verdict and a live one cannot disagree. A duplicate is its own
-			// disqualification: nothing downstream can tell which copy is real.
-			incompleteTraces: duplicateSpans > 0 || traceHealthStatus(
+			// read-back verdict and a live one cannot disagree. A duplicated or
+			// unidentifiable row is its own disqualification: nothing downstream can
+			// tell which copy is real, or what an id-less row was meant to be.
+			incompleteTraces: duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
 				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
 				Boolean(root),
 			) !== "recorded" ? 1 : 0,
@@ -295,7 +303,7 @@ export function formatTraceReport(report: TraceReport): string {
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
-		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete`,
+		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete`,
 		`Topology: ${report.stageSpans} stage span${report.stageSpans === 1 ? "" : "s"}, ${report.coordinationEvents} coordination event${report.coordinationEvents === 1 ? "" : "s"}`,
 	];
 	if (report.parseErrors) lines.push(`Parse errors: ${report.parseErrors}`);

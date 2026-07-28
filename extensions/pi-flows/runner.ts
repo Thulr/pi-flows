@@ -103,6 +103,7 @@ function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefi
 			policy,
 		}),
 		...budgetAttributes(options.budget),
+		...budgetAttributes(options.contractBudget, "flow.contract_budget"),
 	};
 }
 
@@ -120,7 +121,13 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			name: "child.refused",
 			ok: false,
 			scope: options.scope,
-			attributes: { "flow.budget.refused_agent": options.agentName, ...budgetAttributes(exhaustedBudget) },
+			attributes: {
+				"flow.budget.refused_agent": options.agentName,
+				// Named against the ceiling that actually refused, so a contract-bound
+				// refusal is not reported as a flow-budget one.
+				"flow.budget.authority": exhaustedBudget === options.contractBudget ? "contract" : "flow",
+				...budgetAttributes(exhaustedBudget),
+			},
 		});
 		return makeEmptyRunResult(options.agentName, options.task, policy, budgetExceededError(exhaustedBudget));
 	}
@@ -371,7 +378,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				name: budgetUnobservable ? "child.unobservable" : "child.exhausted",
 				ok: false,
 				scope: options.scope,
-				attributes: { "flow.budget.terminated_agent": agent.name, ...budgetAttributes(terminatingBudget ?? options.budget) },
+				attributes: {
+					"flow.budget.terminated_agent": agent.name,
+					"flow.budget.authority": (terminatingBudget ?? options.budget) === options.contractBudget ? "contract" : "flow",
+					...budgetAttributes(terminatingBudget ?? options.budget),
+				},
 			});
 		}
 		await Promise.all(tempFiles.map((tmp) => fs.rm(tmp.dir, { recursive: true, force: true }).catch(() => undefined)));

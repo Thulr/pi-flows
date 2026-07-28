@@ -161,7 +161,9 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				kind: "validation",
 				name: "evaluate.check_command",
 				ok: check.ok,
-				scope: { stage, key: `${stage.key}.check` },
+				// The gate ran against this iteration's draft, so a revision driven by a
+				// failed check can be traced back to the draft that failed it.
+				scope: { stage, key: `${stage.key}.check`, dependsOn: [generatorKey(stage.key)] },
 				attributes: { "flow.check.passed": check.ok, "flow.check.iteration": iteration },
 			});
 			if (!check.ok) {

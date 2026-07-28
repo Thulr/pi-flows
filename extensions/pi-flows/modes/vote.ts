@@ -131,6 +131,10 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		: "";
 
 	const succeeded = voterResults.filter((result) => !isFailed(result));
+	// Only the ballots that reached the aggregator prompt: a failed voter's output
+	// is filtered out, so naming it would claim a consensus rested on a vote that
+	// was never cast.
+	const consumedBallotKeys = voterResults.flatMap((result, index) => isFailed(result) ? [] : [voterKey(index)]);
 	if (succeeded.length === 0) {
 		return { content: [{ type: "text", text: sanitizeText(`${diversityWarning}Flow vote: all ${voterResults.length} voters failed.`, policy) }], details: makeDetails("vote")(voterResults) };
 	}
@@ -161,7 +165,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "aggregator", dependsOn: voters.map((_unused, index) => voterKey(index)) },
+			scope: { key: "aggregator", dependsOn: consumedBallotKeys },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")(results, planned.error) };
 		const aggregated = await runIntegrationPlan(deps, planned.plan!, "vote", results.length + 1, results);
