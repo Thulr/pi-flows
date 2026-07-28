@@ -456,3 +456,39 @@ test("a contracted child records the ceiling that actually bound it", async () =
 	assert.ok((attr(child, "flow.contract_budget.spent_tokens") as number) > 0);
 	assert.equal(attr(child, "flow.budget.limit_cost_usd"), undefined, "there was no flow-level ceiling to report");
 });
+
+test("a row stripped of its trace id cannot vanish from the evidence gate", async () => {
+	const { stubDir } = await runFlow({ agent: "recon", task: "inspect", traceFile: TRACE }, { recon: "done" });
+	const spans = await readSpans(stubDir);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+
+	// A second run whose ids were stripped used to disappear entirely, leaving the
+	// surviving run to pass the gate on its own.
+	const orphaned = [...spans, ...spans.map((span) => ({ ...span, trace_id: undefined }))];
+	const report = summarizeTraceSpans(orphaned, 0, TRACE);
+	assert.equal(report.traces, 1, "the stripped rows belong to no run");
+	assert.equal(report.malformedSpans, spans.length);
+	assert.equal(traceReportIsComplete(report), false, "unusable rows must not be silently discarded");
+	assert.match(formatTraceReport(report), new RegExp(`${spans.length} unidentifiable`));
+});
+
+test("a workflow gate links to the phase output it validated", async () => {
+	const { stubDir, result } = await runFlow(
+		{
+			task: "ship it",
+			traceFile: TRACE,
+			workflow: {
+				stateFile: ".pi/flow-workflows/gate-link.json",
+				phases: [{ id: "build", agent: "operator", task: "build", checkCommand: "node -e \"process.exit(1)\"" }],
+			},
+		},
+		{ operator: "built" },
+	);
+	assert.equal(result.details.error?.code, "WORKFLOW_GATE_FAILED");
+	const spans = await readSpans(stubDir);
+	const gate = spans.find((span) => attr(span, "flow.unit_key") === "phase-build.gate")!;
+	// A failed workflow must end at the output that failed, not at a gate hanging
+	// off nothing.
+	assert.equal(attr(gate, "flow.depends_on"), "phase-build.work");
+	assert.equal(attr(gate, "flow.depends_on_span_ids"), unit(spans, "phase-build.work")!.span_id);
+});

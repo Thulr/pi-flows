@@ -211,6 +211,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		const integrator: FlowAgentRefInput = { ...(spec.integrator?.agent ? spec.integrator : { agent: "operator" }), cwd: integrationCwd };
 		const integratedWorkers: WorkerWorktree[] = [];
+		// The resolver edits the merge state of everything already integrated, not
+		// only the branch coming in — and its prompt carries every one of those
+		// workers' reports, so linking one input would understate what it acted on.
+		const resolvedConflictKeys: string[] = [];
 		for (const worker of usableWorkers.filter((candidate) => candidate.changed)) {
 			const preMergeHead = git(integrationCwd, ["rev-parse", "HEAD"]);
 			if (!preMergeHead.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not inspect the integration branch before merging.", preMergeHead.stderr, "Inspect the retained integration and worker branches, then retry."), `\n\nIntegration branch: \`${integrationBranch}\``);
@@ -244,7 +248,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			});
 			const conflictPlan = integrationRunPlan(deps, integrator, conflictTask, {
 				fallbackContract: params.contract as DelegationContract | undefined,
-				scope: { key: `conflict-${worker.id}`, dependsOn: [workerKey(worker.id)] },
+				scope: {
+					key: `conflict-${worker.id}`,
+					dependsOn: [...[...integratedWorkers, worker].map((source) => workerKey(source.id)), ...resolvedConflictKeys],
+				},
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
 			const resolved = await runIntegrationPlan(deps, conflictPlan.plan!, "worktree", results.length + 1, results);
@@ -265,6 +272,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			}
 			integratedWorkers.push(worker);
+			resolvedConflictKeys.push(`conflict-${worker.id}`);
 			for (const file of unmerged.stdout.split("\n").filter(Boolean)) resolvedConflictFiles.add(file);
 		}
 

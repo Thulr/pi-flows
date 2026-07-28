@@ -380,7 +380,9 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				kind: "validation",
 				name: "workflow.gate",
 				ok: gate.ok,
-				scope: { key: `${stage.key}.gate`, stage },
+				// The command ran against this phase's workspace, so a failed workflow
+				// ends at the output that failed rather than at a disconnected gate.
+				scope: { key: `${stage.key}.gate`, stage, dependsOn: [phaseWorkKey(phase.id)] },
 				attributes: { "flow.workflow.phase_id": phase.id, "flow.check.passed": gate.ok },
 			});
 			if (!gate.ok) {

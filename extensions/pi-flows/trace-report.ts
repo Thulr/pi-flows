@@ -157,8 +157,15 @@ export function parseTraceJsonl(text: string): { spans: TraceSpanRecord[]; parse
 
 export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, source?: string): TraceReport {
 	const byTrace = new Map<string, TraceSpanRecord[]>();
+	// A row with no trace id belongs to no run, so it cannot be attributed to one
+	// — but discarding it silently is how an entire run whose ids were stripped
+	// disappears from the report while the gate still passes on what is left.
+	let orphanSpans = 0;
 	for (const span of spans) {
-		if (!span.trace_id) continue;
+		if (typeof span.trace_id !== "string" || !span.trace_id.trim()) {
+			orphanSpans += 1;
+			continue;
+		}
 		byTrace.set(span.trace_id, [...(byTrace.get(span.trace_id) ?? []), span]);
 	}
 	const report: TraceReport = {
@@ -266,6 +273,11 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		report.byLabel[label] ??= emptyTraceBucket();
 		addTraceBucket(report.byLabel[label], delta);
 	}
+	// Counted on the report rather than in a bucket: these rows belong to no run,
+	// which is exactly why they need somewhere to be counted.
+	report.malformedSpans += orphanSpans;
+	report.observedSpans += orphanSpans;
+	report.expectedSpans += orphanSpans;
 	return report;
 }
 
@@ -284,7 +296,7 @@ export function formatTpso(bucket: TraceReportBucket): string {
  * that accepted that would pass on an artifact nobody wrote.
  */
 export function traceReportIsComplete(report: TraceReport): boolean {
-	return report.traces > 0 && report.incompleteTraces === 0 && report.parseErrors === 0;
+	return report.traces > 0 && report.incompleteTraces === 0 && report.parseErrors === 0 && report.malformedSpans === 0;
 }
 
 export function formatTokens(count: number): string {
