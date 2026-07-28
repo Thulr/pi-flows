@@ -404,7 +404,11 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		state.updatedAt = new Date().toISOString();
 		await persistState(stateFile, state);
 		recordPhaseState(deps, phase.id, "phase.completed", state, { "flow.handoff.status": run.handoff!.status, "flow.handoff.compatibility": run.handoff!.compatibility });
-		registerPhaseUnit(phaseWorkKey(phase.id));
+		// The next phase and the debrief read `prepareResultHandoff(...).text`, not
+		// the child's raw output, so they depend on the handoff event that records
+		// that crossing. Pointing at the child instead would export a causal path
+		// that skips the validation, filtering, and byte accounting it went through.
+		registerPhaseUnit(`${phaseWorkKey(phase.id)}.handoff`);
 	}
 
 	// A trailing approval gates the workflow's own completion (and its debrief),

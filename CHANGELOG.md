@@ -223,6 +223,20 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   case declares a portfolio suite, task family, and task structure; reports show
   case counts and exclusions across both classifications. The package-version
   selection fixture now expects the current `0.3.0` package value.
+- The trace gate no longer treats a corrupted attribute as an absent one. A
+  rewritten `flow.trace.expected_spans` read as "not a modern trace" and
+  exempted the whole file from the role, parent, dependency, and timing checks;
+  a rewritten `flow.depends_on_count` read as "no count written" and let the
+  fallback rebuild the number out of the very keys it was meant to check.
+  Presence and readability are now separate questions, and a stated value
+  nothing can read invalidates the trace.
+- Workflow phases now link the handoff their consumers actually read, so a
+  following phase and the debrief depend on the `<phase>.work.handoff` event
+  rather than on the child span behind it, and the exported causal path runs
+  through the validation and byte accounting the text went through.
+- An orchestrate resynthesis now carries the accepted handoff of the prior
+  answer instead of raw sanitized output, so the retry prompt matches the
+  handoff evidence recorded for it and does not skip the injection scan.
 - A typed envelope refused as `partial` or `blocked` now records the artifacts
   it claimed. The rejection previously dropped the envelope's artifact
   references and digests, so the trace showed the refusal without showing what

@@ -455,9 +455,56 @@ test("a corrupt dependency count cannot vouch for an emptied link list", async (
 		["zeroed count", rewrite({ "flow.depends_on_count": 0, "flow.depends_on_span_ids": undefined })],
 		["fractional count", rewrite({ "flow.depends_on_count": 1.5 })],
 		["count below the keys present", rewrite({ "flow.depends_on_count": 0.5 })],
+		// A rewritten count reads as absent to a typed accessor, so the fallback
+		// would rebuild the very number that was corrupted out of the keys and
+		// find everything in agreement. Presence is the question, not readability.
+		["count rewritten to a string", rewrite({ "flow.depends_on_count": "1" })],
+		["count rewritten to null", rewrite({ "flow.depends_on_count": null })],
 	] as const) {
 		assert.equal(traceReportIsComplete(summarizeTraceSpans(patched, 0, TRACE)), false, label);
 	}
+
+	// And the same substitution on a span that declares no dependencies at all:
+	// the row still proves a count was written, so its keys did not simply never
+	// exist — they were removed.
+	const alpha = spans.find((span) => attr(span, "flow.unit_key") === "alpha")!;
+	const alphaCounted = spans.map((span) =>
+		span === alpha ? { ...span, attributes: { ...span.attributes, "flow.depends_on_count": "0" } } : span);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(alphaCounted, 0, TRACE)), false);
+});
+
+test("a stated expectation nothing can read does not exempt the trace from the checks", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+
+	// Strip every role *and* corrupt the expectation. Each on its own is caught;
+	// together they used to read as a legacy trace — a format that predates all of
+	// these attributes — and a legacy trace is exempt from every check below.
+	for (const expectation of ["3", 0, -1, null, {}] as const) {
+		const demoted = spans.map((span) => {
+			const { "flow.span_role": _role, ...rest } = span.attributes!;
+			return {
+				...span,
+				attributes: span.parent_span_id === null ? { ...rest, "flow.trace.expected_spans": expectation } : rest,
+			};
+		});
+		assert.equal(
+			traceReportIsComplete(summarizeTraceSpans(demoted, 0, TRACE)),
+			false,
+			`expectation ${JSON.stringify(expectation)} must not demote a modern trace to legacy`,
+		);
+	}
+
+	// A genuine legacy trace — one that never carried any of these attributes —
+	// still passes, so the signal is the claim itself and not its absence.
+	const legacy = spans.map((span) => {
+		const { "flow.span_role": _role, "flow.trace.expected_spans": _expected, ...rest } = span.attributes!;
+		return { ...span, attributes: rest };
+	});
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(legacy, 0, TRACE)), true);
 });
 
 test("a key long enough to be capped stays matchable on both sides", async () => {

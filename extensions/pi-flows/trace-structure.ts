@@ -32,6 +32,16 @@ export function numericAttr(span: TraceSpanRecord, key: string): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * Whether the row carries the attribute at all, regardless of whether its value
+ * is usable. Presence and usability are different questions: a rewritten value
+ * reads as absent to every typed accessor, so collapsing the two lets a
+ * corrupted attribute pass as one that was never written.
+ */
+export function hasAttr(span: TraceSpanRecord, key: string): boolean {
+	return span.attributes?.[key] !== undefined;
+}
+
 export function optionalNumericAttr(span: TraceSpanRecord, key: string): number | undefined {
 	const value = span.attributes?.[key];
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -128,17 +138,20 @@ function spansByKey(spans: TraceSpanRecord[]): Map<string, Set<string>> {
 
 function dependenciesHold(span: TraceSpanRecord, knownIds: Set<string>, byKey: Map<string, Set<string>>): boolean {
 	const declared = stringAttr(span, "flow.depends_on");
-	const countDeclared = optionalNumericAttr(span, "flow.depends_on_count");
-	const idsDeclared = stringAttr(span, "flow.depends_on_span_ids");
 	// No dependency metadata at all is a span that declared none. Some of it is a
 	// span whose keys were removed while the row still proves they existed, which
 	// is corruption wearing the shape of a unit that never depended on anything.
-	if (!declared) return countDeclared === undefined && idsDeclared === undefined;
+	if (!declared) return !hasAttr(span, "flow.depends_on_count") && !hasAttr(span, "flow.depends_on_span_ids");
 	// Counted from the attribute written for the purpose, falling back to the
 	// joined string only for producers that emit no count. Inferring it from a
 	// string any cap could have shortened would read an elision as a broken chain.
 	const keys = declared.split(",").filter(Boolean);
-	const expected = optionalNumericAttr(span, "flow.depends_on_count") ?? keys.length;
+	const declaredCount = optionalNumericAttr(span, "flow.depends_on_count");
+	// The fallback is for producers that emit no count, not for a count that was
+	// rewritten into something unreadable. Deriving one from the keys in that case
+	// would reconstruct agreement out of the very attribute that was corrupted.
+	if (declaredCount === undefined && hasAttr(span, "flow.depends_on_count")) return false;
+	const expected = declaredCount ?? keys.length;
 	// Capping can only shorten the joined list, never lengthen it. More keys than
 	// the count is therefore corruption, not the truncation case below — and it is
 	// what stops a count of zero from agreeing with an emptied id list and waving
@@ -156,10 +169,14 @@ function dependenciesHold(span: TraceSpanRecord, knownIds: Set<string>, byKey: M
 }
 
 /**
- * @param declaredExpectation the root's own `flow.trace.expected_spans`, already
- *   validated as a positive integer, or undefined when it is missing or unusable.
+ * @param expectation `declared` is the root's own `flow.trace.expected_spans`,
+ *   already validated as a positive integer, or undefined when it is missing or
+ *   unusable. `present` says whether the attribute was written at all: a trace
+ *   that claims an expectation is a modern trace even when the claim is
+ *   unreadable, and an unreadable one invalidates it rather than exempting it.
  */
-export function traceStructure(traceSpans: TraceSpanRecord[], declaredExpectation: number | undefined): TraceStructure {
+export function traceStructure(traceSpans: TraceSpanRecord[], expectation: { declared?: number; present: boolean }): TraceStructure {
+	const declaredExpectation = expectation.declared;
 	const identified = traceSpans.filter((span) => typeof span.span_id === "string" && span.span_id.trim());
 	const identifiedIds = identified.map((span) => span.span_id as string);
 	const knownIds = new Set(identifiedIds);
@@ -178,7 +195,7 @@ export function traceStructure(traceSpans: TraceSpanRecord[], declaredExpectatio
 	// carries neither and stays exempt.
 	const modern = declaredRoots.length > 0
 		|| traceSpans.some((span) => stringAttr(span, "flow.span_role") !== undefined)
-		|| declaredExpectation !== undefined;
+		|| expectation.present;
 	if (!modern) {
 		return { root, observedSpans, duplicateSpans, malformedSpans, unexpectedSpans: 0, invalid: false };
 	}
@@ -195,6 +212,9 @@ export function traceStructure(traceSpans: TraceSpanRecord[], declaredExpectatio
 	// Surplus counts as loss of a different kind: rows the exporter never claimed
 	// to have written are not evidence it produced.
 	const unexpectedSpans = declaredExpectation === undefined ? 0 : Math.max(0, observedSpans - declaredExpectation);
+	// A stated expectation nothing can read is not an absent one: the trace still
+	// claims a count, and there is no way to check the count it claims.
+	const expectationUnusable = expectation.present && declaredExpectation === undefined;
 
 	return {
 		root,
@@ -202,6 +222,6 @@ export function traceStructure(traceSpans: TraceSpanRecord[], declaredExpectatio
 		duplicateSpans,
 		malformedSpans,
 		unexpectedSpans,
-		invalid: !rolesDeclared || !rootWellFormed || !connected || !attributionHolds || !timesContained,
+		invalid: expectationUnusable || !rolesDeclared || !rootWellFormed || !connected || !attributionHolds || !timesContained,
 	};
 }

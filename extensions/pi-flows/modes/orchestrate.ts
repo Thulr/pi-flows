@@ -263,7 +263,13 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				scope: { key: `${synthesisKey(synthesisRound)}.retry`, dependsOn: [`${verifyKey(round)}.verdict`] },
 				attributes: { "flow.retry.attempt": round + 1, "flow.retry.max_attempts": maxVerifyRounds, "flow.retry.reason": "verifier_revise" },
 			});
-			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(sanitizeText(resultText(synthesized), policy), critiquePrep.text));
+			// The prior answer crosses into the next synthesizer's prompt, so it is
+			// carried as the accepted handoff — the same text whose bytes and
+			// warnings the handoff event recorded. `sanitizeText` alone skips the
+			// injection scan and, for a typed return, hands over the raw output
+			// rather than the validated canonical envelope.
+			const priorPrep = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy));
+			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(priorPrep.text, critiquePrep.text));
 			if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
 			synthesized = await runIntegrationPlan(deps, synthesisPlan.plan!, "orchestrate", results.length + 1, results);
 			results.push(synthesized);

@@ -171,7 +171,11 @@ test("stages nest, and a unit key never overwrites the stage that shares its nam
 	const phaseStage = stageByKey(workflowSpans, "phase-build");
 	const phaseChild = unit(workflowSpans, "phase-build.work")!;
 	assert.equal(phaseChild.parent_span_id, phaseStage.span_id);
-	assert.equal(attr(unit(workflowSpans, "debrief"), "flow.depends_on_span_ids"), phaseChild.span_id);
+	// The debrief reads the prepared handoff text, so it links the handoff event,
+	// which in turn depends on the child that produced it.
+	const phaseHandoff = unit(workflowSpans, "phase-build.work.handoff")!;
+	assert.equal(attr(unit(workflowSpans, "debrief"), "flow.depends_on_span_ids"), phaseHandoff.span_id);
+	assert.equal(attr(phaseHandoff, "flow.depends_on_span_ids"), phaseChild.span_id);
 });
 
 test("a validation failure and a budget refusal are attributable without a child span", async () => {
@@ -313,8 +317,9 @@ test("the workflow debrief links every phase, including those that ran no child"
 	const spans = await readSpans(stubDir);
 	const debrief = unit(spans, "debrief")!;
 	// The approval phase produced no work span, so a link built from work keys
-	// would name a unit that never existed.
-	assert.equal(attr(debrief, "flow.depends_on"), "phase-build.work,phase-gate.approval,phase-release.work");
+	// would name a unit that never existed. Work phases link their handoff, since
+	// that is the text the debrief actually reads.
+	assert.equal(attr(debrief, "flow.depends_on"), "phase-build.work.handoff,phase-gate.approval,phase-release.work.handoff");
 	assert.equal(String(attr(debrief, "flow.depends_on_span_ids")).split(",").length, 3, "every declared debrief link must resolve");
 });
 

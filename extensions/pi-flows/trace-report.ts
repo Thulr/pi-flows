@@ -9,7 +9,7 @@
  */
 import { safePath } from "./sanitize.ts";
 import { traceHealthStatus } from "./trace-scope.ts";
-import { boolAttr, numericAttr, optionalBoolAttr, optionalNumericAttr, spanRole, stringAttr, traceStructure, type TraceSpanRecord } from "./trace-structure.ts";
+import { boolAttr, hasAttr, numericAttr, optionalBoolAttr, optionalNumericAttr, spanRole, stringAttr, traceStructure, type TraceSpanRecord } from "./trace-structure.ts";
 
 export { boolAttr, numericAttr, optionalBoolAttr, optionalNumericAttr, stringAttr, type TraceSpanRecord } from "./trace-structure.ts";
 
@@ -146,12 +146,13 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// The expectation is read before the structure so the surplus check has
 		// something to compare against. Zero, negative, and fractional values are
 		// corruption rather than a count, so they are not usable as one.
-		const rawExpectation = optionalNumericAttr(
-			traceSpans.find((span) => span.parent_span_id === null) ?? ({} as TraceSpanRecord),
-			"flow.trace.expected_spans",
-		);
+		const expectationRoot = traceSpans.find((span) => span.parent_span_id === null) ?? ({} as TraceSpanRecord);
+		const rawExpectation = optionalNumericAttr(expectationRoot, "flow.trace.expected_spans");
 		const usableExpectation = rawExpectation !== undefined && Number.isInteger(rawExpectation) && rawExpectation > 0 ? rawExpectation : undefined;
-		const structure = traceStructure(traceSpans, usableExpectation);
+		const structure = traceStructure(traceSpans, {
+			...(usableExpectation === undefined ? {} : { declared: usableExpectation }),
+			present: hasAttr(expectationRoot, "flow.trace.expected_spans"),
+		});
 		const root = structure.root;
 		const childSpans = traceSpans.filter((span) => span !== root && spanRole(span, root) === "child");
 		const eventSpans = traceSpans.filter((span) => spanRole(span, root) === "event");

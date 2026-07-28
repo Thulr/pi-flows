@@ -279,3 +279,36 @@ test("no contracted mode accepts an envelope bound to a different contract", asy
 	assert.equal(evaluated.result.details.error?.code, "RETURN_CONTRACT_MISMATCH");
 	assert.equal(evaluated.calls.length, 1, "the unbound artifact must not reach the critics");
 });
+
+test("a resynthesis carries the accepted handoff, not the raw prior answer", async () => {
+	// The retry prompt is an inter-agent boundary like any other: the prior answer
+	// must reach the next synthesizer as the validated canonical handoff whose
+	// bytes and warnings the trace recorded, not as raw output that skipped the
+	// injection scan.
+	const { calls } = await runFlow(
+		{
+			task: "map the system",
+			concurrency: 1,
+			contract,
+			orchestrate: {
+				commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" }, verify: { agent: "overwatch" },
+				maxSubtasks: 1, verifyPolicy: "revise", verifyMaxIterations: 2,
+			},
+		},
+		{
+			commander: '["only"]',
+			recon: envelope(),
+			debrief: [envelope({ summary: "First pass." }), envelope({ summary: "Revised." })],
+			// The verdict is read off the accepted handoff's `data`, not the summary.
+			overwatch: [envelope({ data: { answer: "VERDICT: REVISE" } }), envelope({ data: { answer: "VERDICT: PASS" } })],
+		},
+	);
+	const resynthesis = calls.filter((call) => call.agent === "debrief")[1];
+	assert.ok(resynthesis, "the verifier's REVISE must drive a second synthesis");
+	// Isolate the prior answer: the findings above it are handoffs already, so a
+	// whole-prompt match would pass no matter what this section carried.
+	const priorAnswer = resynthesis.task
+		.split("## Previous synthesized answer (revise this in place)\n")[1]
+		?.split("\n## ")[0] ?? "";
+	assert.match(priorAnswer, /^\{"schemaVersion":"pi-flows\.handoff-envelope\.v1"/);
+});
