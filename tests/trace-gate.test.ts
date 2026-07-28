@@ -582,3 +582,107 @@ test("a span tree that could not have happened is refused", async () => {
 		assert.equal(traceReportIsComplete(report), false, `${label} must not pass the gate`);
 	}
 });
+
+test("keys removed from a dependency list are erasure unless the writer says otherwise", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "map the system",
+			traceFile: TRACE,
+			graph: {
+				nodes: [
+					{ id: "alpha", agent: "recon", task: "start" },
+					{ id: "beta", agent: "recon", task: "also start" },
+					{ id: "gamma", agent: "recon", task: "use {node.alpha} and {node.beta}", dependsOn: ["alpha", "beta"] },
+				],
+			},
+		},
+		{ recon: "node output" },
+	);
+	const spans = await readSpans(stubDir);
+	const gamma = spans.find((span) => attr(span, "flow.unit_key") === "gamma")!;
+	assert.equal(attr(gamma, "flow.depends_on"), "alpha.handoff,beta.handoff");
+	assert.equal(attr(gamma, "flow.depends_on_truncated"), undefined, "a list that fits is not truncated");
+	const rewrite = (patch: Record<string, unknown>) =>
+		spans.map((span) => (span === gamma ? { ...span, attributes: { ...span.attributes, ...patch } } : span));
+
+	// Dropping a trailing key while leaving the count and the ids intact used to
+	// read as capping, and capping skipped every key-to-id check below it.
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(rewrite({ "flow.depends_on": "alpha.handoff" }), 0, TRACE)), false);
+	// Claiming truncation on a list that is whole is the mirror image, and equally
+	// impossible: capping is the only thing that shortens it.
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(rewrite({ "flow.depends_on_truncated": true }), 0, TRACE)), false);
+	// A genuinely capped list stays acceptable, and the keys that survived are
+	// still matched to their ids: swapping them fails even under truncation.
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(rewrite({ "flow.depends_on": "alpha.handoff", "flow.depends_on_truncated": true }), 0, TRACE)), true);
+	assert.equal(
+		traceReportIsComplete(summarizeTraceSpans(rewrite({ "flow.depends_on": "beta.handoff,alpha.handoff" }), 0, TRACE)),
+		false,
+		"reordered keys no longer match their ids positionally",
+	);
+	assert.equal(String(attr(gamma, "flow.depends_on_span_ids")).split(",").length, 2);
+});
+
+test("truncation exempts only the key the cap destroyed, not the ones it left", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "map the system",
+			traceFile: TRACE,
+			concurrency: 1,
+			graph: {
+				nodes: [
+					{ id: "alpha", agent: "recon", task: "a" },
+					{ id: "beta", agent: "recon", task: "b" },
+					{ id: "gamma", agent: "recon", task: "c" },
+					{ id: "delta", agent: "recon", task: "use {node.alpha}{node.beta}{node.gamma}", dependsOn: ["alpha", "beta", "gamma"] },
+				],
+			},
+		},
+		{ recon: "node output" },
+	);
+	const spans = await readSpans(stubDir);
+	const delta = spans.find((span) => attr(span, "flow.unit_key") === "delta")!;
+	const rewrite = (patch: Record<string, unknown>) =>
+		spans.map((span) => (span === delta ? { ...span, attributes: { ...span.attributes, ...patch } } : span));
+
+	// Marked truncated, so the missing third key is excused and so is the last key
+	// present — the cap can cut mid-key. The keys before it are still checked, and
+	// here they are swapped against their ids.
+	assert.equal(
+		traceReportIsComplete(summarizeTraceSpans(rewrite({ "flow.depends_on": "beta.handoff,alpha.handoff", "flow.depends_on_truncated": true }), 0, TRACE)),
+		false,
+		"a surviving key must still match the id at its position",
+	);
+	// The same shape with the surviving keys in their real order is sound.
+	assert.equal(
+		traceReportIsComplete(summarizeTraceSpans(rewrite({ "flow.depends_on": "alpha.handoff,beta.handoff", "flow.depends_on_truncated": true }), 0, TRACE)),
+		true,
+	);
+});
+
+test("a dependency list past the structural cap is marked truncated and still passes", async () => {
+	// The one case the truncation signal exists for: enough author-supplied keys
+	// that the joined list exceeds the 8 KiB structural cap. A real run must not
+	// fail the gate because its ids were long.
+	const wide = Array.from({ length: 12 }, (_, index) => `node-${index}-${"z".repeat(900)}`);
+	const { stubDir, result } = await runFlow(
+		{
+			task: "map it",
+			traceFile: TRACE,
+			concurrency: 2,
+			graph: {
+				nodes: [
+					...wide.map((id) => ({ id, agent: "recon", task: "start" })),
+					{ id: "sink", agent: "recon", task: "combine", dependsOn: wide },
+				],
+			},
+		},
+		{ recon: "node output" },
+	);
+	assert.equal(result.details.error, undefined);
+	const spans = await readSpans(stubDir);
+	const sink = spans.find((span) => attr(span, "flow.unit_key") === "sink")!;
+	assert.equal(attr(sink, "flow.depends_on_truncated"), true, "the writer must say the list was capped");
+	assert.equal(attr(sink, "flow.depends_on_count"), wide.length);
+	assert.ok(String(attr(sink, "flow.depends_on")).split(",").length < wide.length, "the list must actually be shorter");
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+});

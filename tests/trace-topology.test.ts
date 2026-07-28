@@ -455,7 +455,10 @@ test("a failed gate links back to the draft that failed it", async () => {
 	// not stop at the verdict about it.
 	assert.equal(attr(check, "flow.depends_on"), "iteration-1.generator");
 	assert.equal(attr(check, "flow.depends_on_span_ids"), unit(spans, "iteration-1.generator")!.span_id);
-	assert.equal(attr(unit(spans, "iteration-2.generator"), "flow.depends_on"), "iteration-1.check");
+	// The revision reads the *prepared* check output, so it links the handoff that
+	// carried it, which in turn links the check that produced it.
+	assert.equal(attr(unit(spans, "iteration-2.generator"), "flow.depends_on"), "iteration-1.check.handoff");
+	assert.equal(attr(unit(spans, "iteration-1.check.handoff"), "flow.depends_on"), "iteration-1.check");
 });
 
 test("route dispatch runs through the recorded selection, not around it", async () => {

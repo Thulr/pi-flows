@@ -189,7 +189,12 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// The authoritative count. A reader must not have to infer it from a
 			// string that any cap or transform could have shortened.
 			attributes["flow.depends_on_count"] = dependsOn.length;
-			attributes["flow.depends_on"] = dependsOn.map(encodeUnitKey).join(",");
+			const joined = dependsOn.map(encodeUnitKey).join(",");
+			attributes["flow.depends_on"] = joined;
+			// Capping is the one reason a healthy run's key list is shorter than its
+			// count, so the writer says when it happens. Without that signal a reader
+			// cannot tell capping from erasure, and has to let both through.
+			if (Buffer.byteLength(joined, "utf8") > STRUCTURAL_CAP) attributes["flow.depends_on_truncated"] = true;
 			// A dependency may name a unit or a whole stage ("this debrief consumed
 			// round 2"), so both namespaces are searched, units first.
 			const resolved = dependsOn.map((key) => spanIdByKey.get(key) ?? stageSpanIdByKey.get(key)).filter((value): value is string => Boolean(value));

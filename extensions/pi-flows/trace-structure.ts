@@ -160,12 +160,19 @@ function dependenciesHold(span: TraceSpanRecord, knownIds: Set<string>, byKey: M
 	if (keys.length > expected) return false;
 	const resolved = (stringAttr(span, "flow.depends_on_span_ids") ?? "").split(",").filter(Boolean);
 	if (resolved.length !== expected || resolved.some((id) => !knownIds.has(id))) return false;
+	// Fewer keys than the count happens for exactly one legitimate reason, and the
+	// writer marks it. Unmarked, the missing keys were erased, not capped — and
+	// treating erasure as capping is what let a shortened list skip every check
+	// below. A list that is whole cannot also be truncated.
+	const truncated = optionalBoolAttr(span, "flow.depends_on_truncated") === true;
+	if (keys.length < expected !== truncated) return false;
 	// A resolved id can be rewritten to another id that exists, which passes a
-	// membership test while pointing the chain at the wrong unit. Checked
-	// positionally only when the key list arrived intact — a truncated list is
-	// unparseable, and refusing on that would fail a sound run.
-	if (keys.length < expected) return true;
-	return resolved.every((id, index) => byKey.get(keys[index])?.has(id) === true);
+	// membership test while pointing the chain at the wrong unit. The keys that
+	// survived capping are still checked positionally against their ids — all but
+	// the last, which the cap may have cut mid-key and left a fragment of. Only
+	// what the cap actually destroyed goes unchecked.
+	const checkable = truncated ? keys.slice(0, -1) : keys;
+	return checkable.every((key, index) => byKey.get(key)?.has(resolved[index]) === true);
 }
 
 /**

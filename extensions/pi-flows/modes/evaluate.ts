@@ -180,8 +180,27 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				attributes: { "flow.check.passed": check.ok, "flow.check.iteration": iteration },
 			});
 			if (!check.ok) {
+				// The command's output crosses into the next generator's prompt, so it
+				// gets the same treatment as any other feedback: capped, stripped of
+				// invisible characters, and injection-scanned. A check that prints an
+				// attacker-controlled file is no more trustworthy than an agent.
+				const checkRaw = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
+				const checkPrep = handoffWarnings.addFrom(prepareTextHandoff(checkRaw, policy));
+				critique = checkPrep.text;
 				feedbackKey = `${stage.key}.check`;
-				critique = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
+				// Only when a generator will actually read it: on the final iteration
+				// the run ends here, and recording a boundary nothing crossed would
+				// invent one.
+				if (iteration < maxIterations) {
+					recordTextHandoff(deps, {
+						fromAgent: `checkCommand:${checkCommand}`,
+						raw: checkRaw,
+						carried: critique,
+						warnings: checkPrep.warnings,
+						scope: { stage, key: `${stage.key}.check.handoff`, dependsOn: [`${stage.key}.check`] },
+					});
+					feedbackKey = `${stage.key}.check.handoff`;
+				}
 				emitLive();
 				continue;
 			}
