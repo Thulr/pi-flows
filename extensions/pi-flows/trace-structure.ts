@@ -114,13 +114,19 @@ function dependenciesHold(span: TraceSpanRecord, knownIds: Set<string>, byKey: M
 	// string any cap could have shortened would read an elision as a broken chain.
 	const keys = declared.split(",").filter(Boolean);
 	const expected = optionalNumericAttr(span, "flow.depends_on_count") ?? keys.length;
+	// Capping can only shorten the joined list, never lengthen it. More keys than
+	// the count is therefore corruption, not the truncation case below — and it is
+	// what stops a count of zero from agreeing with an emptied id list and waving
+	// through a dependency whose target has disappeared. A fractional or negative
+	// count fails here or on the length comparison, since a list has whole members.
+	if (keys.length > expected) return false;
 	const resolved = (stringAttr(span, "flow.depends_on_span_ids") ?? "").split(",").filter(Boolean);
 	if (resolved.length !== expected || resolved.some((id) => !knownIds.has(id))) return false;
 	// A resolved id can be rewritten to another id that exists, which passes a
 	// membership test while pointing the chain at the wrong unit. Checked
 	// positionally only when the key list arrived intact — a truncated list is
 	// unparseable, and refusing on that would fail a sound run.
-	if (keys.length !== expected) return true;
+	if (keys.length < expected) return true;
 	return resolved.every((id, index) => byKey.get(keys[index])?.has(id) === true);
 }
 

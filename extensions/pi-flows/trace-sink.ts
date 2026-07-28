@@ -64,12 +64,16 @@ const spanId = () => randomUUID().replace(/-/g, "");
 const ATTRIBUTE_CAP = 1024;
 
 /**
- * Dependency lists get their own, larger bound. They are machine identifiers the
- * report parses to check the attribution chain, and a truncated list would read
- * as a broken one — a valid run failing the gate because its ids were long.
+ * Structural keys get their own, larger bound. They are machine identifiers the
+ * report parses to check the attribution chain, and a truncated one would read as
+ * a broken chain — a valid run failing the gate because its ids were long.
+ *
+ * All four share the bound deliberately. A key capped on one side and intact on
+ * the other cannot be matched to itself, so capping them differently would break
+ * exactly the comparison they exist for.
  */
-const DEPENDENCY_CAP = 8 * 1024;
-const DEPENDENCY_ATTRIBUTES = new Set(["flow.depends_on", "flow.depends_on_span_ids"]);
+const STRUCTURAL_CAP = 8 * 1024;
+const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids"]);
 
 /**
  * Emit redacted OpenInference-shaped spans to JSONL: a root span, one span per
@@ -116,7 +120,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		const stored: Record<string, unknown> = {};
 		for (const [key, value] of Object.entries(attributes)) {
 			stored[key] = typeof value === "string"
-				? sanitizeText(value, { ...policy, recordContent: true }, DEPENDENCY_ATTRIBUTES.has(key) ? DEPENDENCY_CAP : ATTRIBUTE_CAP)
+				? sanitizeText(value, { ...policy, recordContent: true }, STRUCTURAL_ATTRIBUTES.has(key) ? STRUCTURAL_CAP : ATTRIBUTE_CAP)
 				: value;
 		}
 		return stored;
@@ -285,7 +289,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 						"flow.span_role": "stage",
 						"flow.mode": mode,
 						"flow.trace_label": storedTraceLabel,
-						"flow.stage_key": storedLabel(encodeUnitKey(key)),
+						"flow.stage_key": sanitizeText(encodeUnitKey(key), { ...policy, recordContent: true }, STRUCTURAL_CAP),
 						"flow.stage_span_count": stage.spans,
 						...traceContextAttributes(storedContext),
 					},

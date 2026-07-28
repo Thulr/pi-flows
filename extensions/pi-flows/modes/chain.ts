@@ -5,6 +5,10 @@ import { appendReturnContract, resolvedCwd } from "../validate.ts";
 import { renderTaskTemplate } from "../parse.ts";
 import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
+import { recordStepHandoff } from "../integration.ts";
+
+/** One place a chain step's unit key is derived, so its link and its handoff name the same unit. */
+const stepKey = (index: number) => `step-${index + 1}`;
 
 export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, policy, makeDetails, defaultCwd } = deps;
@@ -36,7 +40,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 					: {},
 				// A chain step consumed the previous step's output; the link records
 				// that without pretending the earlier step spawned this one.
-				scope: { key: `step-${index + 1}`, ...(index > 0 ? { dependsOn: [`step-${index}`] } : {}) },
+				scope: { key: stepKey(index), ...(index > 0 ? { dependsOn: [stepKey(index - 1)] } : {}) },
 			},
 		);
 		results.push(result);
@@ -54,12 +58,16 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			}
 			const handoff = prepareTextHandoff(canonicalEnvelope(validated.envelope!), policy);
 			previous = withInjectionNotice(handoff, `chain step ${index + 1} envelope`);
+			// The step validated its own envelope, so it records its own boundary:
+			// this is where one agent's output becomes the next agent's prompt.
+			recordStepHandoff(deps, { result, contract, envelope: validated.envelope, carried: previous, scope: { key: stepKey(index) } });
 			continue;
 		}
 		// {previous} is this step's output reused as the next step's prompt — a trust
 		// boundary. Strip invisible chars and flag injection markers before handoff.
 		const handoff = prepareResultHandoff(result, policy);
 		previous = withInjectionNotice(handoff, `chain step ${index + 1} output`);
+		recordStepHandoff(deps, { result, carried: previous, scope: { key: stepKey(index) } });
 	}
 
 	return {

@@ -433,3 +433,48 @@ test("a dependency must point at the unit it names, not merely at something real
 	assert.equal(report.structurallyInvalidTraces, 1);
 	assert.equal(traceReportIsComplete(report), false);
 });
+
+test("a corrupt dependency count cannot vouch for an emptied link list", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "map the system",
+			traceFile: TRACE,
+			graph: { nodes: [{ id: "alpha", agent: "recon", task: "start" }, { id: "beta", agent: "recon", task: "use {node.alpha}", dependsOn: ["alpha"] }] },
+		},
+		{ recon: "node output" },
+	);
+	const spans = await readSpans(stubDir);
+	const beta = spans.find((span) => attr(span, "flow.unit_key") === "beta")!;
+	const rewrite = (patch: Record<string, unknown>) =>
+		spans.map((span) => (span === beta ? { ...span, attributes: { ...span.attributes, ...patch } } : span));
+
+	// The count is the thing the check trusts when the joined list may have been
+	// shortened, so a corrupted count must not be able to agree with an emptied id
+	// list and wave the dependency through.
+	for (const [label, patched] of [
+		["zeroed count", rewrite({ "flow.depends_on_count": 0, "flow.depends_on_span_ids": undefined })],
+		["fractional count", rewrite({ "flow.depends_on_count": 1.5 })],
+		["count below the keys present", rewrite({ "flow.depends_on_count": 0.5 })],
+	] as const) {
+		assert.equal(traceReportIsComplete(summarizeTraceSpans(patched, 0, TRACE)), false, label);
+	}
+});
+
+test("a key long enough to be capped stays matchable on both sides", async () => {
+	// Node ids are author-supplied and unbounded. If the key is capped where it is
+	// declared but not where it is referenced, the two can no longer be matched to
+	// each other and a healthy run fails the gate.
+	const longId = `alpha-${"y".repeat(1400)}`;
+	const { stubDir, result } = await runFlow(
+		{
+			task: "map it",
+			traceFile: TRACE,
+			graph: { nodes: [{ id: longId, agent: "recon", task: "start" }, { id: "beta", agent: "recon", task: "next", dependsOn: [longId] }] },
+		},
+		{ recon: "node output" },
+	);
+	assert.equal(result.details.error, undefined);
+	const spans = await readSpans(stubDir);
+	assert.equal(attr(spans.find((span) => attr(span, "flow.unit_key") === "beta"), "flow.depends_on"), longId);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+});

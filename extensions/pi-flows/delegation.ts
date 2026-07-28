@@ -269,7 +269,7 @@ export function canonicalEnvelope(envelope: DelegationReturnEnvelope): string {
 	return JSON.stringify(envelope);
 }
 
-function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope, contract: DelegationContract): DelegationHandoffEnvelope {
+export function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope, contract: DelegationContract): DelegationHandoffEnvelope {
 	return {
 		schemaVersion: "pi-flows.handoff-envelope.v1",
 		contractId: delegationContractId(contract),
@@ -288,7 +288,7 @@ function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope,
 	};
 }
 
-function compatibilityHandoff(result: FlowRunResult, policy: CapturePolicy): DelegationHandoffEnvelope {
+export function compatibilityHandoff(result: FlowRunResult, policy: CapturePolicy): DelegationHandoffEnvelope {
 	const text = redactValue(capModelVisibleText(resultText(result)), policy) as string;
 	return {
 		schemaVersion: "pi-flows.handoff-envelope.v1",

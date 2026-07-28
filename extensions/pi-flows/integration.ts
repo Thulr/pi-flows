@@ -1,8 +1,10 @@
 import {
+	compatibilityHandoff,
 	createDelegationBudget,
 	canonicalHandoff,
 	prepareIntegrationHandoff,
 	renderDelegationTask,
+	typedHandoff,
 	validateDelegationContract,
 } from "./delegation.ts";
 import { capModelVisibleText, resultText } from "./sanitize.ts";
@@ -12,6 +14,7 @@ import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner
 import type {
 	ChildSpanScope,
 	DelegationContract,
+	DelegationHandoffEnvelope,
 	DelegationReturnEnvelope,
 	FlowAgentRefInput,
 	FlowError,
@@ -97,6 +100,72 @@ function recordArtifacts(record: RecordEvent, source: ArtifactSource, paths: str
 	}
 }
 
+/**
+ * Record a handoff boundary a mode validated itself.
+ *
+ * `chain` owns its own envelope validation and its own `{previous}` rendering,
+ * so it never reaches `acceptIntegrationResult` — but an inter-agent handoff
+ * still happens at every step, and without this the acceptance, the filtering,
+ * and the injection warnings would be missing from the trace precisely where a
+ * step's output becomes the next step's prompt.
+ */
+export function recordStepHandoff(deps: ModeDeps, options: {
+	result: FlowRunResult;
+	contract?: DelegationContract;
+	envelope?: DelegationReturnEnvelope;
+	carried: string;
+	scope?: ChildSpanScope;
+}): void {
+	const record = deps.recordEvent;
+	if (!record) return;
+	const handoff = options.contract && options.envelope
+		? typedHandoff(options.result, options.envelope, options.contract)
+		: compatibilityHandoff(options.result, deps.policy);
+	emitHandoff(record, deps, handoff, options.result, options.scope, options.carried, options.contract, undefined);
+}
+
+/** The one place a handoff boundary becomes spans, so every mode records the same shape. */
+function emitHandoff(
+	record: RecordEvent,
+	deps: ModeDeps,
+	handoff: DelegationHandoffEnvelope,
+	result: FlowRunResult,
+	scope: ChildSpanScope | undefined,
+	carried: string,
+	contract: DelegationContract | undefined,
+	rejection: FlowError | undefined,
+): void {
+	const unit = scope?.key;
+	const handoffScope: ChildSpanScope | undefined = scope
+		? { stage: scope.stage, ...(unit ? { key: `${unit}.handoff`, dependsOn: [unit] } : {}) }
+		: undefined;
+	const raw = capModelVisibleText(resultText(result));
+	record({
+		kind: "handoff",
+		name: rejection ? "handoff.rejected" : "handoff.accepted",
+		ok: !rejection,
+		scope: handoffScope,
+		attributes: handoffAttributes(handoff, {
+			accepted: !rejection,
+			rejection,
+			rawBytes: Buffer.byteLength(raw, "utf8"),
+			carriedBytes: Buffer.byteLength(carried, "utf8"),
+			warnings: scanForInjection(raw),
+			contract,
+			policy: deps.policy,
+		}),
+	});
+	recordArtifacts(
+		record,
+		{ agent: handoff.provenance.agent, contractId: handoff.contractId, digests: handoff.digests },
+		handoff.artifactReferences.map((reference) => reference.path),
+		handoffScope,
+		unit,
+		deps.policy,
+		!rejection,
+	);
+}
+
 function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult, rejection?: FlowError, rejected?: DelegationReturnEnvelope): void {
 	const record = deps.recordEvent;
 	if (!record) return;
@@ -139,32 +208,7 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 		}
 		return;
 	}
-	const raw = capModelVisibleText(resultText(result));
-	const carried = canonicalHandoff(handoff);
-	record({
-		kind: "handoff",
-		name: rejection ? "handoff.rejected" : "handoff.accepted",
-		ok: !rejection,
-		scope,
-		attributes: handoffAttributes(handoff, {
-			accepted: !rejection,
-			rejection,
-			rawBytes: Buffer.byteLength(raw, "utf8"),
-			carriedBytes: Buffer.byteLength(carried, "utf8"),
-			warnings: scanForInjection(raw),
-			contract: plan.contract,
-			policy: deps.policy,
-		}),
-	});
-	recordArtifacts(
-		record,
-		{ agent: handoff.provenance.agent, contractId: handoff.contractId, digests: handoff.digests },
-		handoff.artifactReferences.map((reference) => reference.path),
-		scope,
-		unit,
-		deps.policy,
-		true,
-	);
+	emitHandoff(record, deps, handoff, result, plan.scope, canonicalHandoff(handoff), plan.contract, rejection);
 }
 
 export function acceptIntegrationResult(
