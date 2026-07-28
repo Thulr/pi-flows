@@ -241,17 +241,25 @@ function storedError(error: FlowError, policy: CapturePolicy): FlowError {
 	return { ...error, cause: redactValue(error.cause, policy) as string };
 }
 
+/**
+ * @returns on success, the stored envelope. On rejection, the error — plus
+ *   `rejected`, the child's own claims in stored form, when the envelope was at
+ *   least structurally an envelope. A digest mismatch is exactly when those
+ *   claims matter most: the artifact it named and the digest it asserted are the
+ *   evidence of what went wrong, and discarding them loses the corruption along
+ *   with the trust.
+ */
 export function validateReturnEnvelope(
 	result: FlowRunResult,
 	contract: DelegationContract,
 	cwd: string,
 	policy: CapturePolicy,
 	options: { requireContractIdentity?: boolean } = {},
-): { envelope?: DelegationReturnEnvelope; error?: FlowError } {
+): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	const parsed = extractLastJsonBlock(takeRawFinalAssistantText(result) ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
 	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd, options.requireContractIdentity ?? false);
-	if (validationError) return { error: storedError(validationError, policy) };
+	if (validationError) return { error: storedError(validationError, policy), rejected: storedEnvelope(parsed, policy) };
 	const envelope = storedEnvelope({ ...parsed, usage: result.usage }, policy);
 	result.envelope = envelope;
 	return { envelope };
@@ -406,11 +414,11 @@ export function prepareIntegrationHandoff(
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
 	},
-): { handoff?: DelegationHandoffEnvelope; error?: FlowError } {
+): { handoff?: DelegationHandoffEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	let handoff: DelegationHandoffEnvelope;
 	if (options.contract) {
 		const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy, { requireContractIdentity: true });
-		if (validated.error) return { error: validated.error };
+		if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
 		handoff = typedHandoff(result, validated.envelope!, options.contract);
 	} else {
 		handoff = compatibilityHandoff(result, options.policy);

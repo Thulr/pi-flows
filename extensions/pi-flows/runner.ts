@@ -126,7 +126,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				// Named against the ceiling that actually refused, so a contract-bound
 				// refusal is not reported as a flow-budget one.
 				"flow.budget.authority": exhaustedBudget === options.contractBudget ? "contract" : "flow",
-				...budgetAttributes(exhaustedBudget),
+				// Prefixed by the ceiling that actually refused: reporting a contract
+				// limit under `flow.budget.*` would attribute it to a budget that in a
+				// contract-only run does not exist.
+				...budgetAttributes(exhaustedBudget, exhaustedBudget === options.contractBudget ? "flow.contract_budget" : "flow.budget"),
 			},
 		});
 		return makeEmptyRunResult(options.agentName, options.task, policy, budgetExceededError(exhaustedBudget));
@@ -381,7 +384,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				attributes: {
 					"flow.budget.terminated_agent": agent.name,
 					"flow.budget.authority": (terminatingBudget ?? options.budget) === options.contractBudget ? "contract" : "flow",
-					...budgetAttributes(terminatingBudget ?? options.budget),
+					...budgetAttributes(
+						terminatingBudget ?? options.budget,
+						(terminatingBudget ?? options.budget) === options.contractBudget ? "flow.contract_budget" : "flow.budget",
+					),
 				},
 			});
 		}

@@ -143,14 +143,28 @@ export function handoffAttributes(handoff: DelegationHandoffEnvelope, accounting
 	return attributes;
 }
 
-/** One artifact the handoff pointed at, with the digest that was checked against it. */
-export function artifactAttributes(handoff: DelegationHandoffEnvelope, artifactPath: string, policy: CapturePolicy): Record<string, unknown> {
-	const digest = handoff.digests.find((entry) => entry.artifact === artifactPath);
+/** Whatever declared the artifact: an accepted handoff, or the rejected envelope whose claims are the evidence of what went wrong. */
+export interface ArtifactSource {
+	agent: string;
+	contractId: string | null;
+	digests: Array<{ artifact: string; algorithm: string; value: string }>;
+}
+
+/**
+ * One artifact a child pointed at, with the digest it asserted.
+ *
+ * `verified` is the load-bearing field: an artifact recorded from a rejected
+ * envelope carries the child's own claim about a file that did not match it, and
+ * a reader must not mistake that for a checked digest.
+ */
+export function artifactAttributes(source: ArtifactSource, artifactPath: string, policy: CapturePolicy, verified = true): Record<string, unknown> {
+	const digest = source.digests.find((entry) => entry.artifact === artifactPath);
 	return {
 		...(policy.recordContent ? { "flow.artifact.path": label(artifactPath, policy, LIST_CAP) } : {}),
-		"flow.artifact.from_agent": label(handoff.provenance.agent, policy),
-		"flow.artifact.contract_id": handoff.contractId ?? "(legacy)",
+		"flow.artifact.from_agent": label(source.agent, policy),
+		"flow.artifact.contract_id": source.contractId ?? "(legacy)",
 		"flow.artifact.digest_declared": Boolean(digest),
+		"flow.artifact.verified": verified,
 		...(digest ? { "flow.artifact.digest": `${digest.algorithm}:${digest.value}` } : {}),
 	};
 }

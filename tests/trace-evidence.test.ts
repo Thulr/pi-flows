@@ -546,8 +546,80 @@ test("the strict gate validates its own inputs, not just the spans they describe
 	const ambiguous = summarizeTraceSpans([secondRoot, ...spans] as TraceSpanRecord[], 0, TRACE);
 	assert.equal(ambiguous.structurallyInvalidTraces, 1);
 	assert.equal(traceReportIsComplete(ambiguous), false);
-	assert.match(formatTraceReport(ambiguous), /1 with more than one root/);
+	assert.match(formatTraceReport(ambiguous), /1 structurally invalid/);
 	// The declared root still wins for the metrics, so the report is diagnosable
 	// rather than merely refused.
 	assert.equal(ambiguous.executionSuccesses, 1);
+});
+
+test("a span whose parent was cut is a broken tree, not a complete one", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+
+	// Every count still agrees — unique ids, expected row count, nothing dropped.
+	// What is gone is the tree, which is the thing the topology exists to record.
+	const repoint = (patch: (span: TraceSpanRecord) => TraceSpanRecord) =>
+		spans.map((span) => (role(span) === "child" ? patch(span) : span));
+	for (const [label, broken] of [
+		["stripped", repoint((span) => ({ ...span, parent_span_id: undefined }))],
+		["blank", repoint((span) => ({ ...span, parent_span_id: "  " }))],
+		["unknown", repoint((span) => ({ ...span, parent_span_id: "no-such-span" }))],
+	] as const) {
+		const report = summarizeTraceSpans(broken, 0, TRACE);
+		assert.equal(report.observedSpans, spans.length, `${label}: the counts are untouched`);
+		assert.equal(report.droppedSpans, 0, `${label}: nothing looks missing`);
+		assert.equal(report.structurallyInvalidTraces, 1, `${label}: the tree is broken`);
+		assert.equal(traceReportIsComplete(report), false, `${label} must not pass the gate`);
+	}
+
+	// A root that acquired a parent is the same corruption from the other end.
+	const rootedRoot = spans.map((span) => (span.parent_span_id === null ? { ...span, parent_span_id: "somewhere-else" } : span));
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(rootedRoot, 0, TRACE)), false);
+});
+
+test("a rejected digest keeps the artifact claim that proves the corruption", async () => {
+	const { stubDir, result } = await runFlow(
+		{ task: "write it", traceFile: TRACE, contract, tasks: [{ agent: "operator", task: "write the note" }] },
+		{
+			operator: {
+				writes: { "note.txt": "genuine\n" },
+				reply: envelope({ answer: "note.txt" }, {
+					artifactReferences: [{ path: "note.txt" }],
+					digests: [{ artifact: "note.txt", algorithm: "sha256", value: "0".repeat(64) }],
+				}),
+			},
+		},
+	);
+	assert.equal(result.details.error?.code, "RETURN_DIGEST_MISMATCH");
+	const spans = await readSpans(stubDir);
+	const artifact = spans.find((span) => attr(span, "flow.event_kind") === "artifact")!;
+	// The artifact and the digest the child asserted are what a reader needs to see
+	// what was claimed — dropping them loses the corruption along with the trust.
+	assert.equal(attr(artifact, "flow.event_name"), "artifact.rejected");
+	assert.equal(attr(artifact, "flow.artifact.path"), "note.txt");
+	assert.match(String(attr(artifact, "flow.artifact.digest")), /^sha256:0{64}$/);
+	// And it must not read as a checked digest, because checking it is what failed.
+	assert.equal(attr(artifact, "flow.artifact.verified"), false);
+	assert.equal(artifact.status?.code, "ERROR");
+	assert.equal(attr(spans.find((span) => attr(span, "flow.event_name") === "handoff.rejected"), "flow.handoff.artifact_count"), 1);
+});
+
+test("a contract-bound termination is reported against the contract, not a budget that does not exist", async () => {
+	const { stubDir, result } = await runFlow(
+		{ agent: "operator", task: "write at length", traceFile: TRACE, contract: { ...contract, budget: { maxGeneratedTokens: 4 } } },
+		{ operator: envelope() },
+	);
+	assert.equal(result.details.results[0].error?.code, "BUDGET_EXCEEDED");
+	const event = (await readSpans(stubDir)).find((span) => attr(span, "flow.event_kind") === "budget")!;
+	assert.equal(attr(event, "flow.event_name"), "child.exhausted");
+	assert.equal(attr(event, "flow.budget.authority"), "contract");
+	// The ceiling that stopped the child belongs under the prefix that names it:
+	// with no flow-level budget configured, `flow.budget.*` would attribute the
+	// contract's limit to something the run never had.
+	assert.equal(attr(event, "flow.contract_budget.limit_generated_tokens"), 4);
+	assert.equal(attr(event, "flow.budget.limit_generated_tokens"), undefined);
 });

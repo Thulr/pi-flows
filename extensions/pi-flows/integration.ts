@@ -7,17 +7,19 @@ import {
 } from "./delegation.ts";
 import { capModelVisibleText, resultText } from "./sanitize.ts";
 import { scanForInjection } from "./sanitize.ts";
-import { artifactAttributes, handoffAttributes } from "./trace-attributes.ts";
+import { artifactAttributes, handoffAttributes, type ArtifactSource } from "./trace-attributes.ts";
 import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner.ts";
 import type {
 	ChildSpanScope,
 	DelegationContract,
+	DelegationReturnEnvelope,
 	FlowAgentRefInput,
 	FlowError,
 	FlowMode,
 	FlowRunResult,
 	IncompleteHandoffPolicy,
 	ModeDeps,
+	RecordEvent,
 } from "./types.ts";
 import { appendReturnContract, resolvedCwd } from "./validate.ts";
 
@@ -83,7 +85,19 @@ export function runIntegrationPlan(deps: ModeDeps, plan: IntegrationRunPlan, mod
  * corrupted or unverifiable artifact is attributable to the hop that carried it
  * rather than to the synthesis that later used it.
  */
-function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult, rejection?: FlowError): void {
+function recordArtifacts(record: RecordEvent, source: ArtifactSource, paths: string[], scope: ChildSpanScope | undefined, unit: string | undefined, policy: ModeDeps["policy"], verified: boolean): void {
+	for (const [index, path] of paths.entries()) {
+		record({
+			kind: "artifact",
+			name: verified ? "artifact.referenced" : "artifact.rejected",
+			ok: verified,
+			scope: scope && unit ? { stage: scope.stage, key: `${unit}.artifact-${index + 1}`, dependsOn: [`${unit}.handoff`] } : scope,
+			attributes: artifactAttributes(source, path, policy, verified),
+		});
+	}
+}
+
+function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result: FlowRunResult, rejection?: FlowError, rejected?: DelegationReturnEnvelope): void {
 	const record = deps.recordEvent;
 	if (!record) return;
 	const handoff = result.handoff;
@@ -106,8 +120,23 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 				"flow.handoff.acceptance": `rejected:${rejection?.code ?? "unknown"}`,
 				"flow.error_code": rejection?.code,
 				"flow.handoff.retryable": rejection?.retryable ?? false,
+				"flow.handoff.artifact_count": rejected?.artifactReferences.length ?? 0,
 			},
 		});
+		// A rejected envelope's artifact claims are the evidence of the corruption,
+		// so they are recorded — marked unverified, because the digest is exactly
+		// what failed.
+		if (rejected) {
+			recordArtifacts(
+				record,
+				{ agent: result.agent, contractId: rejected.contractId ?? null, digests: rejected.digests },
+				rejected.artifactReferences.map((reference) => reference.path),
+				scope,
+				unit,
+				deps.policy,
+				false,
+			);
+		}
 		return;
 	}
 	const raw = capModelVisibleText(resultText(result));
@@ -127,14 +156,15 @@ function recordHandoffEvidence(deps: ModeDeps, plan: IntegrationRunPlan, result:
 			policy: deps.policy,
 		}),
 	});
-	for (const [index, reference] of handoff.artifactReferences.entries()) {
-		record({
-			kind: "artifact",
-			name: "artifact.referenced",
-			scope: scope && unit ? { stage: scope.stage, key: `${unit}.artifact-${index + 1}`, dependsOn: [`${unit}.handoff`] } : scope,
-			attributes: artifactAttributes(handoff, reference.path, deps.policy),
-		});
-	}
+	recordArtifacts(
+		record,
+		{ agent: handoff.provenance.agent, contractId: handoff.contractId, digests: handoff.digests },
+		handoff.artifactReferences.map((reference) => reference.path),
+		scope,
+		unit,
+		deps.policy,
+		true,
+	);
 }
 
 export function acceptIntegrationResult(
@@ -149,7 +179,7 @@ export function acceptIntegrationResult(
 		policy: deps.policy,
 		incompletePolicy,
 	});
-	recordHandoffEvidence(deps, plan, result, prepared.error);
+	recordHandoffEvidence(deps, plan, result, prepared.error, prepared.rejected);
 	return prepared.error ?? null;
 }
 

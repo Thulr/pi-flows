@@ -238,12 +238,22 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// duplicates another leaves the row count intact, and a completeness check
 		// built on length would call that trace whole.
 		const identified = traceSpans.filter((span) => typeof span.span_id === "string" && span.span_id.trim());
-		const uniqueIds = new Set(identified.map((span) => span.span_id as string)).size;
+		const identifiedIds = identified.map((span) => span.span_id as string);
+		const uniqueIds = new Set(identifiedIds).size;
 		const duplicateSpans = identified.length - uniqueIds;
 		// A row with no span id is not a span anyone can use, and counting it would
 		// let a stripped row stand in for the one that went missing.
 		const malformedSpans = traceSpans.length - identified.length;
 		const observedSpans = uniqueIds;
+		// A span whose parent was stripped or repointed is still a well-formed row
+		// with a unique id, so nothing above notices it — but the tree it belonged
+		// to no longer holds together, and that is what the topology is for.
+		const knownIds = new Set(identifiedIds);
+		const orphanedChildren = traceSpans.filter((span) =>
+			stringAttr(span, "flow.span_role") !== undefined
+			&& span.parent_span_id !== null
+			&& (typeof span.parent_span_id !== "string" || !span.parent_span_id.trim() || !knownIds.has(span.parent_span_id))).length;
+		const disconnected = orphanedChildren > 0 || (declaredRoot !== undefined && declaredRoot.parent_span_id !== null);
 		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
 
 		const delta: TraceReportBucket = {
@@ -273,11 +283,11 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			// read-back verdict and a live one cannot disagree. A duplicated or
 			// unidentifiable row is its own disqualification: nothing downstream can
 			// tell which copy is real, or what an id-less row was meant to be.
-			incompleteTraces: expectationLost || ambiguousRoot || duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
+			incompleteTraces: expectationLost || ambiguousRoot || disconnected || duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
 				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
 				Boolean(root),
 			) !== "recorded" ? 1 : 0,
-			structurallyInvalidTraces: ambiguousRoot ? 1 : 0,
+			structurallyInvalidTraces: ambiguousRoot || disconnected ? 1 : 0,
 			coordinationEvents: eventSpans.length,
 			stageSpans: stageSpans.length,
 		};
@@ -334,7 +344,7 @@ export function formatTraceReport(report: TraceReport): string {
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
-		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} with more than one root` : ""}`,
+		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} structurally invalid` : ""}`,
 		`Topology: ${report.stageSpans} stage span${report.stageSpans === 1 ? "" : "s"}, ${report.coordinationEvents} coordination event${report.coordinationEvents === 1 ? "" : "s"}`,
 	];
 	if (report.parseErrors) lines.push(`Parse errors: ${report.parseErrors}`);
