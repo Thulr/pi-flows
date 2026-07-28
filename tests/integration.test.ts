@@ -670,7 +670,7 @@ test("flow-scoped command timeouts prefer the mode override, then the flow timeo
 test("monitor interval keeps a standalone Node process alive while awaited", () => {
 	const modulePath = fileURLToPath(new URL("../extensions/pi-flows/modes/monitor.ts", import.meta.url));
 	const script = `import { waitForMonitorInterval } from ${JSON.stringify(modulePath)}; await waitForMonitorInterval(20); process.stdout.write("done");`;
-	const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { encoding: "utf8", timeout: 5_000 });
+	const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { encoding: "utf8", timeout: 60_000 }); // clears tsx's cold start, not the 20ms wait: an early exit fails on stdout, not the clock
 	assert.equal(child.status, 0, child.stderr);
 	assert.equal(child.stdout, "done");
 });
