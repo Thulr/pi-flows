@@ -82,7 +82,7 @@ process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 // Load a local .env (provider keys) if present, before any child pi inherits env.
 loadDotenv();
 
-const { flag, has, bool, flags, positiveNumberFlag, positiveIntegerFlag } = createFlagReader(process.argv.slice(2));
+const { flag, has, bool, flags, rateFlag, positiveNumberFlag, positiveIntegerFlag } = createFlagReader(process.argv.slice(2));
 
 const cliModel = flag("model", null);
 const model = cliModel ?? DEFAULT_EVAL_MODEL;
@@ -128,10 +128,10 @@ const noiseBand = Number(flag("noise-band", "0.05"));
 // shipped set can clear it, so this cannot quietly become unreachable. Opt out
 // per run with --critical-dimension=none.
 const criticalDimensions = resolveCriticalDimensions(flags("critical-dimension"));
-const criticalMissRateCap = Number(flag("critical-miss-rate", String(DEFAULT_CRITICAL_MISS_RATE_CAP)));
+const criticalMissRateCap = rateFlag("critical-miss-rate", DEFAULT_CRITICAL_MISS_RATE_CAP);
 // Judge scores this close to the 0.5 decision boundary abstain and escalate to
 // human review instead of voting, so the judge is never scored on a coin flip.
-const abstentionBand = Number(flag("abstention-band", "0.1"));
+const abstentionBand = rateFlag("abstention-band", 0.1);
 // Emit-the-trace-and-stop: the command-template mode `thulr run-experiment` and
 // `thulr optimize` drive ("the template MUST emit a structured JSONL trace to {out}").
 const traceOnly = has("trace-only");
@@ -361,7 +361,7 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }
 		summaries: [...summaries, ...calibrationSummaries],
 		verdicts,
 		keyInputs: { judgeModel, judgeSamples: samples, judgeBin, evalSet, promptVersion: PROMPT_VERSION, configVersion: CONFIG_VERSION },
-		reviewsPath: reviews,
+		reviews: { path: reviews, explicit: Boolean(reviewsFlag) },
 		criticalDimensions,
 		criticalMissRateCap,
 		abstentionBand,

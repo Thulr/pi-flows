@@ -14,6 +14,7 @@ import {
 	calibrationKey,
 	calibrationKeyDrift,
 	formatCalibrationKeyDrift,
+	groundTruthDigest,
 	rubricDigest,
 	thresholdFingerprint,
 	traceAttributeDigest,
@@ -64,6 +65,7 @@ const KEY_INPUTS = {
 	promptVersion: "pi-flows@0.3.0",
 	configVersion: "pi-flows-eval:agent-frontmatter",
 	rubric: "aaaaaaaaaaaaaaaa",
+	groundTruth: "eeeeeeeeeeeeeeee",
 	thresholds: thresholdFingerprint({ noiseBand: 0.05 }),
 	traceSchemaVersion: "pi-flows.eval-trace.v1",
 	traceSerialization: "bbbbbbbbbbbbbbbb",
@@ -87,6 +89,7 @@ test("changing any key input invalidates the prior calibration and names what mo
 		promptVersion: "pi-flows@0.4.0",
 		configVersion: "pi-flows-eval:anthropic/claude-haiku-4-5",
 		rubric: "cccccccccccccccc",
+		groundTruth: "ffffffffffffffff",
 		thresholds: thresholdFingerprint({ noiseBand: 0.2 }),
 		traceSchemaVersion: "pi-flows.eval-trace.v2",
 		traceSerialization: "dddddddddddddddd",
@@ -110,6 +113,16 @@ test("a threshold fingerprint ignores guardrail ordering but not guardrail membe
 	assert.notDeepEqual(left, thresholdFingerprint({ noiseBand: 0.05, scoreGuardrails: ["a"], criticalDimensions: ["criterion"] }));
 });
 
+test("ground truth and grading text are separate signals", () => {
+	const base = [{ id: "a", criterion: "Finds the bug.", labels: { criterion: false } }];
+	// Each digest must move for its own kind of change and stay put for the other,
+	// or a drift report cannot say which one happened.
+	assert.notEqual(groundTruthDigest([{ ...base[0], labels: { criterion: true } }]), groundTruthDigest(base));
+	assert.equal(groundTruthDigest([{ ...base[0], criterion: "Reworded." }]), groundTruthDigest(base));
+	assert.equal(rubricDigest([{ ...base[0], labels: { criterion: true } }]), rubricDigest(base));
+	assert.notEqual(rubricDigest([{ ...base[0], criterion: "Reworded." }]), rubricDigest(base));
+});
+
 test("the rubric digest tracks the grading instructions and nothing else", () => {
 	const cases = [{ id: "a", criterion: "Finds the bug.", criteria: { evidence_quality: "Cites a path." } }];
 	const base = rubricDigest(cases);
@@ -117,6 +130,7 @@ test("the rubric digest tracks the grading instructions and nothing else", () =>
 	assert.notEqual(base, rubricDigest([{ ...cases[0], criterion: "Finds the bug and explains it." }]));
 	assert.notEqual(base, rubricDigest([{ ...cases[0], criteria: { evidence_quality: "Cites a path and a line." } }]));
 	assert.notEqual(base, rubricDigest([{ ...cases[0], judgeOnlyDimensions: ["evidence_quality"] }]));
+	assert.equal(base, rubricDigest([{ ...cases[0], labels: { criterion: false } }]), "labels are ground truth, not grading text");
 });
 
 test("the trace serialization digest tracks what the judge is told, not what it is told about", () => {
@@ -672,5 +686,13 @@ test("assessCalibration writes a versioned artifact and detects drift against it
 	const reworded = { ...corpus, measurement: [{ ...corpus.measurement[0], criterion: "Finds it, and explains why." }, corpus.measurement[1]] };
 	const drifted = assessCalibration({ ...options, corpus: reworded });
 	assert.equal(drifted.report.drift.status, "stale");
-	assert.deepEqual(drifted.report.drift.changed, ["rubric"], "rewording a rubric invalidates the calibration measured against the old one");
+	assert.deepEqual(drifted.report.drift.changed, ["rubric"], "rewording a rubric invalidates the calibration measured against the old one, and says so precisely");
+
+	// Re-store the base key first: drift is measured against whatever the previous
+	// run wrote, and the reworded run above left a reworded key behind.
+	assessCalibration(options);
+	const relabelled = { ...corpus, measurement: [{ ...corpus.measurement[0], labels: { criterion: false } }, corpus.measurement[1]] };
+	const truthDrift = assessCalibration({ ...options, corpus: relabelled });
+	assert.equal(truthDrift.report.drift.status, "stale");
+	assert.deepEqual(truthDrift.report.drift.changed, ["groundTruth"], "relabelling a case moves ground truth, not the rubric");
 });

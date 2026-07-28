@@ -8,12 +8,8 @@ import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { acceptIntegrationResult, integrationRunPlan } from "../integration.ts";
-import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, consumeApprovalReceipt, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
-
-/** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
-const APPROVER_LABEL_CAP = 256;
-
-const WORKFLOW_STATE_VERSION = 3;
+import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
+import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 
 interface WorkflowState {
 	version: typeof WORKFLOW_STATE_VERSION;
@@ -42,118 +38,6 @@ function renderPhaseTask(template: string, task: string | undefined, previous: s
 		rendered = rendered.replace(new RegExp(`\\{phase\\.${escapeRegExp(id)}\\}`, "g"), output);
 	}
 	return rendered;
-}
-
-/**
- * Which approval, if any, authorizes entering each step. An approval authorizes
- * ONE action, but that action spans every step between it and the next consent
- * point: the work phases it gates, the approval that ends the run, and the
- * workflow's own completion when nothing else follows. Every one of those steps
- * is registered, so a resume landing in the middle of a gated run still
- * re-verifies rather than walking in behind a check it never reached.
- */
-function approvalAuthorizations(phases: any[]): Map<string, number> {
-	const authorizations = new Map<string, number>();
-	for (const [index, phase] of phases.entries()) {
-		if (!phase?.approval?.message) continue;
-		let step = index + 1;
-		for (; step < phases.length; step += 1) {
-			authorizations.set(phases[step].id, index);
-			if (phases[step]?.approval?.message) break;
-		}
-		if (step >= phases.length) authorizations.set(WORKFLOW_COMPLETE_STEP, index);
-	}
-	return authorizations;
-}
-
-/** The action id an approval phase authorizes. The single source for both the binding and the consumption record. */
-const approvalActionId = (phase: any): string => `workflow.phase:${phase.id}`;
-
-/**
- * Receipt failures a human can simply answer again: the approved action changed,
- * or the window lapsed. Asking for consent afresh is the intended recovery, and
- * without it an expired receipt strands the state file — the approval phase is
- * already complete, so it is skipped, and every resume re-reads the same dead
- * receipt. A consumed or malformed receipt is NOT here: those mean the record was
- * tampered with, and re-prompting past them would launder the tampering.
- */
-const REAPPROVABLE_RECEIPT_ERRORS = new Set(["APPROVAL_RECEIPT_STALE", "APPROVAL_RECEIPT_EXPIRED"]);
-
-/**
- * A gated phase's EFFECTIVE definition — what it resolves to once flow-level
- * fallbacks are applied. The workflow digest sees `phase.returnContract`; only
- * this sees that an omitted one falls back to `params.returnContract`, so
- * changing the fallback after approval is caught rather than inherited.
- */
-function normalizeGatedPhase(phase: any, params: any): Record<string, unknown> {
-	return {
-		id: phase.id,
-		agent: phase.agent ?? null,
-		task: phase.task ?? null,
-		cwd: phase.cwd ?? null,
-		model: phase.model ?? null,
-		tier: phase.tier ?? null,
-		tools: phase.tools ?? null,
-		checkCommand: phase.checkCommand ?? null,
-		contract: phase.contract ?? null,
-		returnContract: phase.returnContract ?? params.returnContract ?? null,
-		requireEvidence: phase.requireEvidence ?? params.requireEvidence ?? false,
-	};
-}
-
-/**
- * The debrief's EFFECTIVE parameters. Bound only when the approval gates the
- * workflow's completion, because only then does the debrief run under it — and
- * these three resolve from top-level params the workflow digest never sees, so
- * without this a trailing approval could be granted and the debrief then run
- * under a contract the operator never approved.
- */
-function normalizeGatedDebrief(params: any): Record<string, unknown> | null {
-	if (!params.workflow?.debrief?.agent) return null;
-	return {
-		contract: params.contract ?? null,
-		returnContract: params.returnContract ?? null,
-		requireEvidence: params.requireEvidence ?? false,
-	};
-}
-
-/**
- * What an approval phase actually authorizes: the contiguous run of work phases
- * between it and the next approval — plus the debrief, when that run reaches the
- * end of the workflow — under the agent scope and handoff policy in force when
- * consent was given. Recomputed from the live spec on every use, so the receipt
- * is checked against what would run now, not against whatever the state file
- * claims was approved.
- */
-function approvalBindingFor(phases: any[], index: number, deps: ModeDeps, digest: string): ApprovalBinding {
-	const gated: any[] = [];
-	let next = index + 1;
-	for (; next < phases.length && !phases[next]?.approval?.message; next += 1) gated.push(phases[next]);
-	return {
-		action: approvalActionId(phases[index]),
-		parameters: {
-			approvalMessage: phases[index].approval.message,
-			agentScope: deps.agentScope,
-			incompleteHandoffPolicy: deps.params.incompleteHandoffPolicy ?? "fail",
-			gatedPhases: gated.map((phase) => normalizeGatedPhase(phase, deps.params)),
-			debrief: next >= phases.length ? normalizeGatedDebrief(deps.params) : null,
-		},
-		requestedBy: "flow:workflow",
-		workflowDigest: digest,
-		stateVersion: WORKFLOW_STATE_VERSION,
-	};
-}
-
-/**
- * Burn the receipt that authorized an action, once that action has begun. The
- * consumer is the ACTION, not the individual step, so a gated run of several
- * phases spends one approval once rather than needing one per phase.
- */
-function consumeAuthorization(state: WorkflowState, phases: any[], authorizedBy: number | undefined): void {
-	if (authorizedBy === undefined) return;
-	const approvalId = phases[authorizedBy].id;
-	const receipt = state.receipts[approvalId];
-	if (receipt) state.receipts[approvalId] = consumeApprovalReceipt(receipt, approvalActionId(phases[authorizedBy]));
 }
 
 function stateError(deps: ModeDeps, results: FlowRunResult[], error: FlowError, state?: WorkflowState): ModeOutput {
@@ -297,10 +181,25 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				// again in this same pass; headless runs still fail closed below.
 				const binding = approvalBindingFor(phases, phaseIndex, deps, digest);
 				const stale = verifyApprovalReceipt(state.receipts[phase.id], binding, { consumer: binding.action });
-				if (stale && REAPPROVABLE_RECEIPT_ERRORS.has(stale.code)) {
+				// Reopening is only safe while none of the gated run has happened. Once
+				// part of it has, a fresh receipt would claim to authorize work that
+				// actually ran under the old parameters — one receipt describing two
+				// different actions — and would erase the receipt that authorized the
+				// completed half. That is a judgement call for a person, not a retry.
+				if (stale && REAPPROVABLE_RECEIPT_ERRORS.has(stale.code) && !gatedRunStarted(phases, phaseIndex, state.completedPhaseIds)) {
 					reapprovalCause = stale.cause;
 					state.completedPhaseIds = state.completedPhaseIds.filter((id) => id !== phase.id);
 					delete state.receipts[phase.id];
+				} else if (stale && REAPPROVABLE_RECEIPT_ERRORS.has(stale.code)) {
+					state.status = "failed";
+					state.updatedAt = new Date().toISOString();
+					await persistState(stateFile, state);
+					return stateError(deps, results, flowError(
+						stale.code,
+						`The approval for "${binding.action}" no longer matches, and part of what it authorized has already run.`,
+						`${stale.cause} Phases ${gatedPhaseIds(phases, phaseIndex).filter((id) => state.completedPhaseIds.includes(id)).join(", ")} already ran under the parameters that were approved, so re-approving now would authorize a mix of old and new.`,
+						"Restore the parameters that were approved and resume, or start a fresh run so the whole gated sequence executes under one approval.",
+					), state);
 				} else {
 					previous = state.outputs[phase.id] ?? previous;
 					continue;
@@ -363,12 +262,12 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			// Consent becomes a receipt bound to exactly what it authorizes. It is
 			// minted unconsumed: it says the action may run, not that it has.
 			const receipt = issueApprovalReceipt(approvalBindingFor(phases, phaseIndex, deps, digest), {
-				approvedBy: sanitizeText(deps.approvalActor ?? DEFAULT_APPROVAL_ACTOR, { ...policy, recordContent: true }, APPROVER_LABEL_CAP),
+				approvedBy: approverLabel(deps, policy, DEFAULT_APPROVAL_ACTOR),
 				ttlMs: approvalTtl.ttlMs,
 			});
 			state.receipts[phase.id] = receipt;
 			state.completedPhaseIds.push(phase.id);
-			consumeAuthorization(state, phases, authorizedBy);
+			consumeAuthorization(state.receipts, phases, authorizedBy);
 			state.outputs[phase.id] = `APPROVED (receipt ${receipt.receiptId})`;
 			previous = state.outputs[phase.id];
 			state.updatedAt = new Date().toISOString();
@@ -412,7 +311,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		state.completedPhaseIds.push(phase.id);
-		consumeAuthorization(state, phases, authorizedBy);
+		consumeAuthorization(state.receipts, phases, authorizedBy);
 		state.handoffs[phase.id] = run.handoff!;
 		state.attestations[phase.id] = createPersistedHandoffAttestation(run.handoff!);
 		state.outputs[phase.id] = params.recordContent === false ? "[content not recorded]" : output;
@@ -433,7 +332,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			await persistState(stateFile, state);
 			return stateError(deps, results, receiptError, state);
 		}
-		consumeAuthorization(state, phases, tailApproval);
+		consumeAuthorization(state.receipts, phases, tailApproval);
 	}
 
 	let finalText = previous;

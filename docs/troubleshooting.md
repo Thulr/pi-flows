@@ -300,6 +300,11 @@ and asks again, naming what changed. Restoring the approved parameters is not
 enough on its own: reopening discards consent that no longer held, so the phase
 still needs a fresh approval.
 
+If part of the gated run already executed, the approval is **not** reopened and
+this stays a hard refusal naming the phases that ran. Restore the parameters that
+were approved and resume, or start a fresh run so the whole gated sequence
+executes under one approval.
+
 ### `APPROVAL_RECEIPT_EXPIRED`
 
 Cause: the resume arrived after the approval's window closed, before the

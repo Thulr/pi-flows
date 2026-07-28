@@ -12,10 +12,12 @@
 // stale with the changed inputs named. Invalidation is derived, not remembered:
 // there is no "remember to bump the version" step to forget.
 //
-// Two of the inputs are computed rather than declared, so a change cannot slip
+// Three of the inputs are computed rather than declared, so a change cannot slip
 // past by not editing a constant: `rubric` hashes the criteria text every case
-// puts in front of the judge, and `traceSerialization` hashes the attribute keys
-// the trace projection actually emits.
+// puts in front of the judge, `groundTruth` hashes the per-split label digests,
+// and `traceSerialization` hashes the attribute keys the trace projection emits.
+// Rubric and ground truth are separate on purpose — rewording a criterion and
+// relabelling a case are different changes, and a drift report should say which.
 import { createHash } from "node:crypto";
 
 export const CALIBRATION_KEY_SCHEMA_VERSION = "pi-flows.calibration-key.v1";
@@ -36,6 +38,7 @@ export const CALIBRATION_KEY_INPUTS = [
 	"promptVersion",
 	"configVersion",
 	"rubric",
+	"groundTruth",
 	"thresholds",
 	"traceSchemaVersion",
 	"traceSerialization",
@@ -68,6 +71,27 @@ export function rubricDigest(cases) {
 		};
 	}
 	return canonicalDigest(rubrics);
+}
+
+/**
+ * A digest over what the cases declare to be TRUE, kept separate from the rubric
+ * digest on purpose: rewording a criterion and relabelling a case are different
+ * changes with different fixes, and a drift report is only useful if it can say
+ * which one happened.
+ */
+export function groundTruthDigest(cases) {
+	const truth = {};
+	for (const testCase of cases ?? []) {
+		const id = testCase.id ?? testCase.name;
+		if (!id) continue;
+		truth[id] = {
+			calibrationLabels: testCase.calibrationLabels ?? null,
+			labels: testCase.labels ?? null,
+			objective: testCase.objective ?? null,
+			judgeOnlyDimensions: [...(testCase.judgeOnlyDimensions ?? [])].sort(),
+		};
+	}
+	return canonicalDigest(truth);
 }
 
 /**

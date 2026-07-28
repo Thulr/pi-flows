@@ -12,6 +12,7 @@
 //   const dryRun = bool("dry-run");             // --dry-run only, never --dry-run=x
 //   const guards = flags("efficiency-guardrail");  // repeatable + comma-separated
 //   const armTimeoutMs = positiveNumberFlag("arm-timeout");  // null when absent
+//   const cap = rateFlag("critical-miss-rate", 0.35);        // validated 0..1
 
 // A malformed millisecond flag is a usage error, not a measurement result: print
 // the offending flag and exit 2 (the harness's "bad invocation" code). Injectable
@@ -41,6 +42,20 @@ export function createFlagReader(argv, { onInvalid = exitOnInvalid } = {}) {
 	const flags = (name) => argv
 		.filter((a) => a.startsWith(`--${name}=`))
 		.flatMap((a) => a.slice(name.length + 3).split(",").map((x) => x.trim()).filter(Boolean));
+	/**
+	 * A rate flag in 0..1, or `fallback` when absent. A typo must never silently
+	 * disable a guard: `Number("oops")` is NaN, and every `bound > NaN` comparison
+	 * is false, so an unvalidated rate turns a release gate off without a word.
+	 */
+	const rateFlag = (name, fallback) => {
+		if (!has(name)) return fallback;
+		const raw = flag(name, "");
+		const value = Number(raw);
+		if (String(raw).trim() === "" || !Number.isFinite(value) || value < 0 || value > 1) {
+			return onInvalid(`--${name} must be a number from 0 to 1, got ${JSON.stringify(raw)}`);
+		}
+		return value;
+	};
 	/** Millisecond flag: null when absent, positive number when valid, `onInvalid` otherwise. */
 	const positiveNumberFlag = (name) => {
 		if (!has(name)) return null;
@@ -58,5 +73,5 @@ export function createFlagReader(argv, { onInvalid = exitOnInvalid } = {}) {
 		}
 		return value;
 	};
-	return { argv, flag, has, bool, flags, positiveNumberFlag, positiveIntegerFlag };
+	return { argv, flag, has, bool, flags, rateFlag, positiveNumberFlag, positiveIntegerFlag };
 }

@@ -463,6 +463,13 @@ into the prompt. Headless runs still fail closed with
 `APPROVAL_RECEIPT_EXPIRED` reopen; a consumed or malformed receipt is evidence of
 tampering and stays a hard refusal.
 
+Reopening applies only while **none** of the gated run has executed. Once part of
+it has, a fresh receipt would claim to authorize work that already ran under the
+old parameters — one receipt describing two different actions — and would erase
+the receipt that authorized the completed half. That case is refused outright,
+naming which phases already ran, so restoring the approved parameters or starting
+a fresh run stays the operator's call.
+
 The expiry gates *starting* the authorized action. Once the receipt has been
 spent on it, a gated run finishes rather than aborting halfway because the clock
 passed — the binding still has to match, so nothing about the action can have

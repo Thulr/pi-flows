@@ -20,9 +20,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as thulr from "./thulr.mjs";
-import { caseSplit, COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
+import { caseSplit, splitVersions, COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
 import { buildCalibrationReport, calibrationGateIssues, calibrationRecords, formatCalibrationReport, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
-import { calibrationKey, rubricDigest, thresholdFingerprint, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
+import { calibrationKey, groundTruthDigest, rubricDigest, thresholdFingerprint, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
 import { buildReviewReport, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
 import { buildReliabilityReport, formatReliabilitySummary } from "./reliability.mjs";
 
@@ -244,6 +244,10 @@ function traceSpans(trace) {
  * drift: if this run's judge, rubric, thresholds, or trace projection differ, the
  * old numbers are reported as stale rather than silently carried forward.
  *
+ * @param {{ path: string|null, explicit: boolean }} reviews the human review set to
+ *   read. An explicitly chosen `--reviews` file wins over the trace-local
+ *   extended set, so this pass and `thulr calibrate` never resolve from
+ *   different human ground truth.
  * @returns {{ report: object, issues: string[], blocks: boolean, path: string|null }}
  */
 export function assessCalibration({
@@ -251,7 +255,7 @@ export function assessCalibration({
 	summaries,
 	verdicts,
 	keyInputs,
-	reviewsPath = null,
+	reviews = {},
 	criticalDimensions = [],
 	criticalMissRateCap = DEFAULT_CRITICAL_MISS_RATE_CAP,
 	abstentionBand,
@@ -284,22 +288,29 @@ export function assessCalibration({
 		})
 		.filter(Boolean);
 
-	// Prefer the extended review set `npm run eval:review` writes — it carries the
-	// dimension, blinding, and adjudication thulr's schema has no room for. Falling
-	// back to thulr's own set costs only those fields: it normalizes as unblinded
-	// criterion verdicts, which is exactly what it is.
+	// An explicitly chosen `--reviews` file wins, so this pass and `thulr calibrate`
+	// never resolve from different human ground truth. Absent that, prefer the
+	// extended set `npm run eval:review` writes — it carries the dimension,
+	// blinding, and adjudication thulr's schema has no room for. Falling back to
+	// thulr's own set costs only those fields: it normalizes as unblinded criterion
+	// verdicts, which is exactly what it is.
 	const extended = reviewSetPath(trace);
-	const reviewSet = readJsonOrNull(existsSync(extended) ? extended : reviewsPath);
+	const chosen = reviews.explicit ? reviews.path : existsSync(extended) ? extended : reviews.path ?? null;
+	const reviewSet = readJsonOrNull(chosen);
 	const humanTruth = reviewGroundTruth(buildReviewReport(reviewSet ?? { reviews: [] }));
 	const records = calibrationRecords({ cases, verdicts, humanTruth, abstentionBand });
+	const splits = splitVersions(splitEntries);
 	const key = calibrationKey({
 		...keyInputs,
 		thresholds: thresholdFingerprint({ ...guardrails, abstentionBand, criticalDimensions, criticalMissRateCap, coverage: COVERAGE_REQUIREMENT }),
 		rubric: rubricDigest(allCases),
+		// Relabelling a case must not read as an unchanged calibration just because
+		// no criterion text moved. Separate from `rubric` so drift can name which.
+		groundTruth: groundTruthDigest(allCases),
 		traceSchemaVersion: EVAL_TRACE_SCHEMA_VERSION,
 		traceSerialization: traceAttributeDigest(traceSpans(trace)),
 	});
-	const report = buildCalibrationReport({ key, storedKey: readJsonOrNull(out)?.key ?? null, splitEntries, records, reviewSet, criticalDimensions, abstentionBand });
+	const report = buildCalibrationReport({ key, storedKey: readJsonOrNull(out)?.key ?? null, splitEntries, splits, records, reviewSet, criticalDimensions, abstentionBand });
 	const issues = calibrationGateIssues(report, { criticalMissRateCap });
 
 	log("\njudge calibration:");

@@ -117,6 +117,19 @@ export function resolveReviewGroup(reviews) {
 	const distinct = new Set(decided.map((review) => review.verdict));
 	const reviewers = [...new Set(independent.map((review) => review.reviewer ?? "anonymous"))];
 
+	// Checked before every resolution path, not after: two adjudicators pulling in
+	// opposite directions means the case is contested no matter how neatly the
+	// blinded reviewers happen to agree.
+	if (conflictingAdjudication) {
+		return {
+			label: null,
+			resolution: "conflicting-adjudication",
+			reviewers,
+			adjudicator: adjudications.map((review) => review.reviewer).sort().join(", "),
+			independentReviewers: reviewers.length,
+		};
+	}
+
 	// Corroboration, not just a verdict. One decided opinion is one opinion however
 	// confidently it is held, and `reviewGroundTruth` lets a resolved label override
 	// the deterministic objective — so a lone review must not become ground truth.
@@ -127,15 +140,6 @@ export function resolveReviewGroup(reviews) {
 	}
 	if (distinct.size === 1 && !adjudication) {
 		return { label: null, resolution: "insufficient-reviewers", reviewers, adjudicator: null, independentReviewers: reviewers.length };
-	}
-	if (conflictingAdjudication) {
-		return {
-			label: null,
-			resolution: "conflicting-adjudication",
-			reviewers,
-			adjudicator: adjudications.map((review) => review.reviewer).sort().join(", "),
-			independentReviewers: reviewers.length,
-		};
 	}
 	if (distinct.size > 1) {
 		if (!adjudication) {

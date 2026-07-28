@@ -29,8 +29,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   approved parameters. Version-2 workflow state migrates to
   `legacy-compatibility` receipts that still bind the gated action. A completed
   approval whose receipt lapsed or was superseded reopens and asks again rather
-  than stranding the state file; a consumed or malformed receipt stays a hard
-  refusal. Every recorded
+  than stranding the state file; a consumed or malformed receipt, or a gated run
+  that already part-executed, stays a hard refusal. Every recorded
   field is additionally covered by a `receiptDigest`, so a partial write or a tool
   that rewrites one field is caught rather than honoured.
 - Judge calibration is now evidence a release decision can rest on. Every run
