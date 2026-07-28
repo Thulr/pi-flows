@@ -24,14 +24,22 @@ const scenarios = faultScenarios();
 // The rates below are computed from these, so the report describes runs rather
 // than declarations. Each scenario runs exactly once; its own test asserts the
 // four families, and the portfolio test aggregates the same outcomes.
+// A scenario that throws is captured, not left as an unhandled rejection: it has
+// to surface as its own named test failure, with its own message.
 const outcomes: Array<{ scenario: FaultScenario; actual: FaultChecks }> = [];
+const failures = new Map<string, unknown>();
 const ran = Promise.all(scenarios.map(async (scenario) => {
-	outcomes.push({ scenario, actual: await scenario.run() });
+	try {
+		outcomes.push({ scenario, actual: await scenario.run() });
+	} catch (error) {
+		failures.set(scenario.id, error);
+	}
 }));
 
 for (const scenario of scenarios) {
 	test(`fault scenario: ${scenario.id} — ${scenario.description}`, async () => {
 		await ran;
+		if (failures.has(scenario.id)) throw failures.get(scenario.id);
 		const actual = outcomes.find((entry) => entry.scenario.id === scenario.id)!.actual;
 		assert.deepEqual(actual.outcome, scenario.expected.outcome, "outcome check");
 		assert.deepEqual(actual.process, scenario.expected.process, "process check");

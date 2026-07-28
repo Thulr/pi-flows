@@ -108,8 +108,10 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			"evaluate",
 			results.length + 1,
 			results,
-			contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
-			{ stage, key: generatorKey(stage.key) },
+			{
+				limits: contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
+				scope: { stage, key: generatorKey(stage.key) },
+			},
 		);
 		results.push(generated);
 		lastGenerator = generated;

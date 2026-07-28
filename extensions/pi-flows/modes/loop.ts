@@ -45,7 +45,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			judgeRef ? "Produce the next artifact for this loop iteration." : `Produce the next artifact. ${loopProtocolInstruction()}`,
 		].filter(Boolean).join("\n");
-		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results, {}, { stage, key: bodyKey(stage.key) });
+		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results, { scope: { stage, key: bodyKey(stage.key) } });
 		results.push(body);
 		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
 		const bodyPrep = prepareResultHandoff(body, policy);
@@ -65,7 +65,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			verdictProtocolInstruction("actionable feedback if another iteration should run"),
 		].join("\n");
-		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, {}, { stage, key: `${stage.key}.judge`, dependsOn: [bodyKey(stage.key)] });
+		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, { scope: { stage, key: `${stage.key}.judge`, dependsOn: [bodyKey(stage.key)] } });
 		results.push(judged);
 		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
 		done = parseVerdict(resultText(judged)) === "pass";

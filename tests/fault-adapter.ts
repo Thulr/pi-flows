@@ -64,10 +64,6 @@ export class FaultLedger {
 	readonly dispatches: DispatchRecord[] = [];
 	readonly events: Array<{ kind: string; name: string; ok: boolean; attributes: Record<string, unknown> }> = [];
 
-	get dispatchedAgents(): string[] {
-		return this.dispatches.map((dispatch) => dispatch.agent);
-	}
-
 	countDelivered(delivery: DispatchRecord["delivery"]): number {
 		return this.dispatches.filter((dispatch) => dispatch.delivery === delivery).length;
 	}
@@ -176,6 +172,15 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 		const budgets = [childOptions.budget, childOptions.contractBudget].filter((budget): budget is FlowBudget => Boolean(budget));
 		const exhausted = budgets.find((budget) => budgetExceeded(budget));
 		if (exhausted) {
+			// The same event the real adapter emits, so a scenario can observe the
+			// refusal that leaves no child span behind.
+			childOptions.recordEvent?.({
+				kind: "budget",
+				name: "child.refused",
+				ok: false,
+				scope: childOptions.scope,
+				attributes: { "flow.budget.refused_agent": agent },
+			});
 			const refused = baseResult(childOptions, "", { input: 0, output: 0, cost: 0 });
 			refused.exitCode = 1;
 			refused.error = budgetExceededError(exhausted);

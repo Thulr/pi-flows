@@ -8,6 +8,7 @@ import { incompleteHandoffSummary, integrationControlText } from "../delegation.
 import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 /** One place each orchestrate unit key is derived, so a dependency link cannot name a unit that was never registered. */
+const DECOMPOSE_KEY = "decompose";
 const workerKey = (index: number) => `worker-${index + 1}`;
 const synthesisKey = (round: number) => `synthesis-${round}`;
 const verifyKey = (round: number) => `verify-${round}`;
@@ -49,7 +50,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		subtasksJsonProtocolInstruction(maxSubtasks),
 	].join("\n");
-	const orchestratorPlan = integrationRunPlan(deps, orchestratorRef, orchestratorTask, { scope: { key: "decompose" } });
+	const orchestratorPlan = integrationRunPlan(deps, orchestratorRef, orchestratorTask, { scope: { key: DECOMPOSE_KEY } });
 	if (orchestratorPlan.error) return { content: [{ type: "text", text: formatFlowError(orchestratorPlan.error) }], details: makeDetails("orchestrate")([], orchestratorPlan.error) };
 	const decomposed = await runIntegrationPlan(deps, orchestratorPlan.plan!, "orchestrate", 1, results);
 	results.push(decomposed);
@@ -99,7 +100,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(subtask), {
 			returnContract: spec.workerReturnContract,
 			placeholderTask: subtask,
-			scope: { key: workerKey(index), dependsOn: ["decompose"] },
+			scope: { key: workerKey(index), dependsOn: [DECOMPOSE_KEY] },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("orchestrate")(results, planned.error) };
 		workerPlans.push(planned.plan!);

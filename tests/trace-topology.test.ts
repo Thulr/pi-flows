@@ -112,6 +112,9 @@ test("child spans identify prompt version, allowed tools, authority, contract, a
 	assert.equal(constraintIds.length, contract.constraints.length + contract.acceptanceChecks.length);
 	assert.match(constraintIds[0], /^constraint\.1:[a-f0-9]{12}$/);
 	assert.match(constraintIds.at(-1)!, /^acceptance\.1:[a-f0-9]{12}$/);
+	// Content-derived, not positional: two different constraints cannot share an id,
+	// which is what makes "was this one preserved?" answerable across hops.
+	assert.equal(new Set(constraintIds.map((id) => id.split(":")[1])).size, constraintIds.length);
 
 	// The prompt version identifies the prompt that actually ran — compared against
 	// the discovered agent's own system prompt, so a digest of the wrong string fails.
@@ -386,8 +389,31 @@ test("handoff filtering and injection warnings reach the trace", async () => {
 	// The injection scan runs at the handoff boundary; its labels are the warning
 	// record, and they are labels rather than the flagged text.
 	assert.match(String(attr(handoff, "flow.handoff.injection_warnings")), /instruction|zero-width|invisible/i);
-	assert.equal(typeof attr(handoff, "flow.handoff.filtered"), "boolean");
 	assert.ok((attr(handoff, "flow.handoff.raw_bytes") as number) > 0);
+});
+
+test("`filtered` means content was actually dropped on the way across", async () => {
+	// A typed handoff carries the envelope and leaves the prose the child wrapped
+	// around it behind, so less crosses the boundary than the child produced.
+	const dropped = await runFlow(
+		{ task: "collect findings", contract, traceFile: TRACE, tasks: [{ agent: "recon", task: "inspect A" }] },
+		{ recon: `${"Here is my detailed reasoning. ".repeat(200)}\n\n\`\`\`json\n${envelope()}\n\`\`\`` },
+	);
+	const droppedHandoff = (await readSpans(dropped.stubDir)).find((span) => attr(span, "flow.event_kind") === "handoff")!;
+	assert.equal(attr(droppedHandoff, "flow.handoff.filtered"), true);
+	assert.ok(
+		(attr(droppedHandoff, "flow.handoff.carried_bytes") as number) < (attr(droppedHandoff, "flow.handoff.raw_bytes") as number),
+		"filtered:true must mean fewer bytes crossed than the child produced",
+	);
+
+	// A legacy-prose handoff wraps the same text in an envelope, so nothing is
+	// dropped and `filtered` must not claim otherwise.
+	const kept = await runFlow(
+		{ task: "collect findings", traceFile: TRACE, tasks: [{ agent: "recon", task: "inspect A" }] },
+		{ recon: "a short complete answer" },
+	);
+	const keptHandoff = (await readSpans(kept.stubDir)).find((span) => attr(span, "flow.event_kind") === "handoff")!;
+	assert.equal(attr(keptHandoff, "flow.handoff.filtered"), false);
 });
 
 test("a validation failure and a budget refusal are attributable without a child span", async () => {
@@ -412,10 +438,10 @@ test("a validation failure and a budget refusal are attributable without a child
 		{ recon: "finding" },
 	);
 	const cappedSpans = await readSpans(capped.stubDir);
+	// The refusal's own attributes are pinned in tests/flow-budget.test.ts; what
+	// matters here is the topology: only the child that ran has a child span,
+	// which is exactly why the refusal needs an event of its own.
 	const budget = cappedSpans.find((span) => attr(span, "flow.event_kind") === "budget")!;
 	assert.equal(attr(budget, "flow.event_name"), "child.refused");
-	assert.equal(attr(budget, "flow.budget.limit_tokens"), 4);
-	// One child ran, one was refused — and only the one that ran has a child span,
-	// which is exactly why the refusal needs an event of its own.
 	assert.equal(byRole(cappedSpans, "child").length, 1);
 });

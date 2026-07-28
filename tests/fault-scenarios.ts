@@ -385,7 +385,7 @@ function exhaustedBudgetScenario(): FaultScenario {
 			// The child that ran before the ceiling is kept; the refused one banks nothing.
 			residualState: { retryable: false, acceptedHandoffs: 1 },
 		},
-		run: scenarioRun(() => {
+		run: async () => {
 			const adapter = makeFaultAdapter({ replies: { recon: "finding" }, usage: { input: 100, output: 100, cost: 0.4 } });
 			const deps = faultDeps(
 				{ task: "collect findings", tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
@@ -394,8 +394,14 @@ function exhaustedBudgetScenario(): FaultScenario {
 				// Concurrency 1 makes the ceiling bite between children rather than racing them.
 				{ concurrency: 1, budget: { maxCostUsd: 0.3, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 } },
 			);
-			return { output: handleParallel(deps), adapter };
-		}, ["debrief"], true),
+			const output = await handleParallel(deps);
+			// The refusal spawns nothing, so the ledger's event record is the only
+			// place it is observable at all — which is why production emits it.
+			if (!adapter.ledger.eventNames("budget").includes("child.refused")) {
+				throw new Error("the budget refusal left no attributable event behind");
+			}
+			return observe(output, adapter.ledger, ["debrief"], { attack: true });
+		},
 	};
 }
 

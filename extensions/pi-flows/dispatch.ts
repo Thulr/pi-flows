@@ -121,10 +121,16 @@ export async function runAgentFanout(
 	});
 }
 
+/** How one dispatch differs from the default: its contract-derived limits and where it sits in the span tree. */
+export interface AgentRunPlacement {
+	limits?: AgentRunLimits;
+	scope?: ChildSpanScope;
+}
+
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
-export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], limits: AgentRunLimits = {}, scope?: ChildSpanScope): Promise<FlowRunResult> {
+export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], placement: AgentRunPlacement = {}): Promise<FlowRunResult> {
 	return deps.runChild({
-		...childRunOptions(deps, ref, task, mode, step, limits, scope),
+		...childRunOptions(deps, ref, task, mode, step, placement.limits ?? {}, placement.scope),
 		onUpdate: (partial) => {
 			const current = partial.details.results[0];
 			deps.onUpdate?.({ content: partial.content, details: deps.makeDetails(mode)([...priorResults, ...(current ? [current] : [])]) });

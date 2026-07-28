@@ -30,12 +30,14 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			"chain",
 			index + 1,
 			results,
-			contract
-				? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget: createDelegationBudget(contract), contract }
-				: {},
-			// A chain step consumed the previous step's output; the link records that
-			// without pretending the earlier step spawned this one.
-			{ key: `step-${index + 1}`, ...(index > 0 ? { dependsOn: [`step-${index}`] } : {}) },
+			{
+				limits: contract
+					? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget: createDelegationBudget(contract), contract }
+					: {},
+				// A chain step consumed the previous step's output; the link records
+				// that without pretending the earlier step spawned this one.
+				scope: { key: `step-${index + 1}`, ...(index > 0 ? { dependsOn: [`step-${index}`] } : {}) },
+			},
 		);
 		results.push(result);
 

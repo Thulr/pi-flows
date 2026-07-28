@@ -125,7 +125,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		"Return the best final answer/artifact. Mention the score and any important caveats.",
 	].join("\n");
-	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results, {}, { key: "debrief", dependsOn: [roundKey(rounds)] });
+	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results, { scope: { key: "debrief", dependsOn: [roundKey(rounds)] } });
 	results.push(final);
 	if (isFailed(final)) return { content: [{ type: "text", text: sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy) }], details: makeDetails("search")(results) };
 	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${handoffWarnings.summary()}\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };

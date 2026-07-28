@@ -73,7 +73,7 @@ export function integrationRunPlan(
  * instead of unpacking the same four fields at every dispatch site.
  */
 export function runIntegrationPlan(deps: ModeDeps, plan: IntegrationRunPlan, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[]): Promise<FlowRunResult> {
-	return runAgentRef(deps, plan.ref, plan.task, mode, step, priorResults, plan.limits, plan.scope);
+	return runAgentRef(deps, plan.ref, plan.task, mode, step, priorResults, { limits: plan.limits, scope: plan.scope });
 }
 
 /**

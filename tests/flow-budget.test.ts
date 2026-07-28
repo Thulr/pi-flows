@@ -5,6 +5,7 @@ import path from "node:path";
 import { infraError } from "../evals/lib.mjs";
 import { __test } from "../extensions/pi-flows/index.ts";
 import { budgetExceededError } from "../extensions/pi-flows/types.ts";
+import { parseTraceJsonl } from "../extensions/pi-flows/trace.ts";
 import { runFlow } from "./stub-harness.ts";
 
 const contractWithBudget = (budget: Record<string, number>) => ({
@@ -167,12 +168,11 @@ test("an exhausted ceiling refuses the next child before it spawns, and says so 
 	assert.equal(refused.messages.length, 0, "a refused child produced no assistant turn because it never ran");
 	assert.equal(refused.usage.cost, 0);
 
-	const spans = (await readFile(path.join(stubDir, "flow-trace.jsonl"), "utf8"))
-		.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	const spans = parseTraceJsonl(await readFile(path.join(stubDir, "flow-trace.jsonl"), "utf8")).spans;
 	const budgetEvent = spans.find((span) => span.attributes?.["flow.event_kind"] === "budget");
 	assert.ok(budgetEvent, "a refusal that spawns nothing must still be attributable as a budget event");
-	assert.equal(budgetEvent.attributes["flow.event_name"], "child.refused");
-	assert.equal(budgetEvent.attributes["flow.budget.refused_agent"], "recon");
-	assert.equal(budgetEvent.attributes["flow.budget.limit_tokens"], 4);
-	assert.equal(budgetEvent.status.code, "ERROR");
+	assert.equal(budgetEvent.attributes!["flow.event_name"], "child.refused");
+	assert.equal(budgetEvent.attributes!["flow.budget.refused_agent"], "recon");
+	assert.equal(budgetEvent.attributes!["flow.budget.limit_tokens"], 4);
+	assert.equal(budgetEvent.status?.code, "ERROR");
 });
