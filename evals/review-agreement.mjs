@@ -212,7 +212,12 @@ export function reviewGroundTruth(report) {
 
 // --- Storage ---------------------------------------------------------------
 
-/** Where the extended review set for a trace lives, beside the one `thulr review` writes for it. */
+/**
+ * Where the extended review set for a trace lives: beside that trace, not at the
+ * repo root. A review set is *about* one trace, and deriving the path from the
+ * trace keeps the two together for an alternate `--trace` and makes this callable
+ * without depending on the process working directory.
+ */
 export function reviewSetPath(tracePath) {
 	return join(dirname(tracePath), ".thulr", "reviews", `${basename(tracePath).replace(/\.jsonl$/, "")}.pi-flows.json`);
 }

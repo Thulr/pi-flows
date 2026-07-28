@@ -343,6 +343,7 @@ test("an abstention escalates with the command that resolves it", () => {
 		records: [...authoritativeRecords(), { caseId: "unsure-case", dimension: "criterion", truth: "partial", source: "deterministic", decision: "abstain", abstained: true, score: 0.5 }],
 	});
 	assert.equal(report.escalations.length, 1);
+	assert.match(formatCalibrationReport(report), /criterion:unsure-case — judge score sat inside the ambiguity band/, "the list names the cause it promises");
 	assert.match(formatCalibrationReport(report), /npm run eval:review -- --case unsure-case --dimension criterion --blinded/);
 	assert.match(formatCalibrationReport(report), /ground truth: 6 deterministic/);
 });
@@ -596,6 +597,16 @@ test("ground truth collapses by majority, never by which trial ran first", () =>
 	assert.equal(unstable.decision, "abstain");
 	assert.match(unstable.abstentionReason, /disagreed on the ground truth/);
 	assert.deepEqual(dimensionCoverage([unstable]), {}, "an unlabelled case contributes no coverage");
+});
+
+test("an abstention names its own cause, since the fix differs per cause", () => {
+	const trial = (decision: string) => ({ caseId: "c", dimension: "criterion", truth: "failed", source: "deterministic", decision, score: 0.5 });
+	// Unanimously abstaining is a rubric scoring at the boundary, not trial
+	// flakiness — reporting it as flakiness points the operator at the wrong fix.
+	assert.match(collapseTrials([trial("abstain"), trial("abstain"), trial("abstain")])[0].abstentionReason, /ambiguity band/);
+	assert.match(collapseTrials([trial("abstain")])[0].abstentionReason, /ambiguity band/);
+	assert.match(collapseTrials([trial("fail"), trial("pass")])[0].abstentionReason, /disagreed on the verdict/);
+	assert.equal(collapseTrials([trial("fail"), trial("fail")])[0].abstentionReason, null, "a decided observation has no abstention to explain");
 });
 
 test("trials that disagree collapse to an abstention rather than a coin flip", () => {

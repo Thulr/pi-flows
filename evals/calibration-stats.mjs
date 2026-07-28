@@ -171,18 +171,21 @@ export function collapseTrials(records) {
 		// order: a stochastic case whose objective check passes twice and fails once
 		// must not have its label decided by which trial happened to run first.
 		const truth = strictMajority(trials.map((trial) => trial.truth));
-		const decided = strictMajority(trials.map((trial) => trial.decision)) ?? "abstain";
+		// Kept separate from the collapsed decision below: `null` (no majority) and
+		// `"abstain"` (a majority that abstained) are different causes with different
+		// fixes, and collapsing them first would lose that.
+		const majorityDecision = strictMajority(trials.map((trial) => trial.decision));
 		// No stable label means the case cannot calibrate anything — a `null` truth
 		// is dropped downstream by coverage and the confusion matrix alike, and the
 		// case is escalated rather than scored against a label it does not have.
-		const decision = truth === null ? "abstain" : decided;
+		const decision = truth === null ? "abstain" : (majorityDecision ?? "abstain");
 		const scores = trials.map((trial) => trial.score).filter(Number.isFinite);
 		return {
 			...trials[0],
 			truth,
 			decision,
 			abstained: decision === "abstain",
-			abstentionReason: abstentionReason({ truth, decided, trials: trials.length }),
+			abstentionReason: abstentionReason({ truth, majorityDecision, trials: trials.length }),
 			score: scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null,
 			trials: trials.length,
 		};
@@ -196,13 +199,17 @@ function strictMajority(values) {
 	return count * 2 > values.length ? top : null;
 }
 
-/** Why this observation carries no usable verdict. Named per cause, because the fix differs. */
-function abstentionReason({ truth, decided, trials }) {
+/**
+ * Why this observation carries no usable verdict. Named per cause, because the
+ * fix differs: an unstable label needs a deterministic case, a split vote needs a
+ * clearer rubric or more trials, and a boundary score needs the rubric to say
+ * which side of the line the case falls on.
+ */
+function abstentionReason({ truth, majorityDecision, trials }) {
 	if (truth === null) return `${trials} repeat trial(s) disagreed on the ground truth, so this case has no stable label to calibrate against`;
-	if (decided !== "abstain") return null;
-	return trials > 1
-		? `${trials} repeat trials disagreed on the verdict without a majority`
-		: "judge score sat inside the ambiguity band around the decision boundary";
+	if (majorityDecision === null) return `${trials} repeat trials disagreed on the verdict without a majority`;
+	if (majorityDecision !== "abstain") return null;
+	return "judge score sat inside the ambiguity band around the decision boundary";
 }
 
 /** Per-dimension statistics over normalized records. */

@@ -463,9 +463,10 @@ Verdicts land in `.thulr/reviews/thulr-trace.reviews.json`, which the next
 `npm run eval` auto-discovers. `calibrate` then reports judge-vs-human TPR/TNR.
 Point at an explicit set with `npm run eval -- --reviews=<path>`.
 
-Each verdict is also written to an extended pi-flows review set
-(`.thulr/reviews/thulr-trace.pi-flows.json`) carrying three fields thulr's schema
-has no room for, and which the calibration pass below reads:
+Each verdict is also written to an extended pi-flows review set beside the trace
+it describes (`evals/.thulr/reviews/thulr-trace.pi-flows.json`), carrying three
+fields thulr's schema has no room for, and which the calibration pass below
+reads:
 
 ```bash
 # a blinded, independent verdict on a named dimension

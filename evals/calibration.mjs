@@ -206,7 +206,8 @@ export function formatCalibrationReport(report) {
 	if (report.escalations.length) {
 		lines.push(`escalated to human review — the judge abstained on ${report.escalations.length} case-dimension(s). Record a blinded verdict for each:`);
 		for (const entry of report.escalations) {
-			lines.push(`  npm run eval:review -- --case ${entry.caseId} --dimension ${entry.dimension} --blinded --reviewer <you> --verdict <pass|fail|unsure>`);
+			lines.push(`  ${entry.dimension}:${entry.caseId} — ${entry.reason}`);
+			lines.push(`    npm run eval:review -- --case ${entry.caseId} --dimension ${entry.dimension} --blinded --reviewer <you> --verdict <pass|fail|unsure>`);
 		}
 	}
 	if (report.authority.critical.length) {
