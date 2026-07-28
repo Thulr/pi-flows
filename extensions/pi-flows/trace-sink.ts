@@ -95,6 +95,12 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	const rootStart = Date.now();
 	const health: FlowTraceHealth = emptyTraceHealth();
 	const stages = new Map<string, StageRecord>();
+	// The widest interval anything recorded. Date.now() is not monotonic, so a
+	// clock that steps backwards between a child and finalize could otherwise
+	// leave the root ending before its own children — an impossible tree, and a
+	// healthy run failing the read-back check for a reason it did not cause.
+	let earliestSpanMs = Number.POSITIVE_INFINITY;
+	let latestSpanMs = Number.NEGATIVE_INFINITY;
 	// Unit keys and stage keys live in separate namespaces. They collide in
 	// practice — a workflow phase is both a stage and the child that runs it — and
 	// one shared map let the child's span id overwrite its own stage's.
@@ -169,7 +175,13 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		return record.spanId;
 	};
 
+	const observeInterval = (startMs: number, endMs: number) => {
+		earliestSpanMs = Math.min(earliestSpanMs, startMs);
+		latestSpanMs = Math.max(latestSpanMs, endMs);
+	};
+
 	const placement = (scope: ChildSpanScope | undefined, startMs: number, endMs: number) => {
+		observeInterval(startMs, endMs);
 		const parentSpanId = scope?.stage ? ensureStage(scope.stage, startMs, endMs) : rootSpanId;
 		const dependsOn = scope?.dependsOn ?? [];
 		const attributes: Record<string, unknown> = {};
@@ -306,8 +318,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				span_id: rootSpanId,
 				parent_span_id: null,
 				name: `flow.${mode}`,
-				start_time_unix_ms: rootStart,
-				end_time_unix_ms: end,
+				start_time_unix_ms: Math.min(rootStart, earliestSpanMs),
+				end_time_unix_ms: Math.max(end, latestSpanMs),
 				status: { code: status.ok ? "OK" : "ERROR" },
 				attributes: {
 					"openinference.span.kind": "CHAIN",

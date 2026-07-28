@@ -89,6 +89,26 @@ function reachesRoot(start: TraceSpanRecord, byId: Map<string, TraceSpanRecord>,
 }
 
 /**
+ * A span has to have happened: finite timestamps, no negative duration, and an
+ * interval its parent actually covers.
+ *
+ * Nothing above notices this. Ids stay unique, parents stay reachable, and
+ * dependencies stay resolvable while the tree describes an execution that could
+ * not have occurred — a child running outside the flow that spawned it.
+ */
+function timesHold(span: TraceSpanRecord, byId: Map<string, TraceSpanRecord>): boolean {
+	const start = span.start_time_unix_ms;
+	const end = span.end_time_unix_ms;
+	if (!Number.isFinite(start) || !Number.isFinite(end) || (start as number) > (end as number)) return false;
+	const parent = typeof span.parent_span_id === "string" ? byId.get(span.parent_span_id) : undefined;
+	if (!parent) return true;
+	const parentStart = parent.start_time_unix_ms;
+	const parentEnd = parent.end_time_unix_ms;
+	if (!Number.isFinite(parentStart) || !Number.isFinite(parentEnd)) return false;
+	return (parentStart as number) <= (start as number) && (end as number) <= (parentEnd as number);
+}
+
+/**
  * Which spans answer to each unit or stage key, so a dependency can be checked
  * against the unit it names rather than merely against the set of ids that exist.
  */
@@ -171,6 +191,7 @@ export function traceStructure(traceSpans: TraceSpanRecord[], declaredExpectatio
 	const connected = traceSpans.every((span) => span === root || reachesRoot(span, byId, root?.span_id));
 	const byKey = spansByKey(traceSpans);
 	const attributionHolds = traceSpans.every((span) => dependenciesHold(span, knownIds, byKey));
+	const timesContained = traceSpans.every((span) => timesHold(span, byId));
 	// Surplus counts as loss of a different kind: rows the exporter never claimed
 	// to have written are not evidence it produced.
 	const unexpectedSpans = declaredExpectation === undefined ? 0 : Math.max(0, observedSpans - declaredExpectation);
@@ -181,6 +202,6 @@ export function traceStructure(traceSpans: TraceSpanRecord[], declaredExpectatio
 		duplicateSpans,
 		malformedSpans,
 		unexpectedSpans,
-		invalid: !rolesDeclared || !rootWellFormed || !connected || !attributionHolds,
+		invalid: !rolesDeclared || !rootWellFormed || !connected || !attributionHolds || !timesContained,
 	};
 }

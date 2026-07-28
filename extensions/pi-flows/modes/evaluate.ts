@@ -5,7 +5,7 @@ import { appendReturnContract, clampIterations, normalizeTimeout, resolvedCwd, v
 import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { recordStepHandoff } from "../integration.ts";
+import { recordStepHandoff, recordTextHandoff } from "../integration.ts";
 import { runCheckCommand } from "../commands.ts";
 
 /** One place the generator's unit key is derived, so each critic's dependency link names the draft it judged. */
@@ -244,11 +244,20 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		// Critique fed back = the REVISE critics' output (a handoff: clean + scan).
-		feedbackKey = `${stage.key}.panel`;
 		const revising = verdicts.filter((verdict) => !verdict.pass);
 		const critiqueRaw = revising.map((verdict, index) => `### Critic ${index + 1} (${verdict.agent})\n\n${verdict.text}`).join("\n\n---\n\n");
 		const critiquePrep = handoffWarnings.addFrom(prepareTextHandoff(critiqueRaw, policy));
 		critique = critiquePrep.text;
+		// The next generator reads this combined critique, not the panel verdict:
+		// the text was aggregated, capped, and injection-scanned on the way here.
+		recordTextHandoff(deps, {
+			fromAgent: revising.map((verdict) => verdict.agent).join(","),
+			raw: critiqueRaw,
+			carried: critique,
+			warnings: critiquePrep.warnings,
+			scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
+		});
+		feedbackKey = `${stage.key}.feedback`;
 	}
 
 	const finalArtifact = lastGenerator ? sanitizeText(resultText(lastGenerator), policy) : "(no generator output)";

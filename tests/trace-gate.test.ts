@@ -510,3 +510,28 @@ test("dependency metadata is refused in pieces, not just when it points nowhere"
 		true,
 	);
 });
+
+test("a span tree that could not have happened is refused", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+	const child = spans.find((span) => role(span) === "child")!;
+	const retime = (patch: Partial<TraceSpanRecord>) =>
+		spans.map((span) => (span === child ? { ...span, ...patch } : span));
+
+	// Ids stay unique, parents stay reachable, dependencies stay resolvable — and
+	// the tree describes a child running outside the flow that spawned it.
+	for (const [label, patched] of [
+		["ends before it starts", retime({ start_time_unix_ms: child.end_time_unix_ms! + 1_000 })],
+		["outside its parent", retime({ start_time_unix_ms: 1, end_time_unix_ms: 2 })],
+		["no timestamps", retime({ start_time_unix_ms: undefined, end_time_unix_ms: undefined })],
+	] as const) {
+		const report = summarizeTraceSpans(patched, 0, TRACE);
+		assert.equal(report.observedSpans, spans.length, `${label}: every span still present`);
+		assert.equal(report.structurallyInvalidTraces, 1, label);
+		assert.equal(traceReportIsComplete(report), false, `${label} must not pass the gate`);
+	}
+});

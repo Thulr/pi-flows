@@ -325,11 +325,12 @@ test("iterative modes link each revision to the feedback that caused it", async 
 	);
 	const evaluateSpans = await readSpans(evaluated.stubDir);
 	const secondDraft = unit(evaluateSpans, "iteration-2.generator")!;
-	const panel = evaluateSpans.find((span) => attr(span, "flow.unit_key") === "iteration-1.panel")!;
-	// Without the link, iteration 2 reads as independent work rather than as an
-	// answer to the verdict that sent it back.
-	assert.equal(attr(secondDraft, "flow.depends_on"), "iteration-1.panel");
-	assert.equal(attr(secondDraft, "flow.depends_on_span_ids"), panel.span_id);
+	const feedback = evaluateSpans.find((span) => attr(span, "flow.unit_key") === "iteration-1.feedback")!;
+	// Through the feedback boundary: what the revision reads is the aggregated,
+	// capped, scanned critique, and the verdict is what produced it.
+	assert.equal(attr(secondDraft, "flow.depends_on"), "iteration-1.feedback");
+	assert.equal(attr(secondDraft, "flow.depends_on_span_ids"), feedback.span_id);
+	assert.equal(attr(feedback, "flow.depends_on"), "iteration-1.panel");
 
 	const looped = await runFlow(
 		{ task: "converge", traceFile: TRACE, loop: { body: { agent: "operator" }, judge: { agent: "redteam" }, maxIterations: 2 } },

@@ -7,7 +7,7 @@ import {
 	typedHandoff,
 	validateDelegationContract,
 } from "./delegation.ts";
-import { capModelVisibleText, resultText } from "./sanitize.ts";
+import { resultText } from "./sanitize.ts";
 import { prepareResultHandoff } from "./handoff.ts";
 import { artifactAttributes, handoffAttributes, type ArtifactSource } from "./trace-attributes.ts";
 import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner.ts";
@@ -126,6 +126,52 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 	emitHandoff(record, deps, handoff, options.result, options.scope, options.carried, options.warnings, options.contract, undefined);
 }
 
+/**
+ * A boundary whose producer is not a single child run — an aggregated critique,
+ * for instance. It carries the same accounting as any other handoff, because the
+ * question a reader asks of it is the same: how much crossed, and what did the
+ * scan flag on the way?
+ */
+export function recordTextHandoff(deps: ModeDeps, options: {
+	fromAgent: string;
+	raw: string;
+	carried: string;
+	warnings: string[];
+	scope: ChildSpanScope;
+}): void {
+	const record = deps.recordEvent;
+	if (!record) return;
+	record({
+		kind: "handoff",
+		name: "handoff.accepted",
+		scope: options.scope,
+		attributes: handoffAttributes(
+			{
+				schemaVersion: "pi-flows.handoff-envelope.v1",
+				contractId: null,
+				compatibility: "legacy-prose",
+				status: "completed",
+				summary: "",
+				evidence: [],
+				artifactReferences: [],
+				digests: [],
+				changedState: [],
+				unresolvedQuestions: [],
+				retry: { retryable: false },
+				data: null,
+				provenance: { agent: options.fromAgent },
+			},
+			{
+				accepted: true,
+				rawBytes: Buffer.byteLength(options.raw, "utf8"),
+				carriedBytes: Buffer.byteLength(options.carried, "utf8"),
+				warnings: options.warnings,
+				policy: deps.policy,
+			},
+		),
+	});
+}
+
 /** The one place a handoff boundary becomes spans, so every mode records the same shape. */
 function emitHandoff(
 	record: RecordEvent,
@@ -142,7 +188,10 @@ function emitHandoff(
 	const handoffScope: ChildSpanScope | undefined = scope
 		? { stage: scope.stage, ...(unit ? { key: `${unit}.handoff`, dependsOn: [unit] } : {}) }
 		: undefined;
-	const raw = capModelVisibleText(resultText(result));
+	// Uncapped on purpose: capping both sides would report equal raw and carried
+	// bytes for a result that lost tens of kilobytes on the way across, and
+	// `filtered:false` for the case that filtered the most.
+	const raw = resultText(result);
 	record({
 		kind: "handoff",
 		name: rejection ? "handoff.rejected" : "handoff.accepted",
