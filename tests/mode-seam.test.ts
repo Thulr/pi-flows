@@ -3,6 +3,7 @@
 // Also covers the FlowDetails contract that error paths keep completed runs.
 import { strict as assert } from "node:assert";
 import test from "node:test";
+import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { handleGraph } from "../extensions/pi-flows/modes/graph.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
@@ -82,6 +83,7 @@ test("typed single dispatch enforces every contract budget field", async () => {
 		calls.push(options);
 		return fakeResult(options, JSON.stringify({
 			schemaVersion: "pi-flows.return-envelope.v1",
+			contractId: delegationContractId(contract as never),
 			status: "completed",
 			summary: "Done.",
 			evidence: [],

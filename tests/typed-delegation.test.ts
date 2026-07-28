@@ -227,7 +227,7 @@ test("evaluate.operator contract overrides the top-level contract", async () => 
 			contract,
 			evaluate: { operator: { agent: "operator", contract: operatorContract }, redteam: { agent: "redteam" }, maxIterations: 1 },
 		},
-		{ operator: envelope({ data: { value: "operator-wins" } }), redteam: "VERDICT: PASS" },
+		{ operator: envelope({ contractId: delegationContractId(operatorContract), data: { value: "operator-wins" } }), redteam: "VERDICT: PASS" },
 	);
 
 	assert.equal(result.details.error, undefined);
@@ -259,4 +259,23 @@ test("chain refuses an envelope that is not bound to the contract it was dispatc
 	);
 	assert.equal(result.details.error?.code, "RETURN_CONTRACT_MISMATCH");
 	assert.equal(calls.length, 1, "the unbound envelope must not reach the next step");
+});
+
+test("no contracted mode accepts an envelope bound to a different contract", async () => {
+	// One rule, checked at every contracted seam. `single` has no downstream
+	// consumer, but validating an envelope's data against a contract it does not
+	// claim is still reporting success for work done under other terms.
+	const other = delegationContractId({ ...contract, objective: "Something else entirely." } as never);
+
+	const lone = await runFlow({ agent: "recon", task: "Find it.", contract }, { recon: envelope({ contractId: other }) });
+	assert.equal(lone.result.details.error?.code, "RETURN_CONTRACT_MISMATCH");
+
+	// evaluate: the critics would otherwise judge an unbound artifact while the
+	// handoff event stamped the dispatched contract's id onto it.
+	const evaluated = await runFlow(
+		{ task: "Find it.", contract, evaluate: { operator: { agent: "operator" }, redteam: { agent: "redteam" }, maxIterations: 1 } },
+		{ operator: envelope({ contractId: other }), redteam: "VERDICT: PASS" },
+	);
+	assert.equal(evaluated.result.details.error?.code, "RETURN_CONTRACT_MISMATCH");
+	assert.equal(evaluated.calls.length, 1, "the unbound artifact must not reach the critics");
 });

@@ -422,6 +422,27 @@ test("a rejected digest keeps the artifact claim that proves the corruption", as
 	assert.equal(attr(spans.find((span) => attr(span, "flow.event_name") === "handoff.rejected"), "flow.handoff.artifact_count"), 1);
 });
 
+test("a refused partial envelope keeps the artifacts it touched in the trace", async () => {
+	// Refusing the handoff is not a reason to forget what the child already wrote:
+	// a partial run's artifact claims are exactly what a reader needs to decide
+	// what state was left behind.
+	const { stubDir, result } = await runFlow(
+		{ task: "write it", traceFile: TRACE, contract, tasks: [{ agent: "operator", task: "write the note" }] },
+		{
+			operator: {
+				writes: { "note.txt": "half\n" },
+				reply: envelope({ answer: "note.txt" }, { status: "partial", artifactReferences: [{ path: "note.txt" }] }),
+			},
+		},
+	);
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INCOMPLETE");
+	const spans = await readSpans(stubDir);
+	assert.equal(attr(spans.find((span) => attr(span, "flow.event_name") === "handoff.rejected"), "flow.handoff.artifact_count"), 1);
+	const artifact = spans.find((span) => attr(span, "flow.event_kind") === "artifact")!;
+	assert.equal(attr(artifact, "flow.event_name"), "artifact.rejected");
+	assert.equal(attr(artifact, "flow.artifact.path"), "note.txt");
+});
+
 test("a contract-bound termination is reported against the contract, not a budget that does not exist", async () => {
 	const { stubDir, result } = await runFlow(
 		{ agent: "operator", task: "write at length", traceFile: TRACE, contract: { ...contract, budget: { maxGeneratedTokens: 4 } } },

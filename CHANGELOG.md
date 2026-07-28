@@ -201,11 +201,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   success/TPSO when a verifier supplied a verdict. Legacy
   `flow.duration_ms_total` traces remain readable and are labeled compatibility
   data.
-- Contracted `chain` steps now require the child to echo the dispatched
-  contract's `sha256:` identity, as every other contracted mode already did. A
-  structurally valid envelope carrying a missing or stale `contractId` is
-  refused with `RETURN_CONTRACT_MISMATCH` instead of being passed to the next
-  step as though it were bound to the contract that step was dispatched under.
+- Contract identity is now checked at every contracted seam, not only the
+  integration adapter. `chain`, `evaluate`, and `single` previously accepted a
+  structurally valid envelope carrying a missing or stale `contractId`; such an
+  envelope is now refused with `RETURN_CONTRACT_MISMATCH` rather than being
+  passed downstream, judged by critics, or reported as a validated result for a
+  contract it never claimed. The check is unconditional — it used to be an
+  opt-in flag that three of its four call sites did not pass.
 
 ### Fixed
 
@@ -221,6 +223,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   case declares a portfolio suite, task family, and task structure; reports show
   case counts and exclusions across both classifications. The package-version
   selection fixture now expects the current `0.3.0` package value.
+- A typed envelope refused as `partial` or `blocked` now records the artifacts
+  it claimed. The rejection previously dropped the envelope's artifact
+  references and digests, so the trace showed the refusal without showing what
+  state the child had already touched.
 - A child that reports a terminal provider error (for example "input exceeds
   the context window of this model") and then stalls no longer hangs the flow
   until `timeoutMs` (default 10 hours): pi-flows now terminates the child after
