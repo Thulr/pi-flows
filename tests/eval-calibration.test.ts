@@ -360,12 +360,12 @@ test("abstained verdicts leave the matrix and enter the escalation queue", () =>
 test("an abstention escalates with the command that resolves it", () => {
 	const report = buildCalibrationReport({
 		key: calibrationKey(KEY_INPUTS),
-		records: [...authoritativeRecords(), { caseId: "unsure-case", dimension: "criterion", truth: "partial", source: "deterministic", decision: "abstain", abstained: true, score: 0.5 }],
+		records: [...authoritativeRecords(), { caseId: "unsure-case", dimension: "criterion", split: "held-out", truth: "partial", source: "deterministic", decision: "abstain", abstained: true, score: 0.5 }],
 	});
 	assert.equal(report.escalations.length, 1);
 	assert.match(formatCalibrationReport(report), /criterion:unsure-case — judge score sat inside the ambiguity band/, "the list names the cause it promises");
 	assert.match(formatCalibrationReport(report), /npm run eval:review -- --case unsure-case --dimension criterion --blinded/);
-	assert.match(formatCalibrationReport(report), /ground truth: 6 deterministic/);
+	assert.match(formatCalibrationReport(report), /ground truth \(gating splits calibration \+ held-out\): 16 deterministic/);
 });
 
 // --- Human review -----------------------------------------------------------
@@ -520,16 +520,16 @@ test("human labels override deterministic ones, and judge-only dimensions are le
 	);
 });
 
+/** Enough held-out evidence to clear the coverage floor AND tighten the miss-rate bound under the default cap. */
 const authoritativeRecords = (dimension = "criterion") =>
 	[
-		["c1", "failed", false, 0.05],
-		["c2", "failed", false, 0.05],
-		["c3", "failed", false, 0.05],
-		["c4", "passed", true, 0.95],
-		["c5", "partial", false, 0.2],
+		...Array.from({ length: 8 }, (_, index) => [`f${index}`, "failed", false, 0.05] as const),
+		...Array.from({ length: 3 }, (_, index) => [`q${index}`, "partial", false, 0.2] as const),
+		...Array.from({ length: 4 }, (_, index) => [`p${index}`, "passed", true, 0.95] as const),
 	].map(([caseId, truth, verdict, score]) => ({
 		caseId,
 		dimension,
+		split: "held-out",
 		truth,
 		source: "deterministic",
 		decision: judgeDecision({ verdict, score }),
@@ -546,13 +546,24 @@ test("nothing blocks until a dimension is declared critical", () => {
 test("a critical dimension that is only provisional blocks the gate", () => {
 	const report = buildCalibrationReport({
 		key: calibrationKey(KEY_INPUTS),
-		records: authoritativeRecords().slice(0, 4),
+		records: authoritativeRecords().filter((record) => record.truth !== "partial"),
 		criticalDimensions: ["criterion"],
 	});
 	const issues = calibrationGateIssues(report);
-	assert.equal(issues.length, 1);
-	assert.match(issues[0], /critical dimension "criterion" is provisional/);
-	assert.match(issues[0], /needs 1 independent partial label/);
+	assert.match(issues.join("\n"), /critical dimension "criterion" is provisional/);
+	assert.match(issues.join("\n"), /needs 1 independent partial label/);
+});
+
+test("cases the rubric was tuned against are reported but never gate", () => {
+	// The same evidence, relabelled as the split it was fitted to, must stop
+	// clearing the floor — otherwise versioning the splits decides nothing.
+	const tuned = authoritativeRecords().map((record) => ({ ...record, split: "rubric-development" }));
+	const report = buildCalibrationReport({ key: calibrationKey(KEY_INPUTS), records: tuned, criticalDimensions: ["criterion"] });
+	assert.deepEqual(report.coverage, {}, "tuned cases contribute no gate coverage");
+	assert.equal(report.rubricDevelopment.observations, tuned.length, "they are still reported");
+	assert.equal(report.rubricDevelopment.coverage.criterion.authoritative, true);
+	assert.match(calibrationGateIssues(report)[0], /has no ground truth in this run/);
+	assert.match(formatCalibrationReport(report), /rubric-development observations \(reported, never gating\): 15/);
 });
 
 test("a critical dimension with no ground truth at all blocks, and says how to unblock", () => {
@@ -562,14 +573,27 @@ test("a critical dimension with no ground truth at all blocks, and says how to u
 	assert.match(issues[0], /--critical-dimension=evidence_quality/);
 });
 
-test("a critical dimension that waves defects through blocks, with the uncertainty on the record", () => {
-	const records = authoritativeRecords().map((record) => (record.caseId === "c1" ? { ...record, decision: "pass", score: 0.95 } : record));
-	const report = buildCalibrationReport({ key: calibrationKey(KEY_INPUTS), records, criticalDimensions: ["criterion"] });
-	const issues = calibrationGateIssues(report);
-	assert.equal(issues.length, 1);
-	assert.match(issues[0], /missed 25\.0% of defects \(95% upper bound \d+\.\d%\)/);
+test("the gate reads the miss-rate upper bound, not the point estimate", () => {
+	// Zero misses is not proof of a zero miss rate. This dimension clears the
+	// coverage floor on four not-passed observations and still cannot gate,
+	// because four observations cannot rule out a high miss rate.
+	const thin = [
+		...["t1", "t2", "t3"].map((caseId) => ({ caseId, dimension: "criterion", split: "held-out", truth: "failed", source: "deterministic", decision: "fail", abstained: false, score: 0.05 })),
+		{ caseId: "t4", dimension: "criterion", split: "held-out", truth: "partial", source: "deterministic", decision: "fail", abstained: false, score: 0.2 },
+		{ caseId: "t5", dimension: "criterion", split: "held-out", truth: "passed", source: "deterministic", decision: "pass", abstained: false, score: 0.95 },
+	];
+	const thinReport = buildCalibrationReport({ key: calibrationKey(KEY_INPUTS), records: thin, criticalDimensions: ["criterion"] });
+	assert.equal(thinReport.coverage.criterion.authoritative, true, "the coverage floor is met");
+	assert.equal(thinReport.statistics.criterion.detection.falseNegativeRate.value, 0, "and the judge missed nothing");
+	const thinIssues = calibrationGateIssues(thinReport);
+	assert.equal(thinIssues.length, 1);
+	assert.match(thinIssues[0], /could be missing up to \d+\.\d% of defects \(95% upper bound over 4 observation\(s\); point estimate 0\.0%\)/);
 
-	assert.deepEqual(calibrationGateIssues(report, { criticalMissRateCap: 0.5 }), [], "a deliberately loosened cap is honoured");
+	// More evidence tightens the bound under the cap, and the same dimension gates.
+	assert.deepEqual(calibrationGateIssues(buildCalibrationReport({ key: calibrationKey(KEY_INPUTS), records: authoritativeRecords(), criticalDimensions: ["criterion"] })), []);
+
+	// A deliberately loosened cap is still honoured.
+	assert.deepEqual(calibrationGateIssues(thinReport, { criticalMissRateCap: 0.9 }), []);
 });
 
 test("a contested human label on a critical dimension blocks until it is adjudicated", () => {
@@ -623,7 +647,7 @@ test("repeat trials of one case cannot manufacture independent coverage", async 
 		objective: { pass: false, score: 0 },
 	}));
 	const { report } = assessCalibration({
-		corpus: { measurement: [{ id: "only-case", criterion: "Finds it." }], calibration: [] },
+		corpus: { measurement: [{ id: "only-case", criterion: "Finds it.", calibrationSplit: "held-out" }], calibration: [] },
 		summaries,
 		verdicts: verdictsFor(Object.fromEntries(summaries.map((summary) => [summary.traceCaseId, { criterion: { verdict: false, score: 0.05 } }]))),
 		keyInputs: KEY_INPUTS,
@@ -692,7 +716,9 @@ test("assessCalibration writes a versioned artifact and detects drift against it
 
 	const corpus = {
 		measurement: [
-			{ id: "case-pass", criterion: "Finds it." },
+			// Declared held-out so it counts toward gate coverage; a rubric-development
+			// case would be reported but excluded, which the test above covers.
+			{ id: "case-pass", criterion: "Finds it.", calibrationSplit: "held-out" },
 			{ id: "pattern-x-holdout-y", criterion: "Finds it too." },
 		],
 		calibration: [
@@ -726,7 +752,7 @@ test("assessCalibration writes a versioned artifact and detects drift against it
 	assert.equal(first.blocks, false);
 
 	const written = JSON.parse(readFileSync(out, "utf8"));
-	assert.equal(written.splits["held-out"].caseCount, 1);
+	assert.equal(written.splits["held-out"].caseCount, 2, "both measurement cases are declared or named held-out");
 	assert.equal(written.splits.calibration.caseCount, 3);
 
 	assert.equal(assessCalibration(options).report.drift.status, "valid", "an unchanged run matches its own stored key");

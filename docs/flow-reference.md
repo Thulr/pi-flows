@@ -455,6 +455,14 @@ binding also covers the debrief's resolved `contract`, `returnContract`, and
 swaps which repo-controlled prompt runs, so it invalidates the approval with
 `APPROVAL_RECEIPT_STALE`.
 
+A completed approval whose receipt has lapsed or been superseded is **reopened**
+rather than stranding the state file: the phase is un-completed, its receipt
+discarded, and consent asked for again in the same pass, with the reason carried
+into the prompt. Headless runs still fail closed with
+`WORKFLOW_APPROVAL_REQUIRED`. Only `APPROVAL_RECEIPT_STALE` and
+`APPROVAL_RECEIPT_EXPIRED` reopen; a consumed or malformed receipt is evidence of
+tampering and stays a hard refusal.
+
 The expiry gates *starting* the authorized action. Once the receipt has been
 spent on it, a gated run finishes rather than aborting halfway because the clock
 passed — the binding still has to match, so nothing about the action can have

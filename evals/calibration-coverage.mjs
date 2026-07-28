@@ -25,6 +25,14 @@ import { canonicalDigest } from "./calibration-key.mjs";
 /** Where a case sits in the calibration lifecycle. Registered per case; see `caseSplit`. */
 export const CALIBRATION_SPLITS = ["rubric-development", "calibration", "held-out"];
 
+/**
+ * The splits whose evidence may decide a release. `rubric-development` is
+ * excluded on purpose: a rubric tuned until it agrees with those cases agrees
+ * with them by construction, so counting them toward gate authority would let an
+ * overfit judge clear the floor on the very cases it was fitted to.
+ */
+export const GATING_SPLITS = ["calibration", "held-out"];
+
 /** The three-valued ground truth a dimension is calibrated against. */
 export const CALIBRATION_CLASSES = ["passed", "partial", "failed"];
 

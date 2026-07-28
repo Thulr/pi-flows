@@ -21,7 +21,7 @@
 //   npm run eval -- --noise-band=0.10    # judge/efficiency regression tolerance (default 0.05)
 //   npm run eval -- --critical-dimension=criterion   # let a calibrated dimension block the gate (needs 3 independent
 //                                         # failed labels plus passed/partial examples, no contested human labels)
-//   npm run eval -- --critical-miss-rate=0.1   # missed defects a critical dimension may carry (default 0)
+//   npm run eval -- --critical-miss-rate=0.1   # cap on the 95% UPPER BOUND of missed defects (default 0.35)
 //   npm run eval -- --abstention-band=0.15   # judge scores this close to 0.5 abstain and escalate (default 0.1)
 //   npm run eval -- --write-baseline      # promote this run to evals/thulr-baseline.json (the gate baseline)
 //   npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
@@ -67,7 +67,7 @@ import { createFlagReader } from "./cli-flags.mjs";
 import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
-import { calibrationPreflightStep } from "./calibration.mjs";
+import { calibrationPreflightStep, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
 import { thresholdFingerprint } from "./calibration-key.mjs";
 import { COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
 import { assessCalibration, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases, writeReliabilityArtifact } from "./pipeline.mjs";
@@ -122,7 +122,7 @@ const noiseBand = Number(flag("noise-band", "0.05"));
 // contested human labels, and no missed defects above the cap. Off by default —
 // a dimension is observed for a few runs before it can stop a release.
 const criticalDimensions = flags("critical-dimension");
-const criticalMissRateCap = Number(flag("critical-miss-rate", "0"));
+const criticalMissRateCap = Number(flag("critical-miss-rate", String(DEFAULT_CRITICAL_MISS_RATE_CAP)));
 // Judge scores this close to the 0.5 decision boundary abstain and escalate to
 // human review instead of voting, so the judge is never scored on a coin flip.
 const abstentionBand = Number(flag("abstention-band", "0.1"));

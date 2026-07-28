@@ -295,8 +295,10 @@ consent was given. Editing any of them between approval and resume means the
 approval no longer covers what would run. Flipping `agentScope` to `project` is
 the case worth naming: it swaps which repo-controlled prompt executes.
 
-Fix: resume in an interactive Pi UI to approve the current action, or restore the
-parameters that were approved and resume again.
+Fix: resume in an interactive Pi UI — the approval phase reopens automatically
+and asks again, naming what changed. Restoring the approved parameters is not
+enough on its own: reopening discards consent that no longer held, so the phase
+still needs a fresh approval.
 
 ### `APPROVAL_RECEIPT_EXPIRED`
 
@@ -306,10 +308,11 @@ indefinitely; the default window is 24 hours from the moment approval was
 granted. The window gates *starting* the action — a gated run already under way
 finishes rather than aborting halfway when the clock passes.
 
-Fix: approve again in an interactive Pi UI, or set
+Fix: resume in an interactive Pi UI — the approval phase reopens and asks again,
+so a lapsed window never strands the state file. Set
 `workflow.approvalTtlMs` (60000..2592000000 ms) to a longer window *before*
-approving. Widening it afterwards does not revive a spent window — the expiry is
-stamped into the receipt at issue time.
+approving if the gap is expected; widening it afterwards does not revive a spent
+window, since the expiry is stamped into the receipt at issue time.
 
 ### `APPROVAL_RECEIPT_CONSUMED`
 

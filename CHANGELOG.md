@@ -27,7 +27,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
   `flow.approval_consumed_count`, `flow.approval_blocked`) without exposing the
   approved parameters. Version-2 workflow state migrates to
-  `legacy-compatibility` receipts that still bind the gated action. Every recorded
+  `legacy-compatibility` receipts that still bind the gated action. A completed
+  approval whose receipt lapsed or was superseded reopens and asks again rather
+  than stranding the state file; a consumed or malformed receipt stays a hard
+  refusal. Every recorded
   field is additionally covered by a `receiptDigest`, so a partial write or a tool
   that rewrites one field is caught rather than honoured.
 - Judge calibration is now evidence a release decision can rest on. Every run
@@ -37,7 +40,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   dimension is authoritative only with three independent *decided* failed labels
   plus passed and partial examples and an abstention rate under 25% — repeat
   trials of one case collapse to one observation (disagreeing trials collapse to
-  an abstention), and an abstention never counts as coverage;
+  an abstention), and an abstention never counts as coverage. Only the
+  `calibration` and `held-out` splits count toward that authority, so cases the
+  rubric was tuned against are reported but never gate, and the gate reads the
+  95% upper bound on missed defects rather than the point estimate — zero misses
+  out of four is not evidence of a zero miss rate.
   `--critical-dimension` opts a dimension into blocking the release gate
   and `--write-baseline` when it falls short. Judge verdicts within
   `--abstention-band` of the decision boundary abstain and escalate to human review

@@ -317,9 +317,18 @@ test("an expired receipt refuses to authorize the resume", async () => {
 	state.receipts.approve = reseal({ ...state.receipts.approve, expiresAt: new Date(Date.now() - 1000).toISOString() });
 	await writeState(cwd, state);
 
+	// Headless: the approval reopens and fails closed, naming why it is being asked
+	// again rather than stranding a state file nobody can ever re-approve.
 	const expired = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
-	assert.equal(expired.result.details.error?.code, "APPROVAL_RECEIPT_EXPIRED");
+	assert.equal(expired.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	assert.match(expired.result.details.error?.cause ?? "", /no longer holds.*bounded window/s);
 	assert.equal(shipCalls(expired.calls), spent, "no child runs on expired consent");
+
+	// Interactive: consent can be granted afresh, and the run proceeds.
+	const reapproved = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+	assert.equal(reapproved.result.details.error, undefined);
+	assert.equal(reapproved.result.details.approvals?.[0].status, "consumed");
+	assert.ok(shipCalls(reapproved.calls) > spent, "the gated phase runs on the fresh approval");
 });
 
 test("changing the gated action's effective parameters invalidates the approval", async () => {
@@ -329,11 +338,15 @@ test("changing the gated action's effective parameters invalidates the approval"
 	// agentScope is not part of the workflow digest, but it decides which prompt
 	// the gated phase actually runs — so it must not ride the old approval.
 	const widened = await runFlow(resumeParams({ agentScope: "all", confirmProjectAgents: false }), { strategist: "SHIPPED" }, { cwd });
-	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
+	assert.equal(widened.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "consent is re-asked for the changed action, headless-closed");
+	assert.match(widened.result.details.error?.cause ?? "", /no longer holds.*agent scope/s);
 	assert.equal(shipCalls(widened.calls), spent);
 
-	// The unchanged action still resumes cleanly.
-	const unchanged = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
+	// Reopening discarded the consent that no longer held, so restoring the
+	// parameters is not enough on its own — the operator has to approve again.
+	const restoredHeadless = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(restoredHeadless.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	const unchanged = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
 	assert.equal(unchanged.result.details.error, undefined);
 });
 
@@ -343,7 +356,9 @@ test("a receipt cannot be replayed onto an action it never authorized", async ()
 	state.receipts.approve = reseal({ ...state.receipts.approve, consumedAt: new Date().toISOString(), consumedBy: "some-other-phase" });
 	await writeState(cwd, state);
 
-	const replayed = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
+	// A spent receipt is evidence of tampering, not a lapsed window — re-prompting
+	// past it would launder the tampering, so it stays a hard refusal.
+	const replayed = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
 	assert.equal(replayed.result.details.error?.code, "APPROVAL_RECEIPT_CONSUMED");
 	assert.equal(shipCalls(replayed.calls), spent);
 });
@@ -354,7 +369,8 @@ test("a resume state with the receipt stripped out fails closed", async () => {
 	state.receipts = {};
 	await writeState(cwd, state);
 
-	const stripped = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
+	// Likewise a missing receipt: it is not a lapse a re-prompt should paper over.
+	const stripped = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
 	assert.equal(stripped.result.details.error?.code, "APPROVAL_RECEIPT_INVALID");
 	assert.equal(shipCalls(stripped.calls), spent);
 });
@@ -383,11 +399,15 @@ test("every phase an approval gates re-verifies, not just the first", async () =
 	const verifyCalls = (calls: Call[]) => calls.filter((call) => call.agent === "recon").length;
 
 	const widened = await runFlow(resumeTwoStep({ agentScope: "all", confirmProjectAgents: false }), { recon: "VERIFIED" }, { cwd });
-	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE", "the second gated phase must be checked too");
+	assert.equal(widened.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the second gated phase must be checked too");
+	assert.match(widened.result.details.error?.cause ?? "", /no longer holds/);
 	assert.equal(verifyCalls(widened.calls), verifyCalls(crashed.calls));
 
-	const resumed = await runFlow(resumeTwoStep(), { recon: "VERIFIED" }, { cwd });
-	assert.equal(resumed.result.details.error, undefined, "the unchanged action still resumes on the already-spent receipt");
+	// The widened resume reopened the approval, so consent is granted afresh and
+	// the remaining gated phase then runs.
+	const resumed = await runFlow(resumeTwoStep(), { recon: "VERIFIED" }, { cwd, hasUI: true });
+	assert.equal(resumed.result.details.error, undefined);
+	assert.ok(verifyCalls(resumed.calls) > verifyCalls(widened.calls), "the second gated phase runs on the fresh approval");
 });
 
 test("a trailing approval binds the debrief it gates, not just the phases", async () => {
@@ -416,11 +436,12 @@ test("a trailing approval binds the debrief it gates, not just the phases", asyn
 	// from the top-level params — so changing it after approval must not ride the
 	// old consent.
 	const changed = await runFlow(resume({ requireEvidence: true }), { debrief: "SUMMARY" }, { cwd });
-	assert.equal(changed.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
+	assert.equal(changed.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	assert.match(changed.result.details.error?.cause ?? "", /no longer holds/);
 
-	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd });
+	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd, hasUI: true });
 	assert.equal(unchanged.result.details.error, undefined);
-	assert.ok(debriefCalls(unchanged.calls) > debriefCalls(changed.calls), "the approved debrief still runs");
+	assert.ok(debriefCalls(unchanged.calls) > debriefCalls(changed.calls), "the re-approved debrief runs");
 });
 
 test("a trailing approval gates the workflow's own completion", async () => {
@@ -465,7 +486,8 @@ test("a pre-receipt state migrates to a bound receipt instead of a bare APPROVED
 	// well as the phase after it, so widening the scope is refused even once every
 	// phase has completed — the receipt is not spent by the workflow finishing.
 	const widened = await runFlow(resumeParams({ agentScope: "all", confirmProjectAgents: false }), { strategist: "SHIPPED" }, { cwd });
-	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
+	assert.equal(widened.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	assert.match(widened.result.details.error?.cause ?? "", /no longer holds/);
 });
 
 test("an invalid approval window is refused before any child runs", async () => {

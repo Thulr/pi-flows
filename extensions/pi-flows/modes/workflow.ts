@@ -70,6 +70,16 @@ function approvalAuthorizations(phases: any[]): Map<string, number> {
 const approvalActionId = (phase: any): string => `workflow.phase:${phase.id}`;
 
 /**
+ * Receipt failures a human can simply answer again: the approved action changed,
+ * or the window lapsed. Asking for consent afresh is the intended recovery, and
+ * without it an expired receipt strands the state file — the approval phase is
+ * already complete, so it is skipped, and every resume re-reads the same dead
+ * receipt. A consumed or malformed receipt is NOT here: those mean the record was
+ * tampered with, and re-prompting past them would launder the tampering.
+ */
+const REAPPROVABLE_RECEIPT_ERRORS = new Set(["APPROVAL_RECEIPT_STALE", "APPROVAL_RECEIPT_EXPIRED"]);
+
+/**
  * A gated phase's EFFECTIVE definition — what it resolves to once flow-level
  * fallbacks are applied. The workflow digest sees `phase.returnContract`; only
  * this sees that an omitted one falls back to `params.returnContract`, so
@@ -276,12 +286,26 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	const results: FlowRunResult[] = [];
 	const resumedHandoffs: DelegationHandoffEnvelope[] = [];
 	let previous = "";
-	for (const phase of phases) {
+	for (const [phaseIndex, phase] of phases.entries()) {
+		// Set when a completed approval is reopened, so the re-prompt can say why it
+		// is being asked again instead of looking like a fresh pause.
+		let reapprovalCause: string | null = null;
 		if (state.completedPhaseIds.includes(phase.id)) {
 			if (phase.approval?.message) {
-				previous = state.outputs[phase.id] ?? previous;
-				continue;
-			}
+				// Re-check consent where the approval lives, not only where it is spent.
+				// A lapsed or superseded approval reopens here so it can be granted
+				// again in this same pass; headless runs still fail closed below.
+				const binding = approvalBindingFor(phases, phaseIndex, deps, digest);
+				const stale = verifyApprovalReceipt(state.receipts[phase.id], binding, { consumer: binding.action });
+				if (stale && REAPPROVABLE_RECEIPT_ERRORS.has(stale.code)) {
+					reapprovalCause = stale.cause;
+					state.completedPhaseIds = state.completedPhaseIds.filter((id) => id !== phase.id);
+					delete state.receipts[phase.id];
+				} else {
+					previous = state.outputs[phase.id] ?? previous;
+					continue;
+				}
+			} else {
 			const persisted = state.handoffs[phase.id];
 			const persistedError = validatePersistedIntegrationHandoff(persisted, {
 				attestation: state.attestations[phase.id],
@@ -295,6 +319,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			state.outputs[phase.id] = validatedOutput;
 			previous = validatedOutput;
 			continue;
+			}
 		}
 
 		// Nothing an approval gates runs until its receipt is re-verified against
@@ -318,7 +343,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		await persistState(stateFile, state);
 
 		if (phase.approval?.message) {
-			const decision = await deps.requestApproval?.("Approve workflow phase?", phase.approval.message) ?? "required";
+			const prompt = reapprovalCause ? `${phase.approval.message}\n\nRe-approval needed: ${reapprovalCause}` : phase.approval.message;
+			const decision = await deps.requestApproval?.("Approve workflow phase?", prompt) ?? "required";
 			if (decision !== "approved") {
 				state.status = decision === "required" ? "paused" : "failed";
 				state.updatedAt = new Date().toISOString();
@@ -327,14 +353,16 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				const error = flowError(
 					code,
 					decision === "required" ? `Workflow paused before approval phase "${phase.id}".` : `Workflow approval phase "${phase.id}" was denied.`,
-					decision === "required" ? "Approval nodes fail closed in headless runs; completed phase artifacts were persisted." : "The interactive approval prompt was denied.",
+					decision === "required"
+						? `Approval nodes fail closed in headless runs; completed phase artifacts were persisted.${reapprovalCause ? ` A previously granted approval no longer holds: ${reapprovalCause}` : ""}`
+						: `The interactive approval prompt was denied.${reapprovalCause ? ` It was re-asked because ${reapprovalCause}` : ""}`,
 					decision === "required" ? `Resume in an interactive Pi UI with workflow.resume:true and stateFile:"${spec.stateFile ?? path.relative(defaultCwd, stateFile)}".` : "Review the persisted artifacts, update the workflow if needed, then retry.",
 				);
 				return stateError(deps, results, error, state);
 			}
 			// Consent becomes a receipt bound to exactly what it authorizes. It is
 			// minted unconsumed: it says the action may run, not that it has.
-			const receipt = issueApprovalReceipt(approvalBindingFor(phases, phases.indexOf(phase), deps, digest), {
+			const receipt = issueApprovalReceipt(approvalBindingFor(phases, phaseIndex, deps, digest), {
 				approvedBy: sanitizeText(deps.approvalActor ?? DEFAULT_APPROVAL_ACTOR, { ...policy, recordContent: true }, APPROVER_LABEL_CAP),
 				ttlMs: approvalTtl.ttlMs,
 			});

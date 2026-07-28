@@ -47,7 +47,7 @@ npm run eval -- --reviews=.thulr/reviews/thulr-trace.reviews.json   # fold human
 npm run eval -- --efficiency-guardrail=cost_usd --efficiency-guardrail=tokens   # fail on spend/token regressions
 npm run eval -- --noise-band=0.10  # regression tolerance for score/pass-rate/efficiency guardrails (default 0.05)
 npm run eval -- --critical-dimension=criterion  # let a calibrated dimension block the gate (see Calibration)
-npm run eval -- --critical-miss-rate=0.1        # missed defects a critical dimension may carry (default 0)
+npm run eval -- --critical-miss-rate=0.1        # cap the 95% upper bound on missed defects (default 0.35)
 npm run eval -- --abstention-band=0.15          # judge scores this close to 0.5 abstain and escalate (default 0.1)
 npm run eval -- --cap=1.00         # per-case USD ceiling on flow delegations (default 0.50)
 npm run eval -- --arm-timeout=30000 # smoke/debug only; every row is excluded from quality verdicts
@@ -511,6 +511,11 @@ Every run writes a versioned `pi-flows.calibration.v1` report to
 
 ### What earns a dimension the right to block
 
+Only the `calibration` and `held-out` splits count toward gate authority. Cases
+the rubric was tuned against (`rubric-development`) are reported separately and
+never gate — a rubric tuned until it agrees with those cases agrees with them by
+construction.
+
 A dimension is `authoritative` only when it has, in this run:
 
 - **three independent failed labels**, plus at least one passed and one partial.
@@ -532,7 +537,7 @@ unsettled, not silently settled — and on missed defects above
 
 ```bash
 npm run eval -- --critical-dimension=criterion          # let it block once it is authoritative
-npm run eval -- --critical-miss-rate=0.1                # tolerate a 10% miss rate (default 0)
+npm run eval -- --critical-miss-rate=0.1                # cap the 95% UPPER BOUND on missed defects (default 0.35)
 npm run eval -- --abstention-band=0.15                  # widen the too-close-to-call band (default 0.1)
 ```
 
@@ -547,7 +552,9 @@ The positive class is **"this answer should not pass"**, so a false negative is 
 missed defect — the error a release gate exists to prevent. The report carries
 the full truth-class x decision confusion matrix, per-class precision and recall,
 false-positive and false-negative rates, and Wilson 95% bounds on each. The bound
-matters more than the point estimate at these sample sizes: a judge that missed 0
+matters more than the point estimate at these sample sizes, and the gate reads the
+**upper bound**, so clearing `--critical-miss-rate` deliberately needs more
+evidence than the coverage floor alone: a judge that missed 0
 of 4 defects has a 0% miss rate and a 95% upper bound near 49%.
 
 A verdict **abstains** rather than voting when the judge's score sits within

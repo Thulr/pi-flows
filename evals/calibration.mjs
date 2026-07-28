@@ -18,15 +18,21 @@
 // is allowed to block. What is not optional is that an opted-in dimension which
 // fails its calibration requirements blocks the gate rather than quietly
 // degrading to a warning.
-import { authoritativeDimensions, caseSplit, dimensionCoverage, formatCoverageReport, groundTruthClass, splitVersions, CALIBRATION_CLASSES, CALIBRATION_SPLITS } from "./calibration-coverage.mjs";
+import { authoritativeDimensions, caseSplit, dimensionCoverage, formatCoverageReport, groundTruthClass, splitVersions, CALIBRATION_CLASSES, CALIBRATION_SPLITS, GATING_SPLITS } from "./calibration-coverage.mjs";
 import { DEFAULT_ABSTENTION_BAND, abstentionEscalations, collapseTrials, dimensionStatistics, formatDimensionStatistics, judgeDecision } from "./calibration-stats.mjs";
 import { calibrationKeyDrift, formatCalibrationKeyDrift } from "./calibration-key.mjs";
 import { buildReviewReport, formatReviewReport } from "./review-agreement.mjs";
 
 export const CALIBRATION_SCHEMA_VERSION = "pi-flows.calibration.v1";
 
-/** Missed defects a critical dimension may carry and still gate. Zero by default: a dimension trusted to block must not be waving defects through. */
-export const DEFAULT_CRITICAL_MISS_RATE_CAP = 0;
+/**
+ * The most a critical dimension's missed-defect rate may plausibly be and still
+ * gate — read against the 95% UPPER BOUND, not the point estimate. Zero misses
+ * out of four is a 0% rate with an upper bound near 49%; gating on the point
+ * estimate would call that release-grade on four observations. The consequence is
+ * deliberate: clearing this needs more evidence than the coverage floor alone.
+ */
+export const DEFAULT_CRITICAL_MISS_RATE_CAP = 0.35;
 
 /**
  * Judge verdicts joined to ground truth, one record per case-dimension.
@@ -91,12 +97,18 @@ export function buildCalibrationReport({
 	// the same question again, not a second question — so coverage, statistics, and
 	// the escalation queue all speak in cases rather than in trials.
 	const observations = collapseTrials(records);
-	const coverage = dimensionCoverage(observations);
+	// Splits are only worth versioning if they decide something. Cases the rubric
+	// was TUNED against cannot also be the evidence that the rubric works, so they
+	// are reported separately and never counted toward gate authority — otherwise
+	// an overfit judge clears the floor on the very cases it was fitted to.
+	const gating = observations.filter((record) => GATING_SPLITS.includes(record.split));
+	const tuning = observations.filter((record) => !GATING_SPLITS.includes(record.split));
+	const coverage = dimensionCoverage(gating);
 	const authoritative = authoritativeDimensions(coverage);
 	// Ground truth from a deterministic objective check is independent of the judge,
 	// which is what calibration needs — but a reader deciding how far to trust an
 	// authoritative dimension should be able to see how much of it a person looked at.
-	const groundTruthSources = observations.reduce((counts, record) => ({ ...counts, [record.source]: (counts[record.source] ?? 0) + 1 }), {});
+	const groundTruthSources = gating.reduce((counts, record) => ({ ...counts, [record.source]: (counts[record.source] ?? 0) + 1 }), {});
 	return {
 		schemaVersion: CALIBRATION_SCHEMA_VERSION,
 		generatedAt,
@@ -106,9 +118,11 @@ export function buildCalibrationReport({
 		splits: splitVersions(splitEntries),
 		coverage,
 		groundTruthSources,
-		statistics: dimensionStatistics(observations.filter((record) => record.decision)),
+		statistics: dimensionStatistics(gating.filter((record) => record.decision)),
+		/** Reported, never gating: the cases the rubric was tuned against. */
+		rubricDevelopment: { observations: tuning.length, coverage: dimensionCoverage(tuning), statistics: dimensionStatistics(tuning.filter((record) => record.decision)) },
 		review,
-		escalations: abstentionEscalations(observations),
+		escalations: abstentionEscalations(gating),
 		authority: {
 			authoritative,
 			provisional: Object.keys(coverage).filter((dimension) => !coverage[dimension].authoritative),
@@ -134,11 +148,13 @@ export function calibrationGateIssues(report, { criticalMissRateCap = DEFAULT_CR
 		if (!coverage.authoritative) {
 			issues.push(`critical dimension "${dimension}" is provisional: ${coverage.shortfalls.join("; ")}. Add the missing labelled cases before letting it gate.`);
 		}
+		// The bound, not the estimate: a gate that reads the point estimate treats
+		// "0 misses out of 4" as proof of a 0% miss rate.
 		const missed = report.statistics[dimension]?.detection?.falseNegativeRate;
-		if (missed?.value !== null && missed?.value !== undefined && missed.value > criticalMissRateCap) {
-			const upper = missed.confidence95 ? ` (95% upper bound ${(missed.confidence95.upper * 100).toFixed(1)}%)` : "";
+		const bound = missed?.confidence95?.upper ?? missed?.value;
+		if (bound !== null && bound !== undefined && bound > criticalMissRateCap) {
 			issues.push(
-				`critical dimension "${dimension}" missed ${(missed.value * 100).toFixed(1)}% of defects${upper}, above the ${(criticalMissRateCap * 100).toFixed(1)}% cap. Fix the rubric or the judge before trusting this dimension to block.`,
+				`critical dimension "${dimension}" could be missing up to ${(bound * 100).toFixed(1)}% of defects (95% upper bound over ${missed.samples} observation(s); point estimate ${(missed.value * 100).toFixed(1)}%), above the ${(criticalMissRateCap * 100).toFixed(1)}% cap. Add labelled defect cases to tighten the bound, or fix the judge.`,
 			);
 		}
 		const contested = report.review.unresolved.filter((entry) => entry.dimension === dimension);
@@ -202,7 +218,8 @@ export function formatCalibrationReport(report) {
 		formatDimensionStatistics(report.statistics),
 		formatReviewReport(report.review),
 	];
-	lines.push(`ground truth: ${Object.entries(report.groundTruthSources).map(([source, count]) => `${count} ${source}`).join(", ") || "none"}`);
+	lines.push(`ground truth (gating splits ${GATING_SPLITS.join(" + ")}): ${Object.entries(report.groundTruthSources).map(([source, count]) => `${count} ${source}`).join(", ") || "none"}`);
+	lines.push(`rubric-development observations (reported, never gating): ${report.rubricDevelopment.observations}`);
 	if (report.escalations.length) {
 		lines.push(`escalated to human review — the judge abstained on ${report.escalations.length} case-dimension(s). Record a blinded verdict for each:`);
 		for (const entry of report.escalations) {
