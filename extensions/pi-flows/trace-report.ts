@@ -136,7 +136,12 @@ export function parseTraceJsonl(text: string): { spans: TraceSpanRecord[]; parse
 	for (const line of text.split(/\r?\n/)) {
 		if (!line.trim()) continue;
 		try {
-			spans.push(JSON.parse(line) as TraceSpanRecord);
+			const parsed: unknown = JSON.parse(line);
+			// A valid JSON primitive is still not a span. Pushing one would make the
+			// summarizer dereference it and take the whole report down, when the
+			// point of counting parse errors is to survive a malformed row.
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not a span object");
+			spans.push(parsed as TraceSpanRecord);
 		} catch {
 			parseErrors += 1;
 		}

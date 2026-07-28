@@ -71,7 +71,10 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		fallbackContract: params.contract as DelegationContract | undefined,
 		returnContract: params.returnContract,
 		requireEvidence: params.requireEvidence,
-		scope: { key: "debrief", dependsOn: sections.map((_unused: unknown, index: number) => sectionKey(index)) },
+		// Only the sections that succeeded reach the synthesis prompt, so only those
+		// belong in its dependency list — claiming it consumed a failed section's
+		// output would misreport what the answer actually rests on.
+		scope: { key: "debrief", dependsOn: results.flatMap((result, index) => isFailed(result) ? [] : [sectionKey(index)]) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")(results, planned.error) };
 	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);

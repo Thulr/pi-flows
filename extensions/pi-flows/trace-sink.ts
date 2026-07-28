@@ -298,7 +298,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
 					...traceContextAttributes(storedContext),
-					...attributes,
+					...storedAttributes(attributes),
 					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
 					"flow.execution_success": status.ok,
 					"flow.trace.expected_spans": expectedSpans,

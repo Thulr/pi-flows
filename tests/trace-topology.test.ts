@@ -693,3 +693,48 @@ test("the monitor reactor links to the observation it is diagnosing", async () =
 	assert.equal(attr(reactor, "flow.depends_on"), "trigger");
 	assert.equal(attr(reactor, "flow.depends_on_span_ids"), trigger.span_id);
 });
+
+test("root summary attributes obey the capture policy like every other span", async () => {
+	const dir = await freshDir();
+	const fakeSecret = "sk-not-a-real-key-1111111111111111111111111111111111"; // privacy-scan: allow deliberate redaction fixture
+	const sink = makeTraceSink(path.join(dir, TRACE), "route", { recordContent: true, redactSecrets: true });
+	// A route choice is an agent name, and a user- or project-supplied agent can be
+	// named anything at all.
+	await sink.finalize({ ok: true }, { "flow.route_choice": `recon token=${fakeSecret} at ${path.join(homedir(), "agents")}`, "flow.child_count": 2 });
+	const root = (await readSpans(dir)).find((span) => span.parent_span_id === null)!;
+	assert.match(String(attr(root, "flow.route_choice")), /recon/, "the choice is still recorded");
+	assert.ok(!String(attr(root, "flow.route_choice")).includes(fakeSecret));
+	assert.doesNotMatch(String(attr(root, "flow.route_choice")), new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+	assert.equal(attr(root, "flow.child_count"), 2, "non-string attributes pass through untouched");
+});
+
+test("a malformed trace row is counted, not fatal", () => {
+	// `null` parses fine and is not a span; pushing it made the summarizer
+	// dereference it and take down the whole report.
+	const parsed = parseTraceJsonl(`null\n[1,2]\n"text"\n{"trace_id":"a","parent_span_id":null,"attributes":{"flow.mode":"single"}}\nnot json\n`);
+	assert.equal(parsed.spans.length, 1);
+	assert.equal(parsed.parseErrors, 4);
+	const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, TRACE);
+	assert.equal(report.traces, 1);
+	assert.equal(traceReportIsComplete(report), false, "parse errors leave the report incomplete");
+});
+
+test("dossier synthesis links only the sections it actually read", async () => {
+	const { stubDir, result } = await runFlow(
+		{
+			task: "reconcile the sources",
+			traceFile: TRACE,
+			concurrency: 1,
+			dossier: {
+				sections: [{ agent: "recon", task: "source A" }, { agent: "recon", task: "source B" }, { agent: "recon", task: "source C" }],
+				debrief: { agent: "debrief" },
+			},
+		},
+		{ recon: ["finding A", "finding B", { reply: "boom", exitCode: 1 }], debrief: "dossier" },
+	);
+	assert.equal(result.details.error, undefined, "two good sections are enough to synthesize");
+	const spans = await readSpans(stubDir);
+	// The failed section was filtered out of the synthesis prompt, so claiming the
+	// debrief consumed it would misreport what the answer rests on.
+	assert.equal(attr(unit(spans, "debrief"), "flow.depends_on"), "section-1,section-2");
+});
