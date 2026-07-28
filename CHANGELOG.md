@@ -10,6 +10,23 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- A deterministic, model-free coordination fault-injection suite runs offline in
+  `npm test`, so failures a live run reproduces once a month are reproduced on
+  every check. A reusable adapter over the child-run seam (`ModeDeps.runChild`)
+  injects delay, loss, duplication, reordering, failure, and staleness without
+  spawning anything; latency is virtual, so a 90-second child costs the suite
+  nothing and still hits its ceiling. Scenarios cover corrupted artifacts,
+  persuasive-but-wrong children, stale and reordered responses, trace
+  suppression, exhausted budgets, shared-writer races, and partial integration
+  followed by a retry. Each declares four independent checks — outcome, process,
+  policy, residual state — because a run that returns the right refusal after
+  merging the bad work is not contained. Benign controls run through the same
+  harness, so false containment stays measurable, and every case carries explicit
+  attack-opportunity and benign-opportunity denominators: containment is reported
+  as a rate (currently 11/12, with the one uncontained case — a replayed untyped
+  ballot — kept in the suite rather than dropped from it) instead of as a pile of
+  passing assertions.
+
 - Coordination traces now capture the boundaries a delegated run actually
   crosses, instead of flattening every child under one root span. Spans declare a
   role (`root`, `stage`, `child`, `event`): children nest under the wave, round,
