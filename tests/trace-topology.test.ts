@@ -738,3 +738,52 @@ test("dossier synthesis links only the sections it actually read", async () => {
 	// debrief consumed it would misreport what the answer rests on.
 	assert.equal(attr(unit(spans, "debrief"), "flow.depends_on"), "section-1,section-2");
 });
+
+test("a duplicated span cannot conceal a dropped one", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+	assert.equal(summarizeTraceSpans(spans, 0, TRACE).incompleteTraces, 0);
+
+	// Lose one row and duplicate another: the row count still matches what the
+	// root said to expect, so a length-based check would call this trace whole.
+	const children = spans.filter((span) => role(span) === "child");
+	const corrupted = [...spans.filter((span) => span !== children[1]), children[0]];
+	assert.equal(corrupted.length, spans.length, "the corruption is invisible to a row count");
+	const report = summarizeTraceSpans(corrupted, 0, TRACE);
+	assert.equal(report.duplicateSpans, 1);
+	assert.ok(report.droppedSpans > 0, "the missing span must still register as dropped");
+	assert.equal(report.incompleteTraces, 1);
+	assert.equal(traceReportIsComplete(report), false);
+	assert.match(formatTraceReport(report), /1 duplicated/);
+});
+
+test("synthesis and verdict spans link only the units they actually aggregate", async () => {
+	const orchestrated = await runFlow(
+		{
+			task: "map the system",
+			traceFile: TRACE,
+			concurrency: 1,
+			orchestrate: { commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" }, maxSubtasks: 2 },
+		},
+		{ commander: '["first", "second"]', recon: ["finding one", { reply: "boom", exitCode: 1 }], debrief: "synthesis" },
+	);
+	const orchestrateSpans = await readSpans(orchestrated.stubDir);
+	// Worker 2 failed, so its output never reached the synthesis prompt.
+	assert.equal(attr(unit(orchestrateSpans, "synthesis-1"), "flow.depends_on"), "worker-1");
+
+	const evaluated = await runFlow(
+		// concurrency 1: two write-capable critics sharing a cwd is refused outright,
+		// and the guard is right to do it — serialize them instead.
+		{ task: "build it", traceFile: TRACE, concurrency: 1, evaluate: { maxIterations: 1, redteam: [{ agent: "redteam" }, { agent: "overwatch" }] } },
+		{ operator: "draft", redteam: "VERDICT: PASS", overwatch: "VERDICT: PASS" },
+	);
+	const evaluateSpans = await readSpans(evaluated.stubDir);
+	const panel = evaluateSpans.find((span) => attr(span, "flow.unit_key") === "iteration-1.panel")!;
+	// A revision links to the panel, so a panel that links to nothing would break
+	// the attribution chain in the middle.
+	assert.equal(attr(panel, "flow.depends_on"), "iteration-1.critic-1,iteration-1.critic-2");
+	assert.equal(String(attr(panel, "flow.depends_on_span_ids")).split(",").length, 2);
+});

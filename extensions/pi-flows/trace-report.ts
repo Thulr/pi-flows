@@ -44,7 +44,9 @@ export interface TraceReportBucket {
 	droppedSpans: number;
 	redactedSpans: number;
 	failedExports: number;
-	/** Runs whose trace evidence is provably incomplete (dropped rows or failed exports). */
+	/** Rows sharing a span id. A duplicate is corruption, and it can hide a drop. */
+	duplicateSpans: number;
+	/** Runs whose trace evidence is provably incomplete (dropped rows, duplicates, or failed exports). */
 	incompleteTraces: number;
 	coordinationEvents: number;
 	stageSpans: number;
@@ -81,6 +83,7 @@ export function emptyTraceBucket(): TraceReportBucket {
 		droppedSpans: 0,
 		redactedSpans: 0,
 		failedExports: 0,
+		duplicateSpans: 0,
 		incompleteTraces: 0,
 		coordinationEvents: 0,
 		stageSpans: 0,
@@ -203,7 +206,14 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const declaredExpected = optionalNumericAttr(rootSpan, "flow.trace.expected_spans");
 		const expectedSpans = declaredExpected ?? traceSpans.length;
 		const failedExports = numericAttr(rootSpan, "flow.trace.failed_exports");
-		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - traceSpans.length));
+		// Counted by unique span id, not by row: a pipeline that loses one span and
+		// duplicates another leaves the row count intact, and a completeness check
+		// built on length would call that trace whole.
+		const identified = traceSpans.filter((span) => typeof span.span_id === "string" && span.span_id.trim());
+		const uniqueIds = new Set(identified.map((span) => span.span_id as string)).size;
+		const duplicateSpans = identified.length - uniqueIds;
+		const observedSpans = uniqueIds + (traceSpans.length - identified.length);
+		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
 
 		const delta: TraceReportBucket = {
 			traces: 1,
@@ -222,16 +232,18 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			budgetHits: budgetHit ? 1 : 0,
 			sameModelVoteWarnings: sameModelVoteWarning ? 1 : 0,
 			expectedSpans,
-			observedSpans: traceSpans.length,
+			observedSpans,
 			droppedSpans,
 			redactedSpans,
 			failedExports,
+			duplicateSpans,
 			// Same derivation the sink used when it stamped `flow.trace.health`, so a
-			// read-back verdict and a live one cannot disagree.
-			incompleteTraces: traceHealthStatus(
-				{ expectedSpans, observedSpans: traceSpans.length, droppedSpans, redactedSpans, failedExports },
+			// read-back verdict and a live one cannot disagree. A duplicate is its own
+			// disqualification: nothing downstream can tell which copy is real.
+			incompleteTraces: duplicateSpans > 0 || traceHealthStatus(
+				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
 				Boolean(root),
-			) === "recorded" ? 0 : 1,
+			) !== "recorded" ? 1 : 0,
 			coordinationEvents: eventSpans.length,
 			stageSpans: stageSpans.length,
 		};
@@ -283,7 +295,7 @@ export function formatTraceReport(report: TraceReport): string {
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
-		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete`,
+		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete`,
 		`Topology: ${report.stageSpans} stage span${report.stageSpans === 1 ? "" : "s"}, ${report.coordinationEvents} coordination event${report.coordinationEvents === 1 ? "" : "s"}`,
 	];
 	if (report.parseErrors) lines.push(`Parse errors: ${report.parseErrors}`);

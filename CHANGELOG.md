@@ -59,8 +59,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   accounts for the export (`flow.trace.expected_spans`, `.observed_spans`,
   `.dropped_spans`, `.redacted_spans`, `.failed_exports`, `.health`), the same
   counters return on `details.trace.spans`, and reading a trace back compares the
-  declared expectation against the rows present — so spans lost after a
-  successful write still register as dropped. `/flows report` and
+  declared expectation against the rows present — counted by unique span id, so a
+  pipeline that loses one span and duplicates another cannot pass a row-count
+  check, and a duplicate is itself reported as corruption. `/flows report` and
   `npm run trace:report` print observed-vs-expected spans, drops, redactions,
   failed exports, incomplete runs, and a stage/event topology line. Health is
   kept separate from execution success on purpose: a run whose spans were dropped

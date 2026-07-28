@@ -125,6 +125,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 
 	// 3. Synthesize the worker findings into one answer. Findings feed the
 	// synthesizer prompt — another trust boundary, so clean + scan each.
+	const consumedWorkerKeys = workerResults.flatMap((result, index) => isFailed(result) ? [] : [workerKey(index)]);
 	const findings = workerResults
 		.map((result, index) => ({ result, index }))
 		.filter(({ result }) => !isFailed(result))
@@ -160,7 +161,10 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			requireEvidence: params.requireEvidence,
 			scope: {
 				key: synthesisKey(synthesisRound),
-				dependsOn: synthesisRound === 1 ? subtasks.map((_unused, index) => workerKey(index)) : [verifyKey(synthesisRound - 1)],
+				// Only the workers whose findings reached the prompt: a failed worker's
+				// output is filtered out, so naming it would claim the answer rests on
+				// evidence the synthesizer never saw.
+				dependsOn: synthesisRound === 1 ? consumedWorkerKeys : [verifyKey(synthesisRound - 1)],
 			},
 		});
 	};
