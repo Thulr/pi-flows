@@ -249,11 +249,51 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// with a unique id, so nothing above notices it — but the tree it belonged
 		// to no longer holds together, and that is what the topology is for.
 		const knownIds = new Set(identifiedIds);
-		const orphanedChildren = traceSpans.filter((span) =>
-			stringAttr(span, "flow.span_role") !== undefined
-			&& span.parent_span_id !== null
+		const modernSpans = traceSpans.filter((span) => stringAttr(span, "flow.span_role") !== undefined);
+		const orphanedChildren = modernSpans.filter((span) =>
+			span.parent_span_id !== null
 			&& (typeof span.parent_span_id !== "string" || !span.parent_span_id.trim() || !knownIds.has(span.parent_span_id))).length;
-		const disconnected = orphanedChildren > 0 || (declaredRoot !== undefined && declaredRoot.parent_span_id !== null);
+
+		// Existing parents are not a tree. Two spans repointed at each other, or a
+		// root made its own parent, leave every reference resolvable while nothing
+		// hangs off the root any more — so the chain is walked rather than the link
+		// merely checked.
+		const byId = new Map(identified.map((span) => [span.span_id as string, span]));
+		const rootId = root?.span_id;
+		const reachesRoot = (start: TraceSpanRecord): boolean => {
+			const seen = new Set<string>();
+			let current: TraceSpanRecord | undefined = start;
+			while (current) {
+				const id = current.span_id;
+				if (typeof id !== "string" || seen.has(id)) return false;
+				seen.add(id);
+				const parent = current.parent_span_id;
+				if (parent === null) return id === rootId;
+				if (typeof parent !== "string") return false;
+				if (parent === rootId) return true;
+				current = byId.get(parent);
+			}
+			return false;
+		};
+		const unreachable = modernSpans.filter((span) => span !== root && !reachesRoot(span)).length;
+		const rootless = modernSpans.length > 0 && rootCandidates.length === 0;
+
+		// A dependency that names a span the trace does not contain, or names fewer
+		// spans than keys, is a broken attribution chain — which is the one thing
+		// these links exist to carry.
+		const danglingDependencies = modernSpans.filter((span) => {
+			const declared = stringAttr(span, "flow.depends_on");
+			if (!declared) return false;
+			const keys = declared.split(",").filter(Boolean);
+			const resolved = (stringAttr(span, "flow.depends_on_span_ids") ?? "").split(",").filter(Boolean);
+			return resolved.length !== keys.length || resolved.some((id) => !knownIds.has(id));
+		}).length;
+
+		const disconnected = orphanedChildren > 0
+			|| unreachable > 0
+			|| rootless
+			|| danglingDependencies > 0
+			|| (declaredRoot !== undefined && declaredRoot.parent_span_id !== null);
 		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
 
 		const delta: TraceReportBucket = {

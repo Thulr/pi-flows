@@ -623,3 +623,58 @@ test("a contract-bound termination is reported against the contract, not a budge
 	assert.equal(attr(event, "flow.contract_budget.limit_generated_tokens"), 4);
 	assert.equal(attr(event, "flow.budget.limit_generated_tokens"), undefined);
 });
+
+test("a resolvable link is not a tree: cycles and unreachable spans are corruption", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ recon: "done" },
+	);
+	const spans = await readSpans(stubDir);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+
+	// Two children pointed at each other: every parent id resolves, nothing is
+	// missing or duplicated, and neither span hangs off the root any more.
+	const children = spans.filter((span) => role(span) === "child");
+	const cycled = spans.map((span) =>
+		span === children[0] ? { ...span, parent_span_id: children[1].span_id }
+			: span === children[1] ? { ...span, parent_span_id: children[0].span_id }
+				: span);
+	const cycleReport = summarizeTraceSpans(cycled, 0, TRACE);
+	assert.equal(cycleReport.droppedSpans, 0, "every reference still resolves");
+	assert.equal(cycleReport.structurallyInvalidTraces, 1);
+	assert.equal(traceReportIsComplete(cycleReport), false);
+
+	// A root that parents itself: no parentless row is left for anything to reach.
+	const selfRooted = spans.map((span) => (span.parent_span_id === null ? { ...span, parent_span_id: span.span_id } : span));
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(selfRooted, 0, TRACE)), false);
+});
+
+test("a broken attribution chain is refused even when every span survives", async () => {
+	const { stubDir } = await runFlow(
+		{
+			task: "map the system",
+			traceFile: TRACE,
+			graph: { nodes: [{ id: "alpha", agent: "recon", task: "start" }, { id: "beta", agent: "recon", task: "use {node.alpha}", dependsOn: ["alpha"] }] },
+		},
+		{ recon: "node output" },
+	);
+	const spans = await readSpans(stubDir);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
+
+	const beta = spans.find((span) => attr(span, "flow.unit_key") === "beta")!;
+	const rewrite = (patch: Record<string, unknown>) =>
+		spans.map((span) => (span === beta ? { ...span, attributes: { ...span.attributes, ...patch } } : span));
+
+	// Repointed at a span the trace does not contain, and stripped of its resolved
+	// ids while still declaring the dependency: the rows are all intact either way,
+	// and the causal chain the links exist to carry is not.
+	for (const [label, patched] of [
+		["unknown target", rewrite({ "flow.depends_on_span_ids": "no-such-span" })],
+		["resolution removed", rewrite({ "flow.depends_on_span_ids": undefined })],
+	] as const) {
+		const report = summarizeTraceSpans(patched, 0, TRACE);
+		assert.equal(report.observedSpans, spans.length, `${label}: every span survives`);
+		assert.equal(report.structurallyInvalidTraces, 1, label);
+		assert.equal(traceReportIsComplete(report), false, `${label} must not pass the gate`);
+	}
+});
