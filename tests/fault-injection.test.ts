@@ -63,10 +63,23 @@ test("benign controls run through the same harness so false containment stays me
 	console.log(formatted);
 });
 
-test("every injectable fault kind is exercised by at least one scenario", () => {
-	const exercised = new Set(scenarios.map((scenario) => scenario.faultKind));
-	const missing = FAULT_KINDS.filter((kind) => !exercised.has(kind));
-	assert.deepEqual(missing, [], `fault kinds declared by the adapter but never injected: ${missing.join(", ")}`);
+test("every injectable fault kind is actually injected by at least one scenario", () => {
+	// Checked against the rules the scenarios inject, not against their labels: a
+	// label-only check passes forever the moment a case stops injecting anything.
+	const injected = new Set(scenarios.flatMap((scenario) => scenario.faults.map((fault) => fault.kind)));
+	const missing = FAULT_KINDS.filter((kind) => !injected.has(kind));
+	assert.deepEqual(missing, [], `fault kinds the adapter can inject but no scenario injects: ${missing.join(", ")}`);
+
+	// And the label has to agree with the rules, so classification cannot drift
+	// from what the case does.
+	for (const scenario of scenarios) {
+		const kinds = new Set(scenario.faults.map((fault) => fault.kind));
+		if (scenario.faultKind === "none") {
+			assert.equal(scenario.faults.length, 0, `${scenario.id} is labelled "none" but injects ${[...kinds].join(", ")}`);
+		} else {
+			assert.ok(kinds.has(scenario.faultKind), `${scenario.id} is labelled ${scenario.faultKind} but injects ${[...kinds].join(", ") || "nothing"}`);
+		}
+	}
 });
 
 test("trace suppression is visible as trace health, not as an agent failure", async () => {
@@ -107,6 +120,16 @@ test("the adapter delivers each fault kind deterministically and records it", as
 	assert.equal(swappedFirst.messages[0].content[0].text, "two");
 	assert.equal(swappedSecond.messages[0].content[0].text, "one");
 	assert.equal(reordered.ledger.countDelivered("swapped"), 2);
+
+	const failed = makeFaultAdapter({ replies: { redteam: "VERDICT: PASS" }, faults: [{ kind: "failure", agent: "redteam", errorCode: "CHILD_PROVIDER_ERROR" }] });
+	const failedResult = await failed.runChild(options("redteam", 1) as any);
+	assert.equal(failedResult.error?.code, "CHILD_PROVIDER_ERROR");
+	assert.equal(failed.ledger.dispatches[0].delivery, "failed");
+
+	const stale = makeFaultAdapter({ replies: { recon: "current" }, faults: [{ kind: "stale", agent: "recon", replay: "from an earlier revision" }] });
+	const staleResult = await stale.runChild(options("recon", 1) as any);
+	assert.equal(staleResult.messages[0].content[0].text, "from an earlier revision");
+	assert.equal(stale.ledger.dispatches[0].delivery, "replayed");
 
 	// Latency is virtual: a 90s child costs the suite nothing and still hits the ceiling.
 	const delayed = makeFaultAdapter({ replies: { recon: "slow" }, faults: [{ kind: "delay", agent: "recon", delayMs: 90_000 }] });

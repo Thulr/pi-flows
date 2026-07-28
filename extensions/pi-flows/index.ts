@@ -29,7 +29,7 @@ import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
 import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
-import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, summarizeTraceSpans, traceEvidenceIssue, traceSummaryAttributes } from "./trace.ts";
+import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
@@ -397,14 +397,9 @@ export default function (pi: ExtensionAPI) {
 				// Strict runs refuse to report a result they cannot evidence. An
 				// already-failed run keeps its own error: the incomplete trace is a
 				// second problem, not a better explanation of the first.
-				const traceIssue = traceStrict ? traceEvidenceIssue(output.details.trace) : null;
-				if (traceIssue && !output.details.error) {
-					const error = flowError(
-						"TRACE_INCOMPLETE",
-						"Flow completed but its coordination trace is incomplete, and strict tracing is on.",
-						`${traceIssue}. Under traceStrict the run cannot be reported as evidence-backed.`,
-						"Check that the trace path is writable and has space, then rerun. This gate sees what the exporter failed to write; for spans lost after a successful write, read the file back with `npm run trace:report -- --strict`. Set traceStrict:false to accept best-effort tracing.",
-					);
+				const traceError = strictTraceError(output.details.trace, traceStrict);
+				if (traceError && !output.details.error) {
+					const error = traceError;
 					output.details.error = error;
 					output.content = [{ type: "text", text: `${formatFlowError(error)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
 					liveDetails = output.details;

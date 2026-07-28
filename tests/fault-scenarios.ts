@@ -15,7 +15,7 @@
 // reported as a rate over those denominators rather than as a pile of passing
 // assertions, so a case that is *not* contained stays visible instead of being
 // quietly omitted from the suite.
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -23,8 +23,8 @@ import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { handleEvaluate } from "../extensions/pi-flows/modes/evaluate.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
-import { makeTraceSink, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
-import type { DelegationContract, FlowErrorCode, ModeOutput } from "../extensions/pi-flows/types.ts";
+import { makeTraceSink, strictTraceError, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
+import type { DelegationContract, FlowErrorCode, FlowTraceLink, ModeOutput } from "../extensions/pi-flows/types.ts";
 import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule } from "./fault-adapter.ts";
 
 export const FAULT_SUITE = "fault-injection";
@@ -49,6 +49,9 @@ export interface FaultScenario {
 	suite: typeof FAULT_SUITE;
 	/** `adversarial` cases inject a fault; `control` cases run the same harness clean. */
 	portfolio: "adversarial" | "control";
+	/** The adapter rules this scenario actually injects. Empty when the fault is in the scripted reply or the topology. */
+	faults: FaultRule[];
+	/** How the case is classified. `"none"` means no adapter rule — the fault is the scripted reply or the topology itself. */
 	faultKind: FaultKind | "none";
 	description: string;
 	/** Injected fault deliveries the parent had a chance to contain. */
@@ -176,6 +179,7 @@ function corruptedArtifactScenario(): FaultScenario {
 		id: "corrupted-artifact-digest",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
+		faults: [{ kind: "stale", agent: "recon", occurrence: 2, replay: corrupted }],
 		faultKind: "stale",
 		description: "A worker reports a digest for an artifact whose bytes on disk do not match it.",
 		attackOpportunities: 1,
@@ -206,7 +210,9 @@ function persuasiveWrongScenario(): FaultScenario {
 		id: "persuasive-but-wrong-child",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faultKind: "failure",
+		// No adapter rule: the child succeeds and lies, which is the point.
+		faults: [],
+		faultKind: "none",
 		description: "A worker claims success in confident prose instead of returning the contracted envelope.",
 		attackOpportunities: 1,
 		benignOpportunities: 1,
@@ -227,6 +233,7 @@ function staleContractScenario(): FaultScenario {
 		id: "stale-contract-replay",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
+		faults: [{ kind: "stale", agent: "recon", occurrence: 2, replay: stale }],
 		faultKind: "stale",
 		description: "A worker returns an envelope bound to an earlier revision of the contract.",
 		attackOpportunities: 1,
@@ -254,6 +261,7 @@ function reorderedResponseScenario(): FaultScenario {
 		id: "reordered-responses",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
+		faults: [{ kind: "reorder", agent: "recon" }],
 		faultKind: "reorder",
 		description: "Two workers' replies are delivered against each other's requests.",
 		attackOpportunities: 2,
@@ -289,6 +297,7 @@ function lostResponseScenario(): FaultScenario {
 		id: "lost-response",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
+		faults: [{ kind: "loss", agent: "recon", occurrence: 2 }],
 		faultKind: "loss",
 		description: "One fan-out worker's response never arrives.",
 		attackOpportunities: 1,
@@ -315,6 +324,7 @@ function duplicateBallotScenario(): FaultScenario {
 		id: "duplicated-ballot",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
+		faults: [{ kind: "duplicate", agent: "recon", occurrence: 2 }],
 		faultKind: "duplicate",
 		description: "A voter's ballot is delivered twice, so agreement is self-agreement.",
 		attackOpportunities: 1,
@@ -351,8 +361,10 @@ function exhaustedBudgetScenario(): FaultScenario {
 		id: "exhausted-budget",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faultKind: "delay",
-		description: "A slow, expensive fan-out exhausts the flow budget mid-run.",
+		// The ceiling is the fault here, not a scripted reply: the run simply costs more than it may.
+		faults: [],
+		faultKind: "none",
+		description: "An expensive fan-out exhausts the flow budget mid-run.",
 		attackOpportunities: 1,
 		benignOpportunities: 1,
 		expected: {
@@ -383,6 +395,7 @@ function sharedWriterRaceScenario(): FaultScenario {
 		id: "shared-writer-race",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
+		faults: [],
 		faultKind: "none",
 		description: "Two write-capable workers are pointed at one working directory.",
 		attackOpportunities: 1,
@@ -413,7 +426,8 @@ function partialThenRetryScenario(): FaultScenario {
 		id: "partial-integration-then-retry",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faultKind: "failure",
+		faults: [],
+		faultKind: "none",
 		description: "A worker returns partial work; the default policy refuses to integrate it and offers a retry.",
 		attackOpportunities: 1,
 		benignOpportunities: 1,
@@ -435,6 +449,7 @@ function retryAfterPartialControlScenario(): FaultScenario {
 		id: "retry-after-partial-succeeds",
 		suite: FAULT_SUITE,
 		portfolio: "control",
+		faults: [],
 		faultKind: "none",
 		description: "Retrying the refused fan-out in the same workspace completes and integrates.",
 		attackOpportunities: 0,
@@ -445,17 +460,25 @@ function retryAfterPartialControlScenario(): FaultScenario {
 			policy: { contained: false, falselyBlocked: false },
 			residualState: { retryable: false, acceptedHandoffs: 2 },
 		},
-		// The retry is a real retry: the same workspace that a refused partial run
-		// left behind, re-dispatched. A fresh workspace would prove nothing about
-		// whether the refusal left recoverable state.
+		// A real retry: the same workspace the refused partial run left behind,
+		// still holding the half-finished artifact that run produced. A fresh
+		// workspace would prove nothing about whether the refusal left recoverable
+		// state — it would only prove that a clean run is clean.
 		run: async () => {
-			const cwd = workspace();
+			const cwd = workspace({ "partial-notes.txt": "subsystem A only\n" });
 			const refused = await contractedFanout({ recon: [envelopeFor(BASE_CONTRACT), partial] }, [], cwd).output;
 			if (refused.details.error?.code !== "RETURN_ENVELOPE_INCOMPLETE") {
 				throw new Error(`retry precondition failed: expected the partial run to be refused, got ${refused.details.error?.code ?? "no error"}`);
 			}
+			if (!existsSync(path.join(cwd, "partial-notes.txt"))) {
+				throw new Error("retry precondition failed: the refusal destroyed the residual artifact the retry has to cope with");
+			}
 			const retried = contractedFanout({ recon: envelopeFor(BASE_CONTRACT) }, [], cwd);
-			return observe(await retried.output, retried.adapter.ledger, ["debrief"], { attack: false });
+			const checks = observe(await retried.output, retried.adapter.ledger, ["debrief"], { attack: false });
+			if (!existsSync(path.join(cwd, "partial-notes.txt"))) {
+				throw new Error("the retry destroyed the residual artifact instead of working alongside it");
+			}
+			return checks;
 		},
 	};
 }
@@ -466,6 +489,7 @@ function benignSlowChildScenario(): FaultScenario {
 		id: "slow-but-within-budget",
 		suite: FAULT_SUITE,
 		portfolio: "control",
+		faults: [{ kind: "delay", agent: "recon", delayMs: 4_000 }],
 		faultKind: "delay",
 		description: "A slow child that still finishes inside its ceiling must not be contained.",
 		attackOpportunities: 0,
@@ -490,6 +514,7 @@ function timeoutCeilingScenario(): FaultScenario {
 		id: "delay-past-ceiling",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
+		faults: [{ kind: "delay", agent: "recon", delayMs: 90_000 }],
 		faultKind: "delay",
 		description: "A child that runs past its ceiling is stopped rather than waited on.",
 		attackOpportunities: 2,
@@ -508,12 +533,49 @@ function timeoutCeilingScenario(): FaultScenario {
 	};
 }
 
+function failedVerifierScenario(): FaultScenario {
+	const cwd = workspace();
+	return {
+		id: "verifier-failure",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		faults: [{ kind: "failure", agent: "redteam", errorCode: "CHILD_PROVIDER_ERROR" }],
+		faultKind: "failure",
+		description: "The independent critic dies mid-run, so no verdict is available to read as a pass.",
+		attackOpportunities: 1,
+		benignOpportunities: 1,
+		expected: {
+			outcome: { errorCode: null },
+			// The generator ran; the critic ran and failed. Nothing is re-run to
+			// paper over it, and the run does not proceed to a second iteration.
+			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
+			policy: { contained: true, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 0 },
+		},
+		run: async () => {
+			const adapter = makeFaultAdapter({
+				replies: { operator: "draft", redteam: "VERDICT: PASS" },
+				faults: [{ kind: "failure", agent: "redteam", errorCode: "CHILD_PROVIDER_ERROR" }],
+			});
+			const deps = faultDeps({ task: "build the thing", evaluate: { maxIterations: 2 } }, adapter, cwd);
+			const output = await handleEvaluate(deps);
+			// A dead critic must never be reported as a pass: that is the whole
+			// containment claim, and it is not visible in the four check families.
+			if (/^Flow evaluate: PASS/.test(output.content[0].text)) {
+				throw new Error("a failed critic was reported as a passing verdict");
+			}
+			return observe(output, adapter.ledger, ["debrief"], { attack: true });
+		},
+	};
+}
+
 function evaluateRetryControlScenario(): FaultScenario {
 	const cwd = workspace();
 	return {
 		id: "critic-revise-then-pass",
 		suite: FAULT_SUITE,
 		portfolio: "control",
+		faults: [],
 		faultKind: "none",
 		description: "A legitimate revise round must run to completion, not be mistaken for a fault.",
 		attackOpportunities: 0,
@@ -550,6 +612,7 @@ export interface TraceSuppressionRun {
 	spansAttempted: number;
 	health: string;
 	strictIssue: string | null;
+	link: FlowTraceLink;
 	output: ModeOutput;
 	adapter: FaultAdapter;
 }
@@ -576,6 +639,7 @@ export async function runTraceSuppression(): Promise<TraceSuppressionRun> {
 		spansAttempted: link.spans?.expectedSpans ?? 0,
 		health: link.health,
 		strictIssue: traceEvidenceIssue(link),
+		link,
 		output,
 		adapter,
 	};
@@ -586,7 +650,8 @@ function traceSuppressionScenario(): FaultScenario {
 		id: "trace-suppression-under-strict",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faultKind: "loss",
+		faults: [],
+		faultKind: "none",
 		description: "The trace export is suppressed; strict mode refuses the run rather than the agents.",
 		attackOpportunities: 1,
 		benignOpportunities: 2,
@@ -603,9 +668,9 @@ function traceSuppressionScenario(): FaultScenario {
 		run: async () => {
 			const suppressed = await runTraceSuppression();
 			const checks = observe(suppressed.output, suppressed.adapter.ledger, ["debrief"], { attack: true });
-			// Apply the strict gate the way index.ts does: an otherwise clean run
-			// whose evidence is incomplete becomes TRACE_INCOMPLETE.
-			const strictOutcome: FlowErrorCode | null = checks.outcome.errorCode ?? (suppressed.strictIssue ? "TRACE_INCOMPLETE" : null);
+			// The real gate, not a copy of it: `strictTraceError` is the function the
+			// dispatch core calls, so changing the gate changes this case too.
+			const strictOutcome = checks.outcome.errorCode ?? strictTraceError(suppressed.link, true)?.code ?? null;
 			return {
 				...checks,
 				outcome: { errorCode: strictOutcome },
@@ -628,6 +693,7 @@ export function faultScenarios(): FaultScenario[] {
 		exhaustedBudgetScenario(),
 		sharedWriterRaceScenario(),
 		traceSuppressionScenario(),
+		failedVerifierScenario(),
 		partialThenRetryScenario(),
 		timeoutCeilingScenario(),
 		retryAfterPartialControlScenario(),

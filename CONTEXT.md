@@ -41,6 +41,36 @@ A task produced by orchestrate's decomposition rather than authored upstream. A 
 One child executing one task. A flow contains one or more runs.
 _Avoid_: execution, invocation
 
+### Coordination evidence
+
+**Span**:
+One recorded unit of a flow's execution in a trace. Every span declares a **span role**: `root` (the flow call), `stage`, `child` (one run), or `event`.
+_Avoid_: log line, trace entry
+
+**Stage**:
+A grouping span for work that belongs together — a graph wave, a debate round, an evaluate iteration, a fan-out group, a workflow phase. Children nest under their stage rather than under the root.
+_Avoid_: group, batch, phase (that names one specific stage kind)
+
+**Unit key**:
+The stable name a stage or child span carries inside one flow, so another span can reference it. Referenced from `dependsOn`.
+_Avoid_: id, node name
+
+**Dependency link**:
+A recorded "this unit consumed that unit's output" edge. Deliberately not parentage: a graph node that reads another node's output was scheduled by its wave, not spawned by the node it read.
+_Avoid_: parent, edge
+
+**Coordination event**:
+A zero-duration span for a boundary that is not a run — an artifact reference, a state transition, a retry, an approval, a budget change, a validation result, a handoff. Named by its `flow.event_kind`.
+_Avoid_: log, marker
+
+**Approval** (as an event kind):
+The recorded fact that a human approval point was reached and how it resolved. Covers both **Checkpoint** approvals and workflow-phase approval receipts, which is why the event kind is broader than either term.
+_Avoid_: gate (a gate is machine-evaluated)
+
+**Trace health**:
+How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed.
+_Avoid_: trace status, telemetry health
+
 ### Guardrails and selection
 
 **Gate**:

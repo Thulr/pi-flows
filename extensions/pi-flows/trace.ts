@@ -1,4 +1,4 @@
-import { emptyUsage, type FlowMode, type FlowRunResult, type FlowTraceLink, type ModeOutput, type UsageStats } from "./types.ts";
+import { emptyUsage, flowError, type FlowError, type FlowMode, type FlowRunResult, type FlowTraceLink, type ModeOutput, type UsageStats } from "./types.ts";
 import { isFailed } from "./sanitize.ts";
 import { parseVerdict } from "./parse.ts";
 import { debateRounds, searchTopology, successfulRuns } from "./topology.ts";
@@ -239,4 +239,21 @@ export function traceEvidenceIssue(link: FlowTraceLink | undefined): string | nu
 	const spans = link.spans;
 	const counts = spans ? `${spans.observedSpans}/${spans.expectedSpans} spans observed, ${spans.droppedSpans} dropped, ${spans.failedExports} failed export(s)` : "span accounting unavailable";
 	return `trace ${link.traceId} is ${link.health} (${counts})${link.error ? `: ${link.error}` : ""}`;
+}
+
+/**
+ * The strict-mode refusal, in one place so the dispatch core and anything that
+ * models it (the fault-injection suite) cannot drift apart. Returns null when
+ * strict mode is off or the evidence is complete.
+ */
+export function strictTraceError(link: FlowTraceLink | undefined, strict: boolean): FlowError | null {
+	if (!strict) return null;
+	const issue = traceEvidenceIssue(link);
+	if (!issue) return null;
+	return flowError(
+		"TRACE_INCOMPLETE",
+		"Flow completed but its coordination trace is incomplete, and strict tracing is on.",
+		`${issue}. Under traceStrict the run cannot be reported as evidence-backed.`,
+		"Check that the trace path is writable and has space, then rerun. This gate sees what the exporter failed to write; for spans lost after a successful write, read the file back with `npm run trace:report -- --strict`. Set traceStrict:false to accept best-effort tracing.",
+	);
 }

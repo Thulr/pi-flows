@@ -6,6 +6,11 @@ import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { searchTopology } from "../topology.ts";
 
+/** One place the round key is derived, so a later dependency link names a stage that exists. */
+function roundKey(round: number): string {
+	return `round-${round}`;
+}
+
 export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, makeDetails } = deps;
 	const spec = params.search ?? {};
@@ -33,7 +38,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	let beam: Array<{ text: string; score: number }> = [];
 
 	for (let round = 1; round <= rounds; round += 1) {
-		const roundStage = { key: `round-${round}`, name: `round ${round}` };
+		const roundStage = { key: roundKey(round), name: `round ${round}` };
 		// Two-level topology: the round holds a generate stage and a score stage, so
 		// a reader can tell "which scorer judged which candidate in which round"
 		// without reconstructing it from ordering.
@@ -117,7 +122,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		"Return the best final answer/artifact. Mention the score and any important caveats.",
 	].join("\n");
-	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results, {}, { key: "debrief", dependsOn: [`round-${rounds}`] });
+	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results, {}, { key: "debrief", dependsOn: [roundKey(rounds)] });
 	results.push(final);
 	if (isFailed(final)) return { content: [{ type: "text", text: sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy) }], details: makeDetails("search")(results) };
 	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${handoffWarnings.summary()}\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };

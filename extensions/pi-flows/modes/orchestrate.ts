@@ -7,6 +7,11 @@ import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary, integrationControlText } from "../delegation.ts";
 import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
+/** One place each orchestrate unit key is derived, so a dependency link cannot name a unit that was never registered. */
+const workerKey = (index: number) => `worker-${index + 1}`;
+const synthesisKey = (round: number) => `synthesis-${round}`;
+const verifyKey = (round: number) => `verify-${round}`;
+
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
 	const spec = params.orchestrate ?? {};
@@ -94,7 +99,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(subtask), {
 			returnContract: spec.workerReturnContract,
 			placeholderTask: subtask,
-			scope: { key: `worker-${index + 1}`, dependsOn: ["decompose"] },
+			scope: { key: workerKey(index), dependsOn: ["decompose"] },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("orchestrate")(results, planned.error) };
 		workerPlans.push(planned.plan!);
@@ -153,8 +158,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			returnContract,
 			requireEvidence: params.requireEvidence,
 			scope: {
-				key: `synthesis-${synthesisRound}`,
-				dependsOn: synthesisRound === 1 ? subtasks.map((_unused, index) => `worker-${index + 1}`) : [`verify-${synthesisRound - 1}`],
+				key: synthesisKey(synthesisRound),
+				dependsOn: synthesisRound === 1 ? subtasks.map((_unused, index) => workerKey(index)) : [verifyKey(synthesisRound - 1)],
 			},
 		});
 	};
@@ -197,7 +202,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Your job",
 				`Judge whether the synthesized answer fully and correctly addresses the goal/contract. ${verdictProtocolInstruction("specific, actionable gaps")} Judge only the answer above.`,
 			].join("\n");
-			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: `verify-${round}`, dependsOn: [`synthesis-${synthesisRound}`] } });
+			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: verifyKey(round), dependsOn: [synthesisKey(synthesisRound)] } });
 			if (verifyPlan.error) return { content: [{ type: "text", text: formatFlowError(verifyPlan.error) }], details: makeDetails("orchestrate")(results, verifyPlan.error) };
 			const verified = await runIntegrationPlan(deps, verifyPlan.plan!, "orchestrate", results.length + 1, results);
 			results.push(verified);
@@ -224,7 +229,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				kind: "validation",
 				name: "orchestrate.verify_verdict",
 				ok: verifyVerdict === "pass",
-				scope: { key: `verify-${round}.verdict`, dependsOn: [`verify-${round}`] },
+				scope: { key: `${verifyKey(round)}.verdict`, dependsOn: [verifyKey(round)] },
 				attributes: { "flow.verdict.value": verifyVerdict, "flow.verdict.round": round, "flow.verdict.policy": verifyPolicy },
 			});
 			verifyNote = `\n\n## Verification (${verifyRef.agent}): ${verifyVerdict === "pass" ? "PASS" : "REVISE"}\n\n${sanitizeText(resultText(verified), policy)}`;

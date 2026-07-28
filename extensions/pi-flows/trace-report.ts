@@ -8,6 +8,7 @@
  * phantom agent regression.
  */
 import { safePath } from "./sanitize.ts";
+import { traceHealthStatus } from "./trace-scope.ts";
 
 export interface TraceSpanRecord {
 	trace_id?: string;
@@ -219,7 +220,12 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			droppedSpans,
 			redactedSpans: numericAttr(rootSpan, "flow.trace.redacted_spans"),
 			failedExports,
-			incompleteTraces: droppedSpans > 0 || failedExports > 0 || !root ? 1 : 0,
+			// Same derivation the sink used when it stamped `flow.trace.health`, so a
+			// read-back verdict and a live one cannot disagree.
+			incompleteTraces: traceHealthStatus(
+				{ expectedSpans, observedSpans: traceSpans.length, droppedSpans, redactedSpans: 0, failedExports },
+				Boolean(root),
+			) === "recorded" ? 0 : 1,
 			coordinationEvents: eventSpans.length,
 			stageSpans: stageSpans.length,
 		};
