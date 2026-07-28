@@ -9,17 +9,9 @@
  */
 import { safePath } from "./sanitize.ts";
 import { traceHealthStatus } from "./trace-scope.ts";
+import { boolAttr, numericAttr, optionalBoolAttr, optionalNumericAttr, spanRole, stringAttr, traceStructure, type TraceSpanRecord } from "./trace-structure.ts";
 
-export interface TraceSpanRecord {
-	trace_id?: string;
-	span_id?: string;
-	parent_span_id?: string | null;
-	name?: string;
-	start_time_unix_ms?: number;
-	end_time_unix_ms?: number;
-	status?: { code?: string; message?: string };
-	attributes?: Record<string, unknown>;
-}
+export { boolAttr, numericAttr, optionalBoolAttr, optionalNumericAttr, stringAttr, type TraceSpanRecord } from "./trace-structure.ts";
 
 export interface TraceReportBucket {
 	traces: number;
@@ -108,37 +100,6 @@ export function addTraceBucket(bucket: TraceReportBucket, delta: TraceReportBuck
 	for (const key of TRACE_BUCKET_FIELDS) bucket[key] += delta[key];
 }
 
-export function numericAttr(span: TraceSpanRecord, key: string): number {
-	const value = span.attributes?.[key];
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-export function optionalNumericAttr(span: TraceSpanRecord, key: string): number | undefined {
-	const value = span.attributes?.[key];
-	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-export function stringAttr(span: TraceSpanRecord, key: string): string | undefined {
-	const value = span.attributes?.[key];
-	return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-export function boolAttr(span: TraceSpanRecord, key: string): boolean {
-	return span.attributes?.[key] === true;
-}
-
-export function optionalBoolAttr(span: TraceSpanRecord, key: string): boolean | undefined {
-	const value = span.attributes?.[key];
-	return typeof value === "boolean" ? value : undefined;
-}
-
-/** Traces written before span roles existed have only root and child spans, so an unlabeled span is a child. */
-function spanRole(span: TraceSpanRecord, root: TraceSpanRecord | undefined): "root" | "child" | "stage" | "event" {
-	if (root && span === root) return "root";
-	const declared = stringAttr(span, "flow.span_role");
-	return declared === "stage" || declared === "event" || declared === "root" ? declared : "child";
-}
-
 export function parseTraceJsonl(text: string): { spans: TraceSpanRecord[]; parseErrors: number } {
 	const spans: TraceSpanRecord[] = [];
 	let parseErrors = 0;
@@ -182,17 +143,16 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 	};
 
 	for (const traceSpans of byTrace.values()) {
-		// A trace has exactly one root. With two parentless rows every number below
-		// is derived from whichever happened to be read first, so the shape is
-		// reported as corrupt rather than silently picked between.
-		const rootCandidates = traceSpans.filter((span) => span.parent_span_id === null);
-		const declaredRoot = rootCandidates.find((span) => stringAttr(span, "flow.span_role") === "root");
-		// A row can claim to be the root while hanging off a parent, in which case it
-		// is not a root candidate at all — it just quietly leaves the child metrics,
-		// because those count declared children.
-		const declaredRoots = traceSpans.filter((span) => stringAttr(span, "flow.span_role") === "root");
-		const ambiguousRoot = rootCandidates.length > 1;
-		const root = declaredRoot ?? rootCandidates[0] ?? traceSpans.find((span) => span.name && !span.name.includes(".", "flow.".length));
+		// The expectation is read before the structure so the surplus check has
+		// something to compare against. Zero, negative, and fractional values are
+		// corruption rather than a count, so they are not usable as one.
+		const rawExpectation = optionalNumericAttr(
+			traceSpans.find((span) => span.parent_span_id === null) ?? ({} as TraceSpanRecord),
+			"flow.trace.expected_spans",
+		);
+		const usableExpectation = rawExpectation !== undefined && Number.isInteger(rawExpectation) && rawExpectation > 0 ? rawExpectation : undefined;
+		const structure = traceStructure(traceSpans, usableExpectation);
+		const root = structure.root;
 		const childSpans = traceSpans.filter((span) => span !== root && spanRole(span, root) === "child");
 		const eventSpans = traceSpans.filter((span) => spanRole(span, root) === "event");
 		const stageSpans = traceSpans.filter((span) => spanRole(span, root) === "stage");
@@ -223,86 +183,19 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const routeChoice = stringAttr(rootSpan, "flow.route_choice");
 
 		// Two independent views of completeness: what the exporter admitted it
-		// failed to write, and what the file is missing relative to what the root
-		// span said to expect. The second catches loss *after* a successful write.
+		// failed to write, and what the file holds relative to what the root said to
+		// expect. The second catches loss *after* a successful write, in both
+		// directions — a surplus row is one the exporter never claimed to have
+		// written, which is not evidence it produced.
 		const redactedSpans = numericAttr(rootSpan, "flow.trace.redacted_spans");
-		const declaredExpected = optionalNumericAttr(rootSpan, "flow.trace.expected_spans");
-		// A root that declares a span role was written by a sink that always stamps
-		// its expectation, so a missing one means the counter was lost — and falling
-		// back to the row count would define away the very gap it is there to find.
-		// Traces written before span roles existed keep the fallback.
-		// Zero, negative, and fractional expectations are corruption, not a count: a
-		// modern root with `expected_spans: 0` would otherwise report nothing dropped
-		// no matter how many spans the file actually holds.
-		const usableExpectation = declaredExpected !== undefined && Number.isInteger(declaredExpected) && declaredExpected > 0;
-		const expectationLost = stringAttr(rootSpan, "flow.span_role") === "root" && !usableExpectation;
-		const expectedSpans = usableExpectation ? declaredExpected : traceSpans.length;
 		const failedExports = numericAttr(rootSpan, "flow.trace.failed_exports");
-		// Counted by unique span id, not by row: a pipeline that loses one span and
-		// duplicates another leaves the row count intact, and a completeness check
-		// built on length would call that trace whole.
-		const identified = traceSpans.filter((span) => typeof span.span_id === "string" && span.span_id.trim());
-		const identifiedIds = identified.map((span) => span.span_id as string);
-		const uniqueIds = new Set(identifiedIds).size;
-		const duplicateSpans = identified.length - uniqueIds;
-		// A row with no span id is not a span anyone can use, and counting it would
-		// let a stripped row stand in for the one that went missing.
-		const malformedSpans = traceSpans.length - identified.length;
-		const observedSpans = uniqueIds;
-		// A span whose parent was stripped or repointed is still a well-formed row
-		// with a unique id, so nothing above notices it — but the tree it belonged
-		// to no longer holds together, and that is what the topology is for.
-		const knownIds = new Set(identifiedIds);
-		const modernSpans = traceSpans.filter((span) => stringAttr(span, "flow.span_role") !== undefined);
-		const orphanedChildren = modernSpans.filter((span) =>
-			span.parent_span_id !== null
-			&& (typeof span.parent_span_id !== "string" || !span.parent_span_id.trim() || !knownIds.has(span.parent_span_id))).length;
-
-		// Existing parents are not a tree. Two spans repointed at each other, or a
-		// root made its own parent, leave every reference resolvable while nothing
-		// hangs off the root any more — so the chain is walked rather than the link
-		// merely checked.
-		const byId = new Map(identified.map((span) => [span.span_id as string, span]));
-		const rootId = root?.span_id;
-		const reachesRoot = (start: TraceSpanRecord): boolean => {
-			const seen = new Set<string>();
-			let current: TraceSpanRecord | undefined = start;
-			while (current) {
-				const id = current.span_id;
-				if (typeof id !== "string" || seen.has(id)) return false;
-				seen.add(id);
-				const parent = current.parent_span_id;
-				if (parent === null) return id === rootId;
-				if (typeof parent !== "string") return false;
-				if (parent === rootId) return true;
-				current = byId.get(parent);
-			}
-			return false;
-		};
-		const unreachable = modernSpans.filter((span) => span !== root && !reachesRoot(span)).length;
-		const rootless = modernSpans.length > 0 && rootCandidates.length === 0;
-		const misdeclaredRoots = modernSpans.length > 0
-			&& (declaredRoots.length !== 1 || declaredRoots[0].parent_span_id !== null);
-		const unknownRoles = modernSpans.some((span) => !["root", "child", "stage", "event"].includes(stringAttr(span, "flow.span_role") as string));
-
-		// A dependency that names a span the trace does not contain, or names fewer
-		// spans than keys, is a broken attribution chain — which is the one thing
-		// these links exist to carry.
-		const danglingDependencies = modernSpans.filter((span) => {
-			const declared = stringAttr(span, "flow.depends_on");
-			if (!declared) return false;
-			const keys = declared.split(",").filter(Boolean);
-			const resolved = (stringAttr(span, "flow.depends_on_span_ids") ?? "").split(",").filter(Boolean);
-			return resolved.length !== keys.length || resolved.some((id) => !knownIds.has(id));
-		}).length;
-
-		const disconnected = orphanedChildren > 0
-			|| unreachable > 0
-			|| rootless
-			|| misdeclaredRoots
-			|| unknownRoles
-			|| danglingDependencies > 0
-			|| (declaredRoot !== undefined && declaredRoot.parent_span_id !== null);
+		// A root that declares a span role came from a sink that always stamps its
+		// expectation, so a missing or unusable one means the counter was lost, and
+		// falling back to the row count would define away the gap it exists to find.
+		// Traces written before span roles existed keep the fallback.
+		const expectationLost = stringAttr(rootSpan, "flow.span_role") === "root" && usableExpectation === undefined;
+		const expectedSpans = usableExpectation ?? traceSpans.length;
+		const { observedSpans, duplicateSpans, malformedSpans, unexpectedSpans } = structure;
 		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
 
 		const delta: TraceReportBucket = {
@@ -332,11 +225,11 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			// read-back verdict and a live one cannot disagree. A duplicated or
 			// unidentifiable row is its own disqualification: nothing downstream can
 			// tell which copy is real, or what an id-less row was meant to be.
-			incompleteTraces: expectationLost || ambiguousRoot || disconnected || duplicateSpans > 0 || malformedSpans > 0 || traceHealthStatus(
+			incompleteTraces: expectationLost || structure.invalid || duplicateSpans > 0 || malformedSpans > 0 || unexpectedSpans > 0 || traceHealthStatus(
 				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
 				Boolean(root),
 			) !== "recorded" ? 1 : 0,
-			structurallyInvalidTraces: ambiguousRoot || disconnected ? 1 : 0,
+			structurallyInvalidTraces: structure.invalid ? 1 : 0,
 			coordinationEvents: eventSpans.length,
 			stageSpans: stageSpans.length,
 		};

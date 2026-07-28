@@ -64,6 +64,14 @@ const spanId = () => randomUUID().replace(/-/g, "");
 const ATTRIBUTE_CAP = 1024;
 
 /**
+ * Dependency lists get their own, larger bound. They are machine identifiers the
+ * report parses to check the attribution chain, and a truncated list would read
+ * as a broken one — a valid run failing the gate because its ids were long.
+ */
+const DEPENDENCY_CAP = 8 * 1024;
+const DEPENDENCY_ATTRIBUTES = new Set(["flow.depends_on", "flow.depends_on_span_ids"]);
+
+/**
  * Emit redacted OpenInference-shaped spans to JSONL: a root span, one span per
  * child run, lazily-created stage spans that keep waves/rounds/phases from
  * flattening into the root, and zero-duration coordination-event spans for the
@@ -107,7 +115,9 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		if (!attributes) return {};
 		const stored: Record<string, unknown> = {};
 		for (const [key, value] of Object.entries(attributes)) {
-			stored[key] = typeof value === "string" ? storedLabel(value) : value;
+			stored[key] = typeof value === "string"
+				? sanitizeText(value, { ...policy, recordContent: true }, DEPENDENCY_ATTRIBUTES.has(key) ? DEPENDENCY_CAP : ATTRIBUTE_CAP)
+				: value;
 		}
 		return stored;
 	};
@@ -160,6 +170,9 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		const dependsOn = scope?.dependsOn ?? [];
 		const attributes: Record<string, unknown> = {};
 		if (dependsOn.length) {
+			// The authoritative count. A reader must not have to infer it from a
+			// string that any cap or transform could have shortened.
+			attributes["flow.depends_on_count"] = dependsOn.length;
 			attributes["flow.depends_on"] = dependsOn.map(encodeUnitKey).join(",");
 			// A dependency may name a unit or a whole stage ("this debrief consumed
 			// round 2"), so both namespaces are searched, units first.

@@ -1,8 +1,9 @@
 // What a coordination-trace span says about itself: delegation identity, the
-// capture policy applied to every attribute, handoff accounting, trace-health
-// counters, and the strict-mode gate that turns them into a release decision.
+// capture policy applied to every attribute, handoff accounting, and the budget
+// authority that bound a child.
 //
-// The span tree those attributes hang on is covered in trace-topology.test.ts.
+// Reading a trace back and gating on it lives in trace-gate.test.ts; the span
+// tree lives in trace-topology.test.ts.
 import { strict as assert } from "node:assert";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -53,8 +54,7 @@ const envelope = (data: unknown = { answer: "package.json" }, overrides: Record<
 	retry: { retryable: false },
 	data,
 	...overrides,
-});
-test("child spans identify prompt version, allowed tools, authority, contract, and delegation reason", async () => {
+});test("child spans identify prompt version, allowed tools, authority, contract, and delegation reason", async () => {
 	const { stubDir } = await runFlow(
 		{ agent: "recon", task: "find the version", contract, tools: "read", traceFile: TRACE, why: "independent scout with a typed contract" },
 		{ recon: envelope() },
@@ -168,31 +168,6 @@ test("artifact references and digests get their own attributable events", async 
 	assert.equal(attr(artifact, "flow.artifact.digest_declared"), true);
 	assert.match(String(attr(artifact, "flow.artifact.digest")), /^sha256:5891b5b5/);
 	assert.equal(attr(spans.find((span) => attr(span, "flow.event_kind") === "handoff"), "flow.handoff.artifact_refs"), "note.txt");
-});
-
-test("trace health counts expected against observed spans and the report surfaces the gap", async () => {
-	const { stubDir, result } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "done" },
-	);
-	const link = result.details.trace!;
-	assert.equal(link.health, "recorded");
-	const spans = await readSpans(stubDir);
-	assert.equal(link.spans!.expectedSpans, spans.length);
-	assert.equal(link.spans!.observedSpans, spans.length);
-	assert.equal(link.spans!.droppedSpans, 0);
-
-	const clean = summarizeTraceSpans(spans, 0, TRACE);
-	assert.equal(clean.incompleteTraces, 0);
-	assert.equal(traceReportIsComplete(clean), true);
-	assert.match(formatTraceReport(clean), /Trace health: \d+\/\d+ spans observed/);
-
-	// Loss after the write still shows up: the root span declares how many rows
-	// the run exported, so a truncated file cannot read as a complete one.
-	const truncated = summarizeTraceSpans(spans.filter((span) => role(span) !== "event"), 0, TRACE);
-	assert.ok(truncated.droppedSpans > 0, "dropping rows must register as dropped spans");
-	assert.equal(truncated.incompleteTraces, 1);
-	assert.equal(traceReportIsComplete(truncated), false);
 });
 
 test("content-omitting runs are reported as redacted rather than complete evidence", async () => {
@@ -352,21 +327,6 @@ test("a strict-trace refusal reaches the durable session history, not just the c
 	assert.deepEqual(run.data.results.map((child: any) => child.errorCode), [undefined]);
 });
 
-test("a report of zero runs is not evidence a strict gate can rest on", async () => {
-	const { stubDir } = await runFlow({ agent: "recon", task: "inspect", traceFile: TRACE }, { recon: "done" });
-	const real = summarizeTraceSpans(await readSpans(stubDir), 0, TRACE);
-	assert.equal(traceReportIsComplete(real), true);
-
-	// An empty file, and a file of well-formed rows that belong to no trace, both
-	// have nothing incomplete in them precisely because they have nothing in them.
-	for (const spans of [[], [{ name: "not-a-span" }, { attributes: { "flow.mode": "parallel" } }]]) {
-		const empty = summarizeTraceSpans(spans as TraceSpanRecord[], 0, TRACE);
-		assert.equal(empty.traces, 0);
-		assert.equal(empty.incompleteTraces, 0);
-		assert.equal(traceReportIsComplete(empty), false, "a release gate must not pass on an artifact nobody wrote");
-	}
-});
-
 test("a pre-spawn refusal returns the trace link for the evidence it wrote", async () => {
 	const context = { runId: "run-1", caseId: "case-1", trialId: "trial-1" };
 	const { result, calls, stubDir } = await runFlow(
@@ -400,49 +360,6 @@ test("root summary attributes obey the capture policy like every other span", as
 	assert.equal(attr(root, "flow.child_count"), 2, "non-string attributes pass through untouched");
 });
 
-test("a malformed trace row is counted, not fatal", () => {
-	// `null` parses fine and is not a span; pushing it made the summarizer
-	// dereference it and take down the whole report.
-	const parsed = parseTraceJsonl(`null\n[1,2]\n"text"\n{"trace_id":"a","parent_span_id":null,"attributes":{"flow.mode":"single"}}\nnot json\n`);
-	assert.equal(parsed.spans.length, 1);
-	assert.equal(parsed.parseErrors, 4);
-	const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, TRACE);
-	assert.equal(report.traces, 1);
-	assert.equal(traceReportIsComplete(report), false, "parse errors leave the report incomplete");
-});
-
-test("a duplicated span cannot conceal a dropped one", async () => {
-	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "done" },
-	);
-	const spans = await readSpans(stubDir);
-	assert.equal(summarizeTraceSpans(spans, 0, TRACE).incompleteTraces, 0);
-
-	// Lose one row and duplicate another: the row count still matches what the
-	// root said to expect, so a length-based check would call this trace whole.
-	const children = spans.filter((span) => role(span) === "child");
-	const corrupted = [...spans.filter((span) => span !== children[1]), children[0]];
-	assert.equal(corrupted.length, spans.length, "the corruption is invisible to a row count");
-	const report = summarizeTraceSpans(corrupted, 0, TRACE);
-	assert.equal(report.duplicateSpans, 1);
-	assert.ok(report.droppedSpans > 0, "the missing span must still register as dropped");
-	assert.equal(report.incompleteTraces, 1);
-	assert.equal(traceReportIsComplete(report), false);
-	assert.match(formatTraceReport(report), /1 duplicated/);
-
-	// The same substitution with an id-less row: it keeps the row count intact and
-	// is unusable as evidence, so counting it would let it stand in for the span
-	// that went missing.
-	const stripped = [...spans.filter((span) => span !== children[1]), { trace_id: children[1].trace_id }];
-	assert.equal(stripped.length, spans.length);
-	const strippedReport = summarizeTraceSpans(stripped, 0, TRACE);
-	assert.equal(strippedReport.malformedSpans, 1);
-	assert.ok(strippedReport.droppedSpans > 0);
-	assert.equal(traceReportIsComplete(strippedReport), false);
-	assert.match(formatTraceReport(strippedReport), /1 unidentifiable/);
-});
-
 test("a contracted child records the ceiling that actually bound it", async () => {
 	const { stubDir } = await runFlow(
 		{ agent: "recon", task: "inspect", traceFile: TRACE, contract: { ...contract, budget: { maxCostUsd: 0.25, maxTokens: 500 } } },
@@ -455,21 +372,6 @@ test("a contracted child records the ceiling that actually bound it", async () =
 	assert.equal(attr(child, "flow.contract_budget.limit_tokens"), 500);
 	assert.ok((attr(child, "flow.contract_budget.spent_tokens") as number) > 0);
 	assert.equal(attr(child, "flow.budget.limit_cost_usd"), undefined, "there was no flow-level ceiling to report");
-});
-
-test("a row stripped of its trace id cannot vanish from the evidence gate", async () => {
-	const { stubDir } = await runFlow({ agent: "recon", task: "inspect", traceFile: TRACE }, { recon: "done" });
-	const spans = await readSpans(stubDir);
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
-
-	// A second run whose ids were stripped used to disappear entirely, leaving the
-	// surviving run to pass the gate on its own.
-	const orphaned = [...spans, ...spans.map((span) => ({ ...span, trace_id: undefined }))];
-	const report = summarizeTraceSpans(orphaned, 0, TRACE);
-	assert.equal(report.traces, 1, "the stripped rows belong to no run");
-	assert.equal(report.malformedSpans, spans.length);
-	assert.equal(traceReportIsComplete(report), false, "unusable rows must not be silently discarded");
-	assert.match(formatTraceReport(report), new RegExp(`${spans.length} unidentifiable`));
 });
 
 test("a workflow gate links to the phase output it validated", async () => {
@@ -491,94 +393,6 @@ test("a workflow gate links to the phase output it validated", async () => {
 	// off nothing.
 	assert.equal(attr(gate, "flow.depends_on"), "phase-build.work");
 	assert.equal(attr(gate, "flow.depends_on_span_ids"), unit(spans, "phase-build.work")!.span_id);
-});
-
-test("a new-format trace with its expectation stripped is incomplete, not self-consistent", async () => {
-	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "done" },
-	);
-	const spans = await readSpans(stubDir);
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
-
-	// Lose a child AND the counter that would have revealed it: the survivors are
-	// perfectly self-consistent, which is exactly the state a gate must not accept.
-	const child = spans.find((span) => role(span) === "child")!;
-	const stripped = spans.filter((span) => span !== child).map((span) => {
-		if (span.parent_span_id !== null) return span;
-		const { "flow.trace.expected_spans": _lost, ...rest } = span.attributes!;
-		return { ...span, attributes: rest };
-	});
-	const report = summarizeTraceSpans(stripped, 0, TRACE);
-	assert.equal(report.droppedSpans, 0, "with the counter gone there is nothing left to compare against");
-	assert.equal(report.incompleteTraces, 1, "a sink-written root always stamps its expectation, so a missing one is loss");
-	assert.equal(traceReportIsComplete(report), false);
-
-	// A trace written before span roles existed has no expectation to lose, so the
-	// row-count fallback still applies and it is readable as before.
-	const legacy = stripped.map(({ attributes, ...span }) => {
-		const { "flow.span_role": _role, ...rest } = attributes!;
-		return { ...span, attributes: rest };
-	});
-	assert.equal(summarizeTraceSpans(legacy, 0, TRACE).incompleteTraces, 0);
-});
-
-test("the strict gate validates its own inputs, not just the spans they describe", async () => {
-	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "done" },
-	);
-	const spans = await readSpans(stubDir);
-	const withRoot = (expected: unknown) => spans.map((span) =>
-		span.parent_span_id === null ? { ...span, attributes: { ...span.attributes, "flow.trace.expected_spans": expected } } : span);
-
-	// A count that cannot be a count: zero would report nothing dropped no matter
-	// how many spans the file holds, and the others are not counts at all.
-	for (const corrupt of [0, -3, 2.5, "7"]) {
-		const report = summarizeTraceSpans(withRoot(corrupt) as TraceSpanRecord[], 0, TRACE);
-		assert.equal(traceReportIsComplete(report), false, `expected_spans ${JSON.stringify(corrupt)} must not pass the gate`);
-	}
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(withRoot(spans.length) as TraceSpanRecord[], 0, TRACE)), true);
-
-	// Two parentless rows: every number below is derived from whichever is read
-	// first, so the shape is reported as corrupt rather than silently picked.
-	const secondRoot = { ...spans[0], span_id: "second-root", parent_span_id: null, attributes: { "flow.mode": "parallel" } };
-	const ambiguous = summarizeTraceSpans([secondRoot, ...spans] as TraceSpanRecord[], 0, TRACE);
-	assert.equal(ambiguous.structurallyInvalidTraces, 1);
-	assert.equal(traceReportIsComplete(ambiguous), false);
-	assert.match(formatTraceReport(ambiguous), /1 structurally invalid/);
-	// The declared root still wins for the metrics, so the report is diagnosable
-	// rather than merely refused.
-	assert.equal(ambiguous.executionSuccesses, 1);
-});
-
-test("a span whose parent was cut is a broken tree, not a complete one", async () => {
-	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "done" },
-	);
-	const spans = await readSpans(stubDir);
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
-
-	// Every count still agrees — unique ids, expected row count, nothing dropped.
-	// What is gone is the tree, which is the thing the topology exists to record.
-	const repoint = (patch: (span: TraceSpanRecord) => TraceSpanRecord) =>
-		spans.map((span) => (role(span) === "child" ? patch(span) : span));
-	for (const [label, broken] of [
-		["stripped", repoint((span) => ({ ...span, parent_span_id: undefined }))],
-		["blank", repoint((span) => ({ ...span, parent_span_id: "  " }))],
-		["unknown", repoint((span) => ({ ...span, parent_span_id: "no-such-span" }))],
-	] as const) {
-		const report = summarizeTraceSpans(broken, 0, TRACE);
-		assert.equal(report.observedSpans, spans.length, `${label}: the counts are untouched`);
-		assert.equal(report.droppedSpans, 0, `${label}: nothing looks missing`);
-		assert.equal(report.structurallyInvalidTraces, 1, `${label}: the tree is broken`);
-		assert.equal(traceReportIsComplete(report), false, `${label} must not pass the gate`);
-	}
-
-	// A root that acquired a parent is the same corruption from the other end.
-	const rootedRoot = spans.map((span) => (span.parent_span_id === null ? { ...span, parent_span_id: "somewhere-else" } : span));
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(rootedRoot, 0, TRACE)), false);
 });
 
 test("a rejected digest keeps the artifact claim that proves the corruption", async () => {
@@ -622,105 +436,4 @@ test("a contract-bound termination is reported against the contract, not a budge
 	// contract's limit to something the run never had.
 	assert.equal(attr(event, "flow.contract_budget.limit_generated_tokens"), 4);
 	assert.equal(attr(event, "flow.budget.limit_generated_tokens"), undefined);
-});
-
-test("a resolvable link is not a tree: cycles and unreachable spans are corruption", async () => {
-	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "done" },
-	);
-	const spans = await readSpans(stubDir);
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
-
-	// Two children pointed at each other: every parent id resolves, nothing is
-	// missing or duplicated, and neither span hangs off the root any more.
-	const children = spans.filter((span) => role(span) === "child");
-	const cycled = spans.map((span) =>
-		span === children[0] ? { ...span, parent_span_id: children[1].span_id }
-			: span === children[1] ? { ...span, parent_span_id: children[0].span_id }
-				: span);
-	const cycleReport = summarizeTraceSpans(cycled, 0, TRACE);
-	assert.equal(cycleReport.droppedSpans, 0, "every reference still resolves");
-	assert.equal(cycleReport.structurallyInvalidTraces, 1);
-	assert.equal(traceReportIsComplete(cycleReport), false);
-
-	// A root that parents itself: no parentless row is left for anything to reach.
-	const selfRooted = spans.map((span) => (span.parent_span_id === null ? { ...span, parent_span_id: span.span_id } : span));
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(selfRooted, 0, TRACE)), false);
-});
-
-test("a broken attribution chain is refused even when every span survives", async () => {
-	const { stubDir } = await runFlow(
-		{
-			task: "map the system",
-			traceFile: TRACE,
-			graph: { nodes: [{ id: "alpha", agent: "recon", task: "start" }, { id: "beta", agent: "recon", task: "use {node.alpha}", dependsOn: ["alpha"] }] },
-		},
-		{ recon: "node output" },
-	);
-	const spans = await readSpans(stubDir);
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
-
-	const beta = spans.find((span) => attr(span, "flow.unit_key") === "beta")!;
-	const rewrite = (patch: Record<string, unknown>) =>
-		spans.map((span) => (span === beta ? { ...span, attributes: { ...span.attributes, ...patch } } : span));
-
-	// Repointed at a span the trace does not contain, and stripped of its resolved
-	// ids while still declaring the dependency: the rows are all intact either way,
-	// and the causal chain the links exist to carry is not.
-	for (const [label, patched] of [
-		["unknown target", rewrite({ "flow.depends_on_span_ids": "no-such-span" })],
-		["resolution removed", rewrite({ "flow.depends_on_span_ids": undefined })],
-	] as const) {
-		const report = summarizeTraceSpans(patched, 0, TRACE);
-		assert.equal(report.observedSpans, spans.length, `${label}: every span survives`);
-		assert.equal(report.structurallyInvalidTraces, 1, label);
-		assert.equal(traceReportIsComplete(report), false, `${label} must not pass the gate`);
-	}
-});
-
-test("an id containing the list delimiter does not turn a healthy run into a refusal", async () => {
-	// Graph node ids are author-supplied and may contain a comma. Joining those raw
-	// made a sound dependency list read as more keys than it had, so the gate this
-	// PR adds would reject evidence from a run that did nothing wrong.
-	const { stubDir, result } = await runFlow(
-		{
-			task: "map it",
-			traceFile: TRACE,
-			graph: {
-				nodes: [
-					{ id: "build,linux", agent: "recon", task: "build" },
-					{ id: "test", agent: "recon", task: "use {node.build,linux}", dependsOn: ["build,linux"] },
-				],
-			},
-		},
-		{ recon: "node output" },
-	);
-	assert.equal(result.details.error, undefined);
-	const spans = await readSpans(stubDir);
-	const dependent = spans.find((span) => attr(span, "flow.unit_key") === "test")!;
-	assert.equal(attr(dependent, "flow.depends_on"), "build%2Clinux", "the delimiter is escaped, not lost");
-	assert.equal(String(attr(dependent, "flow.depends_on_span_ids")).split(",").length, 1);
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
-});
-
-test("a row that claims to be the root while hanging off a parent is corruption", async () => {
-	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
-		{ recon: "done" },
-	);
-	const spans = await readSpans(stubDir);
-	const child = spans.find((span) => role(span) === "child")!;
-	const relabel = (patch: Record<string, unknown>) =>
-		spans.map((span) => (span === child ? { ...span, attributes: { ...span.attributes, ...patch } } : span));
-
-	// It keeps its parent, so it is never a root candidate — and it silently leaves
-	// the child metrics, because those count declared children.
-	const second = summarizeTraceSpans(relabel({ "flow.span_role": "root" }), 0, TRACE);
-	assert.equal(second.structurallyInvalidTraces, 1);
-	assert.equal(traceReportIsComplete(second), false);
-
-	// A role nothing in the vocabulary defines is the same problem: the row is
-	// excluded from every bucket while looking perfectly well-formed.
-	assert.equal(traceReportIsComplete(summarizeTraceSpans(relabel({ "flow.span_role": "sidecar" }), 0, TRACE)), false);
 });
