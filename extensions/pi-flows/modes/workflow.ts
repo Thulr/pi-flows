@@ -33,8 +33,9 @@ function workflowDigest(task: string | undefined, spec: any): string {
 }
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
+const phaseStageKey = (phaseId: string) => `phase-${phaseId}`;
 function phaseWorkKey(phaseId: string): string {
-	return `phase-${phaseId}.work`;
+	return `${phaseStageKey(phaseId)}.work`;
 }
 
 function renderPhaseTask(template: string, task: string | undefined, previous: string, outputs: Record<string, string>): string {
@@ -75,7 +76,7 @@ function recordPhaseState(deps: ModeDeps, phaseId: string, transition: string, s
 		kind: "state",
 		name: `workflow.${transition}`,
 		ok: state.status !== "failed",
-		scope: { key: `phase-${phaseId}.state`, stage: { key: `phase-${phaseId}`, name: `phase ${phaseId}` } },
+		scope: { key: `${phaseStageKey(phaseId)}.state`, stage: { key: phaseStageKey(phaseId), name: `phase ${phaseId}` } },
 		attributes: {
 			"flow.workflow.phase_id": phaseId,
 			"flow.workflow.status": state.status,
@@ -200,7 +201,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	let previous = "";
 	let priorPhaseId: string | undefined;
 	for (const [phaseIndex, phase] of phases.entries()) {
-		const stage = { key: `phase-${phase.id}`, name: `phase ${phase.id}` };
+		const stage = { key: phaseStageKey(phase.id), name: `phase ${phase.id}` };
 		// Set when a completed approval is reopened, so the re-prompt can say why it
 		// is being asked again instead of looking like a fresh pause.
 		let reapprovalCause: string | null = null;

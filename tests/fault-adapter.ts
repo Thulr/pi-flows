@@ -263,9 +263,13 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 			};
 		}
 
-		// A child that reaches the model writes its files; one that never got there
-		// (lost, refused, failed before running) leaves the workspace alone.
-		if (!failure) applyWrites(path.resolve(childOptions.defaultCwd, childOptions.cwd ?? childOptions.defaultCwd), scripted.writes);
+		// Writes belong to the turn that was actually delivered. A replayed or
+		// swapped body came from a different turn and carries that turn's (absent)
+		// writes, so applying this turn's would leave the workspace describing work
+		// the parent never received.
+		if (!failure && delivery === "fresh") {
+			applyWrites(path.resolve(childOptions.defaultCwd, childOptions.cwd ?? childOptions.defaultCwd), scripted.writes);
+		}
 		clockMs += durationMs;
 		const result = failure
 			? failedResult(childOptions, failure.code, failure.message, failure.cause, failure.retryable)

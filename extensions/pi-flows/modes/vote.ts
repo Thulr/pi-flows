@@ -35,6 +35,9 @@ function voterTask(baseTask: string, index: number, total: number, diversify: bo
 	].join("\n");
 }
 
+/** One place a voter's unit key is derived, so the aggregator's dependency links name the ballots it read. */
+const voterKey = (index: number) => `voter-${index + 1}`;
+
 export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
 	const spec = params.vote ?? {};
@@ -100,7 +103,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
 			placeholderTask: goal,
-			scope: { key: `voter-${index + 1}` },
+			scope: { key: voterKey(index) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")([], planned.error) };
 		voterPlans.push(planned.plan!);
@@ -158,7 +161,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "aggregator", dependsOn: voters.map((_unused, index) => `voter-${index + 1}`) },
+			scope: { key: "aggregator", dependsOn: voters.map((_unused, index) => voterKey(index)) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("vote")(results, planned.error) };
 		const aggregated = await runIntegrationPlan(deps, planned.plan!, "vote", results.length + 1, results);

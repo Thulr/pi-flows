@@ -81,6 +81,9 @@ export function workerRecoveryDetails(workers: Array<{ branch: string; cwd: stri
 	return `\n\nWorker state retained for recovery:\n${recovery}`;
 }
 
+/** One place a worker's unit key is derived, so a dependency link cannot name a worker that was never registered. */
+const workerKey = (id: string) => `worker-${id}`;
+
 export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
 	const spec = params.worktree ?? {};
@@ -150,7 +153,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: worker.task.returnContract ?? params.returnContract,
 				requireEvidence: worker.task.requireEvidence ?? true,
 				placeholderTask: worker.task.task,
-				scope: { key: `worker-${worker.id}` },
+				scope: { key: workerKey(worker.id) },
 			});
 			if (planned.error) return modeError(deps, results, planned.error);
 			workerItems.push(planned.plan!);
@@ -241,7 +244,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			});
 			const conflictPlan = integrationRunPlan(deps, integrator, conflictTask, {
 				fallbackContract: params.contract as DelegationContract | undefined,
-				scope: { key: `conflict-${worker.id}`, dependsOn: [`worker-${worker.id}`] },
+				scope: { key: `conflict-${worker.id}`, dependsOn: [workerKey(worker.id)] },
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
 			const resolved = await runIntegrationPlan(deps, conflictPlan.plan!, "worktree", results.length + 1, results);
@@ -285,7 +288,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "integration-review", dependsOn: usableWorkers.map((worker) => `worker-${worker.id}`) },
+			scope: { key: "integration-review", dependsOn: usableWorkers.map((worker) => workerKey(worker.id)) },
 		});
 		if (reviewPlan.error) return modeError(deps, results, reviewPlan.error);
 		const reviewed = await runIntegrationPlan(deps, reviewPlan.plan!, "worktree", results.length + 1, results);

@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { infraError } from "../evals/lib.mjs";
 import { __test } from "../extensions/pi-flows/index.ts";
 import { budgetExceededError } from "../extensions/pi-flows/types.ts";
@@ -143,4 +145,34 @@ test("cost budget fails closed when provider usage telemetry is absent", async (
 	assert.equal(child.usage.costKnown, false);
 	assert.equal(child.stopReason, "budget_unobservable");
 	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
+});
+
+test("an exhausted ceiling refuses the next child before it spawns, and says so on the trace", async () => {
+	// The pre-spawn refusal is the half of budget enforcement that leaves no
+	// child process behind to inspect, so nothing but the call log and the
+	// coordination event records that it happened at all.
+	const { result, calls, stubDir } = await runFlow(
+		{
+			task: "two scouts, one budget",
+			maxTokens: 4,
+			traceFile: "flow-trace.jsonl",
+			concurrency: 1,
+			tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }],
+		},
+		{ recon: { reply: "finding" } },
+	);
+	assert.equal(calls.length, 1, "the second child must never be spawned once the ceiling is spent");
+	const refused = result.details.results[1];
+	assert.equal(refused.error?.code, "BUDGET_EXCEEDED");
+	assert.equal(refused.messages.length, 0, "a refused child produced no assistant turn because it never ran");
+	assert.equal(refused.usage.cost, 0);
+
+	const spans = (await readFile(path.join(stubDir, "flow-trace.jsonl"), "utf8"))
+		.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+	const budgetEvent = spans.find((span) => span.attributes?.["flow.event_kind"] === "budget");
+	assert.ok(budgetEvent, "a refusal that spawns nothing must still be attributable as a budget event");
+	assert.equal(budgetEvent.attributes["flow.event_name"], "child.refused");
+	assert.equal(budgetEvent.attributes["flow.budget.refused_agent"], "recon");
+	assert.equal(budgetEvent.attributes["flow.budget.limit_tokens"], 4);
+	assert.equal(budgetEvent.status.code, "ERROR");
 });

@@ -7,6 +7,9 @@ import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
 
+/** One place the generator's unit key is derived, so each critic's dependency link names the draft it judged. */
+const generatorKey = (stageKey: string) => `${stageKey}.generator`;
+
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
 	const spec = params.evaluate ?? {};
@@ -106,7 +109,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			results.length + 1,
 			results,
 			contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
-			{ stage, key: `${stage.key}.generator` },
+			{ stage, key: generatorKey(stage.key) },
 		);
 		results.push(generated);
 		lastGenerator = generated;
@@ -180,7 +183,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const critics = await runAgentFanout(
 			deps,
 			"evaluate",
-			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [`${stage.key}.generator`] } })),
+			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [generatorKey(stage.key)] } })),
 			concurrency,
 			results,
 			(done) => `Flow evaluate: ${results.length + done} step(s) done`,

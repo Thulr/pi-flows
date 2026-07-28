@@ -6,6 +6,9 @@ import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
+/** One place a section's unit key is derived, so the synthesizer's dependency links name the sections it read. */
+const sectionKey = (index: number) => `section-${index + 1}`;
+
 export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
 	const spec = params.dossier ?? {};
@@ -32,7 +35,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 			returnContract: section.returnContract ?? params.returnContract,
 			requireEvidence: section.requireEvidence ?? true,
 			placeholderTask: section.task,
-			scope: { key: `section-${index + 1}` },
+			scope: { key: sectionKey(index) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")([], planned.error) };
 		sectionItems.push(planned.plan!);
@@ -68,7 +71,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		fallbackContract: params.contract as DelegationContract | undefined,
 		returnContract: params.returnContract,
 		requireEvidence: params.requireEvidence,
-		scope: { key: "debrief", dependsOn: sections.map((_unused: unknown, index: number) => `section-${index + 1}`) },
+		scope: { key: "debrief", dependsOn: sections.map((_unused: unknown, index: number) => sectionKey(index)) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")(results, planned.error) };
 	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);

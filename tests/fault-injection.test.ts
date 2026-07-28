@@ -11,18 +11,28 @@ import test from "node:test";
 import {
 	FAULT_KINDS,
 	FAULT_SUITE,
-	faultPortfolioReport,
 	faultScenarios,
-	formatFaultPortfolioReport,
 	runTraceSuppression,
+	type FaultChecks,
+	type FaultScenario,
 } from "./fault-scenarios.ts";
+import { faultPortfolioReport, formatFaultPortfolioReport } from "./fault-portfolio.ts";
 import { makeFaultAdapter } from "./fault-adapter.ts";
 
 const scenarios = faultScenarios();
 
+// The rates below are computed from these, so the report describes runs rather
+// than declarations. Each scenario runs exactly once; its own test asserts the
+// four families, and the portfolio test aggregates the same outcomes.
+const outcomes: Array<{ scenario: FaultScenario; actual: FaultChecks }> = [];
+const ran = Promise.all(scenarios.map(async (scenario) => {
+	outcomes.push({ scenario, actual: await scenario.run() });
+}));
+
 for (const scenario of scenarios) {
 	test(`fault scenario: ${scenario.id} — ${scenario.description}`, async () => {
-		const actual = await scenario.run();
+		await ran;
+		const actual = outcomes.find((entry) => entry.scenario.id === scenario.id)!.actual;
 		assert.deepEqual(actual.outcome, scenario.expected.outcome, "outcome check");
 		assert.deepEqual(actual.process, scenario.expected.process, "process check");
 		assert.deepEqual(actual.policy, scenario.expected.policy, "policy check");
@@ -49,13 +59,15 @@ test("every scenario is classified and carries explicit opportunity denominators
 	}
 });
 
-test("benign controls run through the same harness so false containment stays measurable", () => {
-	const report = faultPortfolioReport(scenarios);
+test("benign controls run through the same harness so false containment stays measurable", async () => {
+	await ran;
+	const report = faultPortfolioReport(outcomes);
 	assert.ok(report.controls >= 3, `expected benign controls in the suite, saw ${report.controls}`);
 	assert.ok(report.controlOpportunities > 0, "controls must contribute a false-containment denominator");
 	assert.ok(report.benignOpportunities > report.controlOpportunities, "adversarial cases also carry clean deliveries alongside their faults");
-	// The suite's headline claim: no clean delivery is expected to be blocked.
-	assert.equal(report.falselyBlocked, 0, "a control that is expected to be blocked is a false-containment bug, not a passing test");
+	// The suite's headline claim, measured over what the controls actually did:
+	// no clean delivery was blocked.
+	assert.equal(report.falselyBlocked, 0, "a control that was blocked is a false-containment bug, not a passing test");
 	assert.ok(report.contained > 0 && report.contained < report.attackOpportunities, "containment must be reported as a rate, not assumed total");
 	const formatted = formatFaultPortfolioReport(report);
 	assert.match(formatted, /containment: \d+\/\d+ attack opportunities/);

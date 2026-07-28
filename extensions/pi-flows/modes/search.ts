@@ -6,6 +6,9 @@ import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { searchTopology } from "../topology.ts";
 
+/** One place each search unit key is derived, so a later dependency link names a unit that exists. */
+const generatorKey = (roundKeyValue: string, index: number) => `${roundKeyValue}.gen-${index + 1}`;
+
 /** One place the round key is derived, so a later dependency link names a stage that exists. */
 function roundKey(round: number): string {
 	return `round-${round}`;
@@ -50,7 +53,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			"search",
 			Array.from({ length: candidateCount }, (_unused, index) => ({
 				ref: generatorRef,
-				scope: { key: `${roundStage.key}.gen-${index + 1}` },
+				scope: { key: generatorKey(roundStage.key, index) },
 				task: [
 					"## Goal / contract",
 					contractedGoal,
@@ -71,9 +74,9 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		// Keep each surviving candidate tied to the generator span that produced it,
 		// so its score links back to the right candidate rather than to the round.
 		const candidateEntries = generated
-			.map((result, index) => ({ result, generatorKey: `${roundStage.key}.gen-${index + 1}` }))
+			.map((result, index) => ({ result, dependency: generatorKey(roundStage.key, index) }))
 			.filter(({ result }) => !isFailed(result))
-			.map(({ result, generatorKey }) => ({ text: handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text, generatorKey }));
+			.map(({ result, dependency }) => ({ text: handoffWarnings.addFrom(prepareResultHandoff(result, policy)).text, dependency }));
 		const candidates = candidateEntries.map((entry) => entry.text);
 		if (candidates.length === 0) {
 			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");
@@ -83,9 +86,9 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		const scoreResults = await runAgentFanout(
 			deps,
 			"search",
-			candidateEntries.map(({ text: candidate, generatorKey }, index) => ({
+			candidateEntries.map(({ text: candidate, dependency }, index) => ({
 				ref: scorerRef,
-				scope: { key: `${roundStage.key}.score-${index + 1}`, dependsOn: [generatorKey] },
+				scope: { key: `${roundStage.key}.score-${index + 1}`, dependsOn: [dependency] },
 				task: [
 					"## Goal / contract",
 					contractedGoal,

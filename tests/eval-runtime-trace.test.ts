@@ -13,6 +13,8 @@ import {
 	runtimeTraceEvidence,
 } from "../evals/runtime-trace.mjs";
 import { stableTraceIds, traceSummaryAttributes } from "../extensions/pi-flows/trace.ts";
+import { harnessExitCode, traceEvidenceGate } from "../evals/pipeline.mjs";
+import { traceHealthRollup } from "../evals/reliability.mjs";
 import { runFlow } from "./stub-harness.ts";
 
 test("dry-run runtime traces use separate default paths", () => {
@@ -303,4 +305,34 @@ test("eval runner dry-run reliability points at the isolated runtime trace defau
 	assert.equal(child.status, 0, child.stderr);
 	const report = JSON.parse(await readFile(reliabilityOut, "utf8"));
 	assert.equal(report.runtimeTraceFile, ".thulr/runs/runtime.dry-run.trace.jsonl");
+});
+
+test("the eval strict-trace gate blocks only when asked, and never as a subject failure", () => {
+	const trials = (statuses: string[]) => statuses.map((status, index) => ({
+		caseId: "case",
+		trialId: `case::trial-${index}`,
+		pass: true,
+		objective: { pass: true, score: 1 },
+		durationMs: 10,
+		costUsd: 0,
+		scoreFamilies: { traceHealth: { available: true, pass: status === "recorded", status } },
+	}));
+
+	const clean = traceHealthRollup(trials(["recorded", "recorded"]));
+	assert.deepEqual(clean, { trials: 2, recorded: 2, degraded: 0, missing: 0, complete: true });
+	const lossy = traceHealthRollup(trials(["recorded", "degraded", "missing"]));
+	assert.deepEqual(lossy, { trials: 3, recorded: 1, degraded: 1, missing: 1, complete: false });
+
+	const report = (health: ReturnType<typeof traceHealthRollup>) => ({ overall: { traceHealth: health } });
+	// Off by default: an exporter hiccup must not read as a regression.
+	assert.equal(traceEvidenceGate(report(lossy)).blocks, false);
+	assert.equal(traceEvidenceGate(report(lossy), { strict: false }).blocks, false);
+	const blocked = traceEvidenceGate(report(lossy), { strict: true });
+	assert.equal(blocked.blocks, true);
+	assert.match(blocked.issues[0], /1\/3 trials recorded \(1 degraded, 1 missing\)/);
+	assert.equal(traceEvidenceGate(report(clean), { strict: true }).blocks, false);
+
+	// The gate is its own exit axis: a run whose cases all passed still fails.
+	assert.equal(harnessExitCode({ measured: 2, passed: 2 }), 0);
+	assert.equal(harnessExitCode({ measured: 2, passed: 2, traceBlocks: true }), 1);
 });

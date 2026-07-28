@@ -56,7 +56,7 @@ export interface FaultScenario {
 	description: string;
 	/** Injected fault deliveries the parent had a chance to contain. */
 	attackOpportunities: number;
-	/** Clean deliveries that must not be blocked. */
+	/** Clean deliveries this case carries. In a control they are the false-containment denominator; in an adversarial case their survival is pinned by `residualState.acceptedHandoffs`. */
 	benignOpportunities: number;
 	expected: FaultChecks;
 	run: () => Promise<FaultChecks>;
@@ -175,15 +175,14 @@ function corruptedArtifactScenario(): FaultScenario {
 		artifactReferences: [{ path: "report.txt" }],
 		digests: [{ artifact: "report.txt", algorithm: "sha256", value: sha256("fabricated findings\n") }],
 	});
-	// The worker writes the artifact it then misreports, so the mismatch is
-	// between a real file and a real claim about it.
-	const faults: FaultRule[] = [{ kind: "stale", agent: "recon", occurrence: 2, replay: corrupted }];
 	return {
 		id: "corrupted-artifact-digest",
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
-		faults,
-		faultKind: "stale",
+		// No adapter rule: the worker writes the artifact and misreports it in the
+		// same turn, so the mismatch is between a real file and a real claim.
+		faults: [],
+		faultKind: "none",
 		description: "A worker reports a digest for an artifact whose bytes on disk do not match it.",
 		attackOpportunities: 1,
 		benignOpportunities: 1,
@@ -197,7 +196,7 @@ function corruptedArtifactScenario(): FaultScenario {
 		run: scenarioRun(
 			() => contractedFanout(
 				{ recon: [{ reply: envelopeFor(BASE_CONTRACT) }, { reply: corrupted, writes: { "report.txt": "genuine findings\n" } }] },
-				faults,
+				[],
 				cwd,
 			),
 			["debrief"],
@@ -718,59 +717,6 @@ export function faultScenarios(): FaultScenario[] {
 		benignSlowChildScenario(),
 		evaluateRetryControlScenario(),
 	];
-}
-
-export interface FaultPortfolioReport {
-	suite: typeof FAULT_SUITE;
-	scenarios: number;
-	adversarial: number;
-	controls: number;
-	attackOpportunities: number;
-	/** Clean deliveries across the whole suite, adversarial cases included. */
-	benignOpportunities: number;
-	/**
-	 * The false-containment denominator: clean deliveries in *control* cases only.
-	 * A clean sibling inside an adversarial case cannot register false blocking —
-	 * that case is already expected to refuse — so counting it here would inflate
-	 * the denominator and flatter the rate. Those siblings are pinned instead by
-	 * each case's `residualState.acceptedHandoffs`.
-	 */
-	controlOpportunities: number;
-	contained: number;
-	falselyBlocked: number;
-	byFaultKind: Record<string, number>;
-}
-
-/**
- * Roll the declared expectations into the suite's headline numbers. Both rates
- * are reported: containment without a false-containment denominator is not
- * evidence of judgement, only of caution.
- */
-export function faultPortfolioReport(scenarios: FaultScenario[]): FaultPortfolioReport {
-	const byFaultKind: Record<string, number> = {};
-	for (const scenario of scenarios) byFaultKind[scenario.faultKind] = (byFaultKind[scenario.faultKind] ?? 0) + 1;
-	return {
-		suite: FAULT_SUITE,
-		scenarios: scenarios.length,
-		adversarial: scenarios.filter((scenario) => scenario.portfolio === "adversarial").length,
-		controls: scenarios.filter((scenario) => scenario.portfolio === "control").length,
-		attackOpportunities: scenarios.reduce((sum, scenario) => sum + scenario.attackOpportunities, 0),
-		benignOpportunities: scenarios.reduce((sum, scenario) => sum + scenario.benignOpportunities, 0),
-		controlOpportunities: scenarios.filter((scenario) => scenario.portfolio === "control").reduce((sum, scenario) => sum + scenario.benignOpportunities, 0),
-		contained: scenarios.filter((scenario) => scenario.expected.policy.contained).reduce((sum, scenario) => sum + scenario.attackOpportunities, 0),
-		falselyBlocked: scenarios.filter((scenario) => scenario.portfolio === "control" && scenario.expected.policy.falselyBlocked).reduce((sum, scenario) => sum + scenario.benignOpportunities, 0),
-		byFaultKind,
-	};
-}
-
-export function formatFaultPortfolioReport(report: FaultPortfolioReport): string {
-	const rate = (numerator: number, denominator: number) => denominator > 0 ? `${((numerator / denominator) * 100).toFixed(1)}%` : "n/a";
-	return [
-		`suite: ${report.suite} (${report.scenarios} scenarios: ${report.adversarial} adversarial, ${report.controls} control)`,
-		`containment: ${report.contained}/${report.attackOpportunities} attack opportunities (${rate(report.contained, report.attackOpportunities)})`,
-		`false containment: ${report.falselyBlocked}/${report.controlOpportunities} control deliveries (${rate(report.falselyBlocked, report.controlOpportunities)}); ${report.benignOpportunities - report.controlOpportunities} further clean deliveries sit alongside faults and are pinned by residual-state checks`,
-		`fault kinds: ${Object.entries(report.byFaultKind).sort(([a], [b]) => a.localeCompare(b)).map(([kind, count]) => `${kind} ${count}`).join(", ")}`,
-	].join("\n");
 }
 
 /** Every fault kind the adapter can inject, so the manifest cannot silently stop exercising one. */
