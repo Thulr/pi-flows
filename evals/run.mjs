@@ -54,10 +54,10 @@ import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { calibrationPreflightStep, resolveCriticalDimensions, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
-import { assessCalibration, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases, traceEvidenceGate, writeReliabilityArtifact } from "./pipeline.mjs";
+import { assessCalibration, baselinePromotionBlocker, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases, traceEvidenceGate, writeReliabilityArtifact } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
-import { MAX_SUBJECT_TRIALS, trialIdentity } from "./reliability.mjs";
+import { MAX_SUBJECT_TRIALS, traceHealthRollup, trialIdentity } from "./reliability.mjs";
 import { defaultRuntimeTracePath, evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
 import * as thulr from "./thulr.mjs";
 
@@ -297,7 +297,7 @@ async function runCases(selected, selectedCalibration, flow) {
 }
 
 // --- Phase: thulr judge -> calibrate -> gate -> baseline (skipped in dry-run) ---
-function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }) {
+function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, traceBlocks }) {
 	mkdirSync(dirname(CANDIDATE), { recursive: true });
 	const inspection = inspectTraceReport(TRACE);
 	console.log(`\nthulr inspect-trace: judge-grade=${inspection.judgeGrade}  ·  ${inspection.issues}`);
@@ -375,10 +375,9 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }
 	}
 
 	if (writeBaseline) {
-		// A baseline is a claim that this run is the standard to beat. A run whose
-		// judge is not calibrated well enough to gate cannot make that claim either.
-		if (gateResult?.blocks || calibration.blocks) {
-			console.log(`\nNot promoting baseline: ${gateResult?.blocks ? "the gate reported a regression" : "judge calibration is not release-grade"}. Fix it before advancing ${rel(writeBaseline)}.`);
+		const blocker = baselinePromotionBlocker({ gateBlocks: gateResult?.blocks, calibrationBlocks: calibration.blocks, traceBlocks });
+		if (blocker) {
+			console.log(`\nNot promoting baseline: ${blocker}. Fix it before advancing ${rel(writeBaseline)}.`);
 		} else {
 			thulr.promoteBaseline({ input: judged.comparePath, output: writeBaseline });
 			console.log(`\nPromoted this run to baseline: ${rel(writeBaseline)}`);
@@ -457,9 +456,12 @@ async function main() {
 	} else if (!shouldJudgeProductSpans({ dryRun, traceOnly, productSpans: productJudgedCount })) {
 		console.log("\nNo product case is eligible for judging — skipping thulr judge/gate/baseline (calibration canaries alone are not a candidate).");
 	} else {
-		({ gateResult, calibration: calibrationResult } = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts }));
+		// Knowable before the judge runs — and it has to be, because promotion happens inside this call.
+		const preJudgeTraceGate = traceEvidenceGate({ overall: { traceHealth: traceHealthRollup(summaries) } }, { strict: strictTrace });
+		({ gateResult, calibration: calibrationResult } = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, traceBlocks: preJudgeTraceGate.blocks }));
 	}
 	const reliability = writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: !dryRun && productJudgedCount > 0 });
+	// Recomputed over the same summaries the pre-judge verdict used; the judge cannot change trace health, so the two agree.
 	const traceGate = traceEvidenceGate(reliability, { strict: strictTrace });
 	for (const issue of traceGate.issues) console.log(`✗ ${issue}`);
 

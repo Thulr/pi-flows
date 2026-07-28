@@ -296,7 +296,9 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "integration-review", dependsOn: usableWorkers.map((worker) => workerKey(worker.id)) },
+			// The branch under review contains any conflict resolution that produced
+			// it, so the reviewed result's provenance includes the resolvers.
+			scope: { key: "integration-review", dependsOn: [...usableWorkers.map((worker) => workerKey(worker.id)), ...resolvedConflictKeys] },
 		});
 		if (reviewPlan.error) return modeError(deps, results, reviewPlan.error);
 		const reviewed = await runIntegrationPlan(deps, reviewPlan.plan!, "worktree", results.length + 1, results);
@@ -318,6 +320,9 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				kind: "validation",
 				name: "worktree.integration_check",
 				ok: checked.ok,
+				// The command ran against the reviewed branch, so a failed worktree
+				// ends at the review it invalidated rather than at a loose gate.
+				scope: { key: "integration-check", dependsOn: ["integration-review"] },
 				attributes: { "flow.check.passed": checked.ok, "flow.worktree.integration_branch": integrationBranch, "flow.worktree.changed_file_count": changedFiles.length },
 			});
 			if (!checked.ok) {

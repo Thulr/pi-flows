@@ -384,6 +384,22 @@ export function harnessExitCode({ measured, passed, infraExcluded = 0, gateBlock
 }
 
 /**
+ * Why this run must not become the baseline, or null when it may.
+ *
+ * A baseline is a claim that this run is the standard to beat. A run whose judge
+ * is not calibrated well enough to gate cannot make that claim — and neither can
+ * one nobody can audit, which is why the strict-trace verdict has to be known
+ * before promotion rather than after: exiting non-zero afterwards would not
+ * un-contaminate a baseline the run had already overwritten.
+ */
+export function baselinePromotionBlocker({ gateBlocks = false, calibrationBlocks = false, traceBlocks = false } = {}) {
+	if (gateBlocks) return "the gate reported a regression";
+	if (calibrationBlocks) return "judge calibration is not release-grade";
+	if (traceBlocks) return "runtime trace evidence is incomplete under --strict-trace";
+	return null;
+}
+
+/**
  * Whether incomplete runtime-trace evidence should block this run.
  *
  * Only under `--strict-trace`. Best-effort tracing is the default everywhere

@@ -447,3 +447,19 @@ test("a failed gate links back to the draft that failed it", async () => {
 	assert.equal(attr(check, "flow.depends_on_span_ids"), unit(spans, "iteration-1.generator")!.span_id);
 	assert.equal(attr(unit(spans, "iteration-2.generator"), "flow.depends_on"), "iteration-1.check");
 });
+
+test("route dispatch runs through the recorded selection, not around it", async () => {
+	const { stubDir } = await runFlow(
+		{ task: "fix the failing build", traceFile: TRACE, route: { candidates: ["recon", "strategist"] } },
+		{ controller: "ROUTE: recon", recon: "investigated" },
+	);
+	const spans = await readSpans(stubDir);
+	const selection = spans.find((span) => attr(span, "flow.event_name") === "route.selected")!;
+	// classification -> selection -> dispatch: the decision is the boundary that
+	// connects the two, so it must not sit beside the chain as an orphan.
+	assert.equal(attr(selection, "flow.unit_key"), "selection");
+	assert.equal(attr(selection, "flow.depends_on"), "router");
+	assert.equal(attr(selection, "flow.depends_on_span_ids"), unit(spans, "router")!.span_id);
+	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on"), "selection");
+	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on_span_ids"), selection.span_id);
+});

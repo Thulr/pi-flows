@@ -6,6 +6,7 @@ import { runAgentRef } from "../runner.ts";
 
 /** One place each route unit key is derived, so the specialist's dependency link names the router that chose it. */
 const ROUTER_KEY = "router";
+const SELECTION_KEY = "selection";
 
 export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, makeDetails } = deps;
@@ -65,8 +66,8 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
 
-	deps.recordEvent?.({ kind: "state", name: "route.selected", attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(resultText(routed), candidates) } });
-	const specialist = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results, { scope: { key: "specialist", dependsOn: [ROUTER_KEY] } });
+	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [ROUTER_KEY] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(resultText(routed), candidates) } });
+	const specialist = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results, { scope: { key: "specialist", dependsOn: [SELECTION_KEY] } });
 	results.push(specialist);
 	if (isFailed(specialist)) {
 		return {

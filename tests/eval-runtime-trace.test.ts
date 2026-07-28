@@ -13,7 +13,7 @@ import {
 	runtimeTraceEvidence,
 } from "../evals/runtime-trace.mjs";
 import { stableTraceIds, traceSummaryAttributes } from "../extensions/pi-flows/trace.ts";
-import { harnessExitCode, traceEvidenceGate } from "../evals/pipeline.mjs";
+import { baselinePromotionBlocker, harnessExitCode, traceEvidenceGate } from "../evals/pipeline.mjs";
 import { traceHealthRollup } from "../evals/reliability.mjs";
 import { runFlow } from "./stub-harness.ts";
 
@@ -352,4 +352,14 @@ test("--trace-only still honours --strict-trace before it hands off to the drive
 	const strict = run(["--strict-trace"]);
 	assert.equal(strict.status, 1, "strict trace evidence must block the trace-only exit");
 	assert.match(`${strict.stdout}\n${strict.stderr}`, /runtime trace evidence is incomplete under --strict-trace/);
+});
+
+test("a baseline is not promoted on evidence nobody can audit", () => {
+	// The order matters more than the rule: promotion happens inside judgeAndGate,
+	// so a strict verdict computed afterwards would exit non-zero having already
+	// overwritten the baseline with the unauditable run.
+	assert.equal(baselinePromotionBlocker(), null);
+	assert.equal(baselinePromotionBlocker({ traceBlocks: true }), "runtime trace evidence is incomplete under --strict-trace");
+	assert.equal(baselinePromotionBlocker({ gateBlocks: true, traceBlocks: true }), "the gate reported a regression");
+	assert.equal(baselinePromotionBlocker({ calibrationBlocks: true, traceBlocks: true }), "judge calibration is not release-grade");
 });
