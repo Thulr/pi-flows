@@ -3,6 +3,7 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { appendReturnContract } from "../validate.ts";
 import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
 import { prepareResultHandoff } from "../handoff.ts";
+import { recordStepHandoff } from "../integration.ts";
 import { runAgentRef } from "../runner.ts";
 
 /** One place each route unit key is derived, so the specialist's dependency link names the router that chose it. */
@@ -56,6 +57,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	const routingMetadata = prepareResultHandoff(routed, policy, undefined, deps.handoffGuard);
+	recordStepHandoff(deps, { result: routed, prepared: routingMetadata, scope: { key: ROUTER_KEY } });
 	if (routingMetadata.error) {
 		return { content: [{ type: "text", text: formatFlowError(routingMetadata.error) }], details: makeDetails("route")(results, routingMetadata.error) };
 	}
@@ -71,7 +73,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
 
-	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [ROUTER_KEY] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(routingMetadata.text, candidates), "flow.handoff.policy": deps.handoffGuard.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
+	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [`${ROUTER_KEY}.handoff`] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(routingMetadata.text, candidates), "flow.handoff.policy": deps.handoffGuard.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
 	const specialist = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results, { scope: { key: "specialist", dependsOn: [SELECTION_KEY] } });
 	results.push(specialist);
 	if (isFailed(specialist)) {

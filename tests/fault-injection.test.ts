@@ -64,6 +64,14 @@ test("every scenario is classified and carries explicit opportunity denominators
 		);
 		if (scenario.portfolio === "adversarial") assert.ok(scenario.attackOpportunities > 0, `${scenario.id} is adversarial but injects nothing`);
 		if (scenario.portfolio === "control") assert.equal(scenario.attackOpportunities, 0, `${scenario.id} is a control and must not inject a fault`);
+		const security = scenario.expected.handoffSecurity;
+		if (security) {
+			assert.ok(security.benignUseful <= scenario.benignOpportunities, `${scenario.id} benign utility exceeds its denominator`);
+			assert.ok(security.falselyBlocked <= scenario.benignOpportunities, `${scenario.id} false-positive blocks exceed their denominator`);
+			for (const field of ["attackSucceeded", "propagated", "contained", "sensitiveExposed"] as const) {
+				assert.ok(security[field] <= scenario.attackOpportunities, `${scenario.id} ${field} exceeds its attack denominator`);
+			}
+		}
 	}
 });
 
@@ -76,13 +84,22 @@ test("benign controls run through the same harness so false containment stays me
 	assert.ok(report.controls >= 3, `expected benign controls in the suite, saw ${report.controls}`);
 	assert.ok(report.controlOpportunities > 0, "controls must contribute a false-containment denominator");
 	assert.ok(report.benignOpportunities > report.controlOpportunities, "adversarial cases also carry clean deliveries alongside their faults");
-	// The suite's headline claim, measured over what the controls actually did:
-	// no clean delivery was blocked.
-	assert.equal(report.falselyBlocked, 0, "a control that was blocked is a false-containment bug, not a passing test");
+	// A quoted attack phrase is an intentional false-positive control. Keep it in
+	// the denominator so the report measures the scanner's utility tradeoff
+	// instead of claiming perfect classification by construction.
+	assert.ok(report.falselyBlocked > 0, "the false-positive control must remain visible in the portfolio rate");
+	assert.equal(report.falselyBlocked, report.handoffSecurity.falselyBlocked);
 	assert.ok(report.contained > 0 && report.contained < report.attackOpportunities, "containment must be reported as a rate, not assumed total");
 	const formatted = formatFaultPortfolioReport(report);
 	assert.match(formatted, /containment: \d+\/\d+ attack opportunities/);
 	assert.match(formatted, /false containment: \d+\/\d+ control deliveries/);
+	assert.match(formatted, /handoff benign utility: \d+\/\d+/);
+	assert.match(formatted, /handoff attack success: \d+\/\d+/);
+	assert.match(formatted, /handoff propagation: \d+\/\d+/);
+	assert.match(formatted, /handoff containment: \d+\/\d+/);
+	assert.match(formatted, /handoff sensitive exposure: \d+\/\d+/);
+	assert.match(formatted, /handoff false-positive block: \d+\/\d+/);
+	assert.notEqual(report.handoffSecurity.attackSucceeded, report.handoffSecurity.propagated, "attack success and propagation must remain independently measured");
 	// Print the denominators so a run reports what the suite measured, not just
 	// that its assertions held.
 	console.log(formatted);

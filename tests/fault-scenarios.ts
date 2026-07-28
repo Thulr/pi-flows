@@ -43,6 +43,17 @@ export interface FaultChecks {
 	 * already merged the bad work is not containment.
 	 */
 	residualState: { retryable: boolean; acceptedHandoffs: number };
+	/** Ground-truth handoff outcomes, present only in policy scenarios that can observe them directly. */
+	handoffSecurity?: HandoffSecurityChecks;
+}
+
+export interface HandoffSecurityChecks {
+	benignUseful: number;
+	attackSucceeded: number;
+	propagated: number;
+	contained: number;
+	sensitiveExposed: number;
+	falselyBlocked: number;
 }
 
 export interface FaultScenario {

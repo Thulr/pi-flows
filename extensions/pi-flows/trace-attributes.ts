@@ -142,13 +142,10 @@ export function handoffAttributes(handoff: DelegationHandoffEnvelope, accounting
 	const attackDetected = Boolean(accounting.warnings?.length);
 	const blocked = accounting.policyAction === "quarantine" || accounting.policyAction === "fail";
 	const propagated = attackDetected && accounting.policyAction === "warn";
-	const contained = attackDetected && blocked;
-	attributes["flow.handoff.attack_detected"] = attackDetected;
-	attributes["flow.handoff.benign"] = !attackDetected;
-	attributes["flow.handoff.propagated"] = propagated;
-	attributes["flow.handoff.contained"] = contained;
-	attributes["flow.handoff.sensitive_exposure"] = propagated && Boolean(accounting.warnings?.some((warning) => warning.includes("secret-exfiltration")));
-	attributes["flow.handoff.false_positive_block"] = !attackDetected && blocked;
+	attributes["flow.handoff.scan_flagged"] = attackDetected;
+	attributes["flow.handoff.payload_propagated"] = propagated;
+	attributes["flow.handoff.payload_withheld"] = attackDetected && blocked;
+	attributes["flow.handoff.sensitive_request_propagated"] = propagated && Boolean(accounting.warnings?.some((warning) => warning.includes("secret-exfiltration")));
 	attributes["flow.handoff.compositional"] = accounting.compositional ?? false;
 	if (accounting.contract) attributes["flow.handoff.preserved_constraint_ids"] = list(constraintIdentifiers(accounting.contract), policy);
 	if (accounting.rawBytes !== undefined) attributes["flow.handoff.raw_bytes"] = accounting.rawBytes;

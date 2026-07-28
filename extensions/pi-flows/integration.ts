@@ -22,6 +22,7 @@ import type {
 	FlowRunResult,
 	IncompleteHandoffPolicy,
 	ModeDeps,
+	PreparedHandoff,
 	RecordEvent,
 } from "./types.ts";
 import { appendReturnContract, resolvedCwd } from "./validate.ts";
@@ -113,11 +114,8 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 	result: FlowRunResult;
 	contract?: DelegationContract;
 	envelope?: DelegationReturnEnvelope;
-	carried: string;
-	/** The injection labels the mode raised on the text it carried. */
-	warnings: string[];
-	action?: "allow" | "warn" | "quarantine" | "fail";
-	compositional?: boolean;
+	/** The exact prepared value the downstream consumer receives. */
+	prepared: PreparedHandoff;
 	scope?: ChildSpanScope;
 }): void {
 	const record = deps.recordEvent;
@@ -131,9 +129,9 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 		handoff,
 		options.result,
 		options.scope,
-		{ text: options.carried, warnings: options.warnings, action: options.action ?? (options.warnings.length ? "warn" : "allow"), compositional: options.compositional ?? false },
+		options.prepared,
 		options.contract,
-		undefined,
+		options.prepared.error,
 	);
 }
 
@@ -146,10 +144,7 @@ export function recordStepHandoff(deps: ModeDeps, options: {
 export function recordTextHandoff(deps: ModeDeps, options: {
 	fromAgent: string;
 	raw: string;
-	carried: string;
-	warnings: string[];
-	action?: "allow" | "warn" | "quarantine" | "fail";
-	compositional?: boolean;
+	prepared: PreparedHandoff;
 	scope: ChildSpanScope;
 }): void {
 	const record = deps.recordEvent;
@@ -177,11 +172,11 @@ export function recordTextHandoff(deps: ModeDeps, options: {
 			{
 				accepted: true,
 				rawBytes: Buffer.byteLength(options.raw, "utf8"),
-				carriedBytes: Buffer.byteLength(options.carried, "utf8"),
-				warnings: options.warnings,
+				carriedBytes: Buffer.byteLength(options.prepared.text, "utf8"),
+				warnings: options.prepared.warnings,
 				handoffPolicy: deps.handoffGuard.resolution.effective,
-				policyAction: options.action ?? (options.warnings.length ? "warn" : "allow"),
-				compositional: options.compositional,
+				policyAction: options.prepared.action,
+				compositional: options.prepared.compositional,
 				policy: deps.policy,
 			},
 		),
@@ -195,7 +190,7 @@ function emitHandoff(
 	handoff: DelegationHandoffEnvelope,
 	result: FlowRunResult,
 	scope: ChildSpanScope | undefined,
-	prepared: { text: string; warnings: string[]; action: "allow" | "warn" | "quarantine" | "fail"; compositional: boolean },
+	prepared: PreparedHandoff,
 	contract: DelegationContract | undefined,
 	rejection: FlowError | undefined,
 ): void {

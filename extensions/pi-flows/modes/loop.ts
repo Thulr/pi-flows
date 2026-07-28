@@ -59,7 +59,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		// one would invent an inter-agent handoff in a healthy trace.
 		const bodyDone = judgeRef ? false : parseLoopStatus(resultText(body)) === "done";
 		if (judgeRef || (!bodyDone && iteration < maxIterations)) {
-			recordStepHandoff(deps, { result: body, carried: previous, warnings: bodyPrep.warnings, action: bodyPrep.action, compositional: bodyPrep.compositional, scope: { stage, key: bodyKey(stage.key) } });
+			recordStepHandoff(deps, { result: body, prepared: { ...bodyPrep, text: previous }, scope: { stage, key: bodyKey(stage.key) } });
 		}
 
 		priorIterationKey = `${bodyKey(stage.key)}.handoff`;
@@ -88,7 +88,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		// Likewise: a REVISE on the final iteration ends the loop, so nothing reads
 		// this critique and no boundary was crossed.
 		if (iteration < maxIterations) {
-			recordStepHandoff(deps, { result: judged, carried: critique, warnings: critiquePrep.warnings, action: critiquePrep.action, compositional: critiquePrep.compositional, scope: { stage, key: `${stage.key}.judge` } });
+			recordStepHandoff(deps, { result: judged, prepared: { ...critiquePrep, text: critique }, scope: { stage, key: `${stage.key}.judge` } });
 		}
 	}
 

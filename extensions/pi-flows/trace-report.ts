@@ -31,14 +31,6 @@ export interface TraceReportBucket {
 	legacyDurationTraces: number;
 	budgetHits: number;
 	sameModelVoteWarnings: number;
-	handoffBenign: number;
-	handoffBenignUseful: number;
-	handoffAttacks: number;
-	handoffAttackSuccesses: number;
-	handoffPropagations: number;
-	handoffContainments: number;
-	handoffSensitiveExposures: number;
-	handoffFalsePositiveBlocks: number;
 	expectedSpans: number;
 	observedSpans: number;
 	droppedSpans: number;
@@ -82,14 +74,6 @@ export function emptyTraceBucket(): TraceReportBucket {
 		legacyDurationTraces: 0,
 		budgetHits: 0,
 		sameModelVoteWarnings: 0,
-		handoffBenign: 0,
-		handoffBenignUseful: 0,
-		handoffAttacks: 0,
-		handoffAttackSuccesses: 0,
-		handoffPropagations: 0,
-		handoffContainments: 0,
-		handoffSensitiveExposures: 0,
-		handoffFalsePositiveBlocks: 0,
 		expectedSpans: 0,
 		observedSpans: 0,
 		droppedSpans: 0,
@@ -198,11 +182,6 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
 		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");
 		const routeChoice = stringAttr(rootSpan, "flow.route_choice");
-		const handoffSpans = eventSpans.filter((span) => stringAttr(span, "flow.event_kind") === "handoff");
-		const handoffBenign = handoffSpans.filter((span) => boolAttr(span, "flow.handoff.benign")).length;
-		const handoffAttacks = handoffSpans.filter((span) => boolAttr(span, "flow.handoff.attack_detected")).length;
-		const handoffPropagations = handoffSpans.filter((span) => boolAttr(span, "flow.handoff.propagated")).length;
-		const handoffContainments = handoffSpans.filter((span) => boolAttr(span, "flow.handoff.contained")).length;
 
 		// Two independent views of completeness: what the exporter admitted it
 		// failed to write, and what the file holds relative to what the root said to
@@ -236,14 +215,6 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			legacyDurationTraces: legacyWorkerTime === undefined || optionalNumericAttr(rootSpan, "flow.worker_time_ms") !== undefined ? 0 : 1,
 			budgetHits: budgetHit ? 1 : 0,
 			sameModelVoteWarnings: sameModelVoteWarning ? 1 : 0,
-			handoffBenign,
-			handoffBenignUseful: handoffSpans.filter((span) => boolAttr(span, "flow.handoff.benign") && numericAttr(span, "flow.handoff.carried_bytes") > 0).length,
-			handoffAttacks,
-			handoffAttackSuccesses: handoffPropagations,
-			handoffPropagations,
-			handoffContainments,
-			handoffSensitiveExposures: handoffSpans.filter((span) => boolAttr(span, "flow.handoff.sensitive_exposure")).length,
-			handoffFalsePositiveBlocks: handoffSpans.filter((span) => boolAttr(span, "flow.handoff.false_positive_block")).length,
 			expectedSpans,
 			observedSpans,
 			droppedSpans,
@@ -316,7 +287,6 @@ export function formatTraceReport(report: TraceReport): string {
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
-		`Handoff policy: benign utility ${report.handoffBenignUseful}/${report.handoffBenign} (${formatRate(report.handoffBenignUseful, report.handoffBenign)}); attack success ${report.handoffAttackSuccesses}/${report.handoffAttacks} (${formatRate(report.handoffAttackSuccesses, report.handoffAttacks)}); propagation ${report.handoffPropagations}/${report.handoffAttacks} (${formatRate(report.handoffPropagations, report.handoffAttacks)}); containment ${report.handoffContainments}/${report.handoffAttacks} (${formatRate(report.handoffContainments, report.handoffAttacks)}); sensitive exposure ${report.handoffSensitiveExposures}/${report.handoffAttacks} (${formatRate(report.handoffSensitiveExposures, report.handoffAttacks)}); false-positive block ${report.handoffFalsePositiveBlocks}/${report.handoffBenign} (${formatRate(report.handoffFalsePositiveBlocks, report.handoffBenign)})`,
 		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} structurally invalid` : ""}`,
 		`Topology: ${report.stageSpans} stage span${report.stageSpans === 1 ? "" : "s"}, ${report.coordinationEvents} coordination event${report.coordinationEvents === 1 ? "" : "s"}`,
 	];

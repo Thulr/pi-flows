@@ -159,10 +159,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				result: generated,
 				contract,
 				envelope: generated.envelope,
-				carried: artifact,
-				warnings: artifactPrep.warnings,
-				action: artifactPrep.action,
-				compositional: artifactPrep.compositional,
+				prepared: { ...artifactPrep, text: artifact },
 				scope: { stage, key: generatorKey(stage.key) },
 			});
 			priorArtifactKey = `${generatorKey(stage.key)}.handoff`;
@@ -210,10 +207,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 					recordTextHandoff(deps, {
 						fromAgent: `checkCommand:${checkCommand}`,
 						raw: checkRaw,
-						carried: critique,
-						warnings: checkPrep.warnings,
-						action: checkPrep.action,
-						compositional: checkPrep.compositional,
+						prepared: { ...checkPrep, text: critique },
 						scope: { stage, key: `${stage.key}.check.handoff`, dependsOn: [`${stage.key}.check`] },
 					});
 					feedbackKey = `${stage.key}.check.handoff`;
@@ -295,10 +289,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			recordTextHandoff(deps, {
 				fromAgent: revising.map((verdict) => verdict.agent).join(","),
 				raw: critiqueRaw,
-				carried: critique,
-				warnings: critiquePrep.warnings,
-				action: critiquePrep.action,
-				compositional: critiquePrep.compositional,
+				prepared: { ...critiquePrep, text: critique },
 				scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
 			});
 			feedbackKey = `${stage.key}.feedback`;
