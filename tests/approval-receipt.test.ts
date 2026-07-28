@@ -179,7 +179,19 @@ test("a receipt no path re-verified is reported as unverified, not repeated as f
 	const tampered = { ...receipt, approvedBy: "someone-else" } as typeof receipt;
 	const summary = approvalReceiptSummary(tampered);
 	assert.equal(summary.validation, "unverified", "the audit line must not launder an edited record");
-	assert.match(formatApprovalReceipt(summary), /someone-else/, "the claimed value is still shown, just not vouched for");
+	const line = formatApprovalReceipt(summary);
+	assert.match(line, /^UNVERIFIED \(receipt digest mismatch\)/, "the caveat leads, so a reader who stops early is not misled");
+	assert.match(line, /someone-else/, "the claimed value is still shown, just not vouched for");
+});
+
+test("an unreadable receipt degrades to an unverified line instead of throwing", () => {
+	// This runs on the paths that are REFUSING a malformed state file, so throwing
+	// here would swallow the actionable error it accompanies.
+	for (const broken of [null, undefined, "APPROVED", 42, []]) {
+		const summary = approvalReceiptSummary(broken);
+		assert.equal(summary.validation, "unverified", `${JSON.stringify(broken) ?? "undefined"} must not throw`);
+		assert.match(formatApprovalReceipt(summary), /^UNVERIFIED/);
+	}
 });
 
 test("a receipt summary carries identity and status but never the bound parameters", () => {

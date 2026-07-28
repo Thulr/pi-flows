@@ -536,9 +536,13 @@ false-positive and false-negative rates, and Wilson 95% bounds on each. The boun
 matters more than the point estimate at these sample sizes: a judge that missed 0
 of 4 defects has a 0% miss rate and a 95% upper bound near 49%.
 
-Judge scores within `--abstention-band` of the 0.5 decision boundary **abstain**
-rather than vote. Abstentions leave the confusion matrix and enter an escalation
-list for human review, so the judge is never scored on a coin flip.
+A verdict **abstains** rather than voting when the judge's score sits within
+`--abstention-band` of the 0.5 decision boundary, when repeat trials disagree on
+the verdict without a majority, or when repeat trials disagree on the *ground
+truth* — a stochastic case with no stable label cannot calibrate anything.
+Abstentions leave the confusion matrix and enter an escalation list naming the
+cause and the `eval:review` command that resolves it, so the judge is never
+scored on a coin flip.
 
 ### Corpus splits
 

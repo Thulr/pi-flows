@@ -8,15 +8,15 @@
 // so it can be unit-tested without spawning a CLI.
 //
 // Phase ownership:
-//   selectMeasurementCases  both
-//   caseSpanFields          both (the case -> thulr span projection)
-//   inspectTraceReport      both
-//   judgeTraceRun           both
-//   printScoreDeltas        both (run.mjs passes thulr.gate, compare.mjs thulr.compare)
-//   writeReliabilityArtifact run.mjs only — the per-trial reliability artifact
-//   assessCalibration       run.mjs only — judge calibration + its gate rules
-//   gateAgainstBaseline     run.mjs only — the release gate + JUnit artifact
-//   harnessExitCode         run.mjs only — the two-axis exit policy
+//   selectMeasurementCases    both
+//   caseSpanFields            both (the case -> thulr span projection)
+//   inspectTraceReport        both
+//   judgeTraceRun             both
+//   printScoreDeltas          both (run.mjs passes thulr.gate, compare.mjs thulr.compare)
+//   writeReliabilityArtifact  run.mjs only — the per-trial reliability artifact
+//   assessCalibration         run.mjs only — judge calibration + its gate rules
+//   gateAgainstBaseline       run.mjs only — the release gate + JUnit artifact
+//   harnessExitCode           run.mjs only — the two-axis exit policy
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as thulr from "./thulr.mjs";

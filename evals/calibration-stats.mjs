@@ -143,7 +143,7 @@ export function abstentionEscalations(records) {
 			dimension: record.dimension,
 			score: record.score ?? null,
 			truth: record.truth ?? null,
-			reason: "judge score sat inside the ambiguity band around the decision boundary",
+			reason: record.abstentionReason ?? "judge score sat inside the ambiguity band around the decision boundary",
 		}))
 		.sort((left, right) => `${left.dimension}::${left.caseId}`.localeCompare(`${right.dimension}::${right.caseId}`));
 }
@@ -167,18 +167,42 @@ export function collapseTrials(records) {
 		byCase.set(key, [...(byCase.get(key) ?? []), record]);
 	}
 	return [...byCase.values()].map((trials) => {
-		const counts = trials.reduce((totals, trial) => ({ ...totals, [trial.decision]: (totals[trial.decision] ?? 0) + 1 }), {});
-		const [decision, count] = Object.entries(counts).sort(([, left], [, right]) => right - left)[0];
-		const majority = count * 2 > trials.length ? decision : "abstain";
+		// Ground truth is collapsed by the same rule as the decision, never by trial
+		// order: a stochastic case whose objective check passes twice and fails once
+		// must not have its label decided by which trial happened to run first.
+		const truth = strictMajority(trials.map((trial) => trial.truth));
+		const decided = strictMajority(trials.map((trial) => trial.decision)) ?? "abstain";
+		// No stable label means the case cannot calibrate anything — a `null` truth
+		// is dropped downstream by coverage and the confusion matrix alike, and the
+		// case is escalated rather than scored against a label it does not have.
+		const decision = truth === null ? "abstain" : decided;
 		const scores = trials.map((trial) => trial.score).filter(Number.isFinite);
 		return {
 			...trials[0],
-			decision: majority,
-			abstained: majority === "abstain",
+			truth,
+			decision,
+			abstained: decision === "abstain",
+			abstentionReason: abstentionReason({ truth, decided, trials: trials.length }),
 			score: scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null,
 			trials: trials.length,
 		};
 	});
+}
+
+/** The value more than half the entries agree on, or null when nothing commands a strict majority. */
+function strictMajority(values) {
+	const counts = values.reduce((totals, value) => ({ ...totals, [value]: (totals[value] ?? 0) + 1 }), {});
+	const [top, count] = Object.entries(counts).sort(([, left], [, right]) => right - left)[0] ?? [];
+	return count * 2 > values.length ? top : null;
+}
+
+/** Why this observation carries no usable verdict. Named per cause, because the fix differs. */
+function abstentionReason({ truth, decided, trials }) {
+	if (truth === null) return `${trials} repeat trial(s) disagreed on the ground truth, so this case has no stable label to calibrate against`;
+	if (decided !== "abstain") return null;
+	return trials > 1
+		? `${trials} repeat trials disagreed on the verdict without a majority`
+		: "judge score sat inside the ambiguity band around the decision boundary";
 }
 
 /** Per-dimension statistics over normalized records. */

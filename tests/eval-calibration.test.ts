@@ -582,6 +582,22 @@ test("repeat trials of one case cannot manufacture independent coverage", async 
 	assert.equal(report.statistics.criterion.detection.falseNegativeRate.samples, 1);
 });
 
+test("ground truth collapses by majority, never by which trial ran first", () => {
+	const trial = (truth: string) => ({ caseId: "flaky", dimension: "criterion", truth, source: "deterministic", decision: "fail", score: 0.1 });
+	// A stochastic case whose objective check passes twice and fails once has one
+	// label, and it must not depend on trial ordering.
+	assert.equal(collapseTrials([trial("failed"), trial("passed"), trial("passed")])[0].truth, "passed");
+	assert.equal(collapseTrials([trial("passed"), trial("failed"), trial("passed")])[0].truth, "passed");
+
+	// With no majority the case has no stable label, so it calibrates nothing and
+	// is escalated rather than scored against a label it does not have.
+	const unstable = collapseTrials([trial("failed"), trial("passed")])[0];
+	assert.equal(unstable.truth, null);
+	assert.equal(unstable.decision, "abstain");
+	assert.match(unstable.abstentionReason, /disagreed on the ground truth/);
+	assert.deepEqual(dimensionCoverage([unstable]), {}, "an unlabelled case contributes no coverage");
+});
+
 test("trials that disagree collapse to an abstention rather than a coin flip", () => {
 	const split = collapseTrials([
 		{ caseId: "flaky", dimension: "criterion", truth: "failed", source: "deterministic", decision: "fail", score: 0.1 },
@@ -592,6 +608,7 @@ test("trials that disagree collapse to an abstention rather than a coin flip", (
 	assert.equal(split[0].abstained, true);
 	assert.equal(split[0].score, 0.5, "the collapsed score is the mean across trials");
 	assert.equal(split[0].trials, 2);
+	assert.match(split[0].abstentionReason, /disagreed on the verdict/, "the escalation names the cause, since the fix differs per cause");
 
 	const agreed = collapseTrials([
 		{ caseId: "stable", dimension: "criterion", truth: "failed", source: "deterministic", decision: "fail", score: 0.1 },

@@ -268,23 +268,33 @@ export function consumeApprovalReceipt(receipt: ApprovalReceipt, consumer: strin
  * digest is re-checked here too: an audit line must not repeat a receipt's
  * claims about who approved what as fact when the record does not hold together.
  */
-export function approvalReceiptSummary(receipt: ApprovalReceipt): ApprovalReceiptSummary {
-	const intact = isRecord(receipt) && receipt.receiptDigest === approvalReceiptDigest(receipt);
+export function approvalReceiptSummary(receipt: unknown): ApprovalReceiptSummary {
+	// A summary is built from whatever the state file held, including on the paths
+	// that are refusing that state. A malformed entry must degrade to an unverified
+	// line, never throw past the actionable error it accompanies.
+	if (!isRecord(receipt)) {
+		return { receiptId: "(none)", action: "(unreadable)", approvedBy: "(unreadable)", issuedAt: "(unreadable)", expiresAt: null, status: "issued", consumedBy: null, validation: "unverified" };
+	}
+	const stored = receipt as ApprovalReceipt;
+	const intact = stored.receiptDigest === approvalReceiptDigest(stored);
 	return {
-		receiptId: receipt.receiptId,
-		action: receipt.action,
-		approvedBy: receipt.approvedBy,
-		issuedAt: receipt.issuedAt,
-		expiresAt: receipt.expiresAt,
-		status: receipt.consumedAt === null ? "issued" : "consumed",
-		consumedBy: receipt.consumedBy,
-		validation: intact ? receipt.validation : "unverified",
+		receiptId: String(stored.receiptId ?? "(none)"),
+		action: String(stored.action ?? "(unreadable)"),
+		approvedBy: String(stored.approvedBy ?? "(unreadable)"),
+		issuedAt: String(stored.issuedAt ?? "(unreadable)"),
+		expiresAt: typeof stored.expiresAt === "string" ? stored.expiresAt : null,
+		status: stored.consumedAt ? "consumed" : "issued",
+		consumedBy: typeof stored.consumedBy === "string" ? stored.consumedBy : null,
+		validation: intact ? stored.validation : "unverified",
 	};
 }
 
 export function formatApprovalReceipt(summary: ApprovalReceiptSummary): string {
 	const window = summary.expiresAt ? ` expires ${summary.expiresAt}` : " no expiry (migrated)";
-	return `${summary.action} · receipt ${summary.receiptId} · ${summary.status}${summary.consumedBy ? ` by ${summary.consumedBy}` : ""} · approved by ${summary.approvedBy} ·${window}`;
+	// The caveat goes first. A reader who stops after the first clause must not
+	// come away believing a record that does not hold together.
+	const caveat = summary.validation === "unverified" ? "UNVERIFIED (receipt digest mismatch) · " : "";
+	return `${caveat}${summary.action} · receipt ${summary.receiptId} · ${summary.status}${summary.consumedBy ? ` by ${summary.consumedBy}` : ""} · approved by ${summary.approvedBy} ·${window}`;
 }
 
 /** Validate an operator-supplied approval window before it is used to mint a receipt. */
