@@ -4,7 +4,7 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
 
 export function codexModelFromPi(model) {
@@ -113,7 +113,7 @@ export async function runCodex({ task, cwd, model, reportedModel = model, timeou
 		errorMessage = stderr || `direct Codex exited ${exitCode}`;
 	}
 	const text = finalText || errorMessage || stderr || "(no output)";
-	const pricing = getModel("openai-codex", model)?.cost;
+	const pricing = getBuiltinModel("openai-codex", model)?.cost;
 	if (pricing) {
 		usage.cost = ((pricing.input * usage.input) + (pricing.output * usage.output) + (pricing.cacheRead * usage.cacheRead) + (pricing.cacheWrite * usage.cacheWrite)) / 1_000_000;
 		usage.costKnown = true;

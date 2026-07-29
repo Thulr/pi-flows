@@ -5,7 +5,7 @@ This quickstart verifies pi-flows without requiring a model call.
 ## Prerequisites
 
 - Node.js `>=24`, npm `>=11`
-- pi CLI `>=0.78.0` on your `PATH` — pi-flows runs **inside** the pi host, so
+- pi CLI `>=0.82.0` on your `PATH` — pi-flows runs **inside** the pi host, so
   step 2 fails without it. If you don't have `pi`, install it from the
   [pi project](https://github.com/earendil-works/pi) (the binary ships in
   `@earendil-works/pi-coding-agent`); see the
@@ -16,7 +16,7 @@ This quickstart verifies pi-flows without requiring a model call.
 ```bash
 npm ci
 npm run check       # build + test this package (does not require pi)
-npm run preflight   # verify the pi CLI is installed and on PATH
+npm run preflight   # verify the pi CLI is on PATH and meets the version floor
 ```
 
 ## 2. Load the extension locally

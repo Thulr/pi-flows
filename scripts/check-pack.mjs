@@ -49,5 +49,8 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // material. Raise this deliberately when a public surface grows, never to make an
 // accidental inclusion fit — the forbidden-path and relative-import checks above
 // are what catch those, and they are the reason a bump here is safe to make.
-assert.ok(pack.unpackedSize < 680_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 690_000 for the pi version-floor guidance in troubleshooting and its
+// changelog entries; the previous 680_000 left under 200 bytes of headroom, so
+// the next release note alone would have tripped it.
+assert.ok(pack.unpackedSize < 690_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
