@@ -28,8 +28,8 @@ import { MAX_SUBJECT_TRIALS, traceHealthRollup, trialIdentity } from "./reliabil
 import { defaultRuntimeTracePath, evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
 import { buildEvaluationProvenance } from "./evaluation-provenance.mjs";
 import { captureReleaseSystem } from "./release-system.mjs";
+import { evaluationArtifactProvenance } from "./evaluation-artifacts.mjs";
 import * as thulr from "./thulr.mjs";
-
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
 
@@ -461,6 +461,7 @@ async function main() {
 		// Knowable before the judge runs — and it has to be, because promotion happens inside this call.
 		const preJudgeTraceGate = traceEvidenceGate({ overall: { traceHealth: traceHealthRollup(summaries) } }, { strict: strictTrace });
 		({ gateResult, calibration: calibrationResult } = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, traceBlocks: preJudgeTraceGate.blocks }));
+		if (calibrationResult?.report) Object.assign(reliabilityOptions.evaluation, evaluationArtifactProvenance(CALIBRATION, calibrationResult.report, CANDIDATE));
 	}
 	const reliability = writeReliabilityArtifact(summaries, verdicts, { ...reliabilityOptions, judgeAvailable: !dryRun && productJudgedCount > 0 });
 	// Recomputed over the same summaries the pre-judge verdict used; the judge cannot change trace health, so the two agree.

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete } from "../extensions/pi-flows/trace-report.ts";
 import { sha256File } from "./release-system.mjs";
 
 export function validateProductionTrace(traceLink, { baseDir = process.cwd() } = {}) {
@@ -12,9 +13,10 @@ export function validateProductionTrace(traceLink, { baseDir = process.cwd() } =
 	let rows = [];
 	if (traceFile) {
 		try {
+			const raw = readFileSync(traceFile, "utf8");
 			actualSha256 = sha256File(traceFile);
 			if (actualSha256 !== traceLink.sha256) issues.push("production trace file sha256 does not match the validated failure link");
-			rows = readFileSync(traceFile, "utf8")
+			rows = raw
 				.split(/\r?\n/)
 				.filter((line) => line.trim())
 				.map((line, index) => {
@@ -26,6 +28,11 @@ export function validateProductionTrace(traceLink, { baseDir = process.cwd() } =
 					}
 				})
 				.filter(Boolean);
+			const parsed = parseTraceJsonl(raw);
+			const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, traceFile);
+			if (!traceReportIsComplete(report)) {
+				issues.push(`production trace structural gate failed: ${report.incompleteTraces} incomplete, ${report.structurallyInvalidTraces} structurally invalid, ${report.parseErrors} parse errors, ${report.duplicateSpans} duplicates, ${report.malformedSpans} malformed`);
+			}
 		} catch (error) {
 			issues.push(`production trace could not be read: ${error.message}`);
 		}

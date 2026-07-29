@@ -6,6 +6,7 @@ import path from "node:path";
 import { createFlagReader } from "./cli-flags.mjs";
 import {
 	appendFailureEvent,
+	appendFailureEvents,
 	buildFailureImport,
 	buildHeldOutTrialEvents,
 	buildPromotionDecision,
@@ -16,6 +17,7 @@ import {
 import { validateProductionTrace } from "./failure-trace.mjs";
 import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
 import { sha256File } from "./release-system.mjs";
+import { validateCalibrationArtifact, validateJudgedRun } from "./evaluation-artifacts.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const [command, ...argv] = process.argv.slice(2);
@@ -53,8 +55,12 @@ async function importFailure() {
 async function recordTrials() {
 	const caseId = required("case");
 	const { value: reliability } = jsonFile("reliability");
+	const judgedRunPath = path.resolve(root, required("judged-run"));
+	const calibrationPath = path.resolve(root, required("calibration"));
 	const runtimeTracePath = path.resolve(root, required("runtime-trace"));
 	const runtimeTraceValidation = validateReleaseRuntimeTrace(runtimeTracePath, reliability, { repoRoot: root });
+	const judgedRunValidation = validateJudgedRun(judgedRunPath, reliability);
+	const calibrationValidation = validateCalibrationArtifact(calibrationPath, reliability);
 	const systemDigest = evaluatedSystemDigest(reliability);
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
@@ -63,10 +69,18 @@ async function recordTrials() {
 	const importedCase = ledgerIdentity.importedCases[caseId];
 	const importBinding = { ...importedCase, ledgerSha256: ledgerIdentity.sha256, ledgerHeadHash: ledgerIdentity.headHash };
 	const existing = new Set(ledger.events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId).map((event) => `${event.runId}:${event.trialId}`));
-	const records = buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation, importBinding });
+	const records = buildHeldOutTrialEvents({
+		caseId,
+		reliability,
+		systemDigest,
+		runtimeTraceValidation,
+		judgedRunValidation,
+		calibrationValidation,
+		importBinding,
+	});
 	const duplicates = records.filter((record) => existing.has(`${record.runId}:${record.trialId}`));
 	if (duplicates.length) throw new Error(`held-out cohort trials already recorded: ${duplicates.map((record) => record.trialId).join(", ")}`);
-	for (const record of records) await appendFailureEvent(ledgerPath, record);
+	await appendFailureEvents(ledgerPath, records);
 	console.log(`recorded ${records.length} held-out trial(s) for ${caseId}`);
 	return 0;
 }

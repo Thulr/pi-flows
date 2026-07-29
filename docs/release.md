@@ -109,8 +109,11 @@ whose hashes enter the manifest. The release command requires the current
 checkout and every operator-declared model/topology/budget/suite/grader field to
 match that recorded provenance exactly; these fields are not trusted as
 standalone assertions. Calibration artifacts retain their blocking decision and
-issues, require a complete self-verifying calibration key, and fail closed when
-their gate is missing or blocking.
+issues, require a complete self-verifying calibration key, all versioned splits,
+coverage/statistics/review evidence, and the release-critical `criterion`
+dimension. The release command recomputes the calibration gate from that
+evidence and requires its key, gate, and artifact hash to match the reliability
+run; a copied or skeletal nonblocking assertion cannot approve.
 
 ```json
 {
@@ -182,7 +185,8 @@ The resulting `pi-flows.release-manifest.v1` pins:
 - hashes of the reliability, calibration, runtime-trace, and required canonical
   production-failure ledger artifacts (use an empty file when no failures have
   been imported). Its hash, head, imported-case bindings, and promoted ids must
-  match the ledger used during evaluation; and
+  match the ledger used during evaluation. Runtime-trace and ledger hashes must
+  also equal the exact bytes their validators read; and
 - the complete hard-blocker decision plus a digest of the manifest itself.
 
 Store the record and its referenced artifacts together in access-controlled,

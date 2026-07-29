@@ -708,7 +708,9 @@ fields nor required evidence. The privacy review must minimize before import;
 redaction is a final containment layer, not permission to ingest a raw incident
 dump. Import also reads the referenced JSONL trace, verifies its full SHA-256,
 and requires the linked span to be a root whose run, case, and trial attributes
-match the attested identity.
+match the attested identity. The entire production trace must also pass the same
+strict structural read-back used for release evidence; a matching root copied
+out of an incomplete or malformed tree is not import evidence.
 
 ```json
 {
@@ -776,6 +778,8 @@ npm run eval:failure -- record \
   --case=production-routing-failure \
   --reliability=.thulr/runs/reliability.json \
   --runtime-trace=.thulr/runs/failure-promotion.runtime.jsonl \
+  --judged-run=.thulr/runs/candidate.json \
+  --calibration=.thulr/runs/calibration.json \
   --ledger=/secure/failures.jsonl
 npm run eval:failure -- promote \
   --case=production-routing-failure \
@@ -785,15 +789,20 @@ npm run eval:failure -- promote \
 
 Promotion is denied unless every distinct held-out trial passed, retained a
 recorded runtime trace, passed policy compliance, had a verified successful
-outcome, and used the same system digest. `--cohort` is the exact eval `--run-id`;
+outcome, and used the same system digest and runtime-trace artifact. `--cohort`
+is the exact eval `--run-id`;
 older failed cohorts remain in the ledger without poisoning a later clean cohort.
 `record` accepts only a reliability artifact stamped by
 `--failure-promotion=<case>` and independently resolves every reliability
-trial's exact root in `--runtime-trace`; an ordinary filtered run or a
-hand-authored pass summary is not promotion evidence. The stamp binds the source
-ledger hash/head and canonical imported-case digest, and every appended trial
-retains the validated runtime-trace SHA-256. Duplicate trial identities are
-invalid rather than last-write-wins.
+trial's exact root in `--runtime-trace`. It also verifies the canonical harness
+attestation, the exact `candidate.json` judge verdicts, and the complete
+nonblocking calibration artifact recorded by the run; a dry run, ordinary
+filtered run, or hand-authored pass summary is not promotion evidence. The stamp
+binds the source ledger hash/head and canonical imported-case digest, and every
+appended trial durably retains that import binding plus the reliability,
+judged-run, calibration, and runtime-trace SHA-256s. Duplicate imports or trial
+identities, pre-import trials, and mixed-trace cohorts are invalid rather than
+last-write-wins. A multi-trial record is validated before its rows are appended.
 An approval changes the derived suite from `capability` to `regression`; future
 release evals must keep passing the same ledger with `--failure-ledger`. The
 release-record command also reads that ledger and blocks if any promoted case is

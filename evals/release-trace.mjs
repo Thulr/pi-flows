@@ -51,9 +51,16 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	}
 
 	let matchedTrials = 0;
+	const matchedRoots = new Set();
+	const matchedTrialIds = new Set();
 	for (const entry of reliability?.cases ?? []) {
 		for (const trial of entry.trials ?? []) {
 			const label = trial.trialId ?? entry.caseId ?? "<unknown>";
+			if (matchedTrialIds.has(trial.trialId)) {
+				issues.push(`${label} duplicates a reliability trial identity`);
+				continue;
+			}
+			matchedTrialIds.add(trial.trialId);
 			const link = trial.runtimeTrace;
 			if (link?.health !== "recorded" || !link.traceId || !link.rootSpanId) {
 				issues.push(`${label} lacks an exact recorded runtime-trace root link`);
@@ -78,6 +85,12 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 				issues.push(`${label} linked span is not the matching runtime root`);
 				continue;
 			}
+			const rootKey = `${link.traceId}:${link.rootSpanId}`;
+			if (matchedRoots.has(rootKey)) {
+				issues.push(`${label} reuses another reliability trial's runtime root`);
+				continue;
+			}
+			matchedRoots.add(rootKey);
 			matchedTrials += 1;
 		}
 	}

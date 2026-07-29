@@ -1,4 +1,20 @@
+import { canonicalDigest } from "./calibration-key.mjs";
+
 export const MAX_SUBJECT_TRIALS = 50;
+export const RELIABILITY_ATTESTATION_SCHEMA_VERSION = "pi-flows.reliability-attestation.v1";
+
+export function reliabilityAttestation(report) {
+	const { harnessAttestation, ...payload } = report ?? {};
+	return {
+		schemaVersion: RELIABILITY_ATTESTATION_SCHEMA_VERSION,
+		digest: canonicalDigest(payload, 64),
+	};
+}
+
+export function reliabilityAttestationIsValid(report) {
+	return report?.harnessAttestation?.schemaVersion === RELIABILITY_ATTESTATION_SCHEMA_VERSION
+		&& report.harnessAttestation.digest === reliabilityAttestation(report).digest;
+}
 
 export function trialIdentity(caseId, trialIndex, subjectTrials) {
 	const trialId = `${caseId}::trial-${String(trialIndex).padStart(3, "0")}`;
@@ -128,7 +144,7 @@ export function buildReliabilityReport(rawTrials, {
 	const cases = [...byCase.entries()].map(([caseId, trials]) => caseReliability(caseId, trials, subjectTrials));
 	const nominalTrials = rawTrials.filter((trial) => !trial.exclusion);
 	const sensitivityTrials = rawTrials.map((trial) => ({ ...trial, pass: !trial.exclusion && trial.pass }));
-	return {
+	const report = {
 		schemaVersion: "pi-flows.reliability.v1",
 		generatedAt,
 		runId: runId ?? null,
@@ -147,6 +163,7 @@ export function buildReliabilityReport(rawTrials, {
 			traceHealth: traceHealthRollup(rawTrials),
 		},
 	};
+	return { ...report, harnessAttestation: reliabilityAttestation(report) };
 }
 
 const rate = (value) => value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;

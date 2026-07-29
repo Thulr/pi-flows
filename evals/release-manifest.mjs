@@ -1,4 +1,7 @@
 import { CALIBRATION_KEY_INPUTS, CALIBRATION_KEY_SCHEMA_VERSION, canonicalDigest } from "./calibration-key.mjs";
+import { calibrationGateIssues, DEFAULT_CRITICAL_DIMENSIONS } from "./calibration.mjs";
+import { CALIBRATION_SPLITS } from "./calibration-coverage.mjs";
+import { reliabilityAttestationIsValid } from "./reliability.mjs";
 
 export const RELEASE_EVIDENCE_SCHEMA_VERSION = "pi-flows.release-evidence.v1";
 export const RELEASE_MANIFEST_SCHEMA_VERSION = "pi-flows.release-manifest.v1";
@@ -26,19 +29,79 @@ function sameValue(left, right) {
 
 function releaseTrialIssues(reliability) {
 	const issues = [];
+	const seenCases = new Set();
+	const seenTrials = new Set();
+	if (!Number.isInteger(reliability?.subjectTrials) || reliability.subjectTrials < 1) issues.push("subjectTrials is missing or invalid");
+	if (reliability?.evaluation?.budgets?.subjectTrials !== reliability?.subjectTrials) {
+		issues.push("subjectTrials does not match evaluation-time budgets");
+	}
 	for (const entry of reliability?.cases ?? []) {
+		if (seenCases.has(entry.caseId)) issues.push(`release reliability duplicates case ${entry.caseId ?? "<unknown>"}`);
+		seenCases.add(entry.caseId);
 		if (!Array.isArray(entry.trials) || entry.trials.length === 0) {
 			issues.push(`release case ${entry.caseId ?? "<unknown>"} has no measured trials`);
 			continue;
 		}
+		if (entry.trials.length !== reliability.subjectTrials) {
+			issues.push(`release case ${entry.caseId ?? "<unknown>"} trial count does not match subjectTrials`);
+		}
 		for (const trial of entry.trials) {
 			const label = trial.trialId ?? entry.caseId ?? "<unknown>";
+			if (!nonEmptyString(trial.trialId) || seenTrials.has(trial.trialId)) issues.push(`${label} has a missing or duplicate trial identity`);
+			seenTrials.add(trial.trialId);
 			if (trial.exclusion) issues.push(`${label} was excluded from measurement`);
 			if (trial.pass !== true) issues.push(`${label} did not pass`);
 			if (trial.scoreFamilies?.policyCompliance?.pass !== true) issues.push(`${label} lacks passing policy-compliance evidence`);
 			if (trial.scoreFamilies?.verifiedOutcome?.pass !== true) issues.push(`${label} lacks a verified successful outcome`);
 			if (trial.scoreFamilies?.traceHealth?.status !== "recorded") issues.push(`${label} lacks a complete runtime trace`);
 		}
+	}
+	return issues;
+}
+
+function calibrationIssues(calibration, reliability) {
+	const issues = [];
+	const critical = calibration?.authority?.critical;
+	if (!Array.isArray(critical) || DEFAULT_CRITICAL_DIMENSIONS.some((dimension) => !critical.includes(dimension))) {
+		issues.push(`calibration is missing release-critical dimension(s): ${DEFAULT_CRITICAL_DIMENSIONS.join(", ")}`);
+	}
+	for (const split of CALIBRATION_SPLITS) {
+		if (!Number.isInteger(calibration?.splits?.[split]?.caseCount)
+			|| calibration.splits[split].caseCount < 1
+			|| !nonEmptyString(calibration.splits[split].digest)) {
+			issues.push(`calibration split ${split} is missing versioned ground-truth evidence`);
+		}
+	}
+	if (!calibration?.coverage || typeof calibration.coverage !== "object"
+		|| !calibration?.statistics || typeof calibration.statistics !== "object"
+		|| !Array.isArray(calibration?.review?.unresolved)) {
+		issues.push("calibration coverage, statistics, or review evidence is incomplete");
+	}
+	const derivedAuthoritative = Object.entries(calibration?.coverage ?? {})
+		.filter(([, value]) => value?.authoritative === true)
+		.map(([dimension]) => dimension)
+		.sort();
+	if (!sameValue(derivedAuthoritative, [...(calibration?.authority?.authoritative ?? [])].sort())) {
+		issues.push("calibration authority is not derivable from coverage evidence");
+	}
+	const cap = calibration?.gate?.criticalMissRateCap;
+	let recomputed = null;
+	try {
+		if (!Number.isFinite(cap) || cap < 0 || cap > 1) throw new Error("critical miss-rate cap is invalid");
+		recomputed = calibrationGateIssues(calibration, { criticalMissRateCap: cap });
+	} catch (error) {
+		issues.push(`calibration gate evidence cannot be recomputed: ${error.message}`);
+	}
+	if (recomputed && (calibration?.gate?.blocks !== (recomputed.length > 0) || !sameValue(calibration?.gate?.issues, recomputed))) {
+		issues.push("stored calibration gate does not match recomputed calibration evidence");
+	}
+	const provenance = reliability?.evaluation?.calibration;
+	if (calibration?.key?.digest !== provenance?.keyDigest
+		|| canonicalDigest(calibration?.gate ?? null, 64) !== provenance?.gateDigest) {
+		issues.push("calibration artifact does not match evaluation-time calibration provenance");
+	}
+	if (calibration?.key?.inputs?.judgeSamples !== reliability?.judgeSamples) {
+		issues.push("calibrated judge sample count does not match reliability evidence");
 	}
 	return issues;
 }
@@ -108,6 +171,7 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	}
 
 	if (reliability?.schemaVersion !== "pi-flows.reliability.v1") blockers.push("reliability artifact schema is unsupported");
+	if (!reliabilityAttestationIsValid(reliability)) blockers.push("reliability artifact lacks a valid canonical harness attestation");
 	const health = reliability?.overall?.traceHealth;
 	if (!health?.complete || health.recorded !== health.trials || health.trials < 1) {
 		blockers.push("required runtime trace evidence is incomplete");
@@ -123,6 +187,7 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 		|| !nonEmptyString(calibration?.key?.digest)
 		|| !calibrationInputs
 		|| CALIBRATION_KEY_INPUTS.some((key) => !(key in calibrationInputs))
+		|| Object.keys(calibrationInputs ?? {}).some((key) => !CALIBRATION_KEY_INPUTS.includes(key))
 		|| calibration.key.digest !== canonicalDigest(calibrationInputs)) {
 		blockers.push("calibration key is missing, incomplete, or does not match its inputs");
 	}
@@ -134,11 +199,15 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	for (const dimension of calibration?.authority?.critical ?? []) {
 		if (!authoritative.has(dimension)) blockers.push(`critical calibration dimension ${dimension} is not authoritative`);
 	}
+	blockers.push(...calibrationIssues(calibration, reliability));
 
 	blockers.push(...systemIssues(system));
 	for (const key of ["reliability", "calibration", "runtimeTrace", "failureLedger"]) {
 		if (!nonEmptyString(artifactHashes?.[key])) blockers.push(`${key} artifact hash is missing`);
 	}
+	if (artifactHashes?.runtimeTrace !== runtimeTraceValidation?.sha256) blockers.push("runtime trace artifact hash does not match validated trace bytes");
+	if (artifactHashes?.failureLedger !== ledgerIdentity?.sha256) blockers.push("failure ledger artifact hash does not match validated ledger bytes");
+	if (artifactHashes?.calibration !== reliability?.evaluation?.calibration?.sha256) blockers.push("calibration artifact hash does not match evaluation-time provenance");
 	const measuredCaseSet = new Set(measuredCases);
 	for (const caseId of regressionCaseIds) {
 		if (!measuredCaseSet.has(caseId)) blockers.push(`promoted regression case ${caseId} is absent from release evidence`);

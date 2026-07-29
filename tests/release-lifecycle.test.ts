@@ -18,12 +18,17 @@ import {
 	buildPromotionDecision,
 	evaluatedSystemDigest,
 	failureCasesFromLedger,
+	failureLedgerIdentity,
 	readFailureLedger,
 } from "../evals/failure-ledger.mjs";
 import { buildEvaluationProvenance } from "../evals/evaluation-provenance.mjs";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
-import { calibrationKey } from "../evals/calibration-key.mjs";
+import { calibrationKey, canonicalDigest } from "../evals/calibration-key.mjs";
 import { validateReleaseRuntimeTrace } from "../evals/release-trace.mjs";
+import { validateProductionTrace } from "../evals/failure-trace.mjs";
+import { buildCalibrationReport } from "../evals/calibration.mjs";
+import { reliabilityAttestation } from "../evals/reliability.mjs";
+import { sha256File } from "../evals/release-system.mjs";
 
 const blockerEvidence = () => Object.fromEntries(HARD_BLOCKER_KEYS.map((key) => [
 	key,
@@ -45,6 +50,18 @@ function releaseInputs() {
 		traceSerialization: "trace-shape",
 	};
 	const ledgerIdentity = { sha256: "failure-ledger-hash", headHash: null, promotedCaseIds: [], importedCases: {} };
+	const calibration = buildCalibrationReport({
+		key: calibrationKey(calibrationInputs),
+		splits: Object.fromEntries(["rubric-development", "calibration", "held-out"].map((split) => [split, { caseCount: 1, digest: `${split}-digest` }])),
+		records: [
+			...Array.from({ length: 8 }, (_, index) => ({ caseId: `failed-${index}`, dimension: "criterion", split: "held-out", truth: "failed", source: "deterministic", decision: "fail", abstained: false, score: 0.05 })),
+			...Array.from({ length: 3 }, (_, index) => ({ caseId: `partial-${index}`, dimension: "criterion", split: "held-out", truth: "partial", source: "deterministic", decision: "fail", abstained: false, score: 0.2 })),
+			...Array.from({ length: 4 }, (_, index) => ({ caseId: `passed-${index}`, dimension: "criterion", split: "held-out", truth: "passed", source: "deterministic", decision: "pass", abstained: false, score: 0.95 })),
+		],
+		criticalDimensions: ["criterion"],
+	});
+	calibration.drift = { status: "valid", changed: [] };
+	calibration.gate = { blocks: false, issues: [], criticalMissRateCap: 0.35 };
 	const inputs = {
 		evidence: {
 			schemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
@@ -53,7 +70,7 @@ function releaseInputs() {
 			evaluatedAt: "2026-07-28T12:00:00.000Z",
 			models: { subjects: ["provider/subject-v1"], judge: "provider/judge-v2" },
 			topology: { arm: "flows", modes: ["workflow", "evaluate"] },
-			budgets: { maxCostUsd: 1, maxTokens: 20_000, timeoutMs: 120_000 },
+			budgets: { maxCostUsd: 1, maxTokens: 20_000, timeoutMs: 120_000, subjectTrials: 5 },
 			suite: { name: "release", caseIds: ["release-case"] },
 			grader: { name: "thulr", version: "0.3.0" },
 			hardBlockers: blockerEvidence(),
@@ -63,11 +80,16 @@ function releaseInputs() {
 			runId: "release-run-123",
 			runtimeTraceFile: "release.runtime.jsonl",
 			subjectTrials: 5,
+			judgeSamples: 1,
 			cases: [{
 				caseId: "release-case",
 				trials: Array.from({ length: 5 }, (_, index) => ({
 					trialId: `release-case::trial-00${index + 1}`,
+					traceCaseId: `release-case::trial-00${index + 1}`,
+					model: "provider/subject-v1",
 					pass: true,
+					objective: { pass: true },
+					judge: { criterion: { verdict: true, score: 1 } },
 					exclusion: null,
 					scoreFamilies: {
 						traceHealth: { status: "recorded", pass: true },
@@ -78,13 +100,7 @@ function releaseInputs() {
 			}],
 			overall: { traceHealth: { trials: 5, recorded: 5, degraded: 0, missing: 0, complete: true } },
 		},
-		calibration: {
-			schemaVersion: "pi-flows.calibration.v1",
-			key: calibrationKey(calibrationInputs),
-			drift: { status: "valid", changed: [] },
-			authority: { critical: ["criterion"], authoritative: ["criterion"], provisional: [] },
-			gate: { blocks: false, issues: [], criticalMissRateCap: 0.35 },
-		},
+		calibration,
 		system: {
 			code: { commit: "0123456789abcdef", dirty: false },
 			package: { name: "pi-flows", version: "0.3.0", extensionVersion: "0.3.0", lockfileVersion: 3 },
@@ -99,7 +115,7 @@ function releaseInputs() {
 		},
 		artifactHashes: {
 			reliability: "reliability-hash",
-			calibration: "calibration-hash",
+			calibration: "4".repeat(64),
 			runtimeTrace: "runtime-trace-hash",
 			failureLedger: "failure-ledger-hash",
 		},
@@ -116,7 +132,14 @@ function releaseInputs() {
 		topology: structuredClone(inputs.evidence.topology),
 		budgets: structuredClone(inputs.evidence.budgets),
 		suite: structuredClone(inputs.evidence.suite),
+		calibration: {
+			sha256: inputs.artifactHashes.calibration,
+			keyDigest: inputs.calibration.key.digest,
+			gateDigest: canonicalDigest(inputs.calibration.gate, 64),
+		},
+		judgedRun: { sha256: "f".repeat(64) },
 	};
+	inputs.reliability.harnessAttestation = reliabilityAttestation(inputs.reliability);
 	return inputs;
 }
 
@@ -245,9 +268,35 @@ test("release evaluation fails closed on every catastrophic blocker and incomple
 	substitutedLedger.ledgerIdentity.sha256 = "different-ledger";
 	assert.match(evaluateRelease(substitutedLedger).blockers.join("\n"), /does not match evaluation-time ledger provenance/);
 
+	const mismatchedArtifactHashes = releaseInputs();
+	mismatchedArtifactHashes.artifactHashes.runtimeTrace = "different-trace";
+	mismatchedArtifactHashes.artifactHashes.failureLedger = "different-ledger";
+	assert.match(evaluateRelease(mismatchedArtifactHashes).blockers.join("\n"), /runtime trace artifact hash does not match validated trace bytes/);
+	assert.match(evaluateRelease(mismatchedArtifactHashes).blockers.join("\n"), /failure ledger artifact hash does not match validated ledger bytes/);
+
+	const duplicateTrial = releaseInputs();
+	duplicateTrial.reliability.cases[0].trials[1] = structuredClone(duplicateTrial.reliability.cases[0].trials[0]);
+	assert.match(evaluateRelease(duplicateTrial).blockers.join("\n"), /duplicate trial identity/);
+
 	const incompleteCalibration = releaseInputs();
 	delete incompleteCalibration.calibration.key.inputs.traceSerialization;
 	assert.match(evaluateRelease(incompleteCalibration).blockers.join("\n"), /calibration key is missing, incomplete/);
+
+	const extendedCalibration = releaseInputs();
+	extendedCalibration.calibration.key.inputs.unboundInput = "not-part-of-the-key";
+	extendedCalibration.calibration.key.digest = canonicalDigest(extendedCalibration.calibration.key.inputs);
+	assert.match(evaluateRelease(extendedCalibration).blockers.join("\n"), /calibration key is missing, incomplete/);
+
+	const skeletalCalibration = releaseInputs();
+	skeletalCalibration.calibration.coverage = {};
+	skeletalCalibration.calibration.statistics = {};
+	skeletalCalibration.calibration.authority = { critical: [], authoritative: [], provisional: [] };
+	skeletalCalibration.calibration.gate = { blocks: false, issues: [], criticalMissRateCap: 0.35 };
+	assert.match(evaluateRelease(skeletalCalibration).blockers.join("\n"), /missing release-critical dimension/);
+
+	const calibrationFromAnotherRun = releaseInputs();
+	calibrationFromAnotherRun.reliability.evaluation.calibration.keyDigest = "different-calibration";
+	assert.match(evaluateRelease(calibrationFromAnotherRun).blockers.join("\n"), /does not match evaluation-time calibration provenance/);
 
 	const changedSystem = releaseInputs();
 	changedSystem.reliability.evaluatedSystem.hashes.harness = "evaluated-harness";
@@ -315,6 +364,14 @@ const heldOutTrace = (reliability) => ({
 	sha256: "b".repeat(64),
 });
 
+const heldOutJudgedRun = () => ({ valid: true, issues: [], sha256: "f".repeat(64) });
+const heldOutCalibration = () => ({
+	valid: true,
+	issues: [],
+	sha256: "4".repeat(64),
+	calibration: { gate: { blocks: false } },
+});
+
 const testImportBinding = () => ({
 	eventHash: "c".repeat(64),
 	caseDigest: "d".repeat(64),
@@ -356,7 +413,7 @@ test("validated production failures become sanitized executable capability cases
 	traversal.case.initialState.files[0].path = "../outside.txt";
 	assert.throws(() => buildFailureImport(traversal, { traceValidation: validProductionTrace() }), /normalized file path inside the case workspace/);
 	assert.throws(() => buildFailureImport(failureInput()), /production trace validation is required/);
-	for (const invalidPath of [".", "a//b", "a/./b", "nul\0name"]) {
+	for (const invalidPath of [".", "a//b", "a/./b", "dir/", "nul\0name"]) {
 		const aliased = failureInput();
 		aliased.case.initialState.files[0].path = invalidPath;
 		assert.throws(() => buildFailureImport(aliased, { traceValidation: validProductionTrace() }), /normalized file path/);
@@ -400,15 +457,52 @@ test("release trace validation rejects a root-only remnant of a larger trace", a
 	assert.match(validation.issues.join("\n"), /structural gate failed/);
 });
 
+test("production failure import rejects a structurally incomplete linked trace", async () => {
+	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-production-trace-"));
+	const traceFile = path.join(directory, "runtime.jsonl");
+	await writeFile(traceFile, `${JSON.stringify({
+		trace_id: "trace-7",
+		span_id: "root-7",
+		parent_span_id: null,
+		start_time_unix_ms: 1,
+		end_time_unix_ms: 2,
+		attributes: {
+			"flow.span_role": "root",
+			"flow.trace.expected_spans": 2,
+			"flow.run_id": "run-7",
+			"flow.case_id": "case-7",
+			"flow.trial_id": "trial-7",
+		},
+	})}\n`, "utf8");
+	const validation = validateProductionTrace({
+		traceFile,
+		sha256: sha256File(traceFile),
+		traceId: "trace-7",
+		rootSpanId: "root-7",
+		runId: "run-7",
+		caseId: "case-7",
+		trialId: "trial-7",
+	});
+	assert.equal(validation.valid, false);
+	assert.match(validation.issues.join("\n"), /structural gate failed/);
+});
+
 test("promotion is append-only and requires stable held-out success on one system", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-failure-ledger-"));
 	const ledgerPath = path.join(directory, "ledger.jsonl");
 	const imported = buildFailureImport(failureInput(), { importedAt: "2026-07-28T11:00:00.000Z", traceValidation: validProductionTrace() });
-	await appendFailureEvent(ledgerPath, imported);
+	const importedRecord = await appendFailureEvent(ledgerPath, imported);
 
 	const reliability = releaseInputs().reliability;
 	reliability.runId = "held-out-run";
-	const importBinding = testImportBinding();
+	const initialLedger = await readFailureLedger(ledgerPath);
+	const identity = failureLedgerIdentity(initialLedger.events, sha256File(ledgerPath));
+	const importBinding = {
+		...identity.importedCases["production-routing-failure"],
+		ledgerSha256: identity.sha256,
+		ledgerHeadHash: identity.headHash,
+	};
+	assert.equal(importBinding.eventHash, importedRecord.eventHash);
 	reliability.evidencePurpose = heldOutPurpose(importBinding);
 	reliability.evaluation.suite.caseIds = ["production-routing-failure"];
 	reliability.cases[0].caseId = "production-routing-failure";
@@ -417,11 +511,15 @@ test("promotion is append-only and requires stable held-out success on one syste
 		trialId: `production-routing-failure::trial-00${index + 1}`,
 	}));
 	reliability.subjectTrials = 3;
+	reliability.evaluation.budgets.subjectTrials = 3;
+	reliability.harnessAttestation = reliabilityAttestation(reliability);
 	const trials = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability,
 		systemDigest: evaluatedSystemDigest(reliability),
 		runtimeTraceValidation: heldOutTrace(reliability),
+		judgedRunValidation: heldOutJudgedRun(),
+		calibrationValidation: heldOutCalibration(),
 		importBinding,
 		recordedAt: "2026-07-28T12:00:00.000Z",
 	});
@@ -455,14 +553,18 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	clean.cases[0].caseId = "production-routing-failure";
 	clean.cases[0].trials = clean.cases[0].trials.slice(0, 3);
 	clean.subjectTrials = 3;
+	clean.evaluation.budgets.subjectTrials = 3;
 	const importBinding = testImportBinding();
 	clean.evidencePurpose = heldOutPurpose(importBinding);
 	clean.evaluation.suite.caseIds = ["production-routing-failure"];
+	clean.harnessAttestation = reliabilityAttestation(clean);
 	const trialEvents = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability: clean,
 		systemDigest: evaluatedSystemDigest(clean),
 		runtimeTraceValidation: heldOutTrace(clean),
+		judgedRunValidation: heldOutJudgedRun(),
+		calibrationValidation: heldOutCalibration(),
 		importBinding,
 	});
 
@@ -480,6 +582,9 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	const mixed = [imported, ...structuredClone(trialEvents)];
 	mixed[1].systemDigest = "commit-b";
 	assert.match(buildPromotionDecision(mixed, "production-routing-failure", { cohortId: clean.runId }).reasons.join("\n"), /same evaluated system/);
+	const mixedTrace = [imported, ...structuredClone(trialEvents)];
+	mixedTrace[1].runtimeTraceSha256 = "9".repeat(64);
+	assert.match(buildPromotionDecision(mixedTrace, "production-routing-failure", { cohortId: clean.runId }).reasons.join("\n"), /one runtime trace artifact/);
 
 	const oldFailed = structuredClone(trialEvents[0]);
 	oldFailed.runId = "old-failed-run";
@@ -497,6 +602,8 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 		reliability: ordinaryReliability,
 		systemDigest: evaluatedSystemDigest(ordinaryReliability),
 		runtimeTraceValidation: heldOutTrace(ordinaryReliability),
+		judgedRunValidation: heldOutJudgedRun(),
+		calibrationValidation: heldOutCalibration(),
 		importBinding,
 	}), /dedicated held-out promotion run/);
 	assert.throws(() => buildHeldOutTrialEvents({
@@ -504,6 +611,8 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 		reliability: clean,
 		systemDigest: evaluatedSystemDigest(clean),
 		runtimeTraceValidation: { valid: false, issues: ["missing root"], matchedTrials: 2 },
+		judgedRunValidation: heldOutJudgedRun(),
+		calibrationValidation: heldOutCalibration(),
 		importBinding,
 	}), /runtime trace validation failed/);
 });
@@ -521,6 +630,37 @@ test("failure ledger detects edits to prior append-only records", async () => {
 	const ledger = await readFailureLedger(ledgerPath);
 	assert.equal(ledger.valid, false);
 	assert.match(ledger.issues.join("\n"), /broken eventHash/);
+});
+
+test("failure ledger rejects duplicate imports and held-out evidence before import", async () => {
+	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-failure-ordering-"));
+	const duplicateLedger = path.join(directory, "duplicates.jsonl");
+	const imported = buildFailureImport(failureInput(), { traceValidation: validProductionTrace() });
+	await appendFailureEvent(duplicateLedger, imported);
+	await assert.rejects(appendFailureEvent(duplicateLedger, imported), /duplicates an existing imported case id/);
+
+	const reliability = releaseInputs().reliability;
+	reliability.cases[0].caseId = "production-routing-failure";
+	reliability.cases[0].trials = reliability.cases[0].trials.slice(0, 3);
+	reliability.subjectTrials = 3;
+	reliability.evaluation.budgets.subjectTrials = 3;
+	reliability.evaluation.suite.caseIds = ["production-routing-failure"];
+	const importBinding = testImportBinding();
+	reliability.evidencePurpose = heldOutPurpose(importBinding);
+	reliability.harnessAttestation = reliabilityAttestation(reliability);
+	const [trial] = buildHeldOutTrialEvents({
+		caseId: "production-routing-failure",
+		reliability,
+		systemDigest: evaluatedSystemDigest(reliability),
+		runtimeTraceValidation: heldOutTrace(reliability),
+		judgedRunValidation: heldOutJudgedRun(),
+		calibrationValidation: heldOutCalibration(),
+		importBinding,
+	});
+	await assert.rejects(
+		appendFailureEvent(path.join(directory, "pre-import.jsonl"), trial),
+		/must follow exactly one matching imported case/,
+	);
 });
 
 test("failure ledger refuses persisted imports that bypass canonical sanitation", async () => {

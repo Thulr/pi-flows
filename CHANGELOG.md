@@ -36,7 +36,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   failure ledger so promoted regressions cannot be omitted. Reliability binds
   its ledger head and imported cases, held-out trials retain the trace digest and
   reject duplicate identities, release traces pass structural read-back, and
-  calibration keys are complete and self-verifying.
+  calibration keys are complete and self-verifying. Production traces now pass
+  that structural gate too; promotion evidence is bound to its prior import,
+  canonical reliability attestation, judged-run artifact, calibration artifact,
+  and one runtime-trace digest. Release recomputes calibration authority and
+  gate issues, rejects duplicated trials/imports and skeletal calibration, and
+  cross-checks validated artifact hashes.
 
 - Inter-agent injection handling is now an enforceable, flow-scoped policy.
   `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding

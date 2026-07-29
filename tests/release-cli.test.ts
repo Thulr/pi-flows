@@ -5,8 +5,10 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import test from "node:test";
 import { captureReleaseSystem, sha256File } from "../evals/release-system.mjs";
-import { calibrationKey } from "../evals/calibration-key.mjs";
+import { calibrationKey, canonicalDigest } from "../evals/calibration-key.mjs";
 import { failureLedgerIdentity } from "../evals/failure-ledger.mjs";
+import { buildCalibrationReport } from "../evals/calibration.mjs";
+import { reliabilityAttestation } from "../evals/reliability.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const run = (script: string, args: string[]) => spawnSync(process.execPath, ["--import", "tsx", script, ...args], {
@@ -60,11 +62,42 @@ function hardBlockers() {
 	return Object.fromEntries(keys.map((key) => [key, { status: "passed", evidence: [`check:${key}`] }]));
 }
 
+function completeCalibration(judgeModel = "provider/judge", judgeSamples = 1) {
+	const report = buildCalibrationReport({
+		key: calibrationKey({
+			judgeModel,
+			judgeSamples,
+			judgeBin: null,
+			evalSet: null,
+			promptVersion: "pi-flows@0.3.0",
+			configVersion: "pi-flows-eval:provider/subject",
+			rubric: "rubric",
+			groundTruth: "ground-truth",
+			thresholds: {},
+			traceSchemaVersion: "pi-flows.eval-trace.v1",
+			traceSerialization: "trace-shape",
+		}),
+		splits: Object.fromEntries(["rubric-development", "calibration", "held-out"].map((split) => [split, { caseCount: 1, digest: `${split}-digest` }])),
+		records: [
+			...Array.from({ length: 8 }, (_, index) => ({ caseId: `failed-${index}`, dimension: "criterion", split: "held-out", truth: "failed", source: "deterministic", decision: "fail", abstained: false, score: 0.05 })),
+			...Array.from({ length: 3 }, (_, index) => ({ caseId: `partial-${index}`, dimension: "criterion", split: "held-out", truth: "partial", source: "deterministic", decision: "fail", abstained: false, score: 0.2 })),
+			...Array.from({ length: 4 }, (_, index) => ({ caseId: `passed-${index}`, dimension: "criterion", split: "held-out", truth: "passed", source: "deterministic", decision: "pass", abstained: false, score: 0.95 })),
+		],
+		criticalDimensions: ["criterion"],
+	});
+	return {
+		...report,
+		drift: { status: "valid", changed: [] },
+		gate: { blocks: false, issues: [], criticalMissRateCap: 0.35 },
+	};
+}
+
 function reliability(caseId = "release-case", trials = 3) {
 	return {
 		schemaVersion: "pi-flows.reliability.v1",
 		runId: "release-run",
 		subjectTrials: trials,
+		judgeSamples: 1,
 		evaluatedSystem: { code: { commit: "0123456789abcdef", dirty: false } },
 		evaluation: { agentDiscovery: "package-only", suite: { name: "release", caseIds: [caseId] } },
 		cases: [{
@@ -128,7 +161,7 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 		evaluatedAt: "2026-07-28T12:00:00.000Z",
 		models: { subjects: ["provider/subject"], judge: "provider/judge" },
 		topology: { arm: "flows", modes: ["evaluate"] },
-		budgets: { maxCostUsd: 1, maxTokens: 10_000, timeoutMs: 120_000 },
+		budgets: { maxCostUsd: 1, maxTokens: 10_000, timeoutMs: 120_000, subjectTrials: 3 },
 		suite: { name: "release", caseIds: ["release-case"] },
 		grader: { name: "thulr", version: "0.3.0" },
 		hardBlockers: hardBlockers(),
@@ -145,27 +178,17 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 		budgets: structuredClone(evidenceRecord.budgets),
 		suite: structuredClone(evidenceRecord.suite),
 	};
-	const calibration = await writeJson(directory, "calibration.json", {
-		schemaVersion: "pi-flows.calibration.v1",
-		key: calibrationKey({
-			judgeModel: "provider/judge",
-			judgeSamples: 1,
-			judgeBin: null,
-			evalSet: null,
-			promptVersion: "pi-flows@0.3.0",
-			configVersion: "pi-flows-eval:provider/subject",
-			rubric: "rubric",
-			groundTruth: "ground-truth",
-			thresholds: {},
-			traceSchemaVersion: "pi-flows.eval-trace.v1",
-			traceSerialization: "trace-shape",
-		}),
-		drift: { status: "valid", changed: [] },
-		authority: { critical: ["criterion"], authoritative: ["criterion"], provisional: [] },
-		gate: { blocks: false, issues: [], criticalMissRateCap: 0.35 },
-	});
+	const calibrationReport = completeCalibration();
+	const calibration = await writeJson(directory, "calibration.json", calibrationReport);
+	releaseReliability.evaluation.calibration = {
+		sha256: sha256File(calibration),
+		keyDigest: calibrationReport.key.digest,
+		gateDigest: canonicalDigest(calibrationReport.gate, 64),
+	};
+	releaseReliability.evaluation.judgedRun = { sha256: "f".repeat(64) };
 	const trace = path.join(directory, "runtime.jsonl");
 	const traceRows = attachRuntimeTrace(releaseReliability, trace);
+	releaseReliability.harnessAttestation = reliabilityAttestation(releaseReliability);
 	const reliabilityPath = await writeJson(directory, "reliability.json", releaseReliability);
 	await writeFile(trace, `${traceRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 	const out = path.join(directory, "release.json");
@@ -194,7 +217,7 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 	});
 });
 
-test("failure command imports, records held-out reliability, and appends promotion", async () => {
+test("failure command imports a capability case and refuses dry-run promotion evidence", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-failure-cli-"));
 	const ledger = path.join(directory, "failures.jsonl");
 	const productionTrace = path.join(directory, "validated", "runtime.jsonl");
@@ -204,7 +227,11 @@ test("failure command imports, records held-out reliability, and appends promoti
 		span_id: "root-id",
 		parent_span_id: null,
 		name: "flow.production-case",
+		start_time_unix_ms: 1,
+		end_time_unix_ms: 2,
 		attributes: {
+			"flow.span_role": "root",
+			"flow.trace.expected_spans": 1,
 			"flow.run_id": "production-run",
 			"flow.case_id": "production-case",
 			"flow.trial_id": "production-case::trial-001",
@@ -267,40 +294,19 @@ test("failure command imports, records held-out reliability, and appends promoti
 	assert.match(capabilityReport.evidencePurpose.eventHash, /^[a-f0-9]{64}$/);
 	assert.match(capabilityReport.evidencePurpose.caseDigest, /^[a-f0-9]{64}$/);
 
-	const heldOutReliability = reliability("production-routing-failure", 3);
-	heldOutReliability.evidencePurpose = capabilityReport.evidencePurpose;
-	const heldOutTrace = path.join(directory, "held-out-runtime.jsonl");
-	const heldOutRows = attachRuntimeTrace(heldOutReliability, heldOutTrace);
-	await writeFile(heldOutTrace, `${heldOutRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
-	const reliabilityPath = await writeJson(directory, "reliability.json", heldOutReliability);
+	const judgedRun = await writeJson(directory, "judged-run.json", { cases: [] });
+	const calibration = await writeJson(directory, "held-out-calibration.json", completeCalibration());
 	const recorded = run("evals/failure.mjs", [
 		"record",
 		"--case=production-routing-failure",
-		`--reliability=${reliabilityPath}`,
-		`--runtime-trace=${heldOutTrace}`,
+		`--reliability=${path.join(directory, "capability-reliability.json")}`,
+		`--runtime-trace=${path.join(directory, "capability-runtime.jsonl")}`,
+		`--judged-run=${judgedRun}`,
+		`--calibration=${calibration}`,
 		`--ledger=${ledger}`,
 	]);
-	assert.equal(recorded.status, 0, recorded.stderr);
-
-	const promoted = run("evals/failure.mjs", ["promote", "--case=production-routing-failure", "--cohort=release-run", `--ledger=${ledger}`]);
-	assert.equal(promoted.status, 0, promoted.stderr);
+	assert.equal(recorded.status, 2);
+	assert.match(recorded.stderr, /held-out (runtime trace|judged-run) validation failed/);
 	const records = (await readFile(ledger, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-	assert.deepEqual(records.map((record) => record.type), [
-		"failure.imported",
-		"failure.held-out-trial",
-		"failure.held-out-trial",
-		"failure.held-out-trial",
-		"failure.promotion",
-	]);
-	assert.equal(records.at(-1).decision, "approved");
-	const regressionRun = run("evals/run.mjs", [
-		"--dry-run",
-		"--filter=production-routing-failure",
-		`--failure-ledger=${ledger}`,
-		`--trace-out=${path.join(directory, "regression-trace.jsonl")}`,
-		`--runtime-trace=${path.join(directory, "regression-runtime.jsonl")}`,
-		`--reliability-out=${path.join(directory, "regression-reliability.json")}`,
-	]);
-	assert.equal(regressionRun.status, 0, `${regressionRun.stdout}\n${regressionRun.stderr}`);
-	assert.match(regressionRun.stdout, /suite: regression 1 \(0 excluded\)/);
+	assert.deepEqual(records.map((record) => record.type), ["failure.imported"]);
 });
