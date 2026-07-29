@@ -38,6 +38,9 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 		mode: details.mode,
 		status: details.error ? "error" : details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
 		errorCode: details.error?.code,
+		// Trace pointer travels with the entry so the run-card can link evidence
+		// after session reload, when the in-memory details are gone.
+		trace: details.trace ? { traceFile: details.trace.traceFile, health: details.trace.health } : undefined,
 		results: details.results.map((result) => ({
 			agent: result.agent,
 			agentSource: result.agentSource,
@@ -138,7 +141,8 @@ export function flowsHelpText(): string {
 		"  /flows project                 List bundled + project-local .pi/flow-agents",
 		"  /flows all                     List package + user + project agents",
 		"  /flows status [user|project|all] Show dirs, defaults, and discovery issues",
-		"  /flows inspect                  Inspect a running child (F8)",
+		"  /flows inspect                  Drill into one running child",
+		"  F8                              Toggle the live fleet panel overlay",
 		"  /flows report [trace-file]       Summarize a flow trace JSONL file",
 		"  /flows version                  Show pi-flows version",
 		"",
