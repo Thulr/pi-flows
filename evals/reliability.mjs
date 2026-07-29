@@ -1,4 +1,42 @@
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { canonicalDigest } from "./calibration-key.mjs";
+
 export const MAX_SUBJECT_TRIALS = 50;
+export const RELIABILITY_ATTESTATION_SCHEMA_VERSION = "pi-flows.reliability-attestation.v1";
+
+function attestationKey(key) {
+	if (typeof key !== "string" || Buffer.byteLength(key, "utf8") < 32) {
+		throw new Error("reliability attestation requires at least 32 bytes of operator-controlled key material");
+	}
+	return key;
+}
+
+export function reliabilityAttestation(report, { key } = {}) {
+	const { harnessAttestation, ...payload } = report ?? {};
+	const material = attestationKey(key);
+	const payloadDigest = canonicalDigest(payload, 64);
+	return {
+		schemaVersion: RELIABILITY_ATTESTATION_SCHEMA_VERSION,
+		keyId: createHash("sha256").update(material).digest("hex").slice(0, 16),
+		payloadDigest,
+		signature: createHmac("sha256", material).update(payloadDigest).digest("hex"),
+	};
+}
+
+export function reliabilityAttestationIsValid(report, { key } = {}) {
+	try {
+		const expected = reliabilityAttestation(report, { key });
+		const actual = report?.harnessAttestation;
+		return actual?.schemaVersion === expected.schemaVersion
+			&& actual.keyId === expected.keyId
+			&& actual.payloadDigest === expected.payloadDigest
+			&& typeof actual.signature === "string"
+			&& actual.signature.length === expected.signature.length
+			&& timingSafeEqual(Buffer.from(actual.signature), Buffer.from(expected.signature));
+	} catch {
+		return false;
+	}
+}
 
 export function trialIdentity(caseId, trialIndex, subjectTrials) {
 	const trialId = `${caseId}::trial-${String(trialIndex).padStart(3, "0")}`;
@@ -113,17 +151,30 @@ export function traceHealthRollup(trials) {
 	};
 }
 
-export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, generatedAt = new Date().toISOString(), runId, runtimeTraceFile }) {
+export function buildReliabilityReport(rawTrials, {
+	subjectTrials,
+	judgeSamples,
+	generatedAt = new Date().toISOString(),
+	runId,
+	runtimeTraceFile,
+	evaluatedSystem = null,
+	evaluation = null,
+	evidencePurpose = null,
+	attestationKey: key = null,
+}) {
 	const byCase = new Map();
 	for (const trial of rawTrials) byCase.set(trial.caseId, [...(byCase.get(trial.caseId) ?? []), trial]);
 	const cases = [...byCase.entries()].map(([caseId, trials]) => caseReliability(caseId, trials, subjectTrials));
 	const nominalTrials = rawTrials.filter((trial) => !trial.exclusion);
 	const sensitivityTrials = rawTrials.map((trial) => ({ ...trial, pass: !trial.exclusion && trial.pass }));
-	return {
+	const report = {
 		schemaVersion: "pi-flows.reliability.v1",
 		generatedAt,
 		runId: runId ?? null,
 		runtimeTraceFile: runtimeTraceFile ?? null,
+		evaluatedSystem,
+		evaluation,
+		evidencePurpose,
 		subjectTrials,
 		judgeSamples,
 		cases,
@@ -135,6 +186,7 @@ export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples,
 			traceHealth: traceHealthRollup(rawTrials),
 		},
 	};
+	return { ...report, harnessAttestation: key ? reliabilityAttestation(report, { key }) : null };
 }
 
 const rate = (value) => value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;

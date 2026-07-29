@@ -57,8 +57,11 @@ npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdi
 npm run eval -- --strict-trace     # block the run when its runtime trace evidence is incomplete (off by default)
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --run-id=release-123 --runtime-trace=/tmp/runtime.jsonl # stable eval/runtime linkage
+npm run eval -- --failure-ledger=/secure/failures.jsonl # include imported capability/regression cases
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 npm run eval:select                # tool-selection eval: should the parent model call flow at all?
+npm run eval:failure -- inspect --ledger=/secure/failures.jsonl # inspect the production-failure ledger
+npm run eval:release -- --evidence=/secure/release-evidence.json ... # write a release record
 ```
 
 `--trials=N` measures **subject reliability** and is independent of
@@ -677,6 +680,148 @@ record. `thulr experiment show .thulr/experiments/<id>.json` prints the full sta
 and `thulr dashboard` watches a run live. **Cost note:** every candidate is a full
 suite run on the subject model plus a judge pass — scope with `--filter` in the
 template or `--max-candidates` before launching a wide grid.
+
+## Production failures and regression promotion
+
+`npm run eval:failure` provides the controlled path from one validated production
+failure to a durable regression guard. The ledger is JSONL, hash-chained, written
+with mode `0600`, and append-only: imports, held-out trials, denied promotions,
+and approved promotions are separate events. Keep it in access-controlled
+release evidence storage (the default `.thulr/failures/ledger.jsonl` is local and
+ignored), not in the package or repository.
+
+Prepare a `pi-flows.validated-production-failure.v1` JSON input with:
+
+- a validation attestation (`status:"validated"`, named validator, validation
+  time, and `privacyReview:"passed"`);
+- a stable case id, task family/structure, bounded task and literal criterion;
+- a declarative `answer-includes` objective;
+- only the minimized initial-state files needed to reproduce the failure;
+- the production run/case/trial ids, trace file, trace/root span ids, and trace
+  SHA-256 digest; and
+- a promotion policy of 3–50 held-out trials at a required pass rate of 1.
+
+The importer rejects unknown fields and workspace traversal, bounds stored text,
+and redacts secret-shaped values, email addresses, and home paths. Raw
+credentials, hidden reasoning, and unrelated user content are neither accepted
+fields nor required evidence. The privacy review must minimize before import;
+redaction is a final containment layer, not permission to ingest a raw incident
+dump. Import also reads the referenced JSONL trace, verifies its full SHA-256,
+and requires the linked span to be a root whose run, case, and trial attributes
+match the attested identity. The entire production trace must also pass the same
+strict structural read-back used for release evidence; a matching root copied
+out of an incomplete or malformed tree is not import evidence.
+
+```json
+{
+  "schemaVersion": "pi-flows.validated-production-failure.v1",
+  "validation": {
+    "status": "validated",
+    "validator": "incident-reviewer",
+    "validatedAt": "2026-07-28T10:00:00Z",
+    "privacyReview": "passed"
+  },
+  "case": {
+    "id": "production-routing-failure",
+    "title": "Production routing failure",
+    "taskFamily": "routing",
+    "structure": {
+      "decomposability": "atomic",
+      "dependencyDepth": 1,
+      "sharedState": "read-only",
+      "risk": "medium",
+      "reversibility": "reversible"
+    },
+    "agent": "recon",
+    "task": "Read input.txt and return ROUTE_OK.",
+    "criterion": "The answer contains ROUTE_OK.",
+    "expectedBehavior": "Returns the stable marker.",
+    "objective": { "kind": "answer-includes", "value": "ROUTE_OK" },
+    "initialState": {
+      "files": [{ "path": "input.txt", "content": "ROUTE_OK" }]
+    },
+    "traceLink": {
+      "runId": "production-run",
+      "caseId": "production-case",
+      "trialId": "production-case::trial-001",
+      "traceFile": "validated/runtime.jsonl",
+      "traceId": "trace-id",
+      "rootSpanId": "root-id",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    "failure": {
+      "summary": "The stable marker was omitted.",
+      "labels": ["routing.wrong-agent"]
+    },
+    "promotionPolicy": { "minimumHeldOutTrials": 5, "requiredPassRate": 1 }
+  }
+}
+```
+
+```bash
+# Add the minimized reproducer to the capability suite.
+npm run eval:failure -- import \
+  --input=/secure/validated-failure.json \
+  --ledger=/secure/failures.jsonl
+
+# Exercise it through the normal model/eval/trace seam on clean held-out trials.
+# Keep this operator-controlled key outside artifacts and reuse it for `record`.
+export PI_FLOWS_EVAL_ATTESTATION_KEY="$(openssl rand -hex 32)"
+npm run eval -- \
+  --failure-ledger=/secure/failures.jsonl \
+  --failure-promotion=production-routing-failure \
+  --trials=5 --strict-trace \
+  --runtime-trace=.thulr/runs/failure-promotion.runtime.jsonl \
+  --run-id=production-routing-failure-held-out
+
+# Record actual reliability rows against the artifact's complete evaluated-system
+# digest, then decide.
+npm run eval:failure -- record \
+  --case=production-routing-failure \
+  --reliability=.thulr/runs/reliability.json \
+  --runtime-trace=.thulr/runs/failure-promotion.runtime.jsonl \
+  --judged-run=.thulr/runs/candidate.json \
+  --calibration=.thulr/runs/calibration.json \
+  --ledger=/secure/failures.jsonl
+npm run eval:failure -- promote \
+  --case=production-routing-failure \
+  --cohort=production-routing-failure-held-out \
+  --ledger=/secure/failures.jsonl
+```
+
+Promotion is denied unless every distinct held-out trial passed, retained a
+recorded runtime trace, passed policy compliance, had a verified successful
+outcome, and used the same system digest and runtime-trace artifact. `--cohort`
+is the exact eval `--run-id`;
+older failed cohorts remain in the ledger without poisoning a later clean cohort.
+`record` accepts only a reliability artifact stamped by
+`--failure-promotion=<case>` and independently resolves every reliability
+trial's exact root in `--runtime-trace`. It also verifies the canonical harness
+HMAC attestation, the exact `candidate.json` judge verdicts, and the complete
+nonblocking calibration artifact recorded by the run; a dry run, ordinary
+filtered run, or hand-authored pass summary is not promotion evidence. The stamp
+binds the source ledger hash/head and canonical imported-case digest, and every
+appended trial durably retains that import binding plus the reliability,
+judged-run, calibration, and runtime-trace SHA-256s. Duplicate imports or trial
+identities, pre-import trials, and mixed-trace cohorts are invalid rather than
+last-write-wins. The reliability SHA plus HMAC key id, payload digest, and
+signature identify one authenticated artifact for the whole cohort. A
+multi-trial record is validated against the same ledger SHA/head under an
+exclusive writer lock before its rows are appended.
+`PI_FLOWS_EVAL_ATTESTATION_KEY` must contain at least 32 bytes. The harness reads
+and removes it from its environment before any model child starts; neither the
+key nor raw key material is stored in reliability or the failure ledger.
+The promotion run recomputes calibration for the imported case and full canary
+portfolio. An `unknown` or `stale` prior key is recorded for audit but does not
+invalidate complete, authoritative evidence recomputed by the current run.
+An approval changes the derived suite from `capability` to `regression`; future
+release evals must keep passing the same ledger with `--failure-ledger`. The
+release-record command also reads that ledger and blocks if any promoted case is
+absent from its reliability artifact. `eval:release` requires the canonical
+ledger even when it is empty, so omitting the option cannot disable this gate.
+Reliability records the evaluation-time ledger hash, head, imported-case
+bindings, and promoted ids; substituting another empty or partial ledger is
+blocked, and an explicitly named nonexistent ledger fails eval preflight.
 
 ## Add a case
 

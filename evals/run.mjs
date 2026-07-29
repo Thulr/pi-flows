@@ -1,56 +1,23 @@
-// Opt-in, model-in-the-loop eval harness for pi-flows — now gated by thulr.
-//
-// Unlike `npm test` (offline, deterministic, no model), this drives REAL `flow`
-// delegations through REAL `pi` and scores agent/flow behaviour — so it needs the
-// `pi` CLI on PATH and a configured model provider, and it spends tokens. It is
-// intentionally NOT part of `npm run check`.
-//
-//   npm run eval                          # use your pi default model/provider
-//   npm run eval -- --filter=route        # only matching cases
-//   npm run eval -- --dry-run             # framework smoke (canned results, no model, no thulr calls)
-//   npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate — the
-//                                         # command-template mode for `thulr run-experiment` / `thulr optimize`
-//   npm run eval -- --strict-trace        # fail the run when its runtime trace evidence is incomplete
-//   npm run eval:select                   # parent-model tool-selection discipline
-//
-// Every flag (subject/judge model, trials, samples, guardrails, calibration caps,
-// baselines, JUnit output) is documented with its default in evals/README.md —
-// the single place they are described, so this header cannot drift from it.
-//
-// For the flows-vs-plain A/B ("does pi-flows beat plain pi?") see `npm run eval:compare`.
-// For "should the parent model call flow at all?" see `npm run eval:select`.
-//
-// Two axes, decomposed (not one god-metric):
-//   1. an objective, deterministic check per case (the chosen route, a known
-//      answer, a passing gate) — this gates BEHAVIOUR and becomes the
-//      objectiveScore label thulr calibrates its judge against.
-//   2. thulr's calibrated LLM judge grades each case's answer against one literal
-//      criterion, then gates QUALITY regressions vs a baseline EvalRun. The judge
+// Opt-in model-in-the-loop eval harness. Unlike the offline test suite, this
+// drives real flow delegations and uses thulr to judge and gate their output.
+// The harness combines deterministic case objectives with thulr's calibrated
+// judge, which grades answer quality and gates regressions. The judge
 //      runs on a different vendor than the subject (default anthropic/claude-
 //      haiku-4-5 — cheap models on both axes) so it never grades its own family.
-// Fixed calibration canaries are appended to the trace as known-bad/partial
-// answers; they measure judge TNR and partial-score behavior, but never count as
-// behaviour or release-gate rows.
-//
-// The harness emits ONE self-contained trace (evals/thulr-trace.jsonl) — each case's
-// answer, criterion, objective label, task text, expected behavior, failure labels,
-// config/prompt version, and cost/token telemetry inline —
-// and shells out to the `thulr` CLI for judge -> calibrate -> gate ->
-// baseline. thulr reads everything from the trace, so there are no separate
-// cases-manifest or labels files.
+// Fixed calibration canaries measure judge behavior outside release case counts.
+// The harness emits one self-contained trace and shells out to thulr for judge,
+// calibration, gate, and baseline operations.
 //
 // Exit code is 0 when every selected case passes (objective AND thulr criterion)
 // and thulr's gate reports no regression; 1 otherwise. In --trace-only mode the
 // exit code only says whether a judgeable trace was emitted — the driver
 // (thulr run-experiment / optimize) owns judging and selection.
 //
-// The five phases (argv -> preflight -> run arms -> trace -> judge/gate) live in
-// evals/pipeline.mjs and evals/run-report.mjs; this file wires them together.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
-import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
+import { CALIBRATION_CASES, EVAL_CORPUS as BASE_EVAL_CORPUS, corpusWithFailureLedger } from "./corpus.mjs";
 import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { calibrationPreflightStep, resolveCriticalDimensions, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
@@ -59,24 +26,23 @@ import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
 import { MAX_SUBJECT_TRIALS, traceHealthRollup, trialIdentity } from "./reliability.mjs";
 import { defaultRuntimeTracePath, evalRunId, runtimeScoreFamilies, runtimeTraceContext, runtimeTraceEvidence } from "./runtime-trace.mjs";
+import { buildEvaluationProvenance } from "./evaluation-provenance.mjs";
+import { captureReleaseSystem } from "./release-system.mjs";
+import { evaluationArtifactProvenance } from "./evaluation-artifacts.mjs";
 import * as thulr from "./thulr.mjs";
-
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
-
-// Load a local .env (provider keys) if present, before any child pi inherits env.
+process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
 loadDotenv();
-
 const { flag, has, bool, flags, rateFlag, positiveNumberFlag, positiveIntegerFlag } = createFlagReader(process.argv.slice(2));
-
+const failureSource = await corpusWithFailureLedger(BASE_EVAL_CORPUS, flag("failure-ledger", null) ? p(flag("failure-ledger", null)) : null);
+const EVAL_CORPUS = failureSource.corpus;
+const CASES = EVAL_CORPUS.measurement;
 const cliModel = flag("model", null);
 const model = cliModel ?? DEFAULT_EVAL_MODEL;
 const modelSource = cliModel ? "--model" : process.env.PI_FLOWS_EVAL_MODEL ? "PI_FLOWS_EVAL_MODEL" : "eval default";
 // `--model=agent` (or empty) keeps each agent's own frontmatter model.
 const useAgentModels = ["agent", "default", ""].includes(model);
 const capUsd = Number(flag("cap", "0.50"));
-// Per-agent timeout. Default 120s for remote models; crank it up for slow local
-// models (llama.cpp etc.) that legitimately take minutes per turn — they're free,
-// so a long ceiling beats spurious timeouts. Override: --timeout=600000 (ms) or PI_FLOWS_TIMEOUT_MS.
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "120000"));
 const armTimeoutMs = positiveNumberFlag("arm-timeout");
 const dryRun = bool("dry-run");
@@ -84,7 +50,9 @@ const dryRun = bool("dry-run");
 // incomplete. Off by default — tracing is best-effort, and an exporter hiccup
 // must never be reported as a subject regression.
 const strictTrace = bool("strict-trace");
-const filter = flag("filter", "");
+const promotionCaseId = flag("failure-promotion", null);
+const RELIABILITY_ATTESTATION_KEY = process.env.PI_FLOWS_EVAL_ATTESTATION_KEY ?? null; delete process.env.PI_FLOWS_EVAL_ATTESTATION_KEY;
+const filter = promotionCaseId ?? flag("filter", "");
 const includeControls = has("include-controls") || filter.length > 0;
 // Cross-model judge: a different vendor than the subject under test breaks
 // self-grading. Default is the cheap anthropic tier — the suite standardizes on
@@ -151,9 +119,7 @@ const gateBaseline = compareFlag ? p(compareFlag) : existsSync(BASELINE_DEFAULT)
 const writeBaseline = has("write-baseline") ? p(flag("write-baseline", "") || BASELINE_DEFAULT) : null;
 const LABELS = p(".thulr/runs/candidate.labels.json");
 const CALIBRATION = p(flag("calibration-out", ".thulr/runs/calibration.json"));
-// Everything the reliability artifact needs except `judgeAvailable`, which is the
-// one thing that differs between the trace-only and judged exits.
-const RELIABILITY_OPTIONS = { out: RELIABILITY, displayPath: rel(RELIABILITY), subjectTrials, judgeSamples: samples, runId: EVAL_RUN_ID, runtimeTraceFile: rel(RUNTIME_TRACE) };
+const EVALUATED_SYSTEM = captureReleaseSystem(p("."));
 // Human-review calibration (thulr review): an SME verdict set folded into
 // `thulr calibrate` as judge-vs-human ground truth (TPR/TNR) on top of the
 // deterministic-label axis. Defaults to the path `thulr review` writes for this
@@ -168,6 +134,7 @@ const reviews = reviewsFlag ? p(reviewsFlag) : existsSync(reviewsDefault) ? revi
 // mode never invokes thulr — the driver (run-experiment/optimize) does.
 function preflight() {
 	return runPreflight([
+		() => failureSource.issues.length ? `Failure ledger preflight failed before model invocation:\n- ${failureSource.issues.join("\n- ")}` : null,
 		corpusPreflightStep(EVAL_CORPUS),
 		calibrationPreflightStep(EVAL_CORPUS),
 		...(dryRun ? [] : [
@@ -232,13 +199,14 @@ async function runCases(selected, selectedCalibration, flow) {
 				if (excludedReason === "infra") sawInfraError = true;
 				const runtimeTrace = runtimeTraceEvidence(result, rel(RUNTIME_TRACE), traceContext);
 				const scoreFamilies = runtimeScoreFamilies({ result, thrown, objective, trace: runtimeTrace });
+				const subjectModel = subjectModelName(result, useAgentModels ? "agent-frontmatter" : model);
 
 				if (!excludedReason) {
 					thulr.appendCaseSpans(TRACE, caseSpanFields(testCase, {
 						answer,
 						label: objective.pass,
 						endMs: endedAt,
-						model: subjectModelName(result, useAgentModels ? "agent-frontmatter" : model),
+						model: subjectModel,
 						task: testCase.params.task,
 						costUsd: cost,
 						tokensTotal: tokens,
@@ -260,6 +228,7 @@ async function runCases(selected, selectedCalibration, flow) {
 					...identity,
 					name: identity.trialId,
 					hard: !!testCase.hard,
+					model: subjectModel,
 					objective,
 					answer,
 					reachedModel,
@@ -388,12 +357,27 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, 
 
 async function main() {
 	if (!preflight()) process.exit(2);
+	const evaluatedGrader = dryRun || traceOnly
+		? null
+		: { name: "thulr", version: thulr.doctor().report?.version ?? null };
 
 	const selected = selectMeasurementCases(CASES, { filter, includeControls });
-	const selectedCalibration = CALIBRATION_CASES.filter((c) => !filter || c.name.includes(filter));
+	const selectedCalibration = promotionCaseId ? CALIBRATION_CASES : CALIBRATION_CASES.filter((c) => !filter || c.name.includes(filter));
 	if (selected.length + selectedCalibration.length === 0) {
 		console.error(`No eval cases match --filter=${filter}. Available: ${[...CASES, ...CALIBRATION_CASES].map((c) => c.name).join(", ")}`);
 		process.exit(2);
+	}
+	if (promotionCaseId) {
+		if (!RELIABILITY_ATTESTATION_KEY) throw new Error("--failure-promotion requires PI_FLOWS_EVAL_ATTESTATION_KEY");
+		const promotionCase = selected.length === 1 && selected[0].name === promotionCaseId ? selected[0] : null;
+		if (!promotionCase?.productionFailure) {
+			console.error(`--failure-promotion=${promotionCaseId} must select exactly one imported production-failure case`);
+			process.exit(2);
+		}
+		if (subjectTrials < promotionCase.productionFailure.promotionPolicy.minimumHeldOutTrials) {
+			console.error(`--failure-promotion=${promotionCaseId} requires at least ${promotionCase.productionFailure.promotionPolicy.minimumHeldOutTrials} subject trials`);
+			process.exit(2);
+		}
 	}
 
 	const flow = flowTool();
@@ -416,6 +400,24 @@ async function main() {
 	mkdirSync(dirname(RUNTIME_TRACE), { recursive: true });
 	writeFileSync(RUNTIME_TRACE, "", "utf8");
 	const { summaries, calibrationSummaries, judgedCount, productJudgedCount, totalCost, sawInfraError } = await runCases(selected, selectedCalibration, flow);
+	const reliabilityOptions = {
+		out: RELIABILITY,
+		displayPath: rel(RELIABILITY),
+		subjectTrials,
+		judgeSamples: samples,
+		runId: EVAL_RUN_ID,
+		runtimeTraceFile: rel(RUNTIME_TRACE),
+		evaluatedSystem: EVALUATED_SYSTEM,
+		attestationKey: RELIABILITY_ATTESTATION_KEY,
+		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel, grader: evaluatedGrader, failureLedger: failureSource.failureLedger }),
+		evidencePurpose: promotionCaseId ? {
+			kind: "failure-promotion-held-out",
+			caseId: promotionCaseId,
+			...failureSource.failureLedger?.importedCases?.[promotionCaseId],
+			ledgerSha256: failureSource.failureLedger?.sha256,
+			ledgerHeadHash: failureSource.failureLedger?.headHash,
+		} : null,
+	};
 
 	const behaviourCases = summaries.filter((s) => !s.hard);
 	const measuredBehaviourCases = behaviourCases.filter((s) => !s.excludedReason);
@@ -443,7 +445,7 @@ async function main() {
 		// ranks, and selects. Exit 0 iff a judgeable trace was emitted — objective
 		// misses are labels in the trace, not a candidate failure.
 		console.log(`\n(trace-only) emitted ${judgedCount} self-contained case(s) to ${rel(TRACE)}; judge/gate left to the driver.`);
-		const traceOnlyReliability = writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: false });
+		const traceOnlyReliability = writeReliabilityArtifact(summaries, verdicts, { ...reliabilityOptions, judgeAvailable: false });
 		// Judging is the driver's job here, but evidence is not: a caller that asked
 		// for strict traces must not be handed a 0 for an unauditable experiment.
 		const traceOnlyGate = traceEvidenceGate(traceOnlyReliability, { strict: strictTrace });
@@ -459,8 +461,9 @@ async function main() {
 		// Knowable before the judge runs — and it has to be, because promotion happens inside this call.
 		const preJudgeTraceGate = traceEvidenceGate({ overall: { traceHealth: traceHealthRollup(summaries) } }, { strict: strictTrace });
 		({ gateResult, calibration: calibrationResult } = judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, traceBlocks: preJudgeTraceGate.blocks }));
+		if (calibrationResult?.report) Object.assign(reliabilityOptions.evaluation, evaluationArtifactProvenance(CALIBRATION, calibrationResult.report, CANDIDATE));
 	}
-	const reliability = writeReliabilityArtifact(summaries, verdicts, { ...RELIABILITY_OPTIONS, judgeAvailable: !dryRun && productJudgedCount > 0 });
+	const reliability = writeReliabilityArtifact(summaries, verdicts, { ...reliabilityOptions, judgeAvailable: !dryRun && productJudgedCount > 0 });
 	// Recomputed over the same summaries the pre-judge verdict used; the judge cannot change trace health, so the two agree.
 	const traceGate = traceEvidenceGate(reliability, { strict: strictTrace });
 	for (const issue of traceGate.issues) console.log(`✗ ${issue}`);

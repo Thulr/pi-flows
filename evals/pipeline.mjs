@@ -182,7 +182,20 @@ export function printScoreDeltas({ run, options, heading, unavailable, log = con
  * no judge verdict, a trial passes on its objective check alone rather than on a
  * verdict that was never rendered.
  */
-export function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable, out, subjectTrials, judgeSamples, runId, runtimeTraceFile, displayPath = out, log = console.log }) {
+export function writeReliabilityArtifact(summaries, verdicts, {
+	judgeAvailable,
+	out,
+	subjectTrials,
+	judgeSamples,
+	runId,
+	runtimeTraceFile,
+	evaluatedSystem,
+	evaluation,
+	evidencePurpose,
+	attestationKey,
+	displayPath = out,
+	log = console.log,
+}) {
 	const rawTrials = summaries.map((summary) => {
 		const judge = verdicts.get(summary.traceCaseId) ?? null;
 		return {
@@ -190,6 +203,7 @@ export function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable, 
 			trialId: summary.trialId,
 			traceCaseId: summary.traceCaseId,
 			trialIndex: summary.trialIndex,
+			model: summary.model,
 			pass: !summary.exclusion && summary.objective.pass && (!judgeAvailable || judge?.criterion?.verdict === true),
 			objective: summary.objective,
 			judge,
@@ -203,7 +217,16 @@ export function writeReliabilityArtifact(summaries, verdicts, { judgeAvailable, 
 			scoreFamilies: summary.scoreFamilies,
 		};
 	});
-	const report = buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, runId, runtimeTraceFile });
+	const report = buildReliabilityReport(rawTrials, {
+		subjectTrials,
+		judgeSamples,
+		runId,
+		runtimeTraceFile,
+		evaluatedSystem,
+		evaluation,
+		evidencePurpose,
+		attestationKey,
+	});
 	mkdirSync(dirname(out), { recursive: true });
 	writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 	for (const line of formatReliabilitySummary(report)) log(line);
@@ -312,6 +335,10 @@ export function assessCalibration({
 	});
 	const report = buildCalibrationReport({ key, storedKey: readJsonOrNull(out)?.key ?? null, splitEntries, splits, records, reviewSet, criticalDimensions, abstentionBand });
 	const issues = calibrationGateIssues(report, { criticalMissRateCap });
+	const artifact = {
+		...report,
+		gate: { blocks: issues.length > 0, issues, criticalMissRateCap },
+	};
 
 	log("\njudge calibration:");
 	log(formatCalibrationReport(report));
@@ -321,10 +348,10 @@ export function assessCalibration({
 	}
 	if (out) {
 		mkdirSync(dirname(out), { recursive: true });
-		writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+		writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
 		log(`calibration report written to ${relativeToRepo(out)}`);
 	}
-	return { report, issues, blocks: issues.length > 0, path: out };
+	return { report: artifact, issues, blocks: issues.length > 0, path: out };
 }
 
 /**

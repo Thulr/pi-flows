@@ -114,10 +114,11 @@ export function findNearestProjectAgentsDir(cwd: string): string | null {
 export function discoverFlowAgents(cwd: string, scope: AgentScope): FlowDiscovery {
 	const userAgentsDir = path.join(getAgentDir(), "flow-agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
+	const packageOnly = process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY === "1";
 
 	const packageLoad = loadAgentsFromDir(packageAgentsDir, "package");
-	const userLoad = scope === "project" ? { agents: [] as FlowAgent[], issues: [] as DiscoveryIssue[] } : loadAgentsFromDir(userAgentsDir, "user");
-	const projectLoad = scope === "user" || !projectAgentsDir
+	const userLoad = packageOnly || scope === "project" ? { agents: [] as FlowAgent[], issues: [] as DiscoveryIssue[] } : loadAgentsFromDir(userAgentsDir, "user");
+	const projectLoad = packageOnly || scope === "user" || !projectAgentsDir
 		? { agents: [] as FlowAgent[], issues: [] as DiscoveryIssue[] }
 		: loadAgentsFromDir(projectAgentsDir, "project");
 

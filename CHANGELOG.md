@@ -10,6 +10,39 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Release decisions can now be emitted as deterministic
+  `pi-flows.release-manifest.v1` records. The manifest pins the code commit,
+  package/extension/lock versions, subject and judge model identifiers, prompt
+  and tool-schema hashes, topology, budgets, environment, suite, harness,
+  grader, calibration key, runtime trace, and source artifacts. It fails closed
+  on dirty code, incomplete traces, incomplete or non-authoritative calibration,
+  missing promoted regressions, and explicit hard blockers for unauthorized
+  irreversible actions, approval bypass, secret or personal-data leakage,
+  corrupted shared state, rollback failure, and trace loss.
+- Validated production failures can be imported through a privacy-minimizing,
+  allowlisted format into a `0600` hash-chained event ledger. Their minimized
+  initial state and exact runtime-trace linkage become executable capability
+  cases under `npm run eval -- --failure-ledger=...`; promotion to regression
+  requires at least three distinct, passing, policy-compliant, fully traced
+  held-out repetitions from one explicit run cohort and code revision, and every
+  import, trial, denial, or approval is append-only. Older failed cohorts remain
+  auditable without permanently poisoning a later fixed cohort. Import verifies
+  the production trace digest and root identity; promotion accepts only a
+  dedicated held-out run with independently resolved runtime roots. Release
+  records bind operator attestations to evaluation-time models, topology,
+  budgets, environment, and repository hashes, and reject empty or untyped
+  hard-blocker references. Release evals isolate package-owned prompts, bind the
+  actual grader version and calibration gate decision, and require the canonical
+  failure ledger so promoted regressions cannot be omitted. Reliability binds
+  its ledger head and imported cases, held-out trials retain the trace digest and
+  reject duplicate identities, release traces pass structural read-back, and
+  calibration keys are complete and self-verifying. Production traces now pass
+  that structural gate too; promotion evidence is bound to its prior import,
+  operator-authenticated reliability HMAC, judged-run artifact, calibration
+  artifact, and one runtime-trace digest. Release recomputes calibration authority and
+  gate issues, rejects duplicated trials/imports and skeletal calibration, and
+  cross-checks validated artifact hashes.
+
 - Inter-agent injection handling is now an enforceable, flow-scoped policy.
   `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding
   `quarantine`, and `fail` before the recipient process spawns;
