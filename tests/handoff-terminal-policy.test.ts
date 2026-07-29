@@ -186,3 +186,78 @@ test("fail policy blocks verifier critique before a resynthesis consumes it", as
 	assert.equal(result.details.error?.code, "HANDOFF_POLICY_VIOLATION");
 	assert.equal(calls.filter((call) => call.agent === "debrief").length, 1);
 });
+
+test("fail policy does not reject terminal loop body output", async () => {
+	const settled = await runFlow(
+		{
+			task: "Document the risk.",
+			handoffPolicy: "fail",
+			loop: { body: { agent: "operator" }, maxIterations: 2 },
+		},
+		{ operator: `LOOP: DONE\n${TERMINAL_ANSWER}` },
+	);
+	assert.equal(settled.result.details.error, undefined);
+	assert.equal(settled.calls.length, 1);
+	assert.match(settled.text, /Security documentation quotes/);
+
+	const exhausted = await runFlow(
+		{
+			task: "Document the risk.",
+			handoffPolicy: "fail",
+			loop: { body: { agent: "operator" }, maxIterations: 2 },
+		},
+		{ operator: ["still working", TERMINAL_ANSWER] },
+	);
+	assert.equal(exhausted.result.details.error?.code, "LOOP_DID_NOT_CONVERGE");
+	assert.equal(exhausted.calls.length, 2);
+	assert.match(exhausted.text, /Security documentation quotes/);
+});
+
+test("fail policy does not reject an unconsumed final loop critique", async () => {
+	const { calls, result, text } = await runFlow(
+		{
+			task: "Document the risk.",
+			handoffPolicy: "fail",
+			loop: {
+				body: { agent: "operator" },
+				judge: { agent: "redteam" },
+				maxIterations: 1,
+			},
+		},
+		{ operator: "clean draft", redteam: `VERDICT: REVISE\n${TERMINAL_ANSWER}` },
+	);
+	assert.equal(result.details.error?.code, "LOOP_DID_NOT_CONVERGE");
+	assert.equal(calls.length, 2);
+	assert.match(text, /Security documentation quotes/);
+});
+
+test("fail policy still blocks loop output before a downstream consumer", async () => {
+	const bodyBlocked = await runFlow(
+		{
+			task: "Document the risk.",
+			handoffPolicy: "fail",
+			loop: { body: { agent: "operator" }, maxIterations: 2 },
+		},
+		{ operator: [TERMINAL_ANSWER, "must not run"] },
+	);
+	assert.equal(bodyBlocked.result.details.error?.code, "HANDOFF_POLICY_VIOLATION");
+	assert.equal(bodyBlocked.calls.length, 1);
+
+	const critiqueBlocked = await runFlow(
+		{
+			task: "Document the risk.",
+			handoffPolicy: "fail",
+			loop: {
+				body: { agent: "operator" },
+				judge: { agent: "redteam" },
+				maxIterations: 2,
+			},
+		},
+		{
+			operator: ["clean draft", "must not run"],
+			redteam: `VERDICT: REVISE\n${TERMINAL_ANSWER}`,
+		},
+	);
+	assert.equal(critiqueBlocked.result.details.error?.code, "HANDOFF_POLICY_VIOLATION");
+	assert.equal(critiqueBlocked.calls.filter((call) => call.agent === "operator").length, 1);
+});

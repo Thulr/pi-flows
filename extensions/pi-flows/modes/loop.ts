@@ -52,13 +52,14 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results, { scope: { stage, key: bodyKey(stage.key), ...(priorIterationKey ? { dependsOn: [priorIterationKey] } : {}) } });
 		results.push(body);
 		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
-		const bodyPrep = prepareResultHandoff(body, policy, undefined, deps.handoffGuard);
+		const bodyDone = judgeRef ? false : parseLoopStatus(resultText(body)) === "done";
+		const bodyConsumed = Boolean(judgeRef) || (!bodyDone && iteration < maxIterations);
+		const bodyPrep = prepareResultHandoff(body, policy, undefined, bodyConsumed ? deps.handoffGuard : undefined);
 		previous = withInjectionNotice(bodyPrep, `loop iteration ${iteration} output`);
 		// This output crosses to a judge, or to the next iteration. On a final pass
 		// with neither, it is the answer — no boundary was crossed, and recording
 		// one would invent an inter-agent handoff in a healthy trace.
-		const bodyDone = judgeRef ? false : parseLoopStatus(resultText(body)) === "done";
-		if (judgeRef || (!bodyDone && iteration < maxIterations)) {
+		if (bodyConsumed) {
 			recordStepHandoff(deps, { result: body, prepared: { ...bodyPrep, text: previous }, scope: { stage, key: bodyKey(stage.key) } });
 		}
 
@@ -83,11 +84,12 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		priorIterationKey = `${stage.key}.judge.handoff`;
 		done = parseVerdict(resultText(judged)) === "pass";
 		if (done) break;
-		const critiquePrep = prepareResultHandoff(judged, policy, undefined, deps.handoffGuard);
+		const critiqueConsumed = iteration < maxIterations;
+		const critiquePrep = prepareResultHandoff(judged, policy, undefined, critiqueConsumed ? deps.handoffGuard : undefined);
 		critique = withInjectionNotice(critiquePrep, `loop judge iteration ${iteration}`);
 		// Likewise: a REVISE on the final iteration ends the loop, so nothing reads
 		// this critique and no boundary was crossed.
-		if (iteration < maxIterations) {
+		if (critiqueConsumed) {
 			recordStepHandoff(deps, { result: judged, prepared: { ...critiquePrep, text: critique }, scope: { stage, key: `${stage.key}.judge` } });
 		}
 	}
