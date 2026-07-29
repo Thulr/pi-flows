@@ -36,7 +36,7 @@ import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetL
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
 import { renderFlowResultRow } from "./ui-live-row.ts";
-import { renderFlowRunCard } from "./ui-run-card.ts";
+import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
@@ -114,9 +114,9 @@ export default function (pi: ExtensionAPI) {
 		handler: async (ctx) => fleetPanel.toggle(ctx, true),
 	});
 
-	// The durable run-card: re-renders the persisted `pi-flows.run` entry after
+	// The durable flow card: re-renders the persisted `pi-flows.run` entry after
 	// the live tool row has scrolled away, including on session reload.
-	pi.registerEntryRenderer?.("pi-flows.run", (entry, options, theme) => renderFlowRunCard(entry.data, options.expanded, theme));
+	pi.registerEntryRenderer?.("pi-flows.run", (entry, options, theme) => renderFlowCard(entry.data, options.expanded, theme));
 
 	pi.registerCommand("flows", {
 		description: "List and inspect first-party flow agents",

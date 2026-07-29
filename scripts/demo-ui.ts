@@ -1,19 +1,19 @@
 /**
  * Terminal demo harness for the subagent UI surfaces. Drives the *real*
  * renderers — the live tool-row board, the F8 fleet panel, and the durable
- * run-card — with a scripted, fully fictional timeline (no model calls, no
+ * flow card — with a scripted, fully fictional timeline (no model calls, no
  * child processes, no real paths). Used by the VHS tapes in scripts/demo/ to
  * record the visual evidence embedded in PRs and docs.
  *
  *   node --import tsx scripts/demo-ui.ts live   # collapsed live board
  *   node --import tsx scripts/demo-ui.ts fleet  # F8 fleet panel overlay
- *   node --import tsx scripts/demo-ui.ts card   # durable run-card entry
+ *   node --import tsx scripts/demo-ui.ts card   # durable flow card entry
  */
 import { Theme } from "@earendil-works/pi-coding-agent";
 import { FleetPanel } from "../extensions/pi-flows/fleet-panel.ts";
 import { FlowRunRegistry } from "../extensions/pi-flows/inspector.ts";
 import { renderFlowResultRow, type RowTickerState } from "../extensions/pi-flows/ui-live-row.ts";
-import { flowRunCardLines, type FlowRunEntryData } from "../extensions/pi-flows/ui-run-card.ts";
+import { flowCardLines, type FlowRunEntryData } from "../extensions/pi-flows/ui-flow-card.ts";
 
 // A real Theme instance (the same class pi hands to renderers). The
 // constructor precomputes ANSI for every color key, so fill the full record
@@ -161,11 +161,11 @@ async function cardDemo(): Promise<void> {
 		trace: { traceFile: "flow-trace.jsonl", health: "complete" },
 	};
 	clear();
-	process.stdout.write(theme.fg("muted", "collapsed run-card entry (persisted in the session):") + "\n\n");
-	process.stdout.write(flowRunCardLines(data, theme, false).join("\n") + "\n");
+	process.stdout.write(theme.fg("muted", "collapsed flow card entry (persisted in the session):") + "\n\n");
+	process.stdout.write(flowCardLines(data, theme, false).join("\n") + "\n");
 	await sleep(3000);
 	process.stdout.write("\n" + theme.fg("muted", "expanded (ctrl+o):") + "\n\n");
-	process.stdout.write(flowRunCardLines(data, theme, true).join("\n") + "\n");
+	process.stdout.write(flowCardLines(data, theme, true).join("\n") + "\n");
 	await sleep(4000);
 }
 

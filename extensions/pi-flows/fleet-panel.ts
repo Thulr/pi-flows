@@ -7,7 +7,7 @@ import type { FlowBudget, FlowRunResult } from "./types.ts";
 
 /**
  * The mission-control fleet panel: a persistent, *non-capturing* overlay that
- * shows every live flow run at once — per-agent state, each running child's
+ * shows every live flow run at once — per-run state, each running child's
  * current activity, and budget burn-down. Because the overlay never captures
  * focus, the editor keeps input the whole time: the panel is ambient
  * monitoring, not a modal. F8 toggles it; `/flows inspect` remains the focused

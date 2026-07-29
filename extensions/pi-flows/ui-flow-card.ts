@@ -5,8 +5,9 @@ import { formatTokens } from "./trace.ts";
 import type { FlowMode, UsageStats } from "./types.ts";
 
 /**
- * The durable run-card: the `pi-flows.run` session entry rendered as a
- * persistent summary of what a flow actually did — status, per-agent
+ * The durable flow card: the `pi-flows.run` session entry (the entry type
+ * keeps its pre-glossary name for session compatibility) rendered as a
+ * persistent summary of what a flow actually did — status, per-run
  * durations, cost rollup, and the trace link. Unlike the live tool row this
  * survives session reloads: the renderer re-runs over the stored entry data,
  * so everything it needs must be *in* the entry (no in-memory registry).
@@ -62,8 +63,8 @@ function entryTotals(results: FlowRunEntryResult[]): { tokens: number; cost: num
 	return { tokens, cost };
 }
 
-/** Card lines. First line is the header; `expanded` adds per-agent failure detail. */
-export function flowRunCardLines(data: FlowRunEntryData, theme: Theme, expanded: boolean): string[] {
+/** Card lines. First line is the header; `expanded` adds per-run failure detail. */
+export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: boolean): string[] {
 	const statusIcon = data.status === "ok" ? theme.fg("success", "▣") : data.status === "partial" ? theme.fg("warning", "▣") : theme.fg("error", "▣");
 	const statusText = data.status === "error" && data.errorCode ? `${data.status}:${data.errorCode}` : data.status;
 	const statusColor = data.status === "ok" ? "success" : data.status === "partial" ? "warning" : "error";
@@ -106,7 +107,7 @@ export function flowRunCardLines(data: FlowRunEntryData, theme: Theme, expanded:
 }
 
 /** Entry renderer body for `pi-flows.run`. Returns undefined for entries this version cannot read. */
-export function renderFlowRunCard(data: unknown, expanded: boolean, theme: Theme): Text | undefined {
+export function renderFlowCard(data: unknown, expanded: boolean, theme: Theme): Text | undefined {
 	if (!data || typeof data !== "object" || !Array.isArray((data as FlowRunEntryData).results)) return undefined;
-	return new Text(flowRunCardLines(data as FlowRunEntryData, theme, expanded).join("\n"), 0, 0);
+	return new Text(flowCardLines(data as FlowRunEntryData, theme, expanded).join("\n"), 0, 0);
 }
