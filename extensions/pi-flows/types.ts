@@ -19,7 +19,7 @@ export type {
 export { encodeAuthorKey } from "./trace-scope.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
 
-export const PI_FLOWS_VERSION = "0.3.0";
+export const PI_FLOWS_VERSION = "0.4.0";
 
 export const MAX_PARALLEL_TASKS = 8;
 export const DEFAULT_CONCURRENCY = 4;
