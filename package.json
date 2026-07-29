@@ -21,7 +21,7 @@
   "engines": {
     "node": ">=24.0.0",
     "npm": ">=11.0.0",
-    "pi": ">=0.78.0"
+    "pi": ">=0.82.0"
   },
   "files": [
     "agents/*.md",
@@ -41,10 +41,10 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": ">=0.78.0 <1.0.0",
-    "@earendil-works/pi-ai": ">=0.78.0 <1.0.0",
-    "@earendil-works/pi-coding-agent": ">=0.78.0 <1.0.0",
-    "@earendil-works/pi-tui": ">=0.78.0 <1.0.0",
+    "@earendil-works/pi-agent-core": ">=0.82.0 <1.0.0",
+    "@earendil-works/pi-ai": ">=0.82.0 <1.0.0",
+    "@earendil-works/pi-coding-agent": ">=0.82.0 <1.0.0",
+    "@earendil-works/pi-tui": ">=0.82.0 <1.0.0",
     "typebox": ">=1.1.0 <2.0.0"
   },
   "devDependencies": {

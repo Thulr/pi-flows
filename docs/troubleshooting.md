@@ -15,7 +15,7 @@ Cause: the `pi` host CLI is not installed or not on your `PATH`. pi-flows is a
 pi extension and cannot run without it — and `npm ci` / `npm run check` do **not**
 install pi (they only build and test this package).
 
-Fix: install the `pi` CLI (`>=0.78.0`). The `pi` binary ships in
+Fix: install the `pi` CLI (`>=0.82.0`). The `pi` binary ships in
 `@earendil-works/pi-coding-agent`; get it from the
 [pi project](https://github.com/earendil-works/pi), for example:
 
@@ -30,7 +30,33 @@ npm run preflight   # or: pi --version
 ```
 
 See the [README Install section](../README.md#install) for the full prerequisite
-list (Node `>=24`, npm `>=11`, pi `>=0.78.0`).
+list (Node `>=24`, npm `>=11`, pi `>=0.82.0`).
+
+### pi is older than the minimum supported version
+
+Cause: `pi` is on your PATH, but its version is below the floor pi-flows is
+built against (`engines.pi` in `package.json`, currently `>=0.82.0`). Older
+hosts are unsupported and can fail when the extension loads. `npm run preflight`
+reports this as, for example:
+
+```
+✗ pi 0.81.0 is older than the minimum supported version 0.82.0.
+```
+
+Fix: upgrade the CLI, then re-run the check:
+
+```bash
+npm i -g @earendil-works/pi-coding-agent@latest
+npm run preflight
+```
+
+If preflight instead warns that it could not read a version, `pi` answered but
+its `--version` output had no recognizable `major.minor.patch` in it. That is a
+warning rather than a failure — confirm your version by hand with `pi --version`.
+
+Note that inside npm scripts, `pi` resolves from `node_modules/.bin` first when
+this repo is checked out, so preflight may report a different version than the
+`pi` you get in a plain shell.
 
 ### Provider/auth failures
 

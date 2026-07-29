@@ -79,7 +79,7 @@ pi runs this as an evaluate loop — the `operator` builds the change, a separat
 
 pi-flows runs inside the [pi](https://github.com/earendil-works/pi) coding agent, so you install it as a pi package — no clone required.
 
-**Prerequisites:** Node.js `>=24`, npm `>=11`, and the pi CLI `>=0.78.0` on your `PATH`. Don't have pi? It ships in `@earendil-works/pi-coding-agent`:
+**Prerequisites:** Node.js `>=24`, npm `>=11`, and the pi CLI `>=0.82.0` on your `PATH`. Don't have pi? It ships in `@earendil-works/pi-coding-agent`:
 
 ```bash
 npm i -g @earendil-works/pi-coding-agent
@@ -115,7 +115,7 @@ To hack on pi-flows or try unreleased `main`, work from a checkout:
 git clone https://github.com/Thulr/pi-flows
 cd pi-flows
 npm ci
-npm run preflight   # verify the pi CLI is installed and on PATH
+npm run preflight   # verify the pi CLI is on PATH and meets the version floor
 pi -e ./extensions/pi-flows/index.ts   # load the local extension in pi
 ```
 

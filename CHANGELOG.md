@@ -335,6 +335,27 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   structured `CHILD_PROVIDER_ERROR` with the provider message, retaining the
   usage already spent.
 
+### Changed
+
+- The supported pi host floor moved from `0.78.0` to `0.82.0`, in `engines.pi`,
+  the four `@earendil-works/pi-*` peer ranges, `scripts/check-pi.mjs`, and the
+  prerequisite lists in `README.md`, `docs/quickstart.md`, and
+  `docs/troubleshooting.md`. The lockfile now resolves every pi package to a
+  single `0.82.1`; previously `pi-coding-agent` resolved to `0.82.1` while
+  `pi-agent-core`, `pi-ai`, and `pi-tui` stayed at `0.78.0` at the top level, so
+  the build typechecked against two pi versions at once. Installs on a pi host
+  older than `0.82.0` are no longer supported.
+- `npm run preflight` now enforces the pi version floor instead of only checking
+  that the binary exists. It reads the floor from `engines.pi` rather than
+  restating it, reports the version it found alongside the one it needs, and
+  treats a prerelease as below the release it precedes. A `pi --version` banner
+  with no readable version warns rather than fails, since pi answering at all
+  is not evidence of an unsupported host.
+- The Codex control arm reads model pricing through `getBuiltinModel` from
+  `@earendil-works/pi-ai/providers/all`. pi-ai `0.82` removed `getModel` from
+  the package root (it survives only as a deprecated alias on the `/compat`
+  subpath), which broke `evals/baseline-codex.mjs` at import time.
+
 ## 0.3.0 - 2026-07-25
 
 ### Added
