@@ -5,19 +5,47 @@
 // old pi that loads the extension and then fails. This fails fast with an
 // actionable message instead.
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PI_PROJECT = "https://github.com/earendil-works/pi";
+const CHECKOUT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-/** npm prepends `node_modules/.bin` — this package's and every ancestor's — to
- * PATH while it runs a script, and `@earendil-works/pi-coding-agent` is a peer
- * dependency, so a repo clone has a `pi` there. The host that actually loads the
- * extension is the one the user's shell finds (`pi -e ./extensions/pi-flows/index.ts`
- * in the documented workflow), so checking npm's injected copy would validate a
- * binary the very next command never runs. */
+/** The bin directories npm prepends to PATH while running a script: this
+ * checkout's `node_modules/.bin` and every ancestor's. `@earendil-works/pi-coding-agent`
+ * is a peer dependency, so a clone has a `pi` in the first of them — but the host
+ * that loads the extension is the one the user's shell finds
+ * (`pi -e ./extensions/pi-flows/index.ts` in the documented workflow), so checking
+ * npm's copy would validate a binary the very next command never runs.
+ *
+ * Only these exact directories are skipped. A `node_modules/.bin` the user put on
+ * their own PATH is a legitimate host location and must keep working, so matching
+ * on the `node_modules/.bin` basename alone would break a real setup. */
+function npmInjectedBins(startDir) {
+  const bins = new Set();
+  for (let dir = startDir; ; dir = path.dirname(dir)) {
+    bins.add(canonical(path.join(dir, "node_modules", ".bin")));
+    if (path.dirname(dir) === dir) return bins;
+  }
+}
+
+/** Compare PATH entries by their canonical location. A checkout reached through
+ * a symlink (a macOS `/var` -> `/private/var` temp dir, a symlinked work tree)
+ * otherwise reads as a different directory than the one npm put on PATH, and the
+ * skip above would silently miss. */
+function canonical(entry) {
+  try {
+    return realpathSync(entry);
+  } catch {
+    return path.resolve(entry);
+  }
+}
+
+const INJECTED_BINS = npmInjectedBins(CHECKOUT_ROOT);
+
 function isNpmInjectedBin(entry) {
-  return path.basename(entry) === ".bin" && path.basename(path.dirname(entry)) === "node_modules";
+  return INJECTED_BINS.has(canonical(entry));
 }
 
 /** Resolve a command the way a shell would: first executable match wins. */

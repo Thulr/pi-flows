@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -40,12 +40,24 @@ async function writeFakePi(dir: string, banner: string, exitCode = 0) {
 }
 
 /** Run preflight with an exact PATH, so the real CLI cannot leak into a test. */
-function runPreflight(pathEntries: string[]) {
-  return spawnSync(process.execPath, [checkPi], {
+function runPreflight(pathEntries: string[], script = checkPi) {
+  return spawnSync(process.execPath, [script], {
     cwd: repoRoot,
     encoding: "utf8",
     env: { ...process.env, PATH: pathEntries.join(path.delimiter) },
   });
+}
+
+/** A throwaway checkout holding the script and the manifest it reads. The script
+ * derives npm's injected bin directories from its own location, so only inside
+ * one of these is `<root>/node_modules/.bin` a directory npm would really have
+ * prepended. */
+async function fakeCheckout() {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-flows-preflight-checkout-"));
+  await mkdir(path.join(root, "scripts"), { recursive: true });
+  await copyFile(checkPi, path.join(root, "scripts", "check-pi.mjs"));
+  await copyFile(path.join(repoRoot, "package.json"), path.join(root, "package.json"));
+  return { root, script: path.join(root, "scripts", "check-pi.mjs") };
 }
 
 async function withFakePi(banner?: string, exitCode = 0) {
@@ -88,29 +100,42 @@ test("preflight treats a prerelease as below the release it precedes", async () 
 // a peer dependency — so in a clone there is a `pi` there that the user's shell
 // will never run. Checking it would green-light a host that the documented
 // `pi -e ./extensions/pi-flows/index.ts` never touches.
-test("preflight checks the shell's pi, not the copy npm injects from node_modules/.bin", async () => {
+test("preflight checks the shell's pi, not the copy npm injects from the checkout", async () => {
   const floor = await supportedFloor();
-  const root = await mkdtemp(path.join(tmpdir(), "pi-flows-preflight-"));
-  const shellPi = await writeFakePi(path.join(root, "bin"), justBelow(floor));
-  const injectedDir = path.join(root, "node_modules", ".bin");
+  const checkout = await fakeCheckout();
+  const injectedDir = path.join(checkout.root, "node_modules", ".bin");
   await writeFakePi(injectedDir, render(floor));
+  const shellPi = await writeFakePi(path.join(checkout.root, "usr-bin"), justBelow(floor));
 
   // npm puts its bin directory first, so a naive lookup finds the supported one.
-  const result = runPreflight([injectedDir, path.dirname(shellPi)]);
+  const result = runPreflight([injectedDir, path.dirname(shellPi)], checkout.script);
   assert.equal(result.status, 1, "the extension is loaded by the shell's pi, so that is the one to validate");
   assert.match(result.stderr, new RegExp(`✗ pi ${justBelow(floor)} is older`));
   assert.ok(result.stderr.includes(shellPi), `failure should name the binary it checked: ${result.stderr}`);
 });
 
-test("preflight reports a pi that exists only under node_modules/.bin as missing", async () => {
+test("preflight reports a pi that exists only under the checkout's node_modules/.bin as missing", async () => {
   const floor = await supportedFloor();
-  const root = await mkdtemp(path.join(tmpdir(), "pi-flows-preflight-"));
-  const injected = await writeFakePi(path.join(root, "node_modules", ".bin"), render(floor));
+  const checkout = await fakeCheckout();
+  const injected = await writeFakePi(path.join(checkout.root, "node_modules", ".bin"), render(floor));
 
-  const result = runPreflight([path.dirname(injected)]);
+  const result = runPreflight([path.dirname(injected)], checkout.script);
   assert.equal(result.status, 1, "a pi only reachable inside npm scripts cannot host the documented workflow");
   assert.match(result.stderr, /✗ pi CLI not found on PATH\./);
   assert.ok(result.stderr.includes(`There is a local copy at ${injected}`), result.stderr);
+});
+
+// Only the checkout's own (and its ancestors') bin directories are npm's. A
+// `node_modules/.bin` the user exported themselves is a real host location, so
+// skipping it by basename would report a working install as missing.
+test("preflight honors a node_modules/.bin the user put on PATH themselves", async () => {
+  const floor = await supportedFloor();
+  const root = await mkdtemp(path.join(tmpdir(), "pi-flows-preflight-tools-"));
+  const userPi = await writeFakePi(path.join(root, "tools", "node_modules", ".bin"), render(floor));
+
+  const result = runPreflight([path.dirname(userPi)]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(userPi), `should check the user's own pi: ${result.stdout}`);
 });
 
 test("preflight warns instead of failing when the version cannot be read", async () => {

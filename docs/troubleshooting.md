@@ -62,6 +62,11 @@ the host that loads the extension is the `pi` from `pi -e ./extensions/pi-flows/
 not npm's copy. If your only `pi` is that local one, preflight reports it as not
 found and points at it, because the documented command would fail.
 
+Only the directories npm actually injects are skipped — this checkout's
+`node_modules/.bin` and its ancestors', compared by canonical path. A
+`node_modules/.bin` you put on your own PATH is a normal install location and is
+checked like any other.
+
 ### Provider/auth failures
 
 pi-flows does not create provider credentials. Child pi processes inherit the
