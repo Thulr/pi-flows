@@ -71,7 +71,7 @@ test("registry exposes queued and running children", () => {
 	assert.equal(registry.inspectableAgents().length, 0);
 });
 
-test("F8 follows a child live and closing the overlay does not abort it", async () => {
+test("F8 opens the fleet panel over a live child and closing it does not abort the run", async () => {
 	const cwd = await mkdtemp(path.join(tmpdir(), "pi-flow-inspector-"));
 	const previousDir = process.env.PI_STUB_DIR;
 	const previousPlan = process.env.PI_STUB_PLAN;

@@ -1,7 +1,7 @@
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import { getMarkdownTheme, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import {
 	DEFAULT_CONCURRENCY,
 	MAX_FLOW_DEPTH,
@@ -34,6 +34,9 @@ import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictT
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
+import { createFleetPanelController } from "./fleet-panel.ts";
+import { renderFlowResultRow } from "./ui-live-row.ts";
+import { renderFlowRunCard } from "./ui-run-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
@@ -104,11 +107,16 @@ export const __test = {
 
 export default function (pi: ExtensionAPI) {
 	const liveRuns = new FlowRunRegistry();
+	const fleetPanel = createFleetPanelController(liveRuns);
 
 	pi.registerShortcut("f8", {
-		description: "Inspect a running flow agent",
-		handler: async (ctx) => showFlowInspector(ctx, liveRuns, true),
+		description: "Toggle the flow fleet panel",
+		handler: async (ctx) => fleetPanel.toggle(ctx, true),
 	});
+
+	// The durable run-card: re-renders the persisted `pi-flows.run` entry after
+	// the live tool row has scrolled away, including on session reload.
+	pi.registerEntryRenderer?.("pi-flows.run", (entry, options, theme) => renderFlowRunCard(entry.data, options.expanded, theme));
 
 	pi.registerCommand("flows", {
 		description: "List and inspect first-party flow agents",
@@ -333,7 +341,7 @@ export default function (pi: ExtensionAPI) {
 			// PI_FLOWS_APPROVAL_ACTOR names, else the channel that answered the prompt.
 			const approvalActor = process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR;
 			let liveDetails = makeDetails(mode)([]);
-			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets);
+			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets, budget);
 			updateFlowUi(ctx, liveDetails);
 			const statusOnUpdate: Update = (partial) => {
 				liveDetails = partial.details;
@@ -429,54 +437,8 @@ export default function (pi: ExtensionAPI) {
 				0,
 			);
 		},
-		renderResult(result, { expanded }, theme) {
-			const details = result.details as FlowDetails | undefined;
-			if (!details) {
-				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
-			}
-
-			if (details.mode === "list" || details.mode === "config") {
-				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : summarizeAgents((details.agents ?? []) as FlowAgent[], details.discoveryIssues ?? []), 0, 0);
-			}
-
-			const done = details.results.filter((item) => item.exitCode !== -1).length;
-			const failed = details.results.filter((item) => item.exitCode !== -1 && isFailed(item)).length;
-			const icon = done < details.results.length ? theme.fg("warning", "⏳") : failed ? theme.fg("warning", "◐") : theme.fg("success", "✓");
-
-			if (!expanded) {
-				let text = `${icon} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))} ${theme.fg("accent", `${done}/${details.results.length}`)}`;
-				for (const item of details.results.slice(0, 5)) {
-					const itemIcon = item.exitCode === -1 ? theme.fg("warning", "⏳") : isFailed(item) ? theme.fg("error", "✗") : theme.fg("success", "✓");
-					text += `\n${itemIcon} ${theme.fg("accent", item.agent)} ${theme.fg("dim", formatUsage(item.usage, item.model, item.durationMs))}`;
-				}
-				if (details.results.length > 5) text += `\n${theme.fg("muted", `... +${details.results.length - 5} more`)}`;
-				text += `\n${theme.fg("muted", "Ctrl+O to expand")}`;
-				return new Text(text, 0, 0);
-			}
-
-			const container = new Container();
-			container.addChild(new Text(`${icon} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`, 0, 0));
-			const mdTheme = getMarkdownTheme();
-
-			for (const item of details.results) {
-				const itemIcon = item.exitCode === -1 ? theme.fg("warning", "⏳") : isFailed(item) ? theme.fg("error", "✗") : theme.fg("success", "✓");
-				container.addChild(new Spacer(1));
-				container.addChild(
-					new Text(`${itemIcon} ${theme.fg("accent", item.agent)} ${theme.fg("muted", `(${item.agentSource})`)}`, 0, 0),
-				);
-				container.addChild(new Text(theme.fg("dim", item.task), 0, 0));
-				const usage = formatUsage(item.usage, item.model, item.durationMs);
-				if (usage) container.addChild(new Text(theme.fg("muted", usage), 0, 0));
-				const output = resultText(item).trim();
-				if (output) {
-					container.addChild(new Spacer(1));
-					container.addChild(new Markdown(capModelVisibleText(output), 0, 0, mdTheme));
-				}
-			}
-
-			return container;
+		renderResult(result, { expanded, isPartial }, theme, context) {
+			return renderFlowResultRow(result as Parameters<typeof renderFlowResultRow>[0], { expanded, isPartial }, theme, context, summarizeAgents);
 		},
 	});
 }

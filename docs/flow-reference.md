@@ -24,13 +24,29 @@ Exactly one mode is valid per call.
 | Dossier | `{ "task": "...", "dossier": { "sections": [{ "agent": "recon", "task": "source A" }, { "agent": "analyst", "task": "source B" }] } }` | Yes |
 | Monitor | `{ "task": "...", "monitor": { "command": "./probe" } }` | On trigger |
 
-## Live TUI inspection
+## Live TUI monitoring
 
-While a flow is running in interactive Pi, press `F8` or run `/flows inspect`.
-Select a queued or running child to see its task, status, usage, and recent text/tool activity.
-Use Up/Down to scroll, End to return to the latest activity, and Escape to close
-the overlay without interrupting the child. The inspector uses existing in-memory
-flow updates and creates no additional persisted data.
+Three surfaces cover a flow's life in interactive Pi, all fed by the same
+in-memory flow updates:
+
+- **The tool row is live.** While children run, the `flow` tool row shows a
+  progress bar, per-agent state with a spinner, each running child's current
+  tool call or latest message, and a token/cost rollup — updating in place.
+  `ctrl+o` expands the settled row into full per-agent output.
+- **`F8` toggles the fleet panel**, a non-modal overlay listing every live run
+  at once: per-agent state and activity, failures, and budget burn-down when
+  `maxCostUsd` is set. The panel never takes keyboard focus — keep typing while
+  it is open. Press `F8` again (or Escape when focused) to close it; closing
+  never interrupts children. It hides automatically on terminals narrower than
+  80 columns.
+- **`/flows inspect` drills into one child.** Select a queued or running child
+  to see its task, status, usage, and recent text/tool activity. Use Up/Down to
+  scroll, End to return to the latest activity, and Escape to close the overlay
+  without interrupting the child.
+
+After a run settles, a durable run-card entry stays in the session transcript
+(and re-renders after `pi` restarts): status, per-agent duration bars, cost
+rollup, failure codes, and the trace file pointer when tracing was on.
 
 ## Activation thresholds
 

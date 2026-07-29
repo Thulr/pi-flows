@@ -10,6 +10,21 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- The `flow` tool row is now a live dashboard while children run: per-agent
+  state with an animated spinner, each running child's current tool call or
+  latest message, a progress bar, and a token/cost rollup, updating in place
+  until the run settles (`extensions/pi-flows/ui-live-row.ts`).
+- `F8` now toggles a non-modal fleet panel overlay showing every live flow run
+  at once — per-agent state and activity, failures, and budget burn-down when
+  `maxCostUsd` is set — without taking keyboard focus from the editor
+  (`extensions/pi-flows/fleet-panel.ts`). `/flows inspect` remains the focused
+  single-child drill-down.
+- Every settled run now renders a durable run-card from the persisted
+  `pi-flows.run` session entry: status, per-agent duration bars, cost rollup,
+  failure codes, and the trace pointer — re-rendered after session reloads
+  (`extensions/pi-flows/ui-run-card.ts`). The entry additively gains a
+  `trace: { traceFile, health }` field.
+
 - Release decisions can now be emitted as deterministic
   `pi-flows.release-manifest.v1` records. The manifest pins the code commit,
   package/extension/lock versions, subject and judge model identifiers, prompt

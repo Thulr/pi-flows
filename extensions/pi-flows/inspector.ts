@@ -3,12 +3,14 @@ import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-work
 import { Key, matchesKey, truncateToWidth, visibleWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
 import { isFailed, redactText } from "./sanitize.ts";
 import { formatUsage } from "./trace.ts";
-import type { FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
+import type { FlowBudget, FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
 
-interface LiveFlowRun {
+export interface LiveFlowRun {
 	mode: FlowMode;
 	details: FlowDetails;
 	redactSecrets: boolean;
+	/** Live budget reference — mutated by chargeBudget as children settle, so observers see burn-down without another update channel. */
+	budget?: FlowBudget;
 }
 
 export interface FlowAgentTarget {
@@ -24,9 +26,10 @@ export interface FlowActivityItem {
 export class FlowRunRegistry {
 	private readonly runs = new Map<string, LiveFlowRun>();
 	private readonly listeners = new Set<() => void>();
+	private lastFinished: LiveFlowRun | undefined;
 
-	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true): void {
-		this.runs.set(id, { mode, details, redactSecrets });
+	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true, budget?: FlowBudget): void {
+		this.runs.set(id, { mode, details, redactSecrets, budget });
 		this.notify();
 	}
 
@@ -41,8 +44,18 @@ export class FlowRunRegistry {
 		const run = this.runs.get(id);
 		if (!run) return;
 		run.details = details;
+		this.lastFinished = run;
 		this.runs.delete(id);
 		this.notify();
+	}
+
+	activeRuns(): LiveFlowRun[] {
+		return [...this.runs.values()];
+	}
+
+	/** The most recently settled run, kept so the fleet panel can show a final state after the last child exits. */
+	lastFinishedRun(): LiveFlowRun | undefined {
+		return this.lastFinished;
 	}
 
 	inspectableAgents(): FlowAgentTarget[] {
@@ -73,7 +86,7 @@ export function sanitizeInspectorText(text: string, redactSecrets = true): strin
 	return redactSecrets ? redactText(clean) : clean;
 }
 
-function oneLine(text: string, maxLength: number, redactSecrets: boolean): string {
+export function oneLine(text: string, maxLength: number, redactSecrets: boolean): string {
 	const compact = sanitizeInspectorText(text, redactSecrets).replace(/\s+/g, " ").trim();
 	return compact.length > maxLength ? `${compact.slice(0, maxLength - 1)}…` : compact;
 }
@@ -232,9 +245,9 @@ class FlowAgentViewer {
 	}
 }
 
-type InspectorContext = Pick<ExtensionContext, "hasUI" | "ui"> & { mode?: string };
+export type InspectorContext = Pick<ExtensionContext, "hasUI" | "ui"> & { mode?: string };
 
-function supportsTui(ctx: InspectorContext, knownTui: boolean): boolean {
+export function supportsTui(ctx: InspectorContext, knownTui: boolean): boolean {
 	if (knownTui || ctx.mode === "tui") return true;
 	if (ctx.mode !== undefined) return false;
 	try { return ctx.ui.getAllThemes().length > 0; } catch { return false; }

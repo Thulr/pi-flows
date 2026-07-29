@@ -53,13 +53,14 @@ test("/flows argument parsing rejects typos instead of silently falling back", (
   if (parsed.kind === "error") assert.match(parsed.message, /Unknown \/flows argument/);
 });
 
-test("F8 and /flows inspect expose the live inspector", async () => {
+test("F8 and /flows inspect expose the fleet panel and live inspector", async () => {
   const { commands, shortcuts } = registerForTest();
   const notices: string[] = [];
   const ctx = { hasUI: true, mode: "tui", ui: { notify: (message: string) => notices.push(message) } };
   await shortcuts.get("f8").handler(ctx);
   await commands.get("flows").handler("inspect", ctx);
-  assert.equal(notices.filter((message) => /No child flow agent is queued or running/.test(message)).length, 2);
+  assert.equal(notices.filter((message) => /No flow runs yet in this session/.test(message)).length, 1);
+  assert.equal(notices.filter((message) => /No child flow agent is queued or running/.test(message)).length, 1);
   assert.match(__test.flowsHelpText(), /F8/);
 });
 
