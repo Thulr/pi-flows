@@ -25,8 +25,8 @@ export const SELECTION_CASES = defineCases([
 		name: "package-version-no-flow",
 		task: "In package.json, what is the current package version? Answer with only the version string.",
 		expectFlow: false,
-		answerPattern: "\\b0\\.4\\.1\\b",
-		mock: { flowCalls: 0, answer: "0.4.1" },
+		answerPattern: "\\b0\\.4\\.2\\b",
+		mock: { flowCalls: 0, answer: "0.4.2" },
 		sourceExpectation: {
 			path: "package.json",
 			jsonPath: ["version"],
@@ -140,12 +140,12 @@ export const SELECTION_CASES = defineCases([
 		name: "plausible-release-summary-no-flow",
 		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
 		expectFlow: false,
-		answerPattern: "0/1|counter|single|header",
-		mock: { flowCalls: 0, answer: "- Single-child flow runs drop the 0/1 counter, progress bar, and token rollup from the live tool-row and fleet-panel headers; fan-outs keep them." },
+		answerPattern: "nothing|unreleased|0\\.4\\.2",
+		mock: { flowCalls: 0, answer: "- Nothing is unreleased yet — the most recent release, 0.4.2, removed the confusing 0/1 counter from single-child flow run headers." },
 		sourceExpectation: {
 			format: "text",
 			path: "CHANGELOG.md",
-			patterns: ["## Unreleased[\\s\\S]*Single-child[\\s\\S]*## 0\\.4\\.1[\\s\\S]*## 0\\.4\\.0"],
+			patterns: ["## Unreleased[\\s\\S]*Nothing yet[\\s\\S]*## 0\\.4\\.2[\\s\\S]*Single-child[\\s\\S]*## 0\\.4\\.1"],
 		},
 	},
 	{

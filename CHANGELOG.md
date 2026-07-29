@@ -8,6 +8,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.4.2 - 2026-07-29
+
 ### Changed
 
 - Single-child flow runs no longer render a `0/1` done/total counter, progress
