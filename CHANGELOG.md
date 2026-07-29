@@ -15,7 +15,7 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   package/extension/lock versions, subject and judge model identifiers, prompt
   and tool-schema hashes, topology, budgets, environment, suite, harness,
   grader, calibration key, runtime trace, and source artifacts. It fails closed
-  on dirty code, incomplete traces, stale or non-authoritative calibration,
+  on dirty code, incomplete traces, incomplete or non-authoritative calibration,
   missing promoted regressions, and explicit hard blockers for unauthorized
   irreversible actions, approval bypass, secret or personal-data leakage,
   corrupted shared state, rollback failure, and trace loss.

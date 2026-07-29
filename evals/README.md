@@ -804,10 +804,16 @@ binds the source ledger hash/head and canonical imported-case digest, and every
 appended trial durably retains that import binding plus the reliability,
 judged-run, calibration, and runtime-trace SHA-256s. Duplicate imports or trial
 identities, pre-import trials, and mixed-trace cohorts are invalid rather than
-last-write-wins. A multi-trial record is validated before its rows are appended.
+last-write-wins. The reliability SHA plus HMAC key id, payload digest, and
+signature identify one authenticated artifact for the whole cohort. A
+multi-trial record is validated against the same ledger SHA/head under an
+exclusive writer lock before its rows are appended.
 `PI_FLOWS_EVAL_ATTESTATION_KEY` must contain at least 32 bytes. The harness reads
 and removes it from its environment before any model child starts; neither the
 key nor raw key material is stored in reliability or the failure ledger.
+The promotion run recomputes calibration for the imported case and full canary
+portfolio. An `unknown` or `stale` prior key is recorded for audit but does not
+invalidate complete, authoritative evidence recomputed by the current run.
 An approval changes the derived suite from `capability` to `regression`; future
 release evals must keep passing the same ledger with `--failure-ledger`. The
 release-record command also reads that ledger and blocks if any promoted case is

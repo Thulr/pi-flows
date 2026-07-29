@@ -95,7 +95,7 @@ reference:
 
 Missing evidence is a failure, not a warning. The command also blocks a dirty
 tree, version disagreement, any failed/excluded/unverified trial, incomplete
-runtime traces, stale or blocking calibration, a critical dimension without
+runtime traces, incomplete or blocking calibration, a critical dimension without
 authority, a declared suite that differs from the measured reliability cases, or
 a promoted regression absent from the reliability artifact. The supplied runtime
 trace path must equal `reliability.runtimeTraceFile`; every trial's exact
@@ -114,7 +114,10 @@ issues, require a complete self-verifying calibration key, all versioned splits,
 coverage/statistics/review evidence, and the release-critical `criterion`
 dimension. The release command recomputes the calibration gate from that
 evidence and requires its key, gate, and artifact hash to match the reliability
-run; a copied or skeletal nonblocking assertion cannot approve.
+run; a copied or skeletal nonblocking assertion cannot approve. A current,
+complete recalibration may record that the prior key was unknown or stale; the
+gate reads the newly computed evidence rather than treating old drift as current
+failure.
 
 ```json
 {

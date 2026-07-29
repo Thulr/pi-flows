@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
-import { CALIBRATION_KEY_INPUTS, CALIBRATION_KEY_SCHEMA_VERSION, canonicalDigest } from "./calibration-key.mjs";
-import { calibrationGateIssues, DEFAULT_CRITICAL_DIMENSIONS } from "./calibration.mjs";
-import { CALIBRATION_SPLITS } from "./calibration-coverage.mjs";
+import { canonicalDigest } from "./calibration-key.mjs";
+import { calibrationPolicyIssues } from "./calibration-policy.mjs";
 import { sha256Bytes, sha256File } from "./release-system.mjs";
 
 export function readJsonSnapshot(file, label, issues = []) {
@@ -56,6 +55,10 @@ export function validateJudgedRun(file, reliability) {
 	if (sha256 !== reliability?.evaluation?.judgedRun?.sha256) {
 		issues.push("judged run SHA-256 does not match reliability provenance");
 	}
+	if (judgedRun?.repro?.judge_model !== reliability?.evaluation?.models?.judge
+		|| judgedRun?.repro?.thulr_version !== reliability?.evaluation?.grader?.version) {
+		issues.push("judged run judge model or grader version does not match reliability provenance");
+	}
 	const cases = new Map();
 	for (const entry of judgedRun?.cases ?? []) {
 		if (typeof entry?.case_id !== "string" || cases.has(entry.case_id)) {
@@ -95,46 +98,6 @@ export function validateCalibrationArtifact(file, reliability) {
 	if (canonicalDigest(calibration?.gate ?? null, 64) !== provenance?.gateDigest) {
 		issues.push("calibration gate does not match reliability provenance");
 	}
-	const inputs = calibration?.key?.inputs;
-	if (calibration?.schemaVersion !== "pi-flows.calibration.v1"
-		|| calibration?.key?.schemaVersion !== CALIBRATION_KEY_SCHEMA_VERSION
-		|| !inputs
-		|| CALIBRATION_KEY_INPUTS.some((key) => !(key in inputs))
-		|| Object.keys(inputs ?? {}).some((key) => !CALIBRATION_KEY_INPUTS.includes(key))
-		|| calibration.key.digest !== canonicalDigest(inputs)) {
-		issues.push("calibration schema or canonical key is invalid");
-	}
-	if (calibration?.drift?.status !== "valid") issues.push("calibration key is stale or has no matching prior evidence");
-	if (inputs?.judgeModel !== reliability?.evaluation?.models?.judge || inputs?.judgeSamples !== reliability?.judgeSamples) {
-		issues.push("calibrated judge identity or sample count does not match reliability provenance");
-	}
-	if (DEFAULT_CRITICAL_DIMENSIONS.some((dimension) => !calibration?.authority?.critical?.includes(dimension))) {
-		issues.push("calibration is missing the release-critical criterion dimension");
-	}
-	for (const split of CALIBRATION_SPLITS) {
-		if (!Number.isInteger(calibration?.splits?.[split]?.caseCount)
-			|| calibration.splits[split].caseCount < 1
-			|| typeof calibration.splits[split].digest !== "string"
-			|| calibration.splits[split].digest.length === 0) {
-			issues.push(`calibration split ${split} is incomplete`);
-		}
-	}
-	if (!Number.isFinite(calibration?.gate?.criticalMissRateCap)) issues.push("calibration critical miss-rate cap is missing");
-	const authoritative = Object.entries(calibration?.coverage ?? {})
-		.filter(([, value]) => value?.authoritative === true)
-		.map(([dimension]) => dimension)
-		.sort();
-	if (canonicalDigest(authoritative, 64) !== canonicalDigest([...(calibration?.authority?.authoritative ?? [])].sort(), 64)) {
-		issues.push("calibration authority is not derivable from coverage evidence");
-	}
-	try {
-		const recomputed = calibrationGateIssues(calibration, { criticalMissRateCap: calibration?.gate?.criticalMissRateCap });
-		if (calibration?.gate?.blocks !== (recomputed.length > 0)
-			|| canonicalDigest(calibration?.gate?.issues ?? null, 64) !== canonicalDigest(recomputed, 64)) {
-			issues.push("calibration gate differs from recomputed evidence");
-		}
-	} catch (error) {
-		issues.push(`calibration evidence cannot be recomputed: ${error.message}`);
-	}
+	issues.push(...calibrationPolicyIssues(calibration, reliability));
 	return { valid: issues.length === 0, issues, sha256, calibration };
 }

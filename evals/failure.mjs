@@ -16,7 +16,7 @@ import {
 } from "./failure-ledger.mjs";
 import { validateProductionTrace } from "./failure-trace.mjs";
 import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
-import { validateCalibrationArtifact, validateJudgedRun } from "./evaluation-artifacts.mjs";
+import { readJsonSnapshot, validateCalibrationArtifact, validateJudgedRun } from "./evaluation-artifacts.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const [command, ...argv] = process.argv.slice(2);
@@ -55,7 +55,10 @@ async function importFailure() {
 
 async function recordTrials() {
 	const caseId = required("case");
-	const { value: reliability } = jsonFile("reliability");
+	const reliabilityPath = path.resolve(root, required("reliability"));
+	const reliabilitySnapshot = readJsonSnapshot(reliabilityPath, "reliability artifact");
+	if (!reliabilitySnapshot.value) throw new Error("reliability artifact could not be read");
+	const reliability = reliabilitySnapshot.value;
 	const judgedRunPath = path.resolve(root, required("judged-run"));
 	const calibrationPath = path.resolve(root, required("calibration"));
 	const runtimeTracePath = path.resolve(root, required("runtime-trace"));
@@ -78,11 +81,13 @@ async function recordTrials() {
 		judgedRunValidation,
 		calibrationValidation,
 		attestationKey,
+		reliabilitySha256: reliabilitySnapshot.sha256,
+		ledgerIdentity,
 		importBinding,
 	});
 	const duplicates = records.filter((record) => existing.has(`${record.runId}:${record.trialId}`));
 	if (duplicates.length) throw new Error(`held-out cohort trials already recorded: ${duplicates.map((record) => record.trialId).join(", ")}`);
-	await appendFailureEvents(ledgerPath, records);
+	await appendFailureEvents(ledgerPath, records, { expectedSha256: ledger.sha256, expectedHeadHash: ledgerIdentity.headHash });
 	console.log(`recorded ${records.length} held-out trial(s) for ${caseId}`);
 	return 0;
 }

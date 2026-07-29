@@ -6,7 +6,7 @@ import { redactText } from "../extensions/pi-flows/sanitize.ts";
 import { canonicalDigest } from "./calibration-key.mjs";
 import { reliabilityAttestationIsValid } from "./reliability.mjs";
 import { promotionProvenanceIssues } from "./evaluation-artifacts.mjs";
-
+import { withExclusiveFileLock } from "./file-lock.mjs";
 export const FAILURE_INPUT_SCHEMA_VERSION = "pi-flows.validated-production-failure.v1";
 export const FAILURE_LEDGER_SCHEMA_VERSION = "pi-flows.failure-ledger-event.v1";
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -201,10 +201,9 @@ function importedEventIssue(event, label) {
 function heldOutEventIssue(event, label) {
 	try {
 		requireKeys(eventBody(event), [
-			"type", "recordedAt", "caseId", "runId", "trialId", "systemDigest", "passed",
-			"traceHealth", "policyPassed", "verifiedOutcomePassed", "runtimeTraceSha256",
-			"importEventHash", "caseDigest", "ledgerSha256", "ledgerHeadHash",
-			"judgedRunSha256", "calibrationSha256", "reliabilityAttestationSignature", "evidenceDigest",
+			"type", "recordedAt", "caseId", "runId", "trialId", "systemDigest", "passed", "traceHealth", "policyPassed", "verifiedOutcomePassed", "runtimeTraceSha256",
+			"importEventHash", "caseDigest", "ledgerSha256", "ledgerHeadHash", "judgedRunSha256", "calibrationSha256", "reliabilitySha256",
+			"attestationKeyId", "attestationPayloadDigest", "reliabilityAttestationSignature", "evidenceDigest",
 		], label);
 		if (!ID_PATTERN.test(event.caseId ?? "") || !requiredText(event.runId, `${label}.runId`, 256)
 			|| !requiredText(event.trialId, `${label}.trialId`, 512)
@@ -216,6 +215,9 @@ function heldOutEventIssue(event, label) {
 			|| !/^[a-f0-9]{64}$/.test(event.ledgerHeadHash ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.judgedRunSha256 ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.calibrationSha256 ?? "")
+			|| !/^[a-f0-9]{64}$/.test(event.reliabilitySha256 ?? "")
+			|| !/^[a-f0-9]{16}$/.test(event.attestationKeyId ?? "")
+			|| !/^[a-f0-9]{64}$/.test(event.attestationPayloadDigest ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.reliabilityAttestationSignature ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.evidenceDigest ?? "")
 			|| typeof event.passed !== "boolean"
@@ -266,14 +268,20 @@ function semanticEventIssue(event, previousEvents, label) {
 }
 
 export async function readFailureLedger(ledgerPath) {
-	let raw;
+	let bytes;
 	try {
-		raw = await readFile(ledgerPath, "utf8");
+		bytes = await readFile(ledgerPath);
 	} catch (error) {
 		if (error.code === "ENOENT") return { valid: true, issues: [], events: [], sha256: null };
 		throw error;
 	}
-	const sha256 = createHash("sha256").update(raw).digest("hex");
+	const sha256 = createHash("sha256").update(bytes).digest("hex");
+	let raw;
+	try {
+		raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+	} catch {
+		return { valid: false, issues: ["failure ledger is not valid UTF-8"], events: [], sha256 };
+	}
 	const events = raw.split(/\r?\n/).filter(Boolean).map((line, index) => {
 		try {
 			return JSON.parse(line);
@@ -301,36 +309,30 @@ export async function appendFailureEvent(ledgerPath, event) {
 	return record;
 }
 
-export async function appendFailureEvents(ledgerPath, events) {
+export async function appendFailureEvents(ledgerPath, events, { expectedSha256, expectedHeadHash } = {}) {
 	if (!Array.isArray(events) || events.length === 0) throw new Error("at least one failure event is required");
-	const ledger = await readFailureLedger(ledgerPath);
-	if (!ledger.valid) throw new Error(`refusing to append to an invalid failure ledger: ${ledger.issues.join("; ")}`);
-	const records = [];
-	for (const event of events) {
-		const prior = [...ledger.events, ...records];
-		const previous = prior.at(-1);
-		const record = eventPayload(event, prior.length + 1, previous?.eventHash ?? null);
-		const semanticIssue = semanticEventIssue(record, prior, "new failure ledger event");
-		if (semanticIssue) throw new Error(`refusing to append invalid failure evidence: ${semanticIssue}`);
-		records.push(record);
-	}
 	await mkdir(path.dirname(ledgerPath), { recursive: true });
-	await appendFile(ledgerPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
-	await chmod(ledgerPath, 0o600);
-	return records;
+	return withExclusiveFileLock(`${ledgerPath}.lock`, async () => {
+		const ledger = await readFailureLedger(ledgerPath);
+		if (!ledger.valid) throw new Error(`refusing to append to an invalid failure ledger: ${ledger.issues.join("; ")}`);
+		if (expectedSha256 !== undefined && ledger.sha256 !== expectedSha256) throw new Error("failure ledger changed after validation");
+		if (expectedHeadHash !== undefined && (ledger.events.at(-1)?.eventHash ?? null) !== expectedHeadHash) throw new Error("failure ledger head changed after validation");
+		const records = [];
+		for (const event of events) {
+			const prior = [...ledger.events, ...records];
+			const previous = prior.at(-1);
+			const record = eventPayload(event, prior.length + 1, previous?.eventHash ?? null);
+			const semanticIssue = semanticEventIssue(record, prior, "new failure ledger event");
+			if (semanticIssue) throw new Error(`refusing to append invalid failure evidence: ${semanticIssue}`);
+			records.push(record);
+		}
+		await appendFile(ledgerPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
+		await chmod(ledgerPath, 0o600);
+		return records;
+	});
 }
 
-export function buildHeldOutTrialEvents({
-	caseId,
-	reliability,
-	systemDigest,
-	runtimeTraceValidation,
-	judgedRunValidation,
-	calibrationValidation,
-	attestationKey,
-	importBinding,
-	recordedAt = new Date().toISOString(),
-}) {
+export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation, judgedRunValidation, calibrationValidation, attestationKey, reliabilitySha256, ledgerIdentity, importBinding, recordedAt = new Date().toISOString() }) {
 	if (!ID_PATTERN.test(caseId ?? "")) throw new Error("caseId must be a stable kebab-case identifier");
 	if (reliability?.schemaVersion !== "pi-flows.reliability.v1") throw new Error("reliability artifact schema is unsupported");
 	if (typeof reliability?.runId !== "string" || reliability.runId.length === 0) throw new Error("reliability artifact must identify its held-out run");
@@ -342,6 +344,12 @@ export function buildHeldOutTrialEvents({
 		|| purpose.ledgerSha256 !== importBinding.ledgerSha256 || purpose.ledgerHeadHash !== importBinding.ledgerHeadHash) {
 		throw new Error("held-out reliability is not bound to the target imported case and source ledger");
 	}
+	if (digest(reliability?.evaluation?.failureLedger) !== digest(ledgerIdentity)
+		|| ledgerIdentity?.sha256 !== importBinding.ledgerSha256
+		|| ledgerIdentity?.headHash !== importBinding.ledgerHeadHash
+		|| digest(ledgerIdentity?.importedCases?.[caseId]) !== digest({ eventHash: importBinding.eventHash, caseDigest: importBinding.caseDigest })) {
+		throw new Error("held-out reliability evaluation ledger does not match the validated source ledger");
+	}
 	if (!runtimeTraceValidation?.valid) {
 		throw new Error(`held-out runtime trace validation failed: ${(runtimeTraceValidation?.issues ?? ["validation was not run"]).join("; ")}`);
 	}
@@ -352,6 +360,7 @@ export function buildHeldOutTrialEvents({
 		throw new Error(`held-out calibration validation failed: ${(calibrationValidation?.issues ?? ["calibration blocks or validation was not run"]).join("; ")}`);
 	}
 	if (!/^[a-f0-9]{64}$/.test(runtimeTraceValidation.sha256 ?? "")) throw new Error("held-out runtime trace validation must bind the trace SHA-256");
+	if (!/^[a-f0-9]{64}$/.test(reliabilitySha256 ?? "")) throw new Error("held-out reliability must bind its exact artifact SHA-256");
 	if (!reliabilityAttestationIsValid(reliability, { key: attestationKey })) throw new Error("held-out reliability lacks a valid operator-authenticated harness attestation");
 	if (!reliability?.evaluatedSystem?.code?.commit || reliability.evaluatedSystem.code.dirty !== false) {
 		throw new Error("held-out reliability must pin a clean evaluated system");
@@ -395,6 +404,9 @@ export function buildHeldOutTrialEvents({
 		ledgerHeadHash: importBinding.ledgerHeadHash,
 		judgedRunSha256: reliability.evaluation.judgedRun.sha256,
 		calibrationSha256: reliability.evaluation.calibration.sha256,
+		reliabilitySha256,
+		attestationKeyId: reliability.harnessAttestation.keyId,
+		attestationPayloadDigest: reliability.harnessAttestation.payloadDigest,
 		reliabilityAttestationSignature: reliability.harnessAttestation.signature,
 		evidenceDigest: digest(trial),
 	}));
@@ -415,6 +427,10 @@ export function buildPromotionDecision(events, caseId, { cohortId, decidedAt = n
 	if (evidence.length < policy.minimumHeldOutTrials) reasons.push(`promotion requires ${policy.minimumHeldOutTrials} held-out trials; found ${evidence.length}`);
 	if (new Set(evidence.map((trial) => trial.systemDigest)).size > 1) reasons.push("held-out trials must evaluate the same evaluated system");
 	if (new Set(evidence.map((trial) => trial.runtimeTraceSha256)).size > 1) reasons.push("held-out trials must come from one runtime trace artifact");
+	if (new Set(evidence.map((trial) => trial.reliabilitySha256)).size > 1
+		|| new Set(evidence.map((trial) => `${trial.attestationKeyId}:${trial.attestationPayloadDigest}:${trial.reliabilityAttestationSignature}`)).size > 1) {
+		reasons.push("held-out trials must come from one authenticated reliability artifact");
+	}
 	if (evidence.some((trial) => !trial.passed)) reasons.push("every held-out trial must pass");
 	if (evidence.some((trial) => trial.traceHealth !== "recorded")) reasons.push("every held-out trial must retain its required runtime trace");
 	if (evidence.some((trial) => !trial.policyPassed)) reasons.push("every held-out trial must pass policy compliance");
