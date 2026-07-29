@@ -127,7 +127,7 @@ function systemIssues(system) {
  * Pure release policy. Every issue here is a hard blocker; there is no warning
  * path for catastrophic safety evidence, unpinned code, or an unauditable run.
  */
-export function evaluateRelease({ evidence, reliability, calibration, system, artifactHashes, regressionCaseIds = [], runtimeTraceValidation, ledgerIdentity }) {
+export function evaluateRelease({ evidence, reliability, calibration, system, artifactHashes, regressionCaseIds = [], runtimeTraceValidation, ledgerIdentity, attestationKey }) {
 	const blockers = [];
 	if (evidence?.schemaVersion !== RELEASE_EVIDENCE_SCHEMA_VERSION) {
 		blockers.push(`release evidence must use ${RELEASE_EVIDENCE_SCHEMA_VERSION}`);
@@ -171,7 +171,7 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	}
 
 	if (reliability?.schemaVersion !== "pi-flows.reliability.v1") blockers.push("reliability artifact schema is unsupported");
-	if (!reliabilityAttestationIsValid(reliability)) blockers.push("reliability artifact lacks a valid canonical harness attestation");
+	if (!reliabilityAttestationIsValid(reliability, { key: attestationKey })) blockers.push("reliability artifact lacks a valid operator-authenticated harness attestation");
 	const health = reliability?.overall?.traceHealth;
 	if (!health?.complete || health.recorded !== health.trials || health.trials < 1) {
 		blockers.push("required runtime trace evidence is incomplete");

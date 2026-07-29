@@ -765,6 +765,8 @@ npm run eval:failure -- import \
   --ledger=/secure/failures.jsonl
 
 # Exercise it through the normal model/eval/trace seam on clean held-out trials.
+# Keep this operator-controlled key outside artifacts and reuse it for `record`.
+export PI_FLOWS_EVAL_ATTESTATION_KEY="$(openssl rand -hex 32)"
 npm run eval -- \
   --failure-ledger=/secure/failures.jsonl \
   --failure-promotion=production-routing-failure \
@@ -795,7 +797,7 @@ older failed cohorts remain in the ledger without poisoning a later clean cohort
 `record` accepts only a reliability artifact stamped by
 `--failure-promotion=<case>` and independently resolves every reliability
 trial's exact root in `--runtime-trace`. It also verifies the canonical harness
-attestation, the exact `candidate.json` judge verdicts, and the complete
+HMAC attestation, the exact `candidate.json` judge verdicts, and the complete
 nonblocking calibration artifact recorded by the run; a dry run, ordinary
 filtered run, or hand-authored pass summary is not promotion evidence. The stamp
 binds the source ledger hash/head and canonical imported-case digest, and every
@@ -803,6 +805,9 @@ appended trial durably retains that import binding plus the reliability,
 judged-run, calibration, and runtime-trace SHA-256s. Duplicate imports or trial
 identities, pre-import trials, and mixed-trace cohorts are invalid rather than
 last-write-wins. A multi-trial record is validated before its rows are appended.
+`PI_FLOWS_EVAL_ATTESTATION_KEY` must contain at least 32 bytes. The harness reads
+and removes it from its environment before any model child starts; neither the
+key nor raw key material is stored in reliability or the failure ledger.
 An approval changes the derived suite from `capability` to `regression`; future
 release evals must keep passing the same ledger with `--failure-ledger`. The
 release-record command also reads that ledger and blocks if any promoted case is

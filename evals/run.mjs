@@ -32,14 +32,11 @@ import { evaluationArtifactProvenance } from "./evaluation-artifacts.mjs";
 import * as thulr from "./thulr.mjs";
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
-
 loadDotenv();
-
 const { flag, has, bool, flags, rateFlag, positiveNumberFlag, positiveIntegerFlag } = createFlagReader(process.argv.slice(2));
 const failureSource = await corpusWithFailureLedger(BASE_EVAL_CORPUS, flag("failure-ledger", null) ? p(flag("failure-ledger", null)) : null);
 const EVAL_CORPUS = failureSource.corpus;
 const CASES = EVAL_CORPUS.measurement;
-
 const cliModel = flag("model", null);
 const model = cliModel ?? DEFAULT_EVAL_MODEL;
 const modelSource = cliModel ? "--model" : process.env.PI_FLOWS_EVAL_MODEL ? "PI_FLOWS_EVAL_MODEL" : "eval default";
@@ -54,6 +51,7 @@ const dryRun = bool("dry-run");
 // must never be reported as a subject regression.
 const strictTrace = bool("strict-trace");
 const promotionCaseId = flag("failure-promotion", null);
+const RELIABILITY_ATTESTATION_KEY = process.env.PI_FLOWS_EVAL_ATTESTATION_KEY ?? null; delete process.env.PI_FLOWS_EVAL_ATTESTATION_KEY;
 const filter = promotionCaseId ?? flag("filter", "");
 const includeControls = has("include-controls") || filter.length > 0;
 // Cross-model judge: a different vendor than the subject under test breaks
@@ -364,12 +362,13 @@ async function main() {
 		: { name: "thulr", version: thulr.doctor().report?.version ?? null };
 
 	const selected = selectMeasurementCases(CASES, { filter, includeControls });
-	const selectedCalibration = CALIBRATION_CASES.filter((c) => !filter || c.name.includes(filter));
+	const selectedCalibration = promotionCaseId ? CALIBRATION_CASES : CALIBRATION_CASES.filter((c) => !filter || c.name.includes(filter));
 	if (selected.length + selectedCalibration.length === 0) {
 		console.error(`No eval cases match --filter=${filter}. Available: ${[...CASES, ...CALIBRATION_CASES].map((c) => c.name).join(", ")}`);
 		process.exit(2);
 	}
 	if (promotionCaseId) {
+		if (!RELIABILITY_ATTESTATION_KEY) throw new Error("--failure-promotion requires PI_FLOWS_EVAL_ATTESTATION_KEY");
 		const promotionCase = selected.length === 1 && selected[0].name === promotionCaseId ? selected[0] : null;
 		if (!promotionCase?.productionFailure) {
 			console.error(`--failure-promotion=${promotionCaseId} must select exactly one imported production-failure case`);
@@ -409,6 +408,7 @@ async function main() {
 		runId: EVAL_RUN_ID,
 		runtimeTraceFile: rel(RUNTIME_TRACE),
 		evaluatedSystem: EVALUATED_SYSTEM,
+		attestationKey: RELIABILITY_ATTESTATION_KEY,
 		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel, grader: evaluatedGrader, failureLedger: failureSource.failureLedger }),
 		evidencePurpose: promotionCaseId ? {
 			kind: "failure-promotion-held-out",

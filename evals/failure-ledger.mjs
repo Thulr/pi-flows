@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { redactText } from "../extensions/pi-flows/sanitize.ts";
 import { canonicalDigest } from "./calibration-key.mjs";
 import { reliabilityAttestationIsValid } from "./reliability.mjs";
+import { promotionProvenanceIssues } from "./evaluation-artifacts.mjs";
 
 export const FAILURE_INPUT_SCHEMA_VERSION = "pi-flows.validated-production-failure.v1";
 export const FAILURE_LEDGER_SCHEMA_VERSION = "pi-flows.failure-ledger-event.v1";
@@ -202,7 +204,7 @@ function heldOutEventIssue(event, label) {
 			"type", "recordedAt", "caseId", "runId", "trialId", "systemDigest", "passed",
 			"traceHealth", "policyPassed", "verifiedOutcomePassed", "runtimeTraceSha256",
 			"importEventHash", "caseDigest", "ledgerSha256", "ledgerHeadHash",
-			"judgedRunSha256", "calibrationSha256", "reliabilityAttestationDigest", "evidenceDigest",
+			"judgedRunSha256", "calibrationSha256", "reliabilityAttestationSignature", "evidenceDigest",
 		], label);
 		if (!ID_PATTERN.test(event.caseId ?? "") || !requiredText(event.runId, `${label}.runId`, 256)
 			|| !requiredText(event.trialId, `${label}.trialId`, 512)
@@ -214,7 +216,7 @@ function heldOutEventIssue(event, label) {
 			|| !/^[a-f0-9]{64}$/.test(event.ledgerHeadHash ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.judgedRunSha256 ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.calibrationSha256 ?? "")
-			|| !/^[a-f0-9]{64}$/.test(event.reliabilityAttestationDigest ?? "")
+			|| !/^[a-f0-9]{64}$/.test(event.reliabilityAttestationSignature ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.evidenceDigest ?? "")
 			|| typeof event.passed !== "boolean"
 			|| !["recorded", "degraded", "missing"].includes(event.traceHealth)
@@ -268,9 +270,10 @@ export async function readFailureLedger(ledgerPath) {
 	try {
 		raw = await readFile(ledgerPath, "utf8");
 	} catch (error) {
-		if (error.code === "ENOENT") return { valid: true, issues: [], events: [] };
+		if (error.code === "ENOENT") return { valid: true, issues: [], events: [], sha256: null };
 		throw error;
 	}
+	const sha256 = createHash("sha256").update(raw).digest("hex");
 	const events = raw.split(/\r?\n/).filter(Boolean).map((line, index) => {
 		try {
 			return JSON.parse(line);
@@ -290,7 +293,7 @@ export async function readFailureLedger(ledgerPath) {
 		if (semanticIssue) issues.push(semanticIssue);
 		previousHash = eventHash;
 	}
-	return { valid: issues.length === 0, issues, events };
+	return { valid: issues.length === 0, issues, events, sha256 };
 }
 
 export async function appendFailureEvent(ledgerPath, event) {
@@ -324,6 +327,7 @@ export function buildHeldOutTrialEvents({
 	runtimeTraceValidation,
 	judgedRunValidation,
 	calibrationValidation,
+	attestationKey,
 	importBinding,
 	recordedAt = new Date().toISOString(),
 }) {
@@ -348,10 +352,12 @@ export function buildHeldOutTrialEvents({
 		throw new Error(`held-out calibration validation failed: ${(calibrationValidation?.issues ?? ["calibration blocks or validation was not run"]).join("; ")}`);
 	}
 	if (!/^[a-f0-9]{64}$/.test(runtimeTraceValidation.sha256 ?? "")) throw new Error("held-out runtime trace validation must bind the trace SHA-256");
-	if (!reliabilityAttestationIsValid(reliability)) throw new Error("held-out reliability lacks a valid canonical harness attestation");
+	if (!reliabilityAttestationIsValid(reliability, { key: attestationKey })) throw new Error("held-out reliability lacks a valid operator-authenticated harness attestation");
 	if (!reliability?.evaluatedSystem?.code?.commit || reliability.evaluatedSystem.code.dirty !== false) {
 		throw new Error("held-out reliability must pin a clean evaluated system");
 	}
+	const provenanceIssues = promotionProvenanceIssues(reliability, caseId);
+	if (provenanceIssues.length) throw new Error(provenanceIssues.join("; "));
 	const completeSystemDigest = evaluatedSystemDigest(reliability);
 	if (systemDigest !== completeSystemDigest) throw new Error("systemDigest must match the complete evaluated-system provenance");
 	const suiteIds = reliability?.evaluation?.suite?.caseIds;
@@ -365,7 +371,9 @@ export function buildHeldOutTrialEvents({
 	const trialIds = matching.trials.map((trial) => trial.trialId);
 	if (new Set(trialIds).size !== trialIds.length) throw new Error("held-out reliability contains duplicate trial identities");
 	for (const trial of matching.trials) {
-		if (trial.objective?.pass !== true || trial.judge?.criterion?.verdict !== true || typeof trial.model !== "string" || trial.model.length === 0) {
+		if (trial.traceCaseId !== trial.trialId
+			|| trial.objective?.pass !== true || trial.judge?.criterion?.verdict !== true
+			|| typeof trial.model !== "string" || trial.model.length === 0) {
 			throw new Error(`${trial.trialId ?? caseId} lacks canonical objective, model, or judged-run evidence`);
 		}
 	}
@@ -387,7 +395,7 @@ export function buildHeldOutTrialEvents({
 		ledgerHeadHash: importBinding.ledgerHeadHash,
 		judgedRunSha256: reliability.evaluation.judgedRun.sha256,
 		calibrationSha256: reliability.evaluation.calibration.sha256,
-		reliabilityAttestationDigest: reliability.harnessAttestation.digest,
+		reliabilityAttestationSignature: reliability.harnessAttestation.signature,
 		evidenceDigest: digest(trial),
 	}));
 }

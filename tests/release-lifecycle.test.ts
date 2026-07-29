@@ -29,11 +29,13 @@ import { validateProductionTrace } from "../evals/failure-trace.mjs";
 import { buildCalibrationReport } from "../evals/calibration.mjs";
 import { reliabilityAttestation } from "../evals/reliability.mjs";
 import { sha256File } from "../evals/release-system.mjs";
+import { validateCalibrationArtifact } from "../evals/evaluation-artifacts.mjs";
 
 const blockerEvidence = () => Object.fromEntries(HARD_BLOCKER_KEYS.map((key) => [
 	key,
 	{ status: "passed", evidence: [`check:${key}`] },
 ]));
+const TEST_ATTESTATION_KEY = "test-only-attestation-material-0000000000000001";
 
 function releaseInputs() {
 	const calibrationInputs = {
@@ -139,7 +141,8 @@ function releaseInputs() {
 		},
 		judgedRun: { sha256: "f".repeat(64) },
 	};
-	inputs.reliability.harnessAttestation = reliabilityAttestation(inputs.reliability);
+	inputs.attestationKey = TEST_ATTESTATION_KEY;
+	inputs.reliability.harnessAttestation = reliabilityAttestation(inputs.reliability, { key: TEST_ATTESTATION_KEY });
 	return inputs;
 }
 
@@ -274,6 +277,10 @@ test("release evaluation fails closed on every catastrophic blocker and incomple
 	assert.match(evaluateRelease(mismatchedArtifactHashes).blockers.join("\n"), /runtime trace artifact hash does not match validated trace bytes/);
 	assert.match(evaluateRelease(mismatchedArtifactHashes).blockers.join("\n"), /failure ledger artifact hash does not match validated ledger bytes/);
 
+	const forgedAttestation = releaseInputs();
+	forgedAttestation.attestationKey = "different-test-attestation-material-000000000001";
+	assert.match(evaluateRelease(forgedAttestation).blockers.join("\n"), /operator-authenticated harness attestation/);
+
 	const duplicateTrial = releaseInputs();
 	duplicateTrial.reliability.cases[0].trials[1] = structuredClone(duplicateTrial.reliability.cases[0].trials[0]);
 	assert.match(evaluateRelease(duplicateTrial).blockers.join("\n"), /duplicate trial identity/);
@@ -385,6 +392,23 @@ const heldOutPurpose = (binding = testImportBinding()) => ({
 	...binding,
 });
 
+function authenticateHeldOut(reliability, caseId = "production-routing-failure") {
+	reliability.evaluation.topology = {
+		arm: "flows",
+		cases: { [caseId]: { mode: "single", paramsDigest: "8".repeat(64) } },
+	};
+	reliability.evaluation.budgets.cases = {
+		[caseId]: {
+			maxCostUsd: 1,
+			maxTokens: 20_000,
+			maxGeneratedTokens: null,
+			caseTimeoutMs: 120_000,
+			effectiveTimeoutMs: 120_000,
+		},
+	};
+	reliability.harnessAttestation = reliabilityAttestation(reliability, { key: TEST_ATTESTATION_KEY });
+}
+
 test("validated production failures become sanitized executable capability cases", async () => {
 	const imported = buildFailureImport(failureInput(), { importedAt: "2026-07-28T11:00:00.000Z", traceValidation: validProductionTrace() });
 	assert.equal(imported.type, "failure.imported");
@@ -487,6 +511,23 @@ test("production failure import rejects a structurally incomplete linked trace",
 	assert.match(validation.issues.join("\n"), /structural gate failed/);
 });
 
+test("promotion calibration validation enforces the release calibration policy", async () => {
+	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-promotion-calibration-"));
+	const inputs = releaseInputs();
+	const calibrationFile = path.join(directory, "calibration.json");
+	await writeFile(calibrationFile, `${JSON.stringify(inputs.calibration)}\n`, "utf8");
+	inputs.reliability.evaluation.calibration.sha256 = sha256File(calibrationFile);
+	assert.equal(validateCalibrationArtifact(calibrationFile, inputs.reliability).valid, true);
+
+	const stale = structuredClone(inputs.calibration);
+	stale.drift.status = "unknown";
+	await writeFile(calibrationFile, `${JSON.stringify(stale)}\n`, "utf8");
+	inputs.reliability.evaluation.calibration.sha256 = sha256File(calibrationFile);
+	const validation = validateCalibrationArtifact(calibrationFile, inputs.reliability);
+	assert.equal(validation.valid, false);
+	assert.match(validation.issues.join("\n"), /stale or has no matching prior evidence/);
+});
+
 test("promotion is append-only and requires stable held-out success on one system", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-failure-ledger-"));
 	const ledgerPath = path.join(directory, "ledger.jsonl");
@@ -509,10 +550,11 @@ test("promotion is append-only and requires stable held-out success on one syste
 	reliability.cases[0].trials = reliability.cases[0].trials.slice(0, 3).map((trial, index) => ({
 		...trial,
 		trialId: `production-routing-failure::trial-00${index + 1}`,
+		traceCaseId: `production-routing-failure::trial-00${index + 1}`,
 	}));
 	reliability.subjectTrials = 3;
 	reliability.evaluation.budgets.subjectTrials = 3;
-	reliability.harnessAttestation = reliabilityAttestation(reliability);
+	authenticateHeldOut(reliability);
 	const trials = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability,
@@ -520,6 +562,7 @@ test("promotion is append-only and requires stable held-out success on one syste
 		runtimeTraceValidation: heldOutTrace(reliability),
 		judgedRunValidation: heldOutJudgedRun(),
 		calibrationValidation: heldOutCalibration(),
+		attestationKey: TEST_ATTESTATION_KEY,
 		importBinding,
 		recordedAt: "2026-07-28T12:00:00.000Z",
 	});
@@ -551,13 +594,17 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	const imported = buildFailureImport(failureInput(), { traceValidation: validProductionTrace() });
 	const clean = releaseInputs().reliability;
 	clean.cases[0].caseId = "production-routing-failure";
-	clean.cases[0].trials = clean.cases[0].trials.slice(0, 3);
+	clean.cases[0].trials = clean.cases[0].trials.slice(0, 3).map((trial, index) => ({
+		...trial,
+		trialId: `production-routing-failure::trial-00${index + 1}`,
+		traceCaseId: `production-routing-failure::trial-00${index + 1}`,
+	}));
 	clean.subjectTrials = 3;
 	clean.evaluation.budgets.subjectTrials = 3;
 	const importBinding = testImportBinding();
 	clean.evidencePurpose = heldOutPurpose(importBinding);
 	clean.evaluation.suite.caseIds = ["production-routing-failure"];
-	clean.harnessAttestation = reliabilityAttestation(clean);
+	authenticateHeldOut(clean);
 	const trialEvents = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability: clean,
@@ -565,6 +612,7 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 		runtimeTraceValidation: heldOutTrace(clean),
 		judgedRunValidation: heldOutJudgedRun(),
 		calibrationValidation: heldOutCalibration(),
+		attestationKey: TEST_ATTESTATION_KEY,
 		importBinding,
 	});
 
@@ -595,6 +643,20 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	differentModel.evaluation.models.subjects = ["provider/different-subject"];
 	assert.notEqual(evaluatedSystemDigest(differentModel), evaluatedSystemDigest(clean), "promotion identity includes model/topology/budget provenance");
 
+	const reusedJudgement = structuredClone(clean);
+	reusedJudgement.cases[0].trials[1].traceCaseId = reusedJudgement.cases[0].trials[0].traceCaseId;
+	reusedJudgement.harnessAttestation = reliabilityAttestation(reusedJudgement, { key: TEST_ATTESTATION_KEY });
+	assert.throws(() => buildHeldOutTrialEvents({
+		caseId: "production-routing-failure",
+		reliability: reusedJudgement,
+		systemDigest: evaluatedSystemDigest(reusedJudgement),
+		runtimeTraceValidation: heldOutTrace(reusedJudgement),
+		judgedRunValidation: heldOutJudgedRun(),
+		calibrationValidation: heldOutCalibration(),
+		attestationKey: TEST_ATTESTATION_KEY,
+		importBinding,
+	}), /canonical objective, model, or judged-run evidence/);
+
 	const ordinaryReliability = structuredClone(clean);
 	delete ordinaryReliability.evidencePurpose;
 	assert.throws(() => buildHeldOutTrialEvents({
@@ -604,6 +666,7 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 		runtimeTraceValidation: heldOutTrace(ordinaryReliability),
 		judgedRunValidation: heldOutJudgedRun(),
 		calibrationValidation: heldOutCalibration(),
+		attestationKey: TEST_ATTESTATION_KEY,
 		importBinding,
 	}), /dedicated held-out promotion run/);
 	assert.throws(() => buildHeldOutTrialEvents({
@@ -613,6 +676,7 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 		runtimeTraceValidation: { valid: false, issues: ["missing root"], matchedTrials: 2 },
 		judgedRunValidation: heldOutJudgedRun(),
 		calibrationValidation: heldOutCalibration(),
+		attestationKey: TEST_ATTESTATION_KEY,
 		importBinding,
 	}), /runtime trace validation failed/);
 });
@@ -641,13 +705,17 @@ test("failure ledger rejects duplicate imports and held-out evidence before impo
 
 	const reliability = releaseInputs().reliability;
 	reliability.cases[0].caseId = "production-routing-failure";
-	reliability.cases[0].trials = reliability.cases[0].trials.slice(0, 3);
+	reliability.cases[0].trials = reliability.cases[0].trials.slice(0, 3).map((trial, index) => ({
+		...trial,
+		trialId: `production-routing-failure::trial-00${index + 1}`,
+		traceCaseId: `production-routing-failure::trial-00${index + 1}`,
+	}));
 	reliability.subjectTrials = 3;
 	reliability.evaluation.budgets.subjectTrials = 3;
 	reliability.evaluation.suite.caseIds = ["production-routing-failure"];
 	const importBinding = testImportBinding();
 	reliability.evidencePurpose = heldOutPurpose(importBinding);
-	reliability.harnessAttestation = reliabilityAttestation(reliability);
+	authenticateHeldOut(reliability);
 	const [trial] = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability,
@@ -655,6 +723,7 @@ test("failure ledger rejects duplicate imports and held-out evidence before impo
 		runtimeTraceValidation: heldOutTrace(reliability),
 		judgedRunValidation: heldOutJudgedRun(),
 		calibrationValidation: heldOutCalibration(),
+		attestationKey: TEST_ATTESTATION_KEY,
 		importBinding,
 	});
 	await assert.rejects(

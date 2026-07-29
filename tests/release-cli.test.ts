@@ -11,9 +11,11 @@ import { buildCalibrationReport } from "../evals/calibration.mjs";
 import { reliabilityAttestation } from "../evals/reliability.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
+const TEST_ATTESTATION_KEY = "test-only-attestation-material-0000000000000001";
 const run = (script: string, args: string[]) => spawnSync(process.execPath, ["--import", "tsx", script, ...args], {
 	cwd: root,
 	encoding: "utf8",
+	env: { ...process.env, PI_FLOWS_EVAL_ATTESTATION_KEY: TEST_ATTESTATION_KEY },
 });
 
 async function writeJson(directory: string, name: string, value: unknown) {
@@ -188,7 +190,7 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 	releaseReliability.evaluation.judgedRun = { sha256: "f".repeat(64) };
 	const trace = path.join(directory, "runtime.jsonl");
 	const traceRows = attachRuntimeTrace(releaseReliability, trace);
-	releaseReliability.harnessAttestation = reliabilityAttestation(releaseReliability);
+	releaseReliability.harnessAttestation = reliabilityAttestation(releaseReliability, { key: TEST_ATTESTATION_KEY });
 	const reliabilityPath = await writeJson(directory, "reliability.json", releaseReliability);
 	await writeFile(trace, `${traceRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 	const out = path.join(directory, "release.json");
@@ -287,7 +289,7 @@ test("failure command imports a capability case and refuses dry-run promotion ev
 		`--reliability-out=${path.join(directory, "capability-reliability.json")}`,
 	]);
 	assert.equal(capabilityRun.status, 0, `${capabilityRun.stdout}\n${capabilityRun.stderr}`);
-	assert.match(capabilityRun.stdout, /suite: capability 1 \(0 excluded\)/);
+	assert.match(capabilityRun.stdout, /capability 1 \(0 excluded\)/);
 	const capabilityReport = JSON.parse(await readFile(path.join(directory, "capability-reliability.json"), "utf8"));
 	assert.equal(capabilityReport.evidencePurpose.kind, "failure-promotion-held-out");
 	assert.equal(capabilityReport.evidencePurpose.caseId, "production-routing-failure");

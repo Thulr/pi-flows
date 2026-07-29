@@ -3,7 +3,6 @@ import { CALIBRATION_CASES, CASES } from "./cases.mjs";
 import { PATTERN_CALIBRATION_CASES, PATTERN_CASES } from "./pattern-cases.mjs";
 import { SELECTION_CASES } from "./selection-cases.mjs";
 import { failureCasesFromLedger, failureLedgerIdentity, readFailureLedger } from "./failure-ledger.mjs";
-import { sha256File } from "./release-system.mjs";
 
 export { CALIBRATION_CASES, CASES, PATTERN_CALIBRATION_CASES, PATTERN_CASES, SELECTION_CASES };
 
@@ -29,6 +28,6 @@ export async function corpusWithFailureLedger(corpus, ledgerPath) {
 	return {
 		corpus: { ...corpus, measurement: [...corpus.measurement, ...imported] },
 		issues: [],
-		failureLedger: failureLedgerIdentity(ledger.events, sha256File(ledgerPath)),
+		failureLedger: failureLedgerIdentity(ledger.events, ledger.sha256),
 	};
 }

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete } from "../extensions/pi-flows/trace-report.ts";
-import { sha256File } from "./release-system.mjs";
+import { sha256Bytes } from "./release-system.mjs";
 
 export function validateProductionTrace(traceLink, { baseDir = process.cwd() } = {}) {
 	const issues = [];
@@ -13,8 +13,9 @@ export function validateProductionTrace(traceLink, { baseDir = process.cwd() } =
 	let rows = [];
 	if (traceFile) {
 		try {
-			const raw = readFileSync(traceFile, "utf8");
-			actualSha256 = sha256File(traceFile);
+			const bytes = readFileSync(traceFile);
+			const raw = bytes.toString("utf8");
+			actualSha256 = sha256Bytes(bytes);
 			if (actualSha256 !== traceLink.sha256) issues.push("production trace file sha256 does not match the validated failure link");
 			rows = raw
 				.split(/\r?\n/)

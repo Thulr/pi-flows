@@ -6,13 +6,16 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createFlagReader } from "./cli-flags.mjs";
 import { buildReleaseManifest } from "./release-manifest.mjs";
-import { captureReleaseSystem, sha256File } from "./release-system.mjs";
+import { captureReleaseSystem } from "./release-system.mjs";
 import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
 import { failureLedgerIdentity, promotedRegressionCaseIds, readFailureLedger } from "./failure-ledger.mjs";
+import { readJsonSnapshot } from "./evaluation-artifacts.mjs";
 
 const moduleRoot = path.resolve(import.meta.dirname, "..");
 const { flag } = createFlagReader(process.argv.slice(2));
 const root = path.resolve(moduleRoot, flag("repo-root", moduleRoot));
+const attestationKey = process.env.PI_FLOWS_EVAL_ATTESTATION_KEY ?? null;
+delete process.env.PI_FLOWS_EVAL_ATTESTATION_KEY;
 
 function requiredPath(name) {
 	const value = flag(name, null);
@@ -38,22 +41,27 @@ async function main() {
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	const regressionCaseIds = promotedRegressionCaseIds(ledger.events);
-	const ledgerIdentity = failureLedgerIdentity(ledger.events, sha256File(ledgerPath));
+	const ledgerIdentity = failureLedgerIdentity(ledger.events, ledger.sha256);
+	const reliabilitySnapshot = readJsonSnapshot(reliabilityPath, "reliability artifact");
+	const calibrationSnapshot = readJsonSnapshot(calibrationPath, "calibration artifact");
+	if (!reliabilitySnapshot.value || !calibrationSnapshot.value) throw new Error("release artifacts could not be read");
+	const runtimeTraceValidation = validateReleaseRuntimeTrace(runtimeTracePath, reliabilitySnapshot.value, { repoRoot: root });
 	const inputs = {
 		evidence: readJson(evidencePath, "release evidence"),
-		reliability: readJson(reliabilityPath, "reliability artifact"),
-		calibration: readJson(calibrationPath, "calibration artifact"),
+		reliability: reliabilitySnapshot.value,
+		calibration: calibrationSnapshot.value,
 		system: captureReleaseSystem(root),
 		artifactHashes: {
-			reliability: sha256File(reliabilityPath),
-			calibration: sha256File(calibrationPath),
-			runtimeTrace: sha256File(runtimeTracePath),
-			failureLedger: sha256File(ledgerPath),
+			reliability: reliabilitySnapshot.sha256,
+			calibration: calibrationSnapshot.sha256,
+			runtimeTrace: runtimeTraceValidation.sha256,
+			failureLedger: ledger.sha256,
 		},
 		regressionCaseIds,
 		ledgerIdentity,
+		attestationKey,
+		runtimeTraceValidation,
 	};
-	inputs.runtimeTraceValidation = validateReleaseRuntimeTrace(runtimeTracePath, inputs.reliability, { repoRoot: root });
 	const manifest = buildReleaseManifest(inputs);
 	mkdirSync(path.dirname(out), { recursive: true });
 	writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });

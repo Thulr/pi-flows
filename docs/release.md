@@ -36,6 +36,7 @@ permission, and provenance is generated automatically.
    Include the controlled production-failure ledger when one exists:
 
    ```bash
+   export PI_FLOWS_EVAL_ATTESTATION_KEY="$(openssl rand -hex 32)"
    npm run eval -- \
      --trials=5 \
      --strict-trace \
@@ -162,6 +163,10 @@ run; a copied or skeletal nonblocking assertion cannot approve.
 Copy `models`, `topology`, `budgets`, `suite`, and `grader` from the reliability
 artifact's `evaluation` object, then add the independently owned hard-blocker
 references. Any edit or substitution blocks release.
+
+The release record requires the same operator-controlled
+`PI_FLOWS_EVAL_ATTESTATION_KEY` that authenticated the reliability run. Keep it
+in the release secret store, never in an artifact or the repository.
 
 ```bash
 npm run eval:release -- \

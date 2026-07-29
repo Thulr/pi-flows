@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete } from "../extensions/pi-flows/trace-report.ts";
-import { sha256File } from "./release-system.mjs";
+import { sha256Bytes } from "./release-system.mjs";
 
 function resolved(repoRoot, candidate) {
 	return typeof candidate === "string" && candidate.length > 0
@@ -19,8 +19,9 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	let rows = [];
 	let traceSha256 = null;
 	try {
-		const raw = readFileSync(actualFile, "utf8");
-		traceSha256 = sha256File(actualFile);
+		const bytes = readFileSync(actualFile);
+		const raw = bytes.toString("utf8");
+		traceSha256 = sha256Bytes(bytes);
 		rows = raw
 			.split(/\r?\n/)
 			.filter((line) => line.trim())

@@ -192,6 +192,7 @@ export function writeReliabilityArtifact(summaries, verdicts, {
 	evaluatedSystem,
 	evaluation,
 	evidencePurpose,
+	attestationKey,
 	displayPath = out,
 	log = console.log,
 }) {
@@ -224,6 +225,7 @@ export function writeReliabilityArtifact(summaries, verdicts, {
 		evaluatedSystem,
 		evaluation,
 		evidencePurpose,
+		attestationKey,
 	});
 	mkdirSync(dirname(out), { recursive: true });
 	writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");

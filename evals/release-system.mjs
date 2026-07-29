@@ -13,6 +13,10 @@ export function sha256File(file) {
 	return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+export function sha256Bytes(bytes) {
+	return createHash("sha256").update(bytes).digest("hex");
+}
+
 function trackedFiles(root, directories) {
 	const output = execFileSync("git", ["ls-files", "-z", "--", ...directories], { cwd: root });
 	return output.toString("utf8").split("\0").filter(Boolean).sort();

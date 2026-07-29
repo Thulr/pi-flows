@@ -16,13 +16,14 @@ import {
 } from "./failure-ledger.mjs";
 import { validateProductionTrace } from "./failure-trace.mjs";
 import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
-import { sha256File } from "./release-system.mjs";
 import { validateCalibrationArtifact, validateJudgedRun } from "./evaluation-artifacts.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const [command, ...argv] = process.argv.slice(2);
 const { flag } = createFlagReader(argv);
 const ledgerPath = path.resolve(root, flag("ledger", ".thulr/failures/ledger.jsonl"));
+const attestationKey = process.env.PI_FLOWS_EVAL_ATTESTATION_KEY ?? null;
+delete process.env.PI_FLOWS_EVAL_ATTESTATION_KEY;
 
 function required(name) {
 	const value = flag(name, null);
@@ -65,7 +66,7 @@ async function recordTrials() {
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	if (!ledger.events.some((event) => event.type === "failure.imported" && event.case?.id === caseId)) throw new Error(`failure ${caseId} has not been imported`);
-	const ledgerIdentity = failureLedgerIdentity(ledger.events, sha256File(ledgerPath));
+	const ledgerIdentity = failureLedgerIdentity(ledger.events, ledger.sha256);
 	const importedCase = ledgerIdentity.importedCases[caseId];
 	const importBinding = { ...importedCase, ledgerSha256: ledgerIdentity.sha256, ledgerHeadHash: ledgerIdentity.headHash };
 	const existing = new Set(ledger.events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId).map((event) => `${event.runId}:${event.trialId}`));
@@ -76,6 +77,7 @@ async function recordTrials() {
 		runtimeTraceValidation,
 		judgedRunValidation,
 		calibrationValidation,
+		attestationKey,
 		importBinding,
 	});
 	const duplicates = records.filter((record) => existing.has(`${record.runId}:${record.trialId}`));

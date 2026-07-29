@@ -38,8 +38,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   reject duplicate identities, release traces pass structural read-back, and
   calibration keys are complete and self-verifying. Production traces now pass
   that structural gate too; promotion evidence is bound to its prior import,
-  canonical reliability attestation, judged-run artifact, calibration artifact,
-  and one runtime-trace digest. Release recomputes calibration authority and
+  operator-authenticated reliability HMAC, judged-run artifact, calibration
+  artifact, and one runtime-trace digest. Release recomputes calibration authority and
   gate issues, rejects duplicated trials/imports and skeletal calibration, and
   cross-checks validated artifact hashes.
 
