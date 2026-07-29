@@ -72,6 +72,8 @@
     "eval:review": "node evals/review.mjs",
     "eval:pareto": "node evals/pareto.mjs",
     "eval:select": "node evals/select.mjs",
+    "eval:failure": "node --import tsx evals/failure.mjs",
+    "eval:release": "node --import tsx evals/release.mjs",
     "trace:report": "node scripts/trace-report.mjs"
   }
 }

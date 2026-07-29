@@ -57,8 +57,11 @@ npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdi
 npm run eval -- --strict-trace     # block the run when its runtime trace evidence is incomplete (off by default)
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --run-id=release-123 --runtime-trace=/tmp/runtime.jsonl # stable eval/runtime linkage
+npm run eval -- --failure-ledger=/secure/failures.jsonl # include imported capability/regression cases
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 npm run eval:select                # tool-selection eval: should the parent model call flow at all?
+npm run eval:failure -- inspect --ledger=/secure/failures.jsonl # inspect the production-failure ledger
+npm run eval:release -- --evidence=/secure/release-evidence.json ... # write a release record
 ```
 
 `--trials=N` measures **subject reliability** and is independent of
@@ -677,6 +680,110 @@ record. `thulr experiment show .thulr/experiments/<id>.json` prints the full sta
 and `thulr dashboard` watches a run live. **Cost note:** every candidate is a full
 suite run on the subject model plus a judge pass — scope with `--filter` in the
 template or `--max-candidates` before launching a wide grid.
+
+## Production failures and regression promotion
+
+`npm run eval:failure` provides the controlled path from one validated production
+failure to a durable regression guard. The ledger is JSONL, hash-chained, written
+with mode `0600`, and append-only: imports, held-out trials, denied promotions,
+and approved promotions are separate events. Keep it in access-controlled
+release evidence storage (the default `.thulr/failures/ledger.jsonl` is local and
+ignored), not in the package or repository.
+
+Prepare a `pi-flows.validated-production-failure.v1` JSON input with:
+
+- a validation attestation (`status:"validated"`, named validator, validation
+  time, and `privacyReview:"passed"`);
+- a stable case id, task family/structure, bounded task and literal criterion;
+- a declarative `answer-includes` objective;
+- only the minimized initial-state files needed to reproduce the failure;
+- the production run/case/trial ids, trace file, trace/root span ids, and trace
+  digest; and
+- a promotion policy of 3–50 held-out trials at a required pass rate of 1.
+
+The importer rejects unknown fields and workspace traversal, bounds stored text,
+and redacts secret-shaped values, email addresses, and home paths. Raw
+credentials, hidden reasoning, and unrelated user content are neither accepted
+fields nor required evidence. The privacy review must minimize before import;
+redaction is a final containment layer, not permission to ingest a raw incident
+dump.
+
+```json
+{
+  "schemaVersion": "pi-flows.validated-production-failure.v1",
+  "validation": {
+    "status": "validated",
+    "validator": "incident-reviewer",
+    "validatedAt": "2026-07-28T10:00:00Z",
+    "privacyReview": "passed"
+  },
+  "case": {
+    "id": "production-routing-failure",
+    "title": "Production routing failure",
+    "taskFamily": "routing",
+    "structure": {
+      "decomposability": "atomic",
+      "dependencyDepth": 1,
+      "sharedState": "read-only",
+      "risk": "medium",
+      "reversibility": "reversible"
+    },
+    "agent": "recon",
+    "task": "Read input.txt and return ROUTE_OK.",
+    "criterion": "The answer contains ROUTE_OK.",
+    "expectedBehavior": "Returns the stable marker.",
+    "objective": { "kind": "answer-includes", "value": "ROUTE_OK" },
+    "initialState": {
+      "files": [{ "path": "input.txt", "content": "ROUTE_OK" }]
+    },
+    "traceLink": {
+      "runId": "production-run",
+      "caseId": "production-case",
+      "trialId": "production-case::trial-001",
+      "traceFile": "validated/runtime.jsonl",
+      "traceId": "trace-id",
+      "rootSpanId": "root-id",
+      "sha256": "trace-artifact-digest"
+    },
+    "failure": {
+      "summary": "The stable marker was omitted.",
+      "labels": ["routing.wrong-agent"]
+    },
+    "promotionPolicy": { "minimumHeldOutTrials": 5, "requiredPassRate": 1 }
+  }
+}
+```
+
+```bash
+# Add the minimized reproducer to the capability suite.
+npm run eval:failure -- import \
+  --input=/secure/validated-failure.json \
+  --ledger=/secure/failures.jsonl
+
+# Exercise it through the normal model/eval/trace seam on clean held-out trials.
+npm run eval -- \
+  --failure-ledger=/secure/failures.jsonl \
+  --filter=production-routing-failure \
+  --trials=5 --strict-trace \
+  --run-id=production-routing-failure-held-out
+
+# Record actual reliability rows against one exact code revision, then decide.
+npm run eval:failure -- record \
+  --case=production-routing-failure \
+  --reliability=.thulr/runs/reliability.json \
+  --system="$(git rev-parse HEAD)" \
+  --ledger=/secure/failures.jsonl
+npm run eval:failure -- promote \
+  --case=production-routing-failure \
+  --ledger=/secure/failures.jsonl
+```
+
+Promotion is denied unless every distinct held-out trial passed, retained a
+recorded runtime trace, passed policy compliance, had a verified successful
+outcome, and used the same system digest. An approval changes the derived suite
+from `capability` to `regression`; future release evals must keep passing the same
+ledger with `--failure-ledger`. The release-record command also reads that ledger
+and blocks if any promoted case is absent from its reliability artifact.
 
 ## Add a case
 

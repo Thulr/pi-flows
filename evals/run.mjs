@@ -50,7 +50,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
-import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
+import { CALIBRATION_CASES, EVAL_CORPUS as BASE_EVAL_CORPUS, corpusWithFailureLedger } from "./corpus.mjs";
 import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { calibrationPreflightStep, resolveCriticalDimensions, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
@@ -67,6 +67,9 @@ process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 loadDotenv();
 
 const { flag, has, bool, flags, rateFlag, positiveNumberFlag, positiveIntegerFlag } = createFlagReader(process.argv.slice(2));
+const failureSource = await corpusWithFailureLedger(BASE_EVAL_CORPUS, flag("failure-ledger", null) ? p(flag("failure-ledger", null)) : null);
+const EVAL_CORPUS = failureSource.corpus;
+const CASES = EVAL_CORPUS.measurement;
 
 const cliModel = flag("model", null);
 const model = cliModel ?? DEFAULT_EVAL_MODEL;
@@ -74,9 +77,6 @@ const modelSource = cliModel ? "--model" : process.env.PI_FLOWS_EVAL_MODEL ? "PI
 // `--model=agent` (or empty) keeps each agent's own frontmatter model.
 const useAgentModels = ["agent", "default", ""].includes(model);
 const capUsd = Number(flag("cap", "0.50"));
-// Per-agent timeout. Default 120s for remote models; crank it up for slow local
-// models (llama.cpp etc.) that legitimately take minutes per turn — they're free,
-// so a long ceiling beats spurious timeouts. Override: --timeout=600000 (ms) or PI_FLOWS_TIMEOUT_MS.
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "120000"));
 const armTimeoutMs = positiveNumberFlag("arm-timeout");
 const dryRun = bool("dry-run");
@@ -168,6 +168,7 @@ const reviews = reviewsFlag ? p(reviewsFlag) : existsSync(reviewsDefault) ? revi
 // mode never invokes thulr — the driver (run-experiment/optimize) does.
 function preflight() {
 	return runPreflight([
+		() => failureSource.issues.length ? `Failure ledger preflight failed before model invocation:\n- ${failureSource.issues.join("\n- ")}` : null,
 		corpusPreflightStep(EVAL_CORPUS),
 		calibrationPreflightStep(EVAL_CORPUS),
 		...(dryRun ? [] : [

@@ -10,6 +10,23 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Release decisions can now be emitted as deterministic
+  `pi-flows.release-manifest.v1` records. The manifest pins the code commit,
+  package/extension/lock versions, subject and judge model identifiers, prompt
+  and tool-schema hashes, topology, budgets, environment, suite, harness,
+  grader, calibration key, runtime trace, and source artifacts. It fails closed
+  on dirty code, incomplete traces, stale or non-authoritative calibration,
+  missing promoted regressions, and explicit hard blockers for unauthorized
+  irreversible actions, approval bypass, secret or personal-data leakage,
+  corrupted shared state, rollback failure, and trace loss.
+- Validated production failures can be imported through a privacy-minimizing,
+  allowlisted format into a `0600` hash-chained event ledger. Their minimized
+  initial state and exact runtime-trace linkage become executable capability
+  cases under `npm run eval -- --failure-ledger=...`; promotion to regression
+  requires at least three distinct, passing, policy-compliant, fully traced
+  held-out repetitions of one code revision, and every import, trial, denial,
+  or approval is append-only.
+
 - Inter-agent injection handling is now an enforceable, flow-scoped policy.
   `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding
   `quarantine`, and `fail` before the recipient process spawns;
