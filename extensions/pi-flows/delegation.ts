@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
-import Schema from "typebox/schema";
+import { Compile } from "typebox/compile";
 import { extractLastJsonBlock } from "./protocol.ts";
 import { capModelVisibleText, isFailed, redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
 import { flowError, type CapturePolicy, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowBudget, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
@@ -80,7 +80,7 @@ function rawDelegationContractError(value: unknown): FlowError | null {
 	}
 	if (!isRecord(value.returnSchema)) return contractError("`contract.returnSchema` must be a JSON Schema object.");
 	try {
-		Schema.Compile(value.returnSchema);
+		Compile(value.returnSchema);
 	} catch (error) {
 		return contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`);
 	}
@@ -211,7 +211,7 @@ function validateEnvelopeAgainstContract(
 	}
 	let validator;
 	try {
-		validator = Schema.Compile(contract.returnSchema);
+		validator = Compile(contract.returnSchema);
 	} catch (error) {
 		return contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`);
 	}

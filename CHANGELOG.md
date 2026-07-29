@@ -10,6 +10,18 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 - Nothing yet.
 
+## 0.4.1 - 2026-07-29
+
+### Fixed
+
+- The extension failed to load on a stock `pi` install (`Cannot find module
+  '.../typebox/build/index.mjs/schema'`): pi's extension loader aliases only
+  `typebox`, `typebox/compile`, and `typebox/value`, and rewrites any other
+  subpath against the package main entry. `delegation.ts` now imports `Compile`
+  from `typebox/compile` instead of `typebox/schema` (identical validation
+  behavior), and a new test pins every packaged bare import to pi's alias
+  table so unaliased subpaths cannot ship again.
+
 ## 0.4.0 - 2026-07-29
 
 ### Added
