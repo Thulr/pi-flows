@@ -103,12 +103,18 @@ function sanitizedCase(input) {
 	};
 }
 
-export function buildFailureImport(input, { importedAt = new Date().toISOString() } = {}) {
+export function buildFailureImport(input, { importedAt = new Date().toISOString(), traceValidation } = {}) {
 	requireKeys(input, ["schemaVersion", "validation", "case"], "failure input");
 	if (input.schemaVersion !== FAILURE_INPUT_SCHEMA_VERSION) throw new Error(`failure input must use ${FAILURE_INPUT_SCHEMA_VERSION}`);
 	requireKeys(input.validation, ["status", "validator", "validatedAt", "privacyReview"], "validation");
 	if (input.validation.status !== "validated") throw new Error("validation.status must be validated");
 	if (input.validation.privacyReview !== "passed") throw new Error("validation.privacyReview must be passed");
+	if (!traceValidation?.valid) throw new Error(`production trace validation is required: ${(traceValidation?.issues ?? ["validation was not run"]).join("; ")}`);
+	if (traceValidation.sha256 !== input.case?.traceLink?.sha256
+		|| traceValidation.traceId !== input.case?.traceLink?.traceId
+		|| traceValidation.rootSpanId !== input.case?.traceLink?.rootSpanId) {
+		throw new Error("production trace validation does not match the failure trace link");
+	}
 	return {
 		type: "failure.imported",
 		recordedAt: importedAt,
@@ -119,6 +125,11 @@ export function buildFailureImport(input, { importedAt = new Date().toISOString(
 			privacyReview: "passed",
 		},
 		case: sanitizedCase(input.case),
+		traceValidation: {
+			sha256: traceValidation.sha256,
+			traceId: traceValidation.traceId,
+			rootSpanId: traceValidation.rootSpanId,
+		},
 	};
 }
 
@@ -166,11 +177,28 @@ export async function appendFailureEvent(ledgerPath, event) {
 	return record;
 }
 
-export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, recordedAt = new Date().toISOString() }) {
+export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation, recordedAt = new Date().toISOString() }) {
 	if (!ID_PATTERN.test(caseId ?? "")) throw new Error("caseId must be a stable kebab-case identifier");
+	if (reliability?.schemaVersion !== "pi-flows.reliability.v1") throw new Error("reliability artifact schema is unsupported");
 	if (typeof reliability?.runId !== "string" || reliability.runId.length === 0) throw new Error("reliability artifact must identify its held-out run");
+	if (reliability?.evidencePurpose?.kind !== "failure-promotion-held-out" || reliability.evidencePurpose.caseId !== caseId) {
+		throw new Error(`reliability artifact must come from a dedicated held-out promotion run for ${caseId}`);
+	}
+	if (!runtimeTraceValidation?.valid) {
+		throw new Error(`held-out runtime trace validation failed: ${(runtimeTraceValidation?.issues ?? ["validation was not run"]).join("; ")}`);
+	}
+	if (!reliability?.evaluatedSystem?.code?.commit || reliability.evaluatedSystem.code.dirty !== false) {
+		throw new Error("held-out reliability must pin a clean evaluated system");
+	}
+	const evaluatedSystemDigest = digest(reliability.evaluatedSystem);
+	if (systemDigest !== evaluatedSystemDigest) throw new Error("systemDigest must match the complete evaluated-system provenance");
+	const suiteIds = reliability?.evaluation?.suite?.caseIds;
+	if (!Array.isArray(suiteIds) || suiteIds.length !== 1 || suiteIds[0] !== caseId) {
+		throw new Error(`held-out reliability suite must contain only ${caseId}`);
+	}
 	const matching = (reliability?.cases ?? []).find((entry) => entry.caseId === caseId);
 	if (!matching || !Array.isArray(matching.trials) || matching.trials.length === 0) throw new Error(`reliability artifact has no trials for ${caseId}`);
+	if (matching.trials.length !== reliability.subjectTrials) throw new Error("held-out reliability trial count does not match subjectTrials");
 	return matching.trials.map((trial) => ({
 		type: "failure.held-out-trial",
 		recordedAt,
@@ -257,7 +285,11 @@ export function failureCasesFromLedger(events) {
 					return { pass, score: pass ? 1 : 0, notes: pass ? "matched imported objective" : "imported objective did not match" };
 				},
 				mock: { content: [{ type: "text", text: stored.objective.value }], details: { results: [] } },
-				productionFailure: { traceLink: stored.traceLink, initialStateDigest: stored.initialState.sha256 },
+				productionFailure: {
+					traceLink: stored.traceLink,
+					initialStateDigest: stored.initialState.sha256,
+					promotionPolicy: stored.promotionPolicy,
+				},
 			};
 		});
 }

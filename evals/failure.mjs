@@ -1,7 +1,6 @@
 // Privacy-safe production-failure lifecycle:
 // import a validated/minimized case -> record held-out repetitions -> promote.
 // Every state change is an append-only, hash-chained event.
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createFlagReader } from "./cli-flags.mjs";
@@ -12,6 +11,9 @@ import {
 	buildPromotionDecision,
 	readFailureLedger,
 } from "./failure-ledger.mjs";
+import { validateProductionTrace } from "./failure-trace.mjs";
+import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
+import { canonicalDigest } from "./calibration-key.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const [command, ...argv] = process.argv.slice(2);
@@ -27,33 +29,36 @@ function required(name) {
 function jsonFile(name) {
 	const file = path.resolve(root, required(name));
 	try {
-		return JSON.parse(readFileSync(file, "utf8"));
+		return { file, value: JSON.parse(readFileSync(file, "utf8")) };
 	} catch (error) {
 		throw new Error(`--${name} could not be read as JSON: ${error.message}`);
 	}
 }
 
 async function importFailure() {
-	const input = jsonFile("input");
+	const { file, value: input } = jsonFile("input");
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	if (ledger.events.some((event) => event.type === "failure.imported" && event.case?.id === input.case?.id)) {
 		throw new Error(`failure ${input.case.id} is already imported`);
 	}
-	const record = await appendFailureEvent(ledgerPath, buildFailureImport(input));
+	const traceValidation = validateProductionTrace(input.case?.traceLink, { baseDir: path.dirname(file) });
+	const record = await appendFailureEvent(ledgerPath, buildFailureImport(input, { traceValidation }));
 	console.log(`imported ${record.case.id} into capability suite`);
 	return 0;
 }
 
 async function recordTrials() {
 	const caseId = required("case");
-	const reliability = jsonFile("reliability");
-	const systemDigest = flag("system", null) ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+	const { value: reliability } = jsonFile("reliability");
+	const runtimeTracePath = path.resolve(root, required("runtime-trace"));
+	const runtimeTraceValidation = validateReleaseRuntimeTrace(runtimeTracePath, reliability, { repoRoot: root });
+	const systemDigest = canonicalDigest(reliability.evaluatedSystem, 64);
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	if (!ledger.events.some((event) => event.type === "failure.imported" && event.case?.id === caseId)) throw new Error(`failure ${caseId} has not been imported`);
 	const existing = new Set(ledger.events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId).map((event) => `${event.runId}:${event.trialId}`));
-	const records = buildHeldOutTrialEvents({ caseId, reliability, systemDigest });
+	const records = buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation });
 	const duplicates = records.filter((record) => existing.has(`${record.runId}:${record.trialId}`));
 	if (duplicates.length) throw new Error(`held-out cohort trials already recorded: ${duplicates.map((record) => record.trialId).join(", ")}`);
 	for (const record of records) await appendFailureEvent(ledgerPath, record);

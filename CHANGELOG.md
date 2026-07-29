@@ -26,7 +26,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   requires at least three distinct, passing, policy-compliant, fully traced
   held-out repetitions from one explicit run cohort and code revision, and every
   import, trial, denial, or approval is append-only. Older failed cohorts remain
-  auditable without permanently poisoning a later fixed cohort.
+  auditable without permanently poisoning a later fixed cohort. Import verifies
+  the production trace digest and root identity; promotion accepts only a
+  dedicated held-out run with independently resolved runtime roots. Release
+  records bind operator attestations to evaluation-time models, topology,
+  budgets, environment, and repository hashes, and reject empty or untyped
+  hard-blocker references.
 
 - Inter-agent injection handling is now an enforceable, flow-scoped policy.
   `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding

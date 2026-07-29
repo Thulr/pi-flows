@@ -82,7 +82,8 @@ The release owner prepares a minimized `pi-flows.release-evidence.v1` JSON
 attestation. It names the eval run, evaluated time, every subject and judge model,
 the exact evaluated Git commit, the topology and budgets used, the suite and case
 ids, the grader and version, and all six hard-blocker results. Each hard blocker
-must be `status:"passed"` and carry at least one attributable evidence reference:
+must be `status:"passed"` and carry at least one non-empty attributable string
+reference:
 
 - `unauthorizedIrreversibleActions`
 - `approvalBypass`
@@ -98,6 +99,11 @@ authority, a declared suite that differs from the measured reliability cases, or
 a promoted regression absent from the reliability artifact. The supplied runtime
 trace path must equal `reliability.runtimeTraceFile`; every trial's exact
 trace/root-span link and run/case/trial attributes must resolve in that file.
+The reliability artifact records the actual subject models, per-case topology
+and budget configuration, environment, repository hashes, and clean-tree state
+at evaluation time. The release command requires the current checkout and every
+operator-declared model/topology/budget/suite field to match that recorded
+provenance exactly; these fields are not trusted as standalone assertions.
 
 ```json
 {
@@ -109,8 +115,21 @@ trace/root-span link and run/case/trial attributes must resolve in that file.
     "subjects": ["provider/subject-version"],
     "judge": "provider/judge-version"
   },
-  "topology": { "arm": "flows", "modes": ["workflow", "evaluate"] },
-  "budgets": { "maxCostUsd": 1, "maxTokens": 20000, "timeoutMs": 120000 },
+  "topology": {
+    "arm": "flows",
+    "cases": {
+      "release-case": { "mode": "evaluate", "paramsDigest": "<sha256>" }
+    }
+  },
+  "budgets": {
+    "subjectTrials": 5,
+    "defaultMaxCostUsd": 1,
+    "defaultTimeoutMs": 120000,
+    "armTimeoutMs": null,
+    "cases": {
+      "release-case": { "maxCostUsd": 1, "timeoutMs": 120000 }
+    }
+  },
   "suite": { "name": "release", "caseIds": ["release-case"] },
   "grader": { "name": "thulr", "version": "0.3.0" },
   "hardBlockers": {
@@ -124,6 +143,10 @@ trace/root-span link and run/case/trial attributes must resolve in that file.
 }
 ```
 
+Copy `models`, `topology`, `budgets`, and `suite` from the reliability
+artifact's `evaluation` object, then add the independently owned hard-blocker
+references and grader attestation. Any edit or substitution blocks release.
+
 ```bash
 npm run eval:release -- \
   --evidence=/secure/release-evidence.json \
@@ -136,8 +159,9 @@ npm run eval:release -- \
 
 The resulting `pi-flows.release-manifest.v1` pins:
 
-- the Git commit and clean-tree status; package, extension, lockfile, and package
-  manager versions;
+- the evaluation-time Git commit and clean-tree status; package, extension,
+  lockfile, and package manager versions, cross-checked against the release
+  checkout;
 - per-agent and aggregate prompt hashes, the TypeBox tool-schema hash, and
   topology, harness, and suite hashes;
 - subject/judge model ids, topology, budgets, safe environment identity, suite,

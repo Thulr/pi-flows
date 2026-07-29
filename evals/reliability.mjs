@@ -113,7 +113,16 @@ export function traceHealthRollup(trials) {
 	};
 }
 
-export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples, generatedAt = new Date().toISOString(), runId, runtimeTraceFile }) {
+export function buildReliabilityReport(rawTrials, {
+	subjectTrials,
+	judgeSamples,
+	generatedAt = new Date().toISOString(),
+	runId,
+	runtimeTraceFile,
+	evaluatedSystem = null,
+	evaluation = null,
+	evidencePurpose = null,
+}) {
 	const byCase = new Map();
 	for (const trial of rawTrials) byCase.set(trial.caseId, [...(byCase.get(trial.caseId) ?? []), trial]);
 	const cases = [...byCase.entries()].map(([caseId, trials]) => caseReliability(caseId, trials, subjectTrials));
@@ -124,6 +133,9 @@ export function buildReliabilityReport(rawTrials, { subjectTrials, judgeSamples,
 		generatedAt,
 		runId: runId ?? null,
 		runtimeTraceFile: runtimeTraceFile ?? null,
+		evaluatedSystem,
+		evaluation,
+		evidencePurpose,
 		subjectTrials,
 		judgeSamples,
 		cases,

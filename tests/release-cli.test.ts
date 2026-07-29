@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import test from "node:test";
+import { captureReleaseSystem, sha256File } from "../evals/release-system.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const run = (script: string, args: string[]) => spawnSync(process.execPath, ["--import", "tsx", script, ...args], {
@@ -62,6 +63,8 @@ function reliability(caseId = "release-case", trials = 3) {
 		schemaVersion: "pi-flows.reliability.v1",
 		runId: "release-run",
 		subjectTrials: trials,
+		evaluatedSystem: { code: { commit: "0123456789abcdef", dirty: false } },
+		evaluation: { suite: { name: "release", caseIds: [caseId] } },
 		cases: [{
 			caseId,
 			trials: Array.from({ length: trials }, (_, index) => ({
@@ -79,10 +82,41 @@ function reliability(caseId = "release-case", trials = 3) {
 	};
 }
 
+function attachRuntimeTrace(report, trace) {
+	report.runtimeTraceFile = trace;
+	const rows = report.cases[0].trials.map((trial, index) => {
+		trial.runtimeTrace = {
+			health: "recorded",
+			traceFile: trace,
+			traceId: `trace-${index + 1}`,
+			rootSpanId: `root-${index + 1}`,
+			context: {
+				runId: report.runId,
+				caseId: report.cases[0].caseId,
+				trialId: trial.trialId,
+				trialIndex: index + 1,
+				arm: "flows",
+			},
+		};
+		return {
+			trace_id: `trace-${index + 1}`,
+			span_id: `root-${index + 1}`,
+			parent_span_id: null,
+			name: `flow.${report.cases[0].caseId}`,
+			attributes: {
+				"flow.run_id": report.runId,
+				"flow.case_id": report.cases[0].caseId,
+				"flow.trial_id": trial.trialId,
+			},
+		};
+	});
+	return rows;
+}
+
 test("release command writes a pinned blocked record for a dirty evaluated tree", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-release-cli-"));
 	const codeCommit = await dirtyReleaseRepo(directory);
-	const evidence = await writeJson(directory, "evidence.json", {
+	const evidenceRecord = {
 		schemaVersion: "pi-flows.release-evidence.v1",
 		runId: "release-run",
 		codeCommit,
@@ -93,8 +127,16 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 		suite: { name: "release", caseIds: ["release-case"] },
 		grader: { name: "thulr", version: "0.3.0" },
 		hardBlockers: hardBlockers(),
-	});
+	};
+	const evidence = await writeJson(directory, "evidence.json", evidenceRecord);
 	const releaseReliability = reliability();
+	releaseReliability.evaluatedSystem = captureReleaseSystem(directory);
+	releaseReliability.evaluation = {
+		models: structuredClone(evidenceRecord.models),
+		topology: structuredClone(evidenceRecord.topology),
+		budgets: structuredClone(evidenceRecord.budgets),
+		suite: structuredClone(evidenceRecord.suite),
+	};
 	const calibration = await writeJson(directory, "calibration.json", {
 		schemaVersion: "pi-flows.calibration.v1",
 		key: { schemaVersion: "pi-flows.calibration-key.v1", digest: "calibration-key" },
@@ -103,33 +145,7 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 		blocks: false,
 	});
 	const trace = path.join(directory, "runtime.jsonl");
-	releaseReliability.runtimeTraceFile = trace;
-	const traceRows = releaseReliability.cases[0].trials.map((trial, index) => {
-		trial.runtimeTrace = {
-			health: "recorded",
-			traceFile: trace,
-			traceId: `trace-${index + 1}`,
-			rootSpanId: `root-${index + 1}`,
-			context: {
-				runId: "release-run",
-				caseId: "release-case",
-				trialId: trial.trialId,
-				trialIndex: index + 1,
-				arm: "flows",
-			},
-		};
-		return {
-			trace_id: `trace-${index + 1}`,
-			span_id: `root-${index + 1}`,
-			parent_span_id: null,
-			name: "flow.release-case",
-			attributes: {
-				"flow.run_id": "release-run",
-				"flow.case_id": "release-case",
-				"flow.trial_id": trial.trialId,
-			},
-		};
-	});
+	const traceRows = attachRuntimeTrace(releaseReliability, trace);
 	const reliabilityPath = await writeJson(directory, "reliability.json", releaseReliability);
 	await writeFile(trace, `${traceRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 	const out = path.join(directory, "release.json");
@@ -160,6 +176,19 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 test("failure command imports, records held-out reliability, and appends promotion", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-failure-cli-"));
 	const ledger = path.join(directory, "failures.jsonl");
+	const productionTrace = path.join(directory, "validated", "runtime.jsonl");
+	await mkdir(path.dirname(productionTrace), { recursive: true });
+	await writeFile(productionTrace, `${JSON.stringify({
+		trace_id: "trace-id",
+		span_id: "root-id",
+		parent_span_id: null,
+		name: "flow.production-case",
+		attributes: {
+			"flow.run_id": "production-run",
+			"flow.case_id": "production-case",
+			"flow.trial_id": "production-case::trial-001",
+		},
+	})}\n`, "utf8");
 	const input = await writeJson(directory, "failure.json", {
 		schemaVersion: "pi-flows.validated-production-failure.v1",
 		validation: {
@@ -192,7 +221,7 @@ test("failure command imports, records held-out reliability, and appends promoti
 				traceFile: "validated/runtime.jsonl",
 				traceId: "trace-id",
 				rootSpanId: "root-id",
-				sha256: "trace-hash",
+				sha256: sha256File(productionTrace),
 			},
 			failure: { summary: "The stable marker was omitted.", labels: ["routing.wrong-agent"] },
 			promotionPolicy: { minimumHeldOutTrials: 3, requiredPassRate: 1 },
@@ -202,7 +231,8 @@ test("failure command imports, records held-out reliability, and appends promoti
 	assert.equal(imported.status, 0, imported.stderr);
 	const capabilityRun = run("evals/run.mjs", [
 		"--dry-run",
-		"--filter=production-routing-failure",
+		"--failure-promotion=production-routing-failure",
+		"--trials=3",
 		`--failure-ledger=${ledger}`,
 		`--trace-out=${path.join(directory, "capability-trace.jsonl")}`,
 		`--runtime-trace=${path.join(directory, "capability-runtime.jsonl")}`,
@@ -210,13 +240,23 @@ test("failure command imports, records held-out reliability, and appends promoti
 	]);
 	assert.equal(capabilityRun.status, 0, `${capabilityRun.stdout}\n${capabilityRun.stderr}`);
 	assert.match(capabilityRun.stdout, /suite: capability 1 \(0 excluded\)/);
+	const capabilityReport = JSON.parse(await readFile(path.join(directory, "capability-reliability.json"), "utf8"));
+	assert.deepEqual(capabilityReport.evidencePurpose, {
+		kind: "failure-promotion-held-out",
+		caseId: "production-routing-failure",
+	});
 
-	const reliabilityPath = await writeJson(directory, "reliability.json", reliability("production-routing-failure", 3));
+	const heldOutReliability = reliability("production-routing-failure", 3);
+	heldOutReliability.evidencePurpose = { kind: "failure-promotion-held-out", caseId: "production-routing-failure" };
+	const heldOutTrace = path.join(directory, "held-out-runtime.jsonl");
+	const heldOutRows = attachRuntimeTrace(heldOutReliability, heldOutTrace);
+	await writeFile(heldOutTrace, `${heldOutRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+	const reliabilityPath = await writeJson(directory, "reliability.json", heldOutReliability);
 	const recorded = run("evals/failure.mjs", [
 		"record",
 		"--case=production-routing-failure",
 		`--reliability=${reliabilityPath}`,
-		"--system=commit-abc",
+		`--runtime-trace=${heldOutTrace}`,
 		`--ledger=${ledger}`,
 	]);
 	assert.equal(recorded.status, 0, recorded.stderr);

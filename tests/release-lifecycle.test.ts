@@ -8,6 +8,7 @@ import {
 	RELEASE_EVIDENCE_SCHEMA_VERSION,
 	buildReleaseManifest,
 	evaluateRelease,
+	releaseDigest,
 } from "../evals/release-manifest.mjs";
 import {
 	FAILURE_INPUT_SCHEMA_VERSION,
@@ -25,7 +26,7 @@ const blockerEvidence = () => Object.fromEntries(HARD_BLOCKER_KEYS.map((key) => 
 ]));
 
 function releaseInputs() {
-	return {
+	const inputs = {
 		evidence: {
 			schemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
 			runId: "release-run-123",
@@ -85,6 +86,14 @@ function releaseInputs() {
 		runtimeTraceValidation: { valid: true, issues: [], matchedTrials: 5 },
 		generatedAt: "2026-07-28T12:30:00.000Z",
 	};
+	inputs.reliability.evaluatedSystem = structuredClone(inputs.system);
+	inputs.reliability.evaluation = {
+		models: structuredClone(inputs.evidence.models),
+		topology: structuredClone(inputs.evidence.topology),
+		budgets: structuredClone(inputs.evidence.budgets),
+		suite: structuredClone(inputs.evidence.suite),
+	};
+	return inputs;
 }
 
 test("release manifest pins the complete evaluated system and approves clean evidence", () => {
@@ -145,6 +154,20 @@ test("release evaluation fails closed on every catastrophic blocker and incomple
 	const wrongSuite = releaseInputs();
 	wrongSuite.evidence.suite.caseIds = ["different-case"];
 	assert.match(evaluateRelease(wrongSuite).blockers.join("\n"), /declared suite case ids do not match measured reliability cases/);
+
+	for (const invalid of ["", null, {}]) {
+		const weakBlocker = releaseInputs();
+		weakBlocker.evidence.hardBlockers.approvalBypass.evidence = [invalid];
+		assert.match(evaluateRelease(weakBlocker).blockers.join("\n"), /approvalBypass hard blocker did not pass with attributable evidence/);
+	}
+
+	const assertedModel = releaseInputs();
+	assertedModel.evidence.models.subjects = ["operator/assertion"];
+	assert.match(evaluateRelease(assertedModel).blockers.join("\n"), /model identifiers do not match evaluation-time provenance/);
+
+	const changedSystem = releaseInputs();
+	changedSystem.reliability.evaluatedSystem.hashes.harness = "evaluated-harness";
+	assert.match(evaluateRelease(changedSystem).blockers.join("\n"), /release-record system does not match the evaluated system/);
 });
 
 function failureInput() {
@@ -185,7 +208,7 @@ function failureInput() {
 				traceFile: "/var/validated/runtime.jsonl",
 				traceId: "trace-7",
 				rootSpanId: "root-7",
-				sha256: "trace-digest",
+				sha256: "a".repeat(64),
 			},
 			failure: { summary: "The route omitted ROUTE_OK for customer@example.com.", labels: ["routing.wrong-agent"] },
 			promotionPolicy: { minimumHeldOutTrials: 3, requiredPassRate: 1 },
@@ -193,8 +216,22 @@ function failureInput() {
 	};
 }
 
+const validProductionTrace = () => ({
+	valid: true,
+	issues: [],
+	sha256: "a".repeat(64),
+	traceId: "trace-7",
+	rootSpanId: "root-7",
+});
+
+const heldOutTrace = (reliability) => ({
+	valid: true,
+	issues: [],
+	matchedTrials: reliability.cases.reduce((count, entry) => count + entry.trials.length, 0),
+});
+
 test("validated production failures become sanitized executable capability cases", async () => {
-	const imported = buildFailureImport(failureInput(), { importedAt: "2026-07-28T11:00:00.000Z" });
+	const imported = buildFailureImport(failureInput(), { importedAt: "2026-07-28T11:00:00.000Z", traceValidation: validProductionTrace() });
 	assert.equal(imported.type, "failure.imported");
 	assert.equal(imported.case.suite, "capability");
 	assert.match(JSON.stringify(imported), /REDACTED_EMAIL/);
@@ -215,30 +252,35 @@ test("validated production failures become sanitized executable capability cases
 
 	const unrelated = failureInput();
 	unrelated.case.hiddenReasoning = "not required";
-	assert.throws(() => buildFailureImport(unrelated), /unsupported fields: hiddenReasoning/);
+	assert.throws(() => buildFailureImport(unrelated, { traceValidation: validProductionTrace() }), /unsupported fields: hiddenReasoning/);
 
 	const traversal = failureInput();
 	traversal.case.initialState.files[0].path = "../outside.txt";
-	assert.throws(() => buildFailureImport(traversal), /must stay inside the case workspace/);
+	assert.throws(() => buildFailureImport(traversal, { traceValidation: validProductionTrace() }), /must stay inside the case workspace/);
+	assert.throws(() => buildFailureImport(failureInput()), /production trace validation is required/);
 });
 
 test("promotion is append-only and requires stable held-out success on one system", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-failure-ledger-"));
 	const ledgerPath = path.join(directory, "ledger.jsonl");
-	const imported = buildFailureImport(failureInput(), { importedAt: "2026-07-28T11:00:00.000Z" });
+	const imported = buildFailureImport(failureInput(), { importedAt: "2026-07-28T11:00:00.000Z", traceValidation: validProductionTrace() });
 	await appendFailureEvent(ledgerPath, imported);
 
 	const reliability = releaseInputs().reliability;
 	reliability.runId = "held-out-run";
+	reliability.evidencePurpose = { kind: "failure-promotion-held-out", caseId: "production-routing-failure" };
+	reliability.evaluation.suite.caseIds = ["production-routing-failure"];
 	reliability.cases[0].caseId = "production-routing-failure";
 	reliability.cases[0].trials = reliability.cases[0].trials.slice(0, 3).map((trial, index) => ({
 		...trial,
 		trialId: `production-routing-failure::trial-00${index + 1}`,
 	}));
+	reliability.subjectTrials = 3;
 	const trials = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability,
-		systemDigest: "commit-abc",
+		systemDigest: releaseDigest(reliability.evaluatedSystem),
+		runtimeTraceValidation: heldOutTrace(reliability),
 		recordedAt: "2026-07-28T12:00:00.000Z",
 	});
 	for (const trial of trials.slice(0, 2)) await appendFailureEvent(ledgerPath, trial);
@@ -265,14 +307,18 @@ test("promotion is append-only and requires stable held-out success on one syste
 });
 
 test("held-out evidence rejects failures, trace loss, policy failure, and mixed revisions", () => {
-	const imported = buildFailureImport(failureInput());
+	const imported = buildFailureImport(failureInput(), { traceValidation: validProductionTrace() });
 	const clean = releaseInputs().reliability;
 	clean.cases[0].caseId = "production-routing-failure";
 	clean.cases[0].trials = clean.cases[0].trials.slice(0, 3);
+	clean.subjectTrials = 3;
+	clean.evidencePurpose = { kind: "failure-promotion-held-out", caseId: "production-routing-failure" };
+	clean.evaluation.suite.caseIds = ["production-routing-failure"];
 	const trialEvents = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability: clean,
-		systemDigest: "commit-a",
+		systemDigest: releaseDigest(clean.evaluatedSystem),
+		runtimeTraceValidation: heldOutTrace(clean),
 	});
 
 	for (const mutate of [
@@ -295,12 +341,27 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	oldFailed.passed = false;
 	const cleanDecision = buildPromotionDecision([imported, oldFailed, ...trialEvents], "production-routing-failure", { cohortId: clean.runId });
 	assert.equal(cleanDecision.decision, "approved", "an older failed cohort must not poison a later stable cohort");
+
+	const ordinaryReliability = structuredClone(clean);
+	delete ordinaryReliability.evidencePurpose;
+	assert.throws(() => buildHeldOutTrialEvents({
+		caseId: "production-routing-failure",
+		reliability: ordinaryReliability,
+		systemDigest: releaseDigest(ordinaryReliability.evaluatedSystem),
+		runtimeTraceValidation: heldOutTrace(ordinaryReliability),
+	}), /dedicated held-out promotion run/);
+	assert.throws(() => buildHeldOutTrialEvents({
+		caseId: "production-routing-failure",
+		reliability: clean,
+		systemDigest: releaseDigest(clean.evaluatedSystem),
+		runtimeTraceValidation: { valid: false, issues: ["missing root"], matchedTrials: 2 },
+	}), /runtime trace validation failed/);
 });
 
 test("failure ledger detects edits to prior append-only records", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-tampered-ledger-"));
 	const ledgerPath = path.join(directory, "ledger.jsonl");
-	await appendFailureEvent(ledgerPath, buildFailureImport(failureInput()));
+	await appendFailureEvent(ledgerPath, buildFailureImport(failureInput(), { traceValidation: validProductionTrace() }));
 	const original = await readFile(ledgerPath, "utf8");
 	await import("node:fs/promises").then(({ writeFile }) => writeFile(
 		ledgerPath,

@@ -698,7 +698,7 @@ Prepare a `pi-flows.validated-production-failure.v1` JSON input with:
 - a declarative `answer-includes` objective;
 - only the minimized initial-state files needed to reproduce the failure;
 - the production run/case/trial ids, trace file, trace/root span ids, and trace
-  digest; and
+  SHA-256 digest; and
 - a promotion policy of 3–50 held-out trials at a required pass rate of 1.
 
 The importer rejects unknown fields and workspace traversal, bounds stored text,
@@ -706,7 +706,9 @@ and redacts secret-shaped values, email addresses, and home paths. Raw
 credentials, hidden reasoning, and unrelated user content are neither accepted
 fields nor required evidence. The privacy review must minimize before import;
 redaction is a final containment layer, not permission to ingest a raw incident
-dump.
+dump. Import also reads the referenced JSONL trace, verifies its full SHA-256,
+and requires the linked span to be a root whose run, case, and trial attributes
+match the attested identity.
 
 ```json
 {
@@ -743,7 +745,7 @@ dump.
       "traceFile": "validated/runtime.jsonl",
       "traceId": "trace-id",
       "rootSpanId": "root-id",
-      "sha256": "trace-artifact-digest"
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     },
     "failure": {
       "summary": "The stable marker was omitted.",
@@ -763,15 +765,17 @@ npm run eval:failure -- import \
 # Exercise it through the normal model/eval/trace seam on clean held-out trials.
 npm run eval -- \
   --failure-ledger=/secure/failures.jsonl \
-  --filter=production-routing-failure \
+  --failure-promotion=production-routing-failure \
   --trials=5 --strict-trace \
+  --runtime-trace=.thulr/runs/failure-promotion.runtime.jsonl \
   --run-id=production-routing-failure-held-out
 
-# Record actual reliability rows against one exact code revision, then decide.
+# Record actual reliability rows against the artifact's complete evaluated-system
+# digest, then decide.
 npm run eval:failure -- record \
   --case=production-routing-failure \
   --reliability=.thulr/runs/reliability.json \
-  --system="$(git rev-parse HEAD)" \
+  --runtime-trace=.thulr/runs/failure-promotion.runtime.jsonl \
   --ledger=/secure/failures.jsonl
 npm run eval:failure -- promote \
   --case=production-routing-failure \
@@ -783,6 +787,10 @@ Promotion is denied unless every distinct held-out trial passed, retained a
 recorded runtime trace, passed policy compliance, had a verified successful
 outcome, and used the same system digest. `--cohort` is the exact eval `--run-id`;
 older failed cohorts remain in the ledger without poisoning a later clean cohort.
+`record` accepts only a reliability artifact stamped by
+`--failure-promotion=<case>` and independently resolves every reliability
+trial's exact root in `--runtime-trace`; an ordinary filtered run or a
+hand-authored pass summary is not promotion evidence.
 An approval changes the derived suite from `capability` to `regression`; future
 release evals must keep passing the same ledger with `--failure-ledger`. The
 release-record command also reads that ledger and blocks if any promoted case is

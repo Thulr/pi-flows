@@ -20,6 +20,10 @@ function nonEmptyString(value) {
 	return typeof value === "string" && value.trim().length > 0;
 }
 
+function sameValue(left, right) {
+	return releaseDigest(left) === releaseDigest(right);
+}
+
 function releaseTrialIssues(reliability) {
 	const issues = [];
 	for (const entry of reliability?.cases ?? []) {
@@ -82,10 +86,20 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	const sameCases = new Set(declaredCases).size === declaredCases.length
 		&& [...declaredCases].sort().join("\0") === [...measuredCases].sort().join("\0");
 	if (!sameCases) blockers.push("declared suite case ids do not match measured reliability cases");
+	if (!sameValue(evidence?.models, reliability?.evaluation?.models)) blockers.push("model identifiers do not match evaluation-time provenance");
+	if (!sameValue(evidence?.topology, reliability?.evaluation?.topology)) blockers.push("topology does not match evaluation-time provenance");
+	if (!sameValue(evidence?.budgets, reliability?.evaluation?.budgets)) blockers.push("budgets do not match evaluation-time provenance");
+	if (!sameValue(evidence?.suite, reliability?.evaluation?.suite)) blockers.push("suite does not match evaluation-time provenance");
+	if (!sameValue(system, reliability?.evaluatedSystem)) blockers.push("release-record system does not match the evaluated system");
+	const calibratedJudge = calibration?.key?.inputs?.judgeModel;
+	if (calibratedJudge && evidence?.models?.judge !== calibratedJudge) blockers.push("judge model does not match calibrated judge provenance");
 
 	for (const key of HARD_BLOCKER_KEYS) {
 		const result = evidence?.hardBlockers?.[key];
-		if (result?.status !== "passed" || !Array.isArray(result?.evidence) || result.evidence.length === 0) {
+		if (result?.status !== "passed"
+			|| !Array.isArray(result?.evidence)
+			|| result.evidence.length === 0
+			|| result.evidence.some((reference) => !nonEmptyString(reference))) {
 			blockers.push(`${key} hard blocker did not pass with attributable evidence`);
 		}
 	}
@@ -126,15 +140,15 @@ export function buildReleaseManifest(inputs) {
 		schemaVersion: RELEASE_MANIFEST_SCHEMA_VERSION,
 		generatedAt: inputs.generatedAt ?? new Date().toISOString(),
 		decision,
-		system: inputs.system,
+		system: inputs.reliability?.evaluatedSystem ?? inputs.system,
 		evaluation: {
 			runId: inputs.evidence?.runId ?? null,
 			codeCommit: inputs.evidence?.codeCommit ?? null,
 			evaluatedAt: inputs.evidence?.evaluatedAt ?? null,
-			models: inputs.evidence?.models ?? null,
-			topology: inputs.evidence?.topology ?? null,
-			budgets: inputs.evidence?.budgets ?? null,
-			suite: inputs.evidence?.suite ?? null,
+			models: inputs.reliability?.evaluation?.models ?? null,
+			topology: inputs.reliability?.evaluation?.topology ?? null,
+			budgets: inputs.reliability?.evaluation?.budgets ?? null,
+			suite: inputs.reliability?.evaluation?.suite ?? null,
 			harness: {
 				schemaVersion: inputs.reliability?.schemaVersion ?? null,
 				version: inputs.system?.hashes?.harness ?? null,
