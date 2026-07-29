@@ -80,6 +80,17 @@ test("flowLiveBoardLines shows progress, per-agent state, and activity while run
 	assert.match(text, /F8 fleet panel/);
 });
 
+test("single-child runs drop the done/total counter, bar, and rollup from the header", () => {
+	const board = flowLiveBoardLines(details([
+		result({ usage: { ...usage, input: 2000, output: 300, cost: 0.94 } }),
+	], { mode: "single" }), theme, { tick: 0, redactSecrets: true });
+	assert.doesNotMatch(board[0]!, /0\/1/, "a 0/1 counter reads as stuck, not as progress");
+	assert.doesNotMatch(board[0]!, /▰|▱/);
+	assert.doesNotMatch(board[0]!, /tok|\$/, "the rollup would only restate the single agent line");
+	assert.match(board[0]!, /flow single/);
+	assert.match(board.join("\n"), /recon/);
+});
+
 test("flowLiveBoardLines caps collapsed rows and settles without a spinner hint", () => {
 	const many = Array.from({ length: COLLAPSED_AGENT_ROWS + 3 }, (_item, index) => result({ agent: `agent-${index}`, exitCode: 0 }));
 	const board = flowLiveBoardLines(details(many), theme, { tick: 0, redactSecrets: true });

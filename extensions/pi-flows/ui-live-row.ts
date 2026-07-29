@@ -111,7 +111,11 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	const running = done < total;
 
 	let header = `${headerIcon(details, done, failed, options.tick, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`;
-	if (total > 0) {
+	// The done/total counter, progress bar, and rollup exist to summarize a
+	// fan-out. With one child they only restate (or worse, appear to
+	// contradict) the agent line below — "0/1" reads as stuck, and the rollup
+	// counts input+output while the agent line also shows cache traffic.
+	if (total > 1) {
 		header += ` ${theme.fg("accent", `${done}/${total}`)}`;
 		const bar = progressBar(done, total);
 		if (bar && running) header += ` ${theme.fg("dim", bar)}`;
