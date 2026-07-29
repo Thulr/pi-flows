@@ -25,6 +25,18 @@ export function evaluatedSystemDigest(reliability) {
 	});
 }
 
+export function failureLedgerIdentity(events, sha256) {
+	return {
+		sha256,
+		headHash: events.at(-1)?.eventHash ?? null,
+		promotedCaseIds: promotedRegressionCaseIds(events),
+		importedCases: Object.fromEntries(events
+			.filter((event) => event.type === "failure.imported")
+			.map((event) => [event.case.id, { eventHash: event.eventHash, caseDigest: digest(event.case) }])
+			.sort(([left], [right]) => left.localeCompare(right))),
+	};
+}
+
 function requireKeys(value, allowed, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
 	const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
@@ -59,7 +71,10 @@ function sanitizedFiles(initialState) {
 	const files = initialState.files.map((file, index) => {
 		requireKeys(file, ["path", "content"], `case.initialState.files[${index}]`);
 		const relative = requiredText(file.path, `case.initialState.files[${index}].path`, 256).replaceAll("\\", "/");
-		if (path.posix.isAbsolute(relative) || relative.split("/").includes("..")) throw new Error(`case.initialState.files[${index}].path must stay inside the case workspace`);
+		const normalized = path.posix.normalize(relative);
+		if (relative.includes("\0") || relative === "." || normalized !== relative || path.posix.isAbsolute(relative) || relative.split("/").includes("..")) {
+			throw new Error(`case.initialState.files[${index}].path must be one normalized file path inside the case workspace`);
+		}
 		const content = boundedContent(file.content, `case.initialState.files[${index}].content`, 32_768);
 		totalBytes += Buffer.byteLength(content, "utf8");
 		return { path: relative, content };
@@ -184,11 +199,12 @@ function heldOutEventIssue(event, label) {
 	try {
 		requireKeys(eventBody(event), [
 			"type", "recordedAt", "caseId", "runId", "trialId", "systemDigest", "passed",
-			"traceHealth", "policyPassed", "verifiedOutcomePassed", "evidenceDigest",
+			"traceHealth", "policyPassed", "verifiedOutcomePassed", "runtimeTraceSha256", "evidenceDigest",
 		], label);
 		if (!ID_PATTERN.test(event.caseId ?? "") || !requiredText(event.runId, `${label}.runId`, 256)
 			|| !requiredText(event.trialId, `${label}.trialId`, 512)
 			|| !/^[a-f0-9]{64}$/.test(event.systemDigest ?? "")
+			|| !/^[a-f0-9]{64}$/.test(event.runtimeTraceSha256 ?? "")
 			|| !/^[a-f0-9]{64}$/.test(event.evidenceDigest ?? "")
 			|| typeof event.passed !== "boolean"
 			|| !["recorded", "degraded", "missing"].includes(event.traceHealth)
@@ -204,7 +220,13 @@ function heldOutEventIssue(event, label) {
 
 function semanticEventIssue(event, previousEvents, label) {
 	if (event.type === "failure.imported") return importedEventIssue(event, label);
-	if (event.type === "failure.held-out-trial") return heldOutEventIssue(event, label);
+	if (event.type === "failure.held-out-trial") {
+		const issue = heldOutEventIssue(event, label);
+		if (issue) return issue;
+		const duplicate = previousEvents.some((previous) => previous.type === "failure.held-out-trial"
+			&& previous.caseId === event.caseId && previous.runId === event.runId && previous.trialId === event.trialId);
+		return duplicate ? `${label} duplicates an existing held-out trial identity` : null;
+	}
 	if (event.type === "failure.promotion") {
 		try {
 			const expected = buildPromotionDecision(previousEvents, event.caseId, {
@@ -262,16 +284,22 @@ export async function appendFailureEvent(ledgerPath, event) {
 	return record;
 }
 
-export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation, recordedAt = new Date().toISOString() }) {
+export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation, importBinding, recordedAt = new Date().toISOString() }) {
 	if (!ID_PATTERN.test(caseId ?? "")) throw new Error("caseId must be a stable kebab-case identifier");
 	if (reliability?.schemaVersion !== "pi-flows.reliability.v1") throw new Error("reliability artifact schema is unsupported");
 	if (typeof reliability?.runId !== "string" || reliability.runId.length === 0) throw new Error("reliability artifact must identify its held-out run");
 	if (reliability?.evidencePurpose?.kind !== "failure-promotion-held-out" || reliability.evidencePurpose.caseId !== caseId) {
 		throw new Error(`reliability artifact must come from a dedicated held-out promotion run for ${caseId}`);
 	}
+	const purpose = reliability.evidencePurpose;
+	if (!importBinding || purpose.eventHash !== importBinding.eventHash || purpose.caseDigest !== importBinding.caseDigest
+		|| purpose.ledgerSha256 !== importBinding.ledgerSha256 || purpose.ledgerHeadHash !== importBinding.ledgerHeadHash) {
+		throw new Error("held-out reliability is not bound to the target imported case and source ledger");
+	}
 	if (!runtimeTraceValidation?.valid) {
 		throw new Error(`held-out runtime trace validation failed: ${(runtimeTraceValidation?.issues ?? ["validation was not run"]).join("; ")}`);
 	}
+	if (!/^[a-f0-9]{64}$/.test(runtimeTraceValidation.sha256 ?? "")) throw new Error("held-out runtime trace validation must bind the trace SHA-256");
 	if (!reliability?.evaluatedSystem?.code?.commit || reliability.evaluatedSystem.code.dirty !== false) {
 		throw new Error("held-out reliability must pin a clean evaluated system");
 	}
@@ -295,6 +323,7 @@ export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, run
 		traceHealth: trial.scoreFamilies?.traceHealth?.status ?? "missing",
 		policyPassed: trial.scoreFamilies?.policyCompliance?.pass === true,
 		verifiedOutcomePassed: trial.scoreFamilies?.verifiedOutcome?.pass === true,
+		runtimeTraceSha256: runtimeTraceValidation.sha256,
 		evidenceDigest: digest(trial),
 	}));
 }
@@ -310,6 +339,7 @@ export function buildPromotionDecision(events, caseId, { cohortId, decidedAt = n
 	const evidence = [...uniqueTrials.values()];
 	const policy = imported.case.promotionPolicy;
 	const reasons = [];
+	if (uniqueTrials.size !== trials.length) reasons.push("held-out cohort contains duplicate trial identities");
 	if (evidence.length < policy.minimumHeldOutTrials) reasons.push(`promotion requires ${policy.minimumHeldOutTrials} held-out trials; found ${evidence.length}`);
 	if (new Set(evidence.map((trial) => trial.systemDigest)).size > 1) reasons.push("held-out trials must evaluate the same evaluated system");
 	if (evidence.some((trial) => !trial.passed)) reasons.push("every held-out trial must pass");

@@ -1,17 +1,10 @@
 // Opt-in model-in-the-loop eval harness. Unlike the offline test suite, this
 // drives real flow delegations and uses thulr to judge and gate their output.
-// Two axes, decomposed (not one god-metric):
-//   1. an objective, deterministic check per case (the chosen route, a known
-//      answer, a passing gate) — this gates BEHAVIOUR and becomes the
-//      objectiveScore label thulr calibrates its judge against.
-//   2. thulr's calibrated LLM judge grades each case's answer against one literal
-//      criterion, then gates QUALITY regressions vs a baseline EvalRun. The judge
+// The harness combines deterministic case objectives with thulr's calibrated
+// judge, which grades answer quality and gates regressions. The judge
 //      runs on a different vendor than the subject (default anthropic/claude-
 //      haiku-4-5 — cheap models on both axes) so it never grades its own family.
-// Fixed calibration canaries are appended to the trace as known-bad/partial
-// answers; they measure judge TNR and partial-score behavior, but never count as
-// behaviour or release-gate rows.
-//
+// Fixed calibration canaries measure judge behavior outside release case counts.
 // The harness emits one self-contained trace and shells out to thulr for judge,
 // calibration, gate, and baseline operations.
 //
@@ -416,8 +409,14 @@ async function main() {
 		runId: EVAL_RUN_ID,
 		runtimeTraceFile: rel(RUNTIME_TRACE),
 		evaluatedSystem: EVALUATED_SYSTEM,
-		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel, grader: evaluatedGrader }),
-		evidencePurpose: promotionCaseId ? { kind: "failure-promotion-held-out", caseId: promotionCaseId } : null,
+		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel, grader: evaluatedGrader, failureLedger: failureSource.failureLedger }),
+		evidencePurpose: promotionCaseId ? {
+			kind: "failure-promotion-held-out",
+			caseId: promotionCaseId,
+			...failureSource.failureLedger?.importedCases?.[promotionCaseId],
+			ledgerSha256: failureSource.failureLedger?.sha256,
+			ledgerHeadHash: failureSource.failureLedger?.headHash,
+		} : null,
 	};
 
 	const behaviourCases = summaries.filter((s) => !s.hard);

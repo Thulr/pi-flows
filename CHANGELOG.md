@@ -33,7 +33,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   budgets, environment, and repository hashes, and reject empty or untyped
   hard-blocker references. Release evals isolate package-owned prompts, bind the
   actual grader version and calibration gate decision, and require the canonical
-  failure ledger so promoted regressions cannot be omitted.
+  failure ledger so promoted regressions cannot be omitted. Reliability binds
+  its ledger head and imported cases, held-out trials retain the trace digest and
+  reject duplicate identities, release traces pass structural read-back, and
+  calibration keys are complete and self-verifying.
 
 - Inter-agent injection handling is now an enforceable, flow-scoped policy.
   `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding

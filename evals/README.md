@@ -790,12 +790,18 @@ older failed cohorts remain in the ledger without poisoning a later clean cohort
 `record` accepts only a reliability artifact stamped by
 `--failure-promotion=<case>` and independently resolves every reliability
 trial's exact root in `--runtime-trace`; an ordinary filtered run or a
-hand-authored pass summary is not promotion evidence.
+hand-authored pass summary is not promotion evidence. The stamp binds the source
+ledger hash/head and canonical imported-case digest, and every appended trial
+retains the validated runtime-trace SHA-256. Duplicate trial identities are
+invalid rather than last-write-wins.
 An approval changes the derived suite from `capability` to `regression`; future
 release evals must keep passing the same ledger with `--failure-ledger`. The
 release-record command also reads that ledger and blocks if any promoted case is
 absent from its reliability artifact. `eval:release` requires the canonical
 ledger even when it is empty, so omitting the option cannot disable this gate.
+Reliability records the evaluation-time ledger hash, head, imported-case
+bindings, and promoted ids; substituting another empty or partial ledger is
+blocked, and an explicitly named nonexistent ledger fails eval preflight.
 
 ## Add a case
 

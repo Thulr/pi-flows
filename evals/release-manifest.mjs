@@ -1,4 +1,4 @@
-import { canonicalDigest } from "./calibration-key.mjs";
+import { CALIBRATION_KEY_INPUTS, CALIBRATION_KEY_SCHEMA_VERSION, canonicalDigest } from "./calibration-key.mjs";
 
 export const RELEASE_EVIDENCE_SCHEMA_VERSION = "pi-flows.release-evidence.v1";
 export const RELEASE_MANIFEST_SCHEMA_VERSION = "pi-flows.release-manifest.v1";
@@ -64,7 +64,7 @@ function systemIssues(system) {
  * Pure release policy. Every issue here is a hard blocker; there is no warning
  * path for catastrophic safety evidence, unpinned code, or an unauditable run.
  */
-export function evaluateRelease({ evidence, reliability, calibration, system, artifactHashes, regressionCaseIds = [], runtimeTraceValidation }) {
+export function evaluateRelease({ evidence, reliability, calibration, system, artifactHashes, regressionCaseIds = [], runtimeTraceValidation, ledgerIdentity }) {
 	const blockers = [];
 	if (evidence?.schemaVersion !== RELEASE_EVIDENCE_SCHEMA_VERSION) {
 		blockers.push(`release evidence must use ${RELEASE_EVIDENCE_SCHEMA_VERSION}`);
@@ -92,9 +92,10 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	if (!sameValue(evidence?.suite, reliability?.evaluation?.suite)) blockers.push("suite does not match evaluation-time provenance");
 	if (!sameValue(evidence?.grader, reliability?.evaluation?.grader)) blockers.push("grader does not match evaluation-time provenance");
 	if (reliability?.evaluation?.agentDiscovery !== "package-only") blockers.push("evaluation did not isolate the package prompts pinned by the manifest");
+	if (!sameValue(reliability?.evaluation?.failureLedger, ledgerIdentity)) blockers.push("release failure ledger does not match evaluation-time ledger provenance");
 	if (!sameValue(system, reliability?.evaluatedSystem)) blockers.push("release-record system does not match the evaluated system");
 	const calibratedJudge = calibration?.key?.inputs?.judgeModel;
-	if (calibratedJudge && evidence?.models?.judge !== calibratedJudge) blockers.push("judge model does not match calibrated judge provenance");
+	if (!nonEmptyString(calibratedJudge) || evidence?.models?.judge !== calibratedJudge) blockers.push("judge model does not match calibrated judge provenance");
 
 	for (const key of HARD_BLOCKER_KEYS) {
 		const result = evidence?.hardBlockers?.[key];
@@ -117,6 +118,14 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	blockers.push(...releaseTrialIssues(reliability));
 
 	if (calibration?.schemaVersion !== "pi-flows.calibration.v1") blockers.push("calibration artifact schema is unsupported");
+	const calibrationInputs = calibration?.key?.inputs;
+	if (calibration?.key?.schemaVersion !== CALIBRATION_KEY_SCHEMA_VERSION
+		|| !nonEmptyString(calibration?.key?.digest)
+		|| !calibrationInputs
+		|| CALIBRATION_KEY_INPUTS.some((key) => !(key in calibrationInputs))
+		|| calibration.key.digest !== canonicalDigest(calibrationInputs)) {
+		blockers.push("calibration key is missing, incomplete, or does not match its inputs");
+	}
 	if (calibration?.gate?.blocks !== false) {
 		blockers.push(`calibration reports blocking or missing gate evidence: ${(calibration?.gate?.issues ?? ["gate decision was not recorded"]).join("; ")}`);
 	}

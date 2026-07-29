@@ -99,6 +99,9 @@ authority, a declared suite that differs from the measured reliability cases, or
 a promoted regression absent from the reliability artifact. The supplied runtime
 trace path must equal `reliability.runtimeTraceFile`; every trial's exact
 trace/root-span link and run/case/trial attributes must resolve in that file.
+The read-back also applies the strict trace-tree gate to declared/observed span
+counts, failed exports, malformed or duplicate rows, parentage, timing, and
+dependency links.
 The reliability artifact records the actual subject models, per-case topology
 and budget configuration, environment, repository hashes, and clean-tree state
 at evaluation time. Release evals isolate discovery to the package-owned prompts
@@ -106,7 +109,8 @@ whose hashes enter the manifest. The release command requires the current
 checkout and every operator-declared model/topology/budget/suite/grader field to
 match that recorded provenance exactly; these fields are not trusted as
 standalone assertions. Calibration artifacts retain their blocking decision and
-issues, and a missing or blocking calibration gate fails closed.
+issues, require a complete self-verifying calibration key, and fail closed when
+their gate is missing or blocking.
 
 ```json
 {
@@ -177,7 +181,8 @@ The resulting `pi-flows.release-manifest.v1` pins:
   harness, grader, and calibration versions;
 - hashes of the reliability, calibration, runtime-trace, and required canonical
   production-failure ledger artifacts (use an empty file when no failures have
-  been imported); and
+  been imported). Its hash, head, imported-case bindings, and promoted ids must
+  match the ledger used during evaluation; and
 - the complete hard-blocker decision plus a digest of the manifest itself.
 
 Store the record and its referenced artifacts together in access-controlled,

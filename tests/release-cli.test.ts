@@ -5,6 +5,8 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import test from "node:test";
 import { captureReleaseSystem, sha256File } from "../evals/release-system.mjs";
+import { calibrationKey } from "../evals/calibration-key.mjs";
+import { failureLedgerIdentity } from "../evals/failure-ledger.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const run = (script: string, args: string[]) => spawnSync(process.execPath, ["--import", "tsx", script, ...args], {
@@ -116,6 +118,9 @@ function attachRuntimeTrace(report, trace) {
 test("release command writes a pinned blocked record for a dirty evaluated tree", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-release-cli-"));
 	const codeCommit = await dirtyReleaseRepo(directory);
+	const failureLedger = path.join(directory, "failure-ledger.jsonl");
+	await writeFile(failureLedger, "", "utf8");
+	const ledgerIdentity = failureLedgerIdentity([], sha256File(failureLedger));
 	const evidenceRecord = {
 		schemaVersion: "pi-flows.release-evidence.v1",
 		runId: "release-run",
@@ -133,6 +138,7 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 	releaseReliability.evaluatedSystem = captureReleaseSystem(directory);
 	releaseReliability.evaluation = {
 		agentDiscovery: "package-only",
+		failureLedger: ledgerIdentity,
 		models: structuredClone(evidenceRecord.models),
 		grader: structuredClone(evidenceRecord.grader),
 		topology: structuredClone(evidenceRecord.topology),
@@ -141,7 +147,19 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 	};
 	const calibration = await writeJson(directory, "calibration.json", {
 		schemaVersion: "pi-flows.calibration.v1",
-		key: { schemaVersion: "pi-flows.calibration-key.v1", digest: "calibration-key" },
+		key: calibrationKey({
+			judgeModel: "provider/judge",
+			judgeSamples: 1,
+			judgeBin: null,
+			evalSet: null,
+			promptVersion: "pi-flows@0.3.0",
+			configVersion: "pi-flows-eval:provider/subject",
+			rubric: "rubric",
+			groundTruth: "ground-truth",
+			thresholds: {},
+			traceSchemaVersion: "pi-flows.eval-trace.v1",
+			traceSerialization: "trace-shape",
+		}),
 		drift: { status: "valid", changed: [] },
 		authority: { critical: ["criterion"], authoritative: ["criterion"], provisional: [] },
 		gate: { blocks: false, issues: [], criticalMissRateCap: 0.35 },
@@ -151,8 +169,6 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 	const reliabilityPath = await writeJson(directory, "reliability.json", releaseReliability);
 	await writeFile(trace, `${traceRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 	const out = path.join(directory, "release.json");
-	const failureLedger = path.join(directory, "failure-ledger.jsonl");
-	await writeFile(failureLedger, "", "utf8");
 	const child = run("evals/release.mjs", [
 		`--evidence=${evidence}`,
 		`--reliability=${reliabilityPath}`,
@@ -246,13 +262,13 @@ test("failure command imports, records held-out reliability, and appends promoti
 	assert.equal(capabilityRun.status, 0, `${capabilityRun.stdout}\n${capabilityRun.stderr}`);
 	assert.match(capabilityRun.stdout, /suite: capability 1 \(0 excluded\)/);
 	const capabilityReport = JSON.parse(await readFile(path.join(directory, "capability-reliability.json"), "utf8"));
-	assert.deepEqual(capabilityReport.evidencePurpose, {
-		kind: "failure-promotion-held-out",
-		caseId: "production-routing-failure",
-	});
+	assert.equal(capabilityReport.evidencePurpose.kind, "failure-promotion-held-out");
+	assert.equal(capabilityReport.evidencePurpose.caseId, "production-routing-failure");
+	assert.match(capabilityReport.evidencePurpose.eventHash, /^[a-f0-9]{64}$/);
+	assert.match(capabilityReport.evidencePurpose.caseDigest, /^[a-f0-9]{64}$/);
 
 	const heldOutReliability = reliability("production-routing-failure", 3);
-	heldOutReliability.evidencePurpose = { kind: "failure-promotion-held-out", caseId: "production-routing-failure" };
+	heldOutReliability.evidencePurpose = capabilityReport.evidencePurpose;
 	const heldOutTrace = path.join(directory, "held-out-runtime.jsonl");
 	const heldOutRows = attachRuntimeTrace(heldOutReliability, heldOutTrace);
 	await writeFile(heldOutTrace, `${heldOutRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");

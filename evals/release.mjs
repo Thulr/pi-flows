@@ -8,7 +8,7 @@ import { createFlagReader } from "./cli-flags.mjs";
 import { buildReleaseManifest } from "./release-manifest.mjs";
 import { captureReleaseSystem, sha256File } from "./release-system.mjs";
 import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
-import { promotedRegressionCaseIds, readFailureLedger } from "./failure-ledger.mjs";
+import { failureLedgerIdentity, promotedRegressionCaseIds, readFailureLedger } from "./failure-ledger.mjs";
 
 const moduleRoot = path.resolve(import.meta.dirname, "..");
 const { flag } = createFlagReader(process.argv.slice(2));
@@ -38,6 +38,7 @@ async function main() {
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	const regressionCaseIds = promotedRegressionCaseIds(ledger.events);
+	const ledgerIdentity = failureLedgerIdentity(ledger.events, sha256File(ledgerPath));
 	const inputs = {
 		evidence: readJson(evidencePath, "release evidence"),
 		reliability: readJson(reliabilityPath, "reliability artifact"),
@@ -50,6 +51,7 @@ async function main() {
 			failureLedger: sha256File(ledgerPath),
 		},
 		regressionCaseIds,
+		ledgerIdentity,
 	};
 	inputs.runtimeTraceValidation = validateReleaseRuntimeTrace(runtimeTracePath, inputs.reliability, { repoRoot: root });
 	const manifest = buildReleaseManifest(inputs);

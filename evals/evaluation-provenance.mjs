@@ -14,11 +14,13 @@ export function buildEvaluationProvenance(cases, summaries, {
 	subjectTrials,
 	judgeModel,
 	grader = null,
+	failureLedger = null,
 	suiteName = "release",
 } = {}) {
 	const subjects = [...new Set(summaries.map((summary) => summary.model).filter(Boolean))].sort();
 	return {
 		agentDiscovery: "package-only",
+		failureLedger,
 		models: { subjects, judge: judgeModel },
 		grader,
 		topology: {

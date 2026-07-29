@@ -10,10 +10,12 @@ import {
 	buildHeldOutTrialEvents,
 	buildPromotionDecision,
 	evaluatedSystemDigest,
+	failureLedgerIdentity,
 	readFailureLedger,
 } from "./failure-ledger.mjs";
 import { validateProductionTrace } from "./failure-trace.mjs";
 import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
+import { sha256File } from "./release-system.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const [command, ...argv] = process.argv.slice(2);
@@ -57,8 +59,11 @@ async function recordTrials() {
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	if (!ledger.events.some((event) => event.type === "failure.imported" && event.case?.id === caseId)) throw new Error(`failure ${caseId} has not been imported`);
+	const ledgerIdentity = failureLedgerIdentity(ledger.events, sha256File(ledgerPath));
+	const importedCase = ledgerIdentity.importedCases[caseId];
+	const importBinding = { ...importedCase, ledgerSha256: ledgerIdentity.sha256, ledgerHeadHash: ledgerIdentity.headHash };
 	const existing = new Set(ledger.events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId).map((event) => `${event.runId}:${event.trialId}`));
-	const records = buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation });
+	const records = buildHeldOutTrialEvents({ caseId, reliability, systemDigest, runtimeTraceValidation, importBinding });
 	const duplicates = records.filter((record) => existing.has(`${record.runId}:${record.trialId}`));
 	if (duplicates.length) throw new Error(`held-out cohort trials already recorded: ${duplicates.map((record) => record.trialId).join(", ")}`);
 	for (const record of records) await appendFailureEvent(ledgerPath, record);

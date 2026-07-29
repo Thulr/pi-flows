@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete } from "../extensions/pi-flows/trace-report.ts";
+import { sha256File } from "./release-system.mjs";
 
 function resolved(repoRoot, candidate) {
 	return typeof candidate === "string" && candidate.length > 0
@@ -15,8 +17,11 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	else if (expectedFile !== actualFile) issues.push("supplied runtime trace file differs from reliability.runtimeTraceFile");
 
 	let rows = [];
+	let traceSha256 = null;
 	try {
-		rows = readFileSync(actualFile, "utf8")
+		const raw = readFileSync(actualFile, "utf8");
+		traceSha256 = sha256File(actualFile);
+		rows = raw
 			.split(/\r?\n/)
 			.filter((line) => line.trim())
 			.map((line, index) => {
@@ -28,6 +33,11 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 				}
 			})
 			.filter(Boolean);
+		const parsed = parseTraceJsonl(raw);
+		const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, actualFile);
+		if (!traceReportIsComplete(report)) {
+			issues.push(`runtime trace structural gate failed: ${report.incompleteTraces} incomplete, ${report.structurallyInvalidTraces} structurally invalid, ${report.parseErrors} parse errors, ${report.duplicateSpans} duplicates, ${report.malformedSpans} malformed`);
+		}
 	} catch (error) {
 		issues.push(`runtime trace could not be read: ${error.message}`);
 	}
@@ -73,5 +83,5 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	}
 	const expectedTrials = (reliability?.cases ?? []).reduce((count, entry) => count + (entry.trials?.length ?? 0), 0);
 	if (matchedTrials !== expectedTrials) issues.push(`runtime trace matched ${matchedTrials}/${expectedTrials} reliability trials`);
-	return { valid: issues.length === 0, issues, matchedTrials };
+	return { valid: issues.length === 0, issues, matchedTrials, sha256: traceSha256 };
 }
