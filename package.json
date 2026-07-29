@@ -1,6 +1,6 @@
 {
   "name": "pi-flows",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": false,
   "description": "Delegate pi work to isolated, budgeted sub-agents with verification loops and tracing.",
   "keywords": [
