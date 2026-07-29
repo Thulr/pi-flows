@@ -9,11 +9,11 @@ import {
 	buildFailureImport,
 	buildHeldOutTrialEvents,
 	buildPromotionDecision,
+	evaluatedSystemDigest,
 	readFailureLedger,
 } from "./failure-ledger.mjs";
 import { validateProductionTrace } from "./failure-trace.mjs";
 import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
-import { canonicalDigest } from "./calibration-key.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const [command, ...argv] = process.argv.slice(2);
@@ -53,7 +53,7 @@ async function recordTrials() {
 	const { value: reliability } = jsonFile("reliability");
 	const runtimeTracePath = path.resolve(root, required("runtime-trace"));
 	const runtimeTraceValidation = validateReleaseRuntimeTrace(runtimeTracePath, reliability, { repoRoot: root });
-	const systemDigest = canonicalDigest(reliability.evaluatedSystem, 64);
+	const systemDigest = evaluatedSystemDigest(reliability);
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	if (!ledger.events.some((event) => event.type === "failure.imported" && event.case?.id === caseId)) throw new Error(`failure ${caseId} has not been imported`);

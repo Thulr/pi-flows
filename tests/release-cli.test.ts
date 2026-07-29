@@ -64,7 +64,7 @@ function reliability(caseId = "release-case", trials = 3) {
 		runId: "release-run",
 		subjectTrials: trials,
 		evaluatedSystem: { code: { commit: "0123456789abcdef", dirty: false } },
-		evaluation: { suite: { name: "release", caseIds: [caseId] } },
+		evaluation: { agentDiscovery: "package-only", suite: { name: "release", caseIds: [caseId] } },
 		cases: [{
 			caseId,
 			trials: Array.from({ length: trials }, (_, index) => ({
@@ -132,7 +132,9 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 	const releaseReliability = reliability();
 	releaseReliability.evaluatedSystem = captureReleaseSystem(directory);
 	releaseReliability.evaluation = {
+		agentDiscovery: "package-only",
 		models: structuredClone(evidenceRecord.models),
+		grader: structuredClone(evidenceRecord.grader),
 		topology: structuredClone(evidenceRecord.topology),
 		budgets: structuredClone(evidenceRecord.budgets),
 		suite: structuredClone(evidenceRecord.suite),
@@ -142,18 +144,21 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 		key: { schemaVersion: "pi-flows.calibration-key.v1", digest: "calibration-key" },
 		drift: { status: "valid", changed: [] },
 		authority: { critical: ["criterion"], authoritative: ["criterion"], provisional: [] },
-		blocks: false,
+		gate: { blocks: false, issues: [], criticalMissRateCap: 0.35 },
 	});
 	const trace = path.join(directory, "runtime.jsonl");
 	const traceRows = attachRuntimeTrace(releaseReliability, trace);
 	const reliabilityPath = await writeJson(directory, "reliability.json", releaseReliability);
 	await writeFile(trace, `${traceRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 	const out = path.join(directory, "release.json");
+	const failureLedger = path.join(directory, "failure-ledger.jsonl");
+	await writeFile(failureLedger, "", "utf8");
 	const child = run("evals/release.mjs", [
 		`--evidence=${evidence}`,
 		`--reliability=${reliabilityPath}`,
 		`--calibration=${calibration}`,
 		`--runtime-trace=${trace}`,
+		`--failure-ledger=${failureLedger}`,
 		`--out=${out}`,
 		`--repo-root=${directory}`,
 	]);

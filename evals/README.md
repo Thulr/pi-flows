@@ -794,7 +794,8 @@ hand-authored pass summary is not promotion evidence.
 An approval changes the derived suite from `capability` to `regression`; future
 release evals must keep passing the same ledger with `--failure-ledger`. The
 release-record command also reads that ledger and blocks if any promoted case is
-absent from its reliability artifact.
+absent from its reliability artifact. `eval:release` requires the canonical
+ledger even when it is empty, so omitting the option cannot disable this gate.
 
 ## Add a case
 

@@ -90,6 +90,8 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	if (!sameValue(evidence?.topology, reliability?.evaluation?.topology)) blockers.push("topology does not match evaluation-time provenance");
 	if (!sameValue(evidence?.budgets, reliability?.evaluation?.budgets)) blockers.push("budgets do not match evaluation-time provenance");
 	if (!sameValue(evidence?.suite, reliability?.evaluation?.suite)) blockers.push("suite does not match evaluation-time provenance");
+	if (!sameValue(evidence?.grader, reliability?.evaluation?.grader)) blockers.push("grader does not match evaluation-time provenance");
+	if (reliability?.evaluation?.agentDiscovery !== "package-only") blockers.push("evaluation did not isolate the package prompts pinned by the manifest");
 	if (!sameValue(system, reliability?.evaluatedSystem)) blockers.push("release-record system does not match the evaluated system");
 	const calibratedJudge = calibration?.key?.inputs?.judgeModel;
 	if (calibratedJudge && evidence?.models?.judge !== calibratedJudge) blockers.push("judge model does not match calibrated judge provenance");
@@ -115,7 +117,9 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	blockers.push(...releaseTrialIssues(reliability));
 
 	if (calibration?.schemaVersion !== "pi-flows.calibration.v1") blockers.push("calibration artifact schema is unsupported");
-	if (calibration?.blocks) blockers.push("calibration reports blocking issues");
+	if (calibration?.gate?.blocks !== false) {
+		blockers.push(`calibration reports blocking or missing gate evidence: ${(calibration?.gate?.issues ?? ["gate decision was not recorded"]).join("; ")}`);
+	}
 	if (calibration?.drift?.status !== "valid") blockers.push("calibration key is stale or has no matching prior evidence");
 	const authoritative = new Set(calibration?.authority?.authoritative ?? []);
 	for (const dimension of calibration?.authority?.critical ?? []) {
@@ -123,7 +127,7 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	}
 
 	blockers.push(...systemIssues(system));
-	for (const key of ["reliability", "calibration", "runtimeTrace"]) {
+	for (const key of ["reliability", "calibration", "runtimeTrace", "failureLedger"]) {
 		if (!nonEmptyString(artifactHashes?.[key])) blockers.push(`${key} artifact hash is missing`);
 	}
 	const measuredCaseSet = new Set(measuredCases);
@@ -154,7 +158,7 @@ export function buildReleaseManifest(inputs) {
 				version: inputs.system?.hashes?.harness ?? null,
 				subjectTrials: inputs.reliability?.subjectTrials ?? null,
 			},
-			grader: inputs.evidence?.grader ?? null,
+			grader: inputs.reliability?.evaluation?.grader ?? null,
 			calibration: {
 				schemaVersion: calibration.schemaVersion ?? null,
 				keySchemaVersion: calibration.key?.schemaVersion ?? null,
@@ -173,7 +177,7 @@ export function buildReleaseManifest(inputs) {
 				matchedTrials: inputs.runtimeTraceValidation?.matchedTrials ?? 0,
 				valid: inputs.runtimeTraceValidation?.valid ?? false,
 			},
-			failureLedger: inputs.artifactHashes?.failureLedger ? { sha256: inputs.artifactHashes.failureLedger } : null,
+			failureLedger: { sha256: inputs.artifactHashes?.failureLedger ?? null },
 		},
 	};
 	return { ...manifest, manifestDigest: releaseDigest(manifest) };

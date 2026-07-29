@@ -18,6 +18,13 @@ function digest(value) {
 	return canonicalDigest(value, 64);
 }
 
+export function evaluatedSystemDigest(reliability) {
+	return digest({
+		system: reliability?.evaluatedSystem ?? null,
+		evaluation: reliability?.evaluation ?? null,
+	});
+}
+
 function requireKeys(value, allowed, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
 	const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
@@ -138,6 +145,80 @@ function eventPayload(event, sequence, previousHash) {
 	return { ...payload, eventHash: digest(payload) };
 }
 
+function eventBody(event) {
+	const { schemaVersion, sequence, previousHash, eventHash, ...body } = event;
+	return body;
+}
+
+function importedEventIssue(event, label) {
+	try {
+		requireKeys(eventBody(event), ["type", "recordedAt", "validation", "case", "traceValidation"], label);
+		if (event.type !== "failure.imported") throw new Error(`${label}.type is invalid`);
+		const validation = event.validation;
+		requireKeys(validation, ["status", "validator", "validatedAt", "privacyReview"], `${label}.validation`);
+		const expectedValidation = {
+			status: "validated",
+			validator: requiredText(validation.validator, `${label}.validation.validator`, 256),
+			validatedAt: requiredText(validation.validatedAt, `${label}.validation.validatedAt`, 128),
+			privacyReview: "passed",
+		};
+		if (validation.status !== "validated" || validation.privacyReview !== "passed" || digest(validation) !== digest(expectedValidation)) {
+			throw new Error(`${label}.validation is not a canonical validated privacy review`);
+		}
+		const { suite, initialState, ...candidate } = event.case ?? {};
+		const canonicalCase = sanitizedCase({ ...candidate, initialState: { files: initialState?.files } });
+		if (suite !== "capability" || digest(event.case) !== digest(canonicalCase)) throw new Error(`${label}.case is not canonical sanitized import data`);
+		requireKeys(event.traceValidation, ["sha256", "traceId", "rootSpanId"], `${label}.traceValidation`);
+		if (event.traceValidation.sha256 !== canonicalCase.traceLink.sha256
+			|| event.traceValidation.traceId !== canonicalCase.traceLink.traceId
+			|| event.traceValidation.rootSpanId !== canonicalCase.traceLink.rootSpanId) {
+			throw new Error(`${label}.traceValidation does not match its case trace link`);
+		}
+		return null;
+	} catch (error) {
+		return error.message;
+	}
+}
+
+function heldOutEventIssue(event, label) {
+	try {
+		requireKeys(eventBody(event), [
+			"type", "recordedAt", "caseId", "runId", "trialId", "systemDigest", "passed",
+			"traceHealth", "policyPassed", "verifiedOutcomePassed", "evidenceDigest",
+		], label);
+		if (!ID_PATTERN.test(event.caseId ?? "") || !requiredText(event.runId, `${label}.runId`, 256)
+			|| !requiredText(event.trialId, `${label}.trialId`, 512)
+			|| !/^[a-f0-9]{64}$/.test(event.systemDigest ?? "")
+			|| !/^[a-f0-9]{64}$/.test(event.evidenceDigest ?? "")
+			|| typeof event.passed !== "boolean"
+			|| !["recorded", "degraded", "missing"].includes(event.traceHealth)
+			|| typeof event.policyPassed !== "boolean"
+			|| typeof event.verifiedOutcomePassed !== "boolean") {
+			throw new Error(`${label} contains invalid held-out evidence`);
+		}
+		return null;
+	} catch (error) {
+		return error.message;
+	}
+}
+
+function semanticEventIssue(event, previousEvents, label) {
+	if (event.type === "failure.imported") return importedEventIssue(event, label);
+	if (event.type === "failure.held-out-trial") return heldOutEventIssue(event, label);
+	if (event.type === "failure.promotion") {
+		try {
+			const expected = buildPromotionDecision(previousEvents, event.caseId, {
+				cohortId: event.cohortId,
+				decidedAt: event.recordedAt,
+			});
+			return digest(eventBody(event)) === digest(expected) ? null : `${label} promotion decision is not derivable from prior evidence`;
+		} catch (error) {
+			return `${label} promotion decision is invalid: ${error.message}`;
+		}
+	}
+	return `${label} has unsupported event type`;
+}
+
 export async function readFailureLedger(ledgerPath) {
 	let raw;
 	try {
@@ -161,6 +242,8 @@ export async function readFailureLedger(ledgerPath) {
 		if (event.sequence !== index + 1) issues.push(`line ${index + 1} has a broken sequence`);
 		if (event.previousHash !== previousHash) issues.push(`line ${index + 1} has a broken previousHash`);
 		if (eventHash !== digest(payload)) issues.push(`line ${index + 1} has a broken eventHash`);
+		const semanticIssue = semanticEventIssue(event, events.slice(0, index), `failure ledger line ${index + 1}`);
+		if (semanticIssue) issues.push(semanticIssue);
 		previousHash = eventHash;
 	}
 	return { valid: issues.length === 0, issues, events };
@@ -171,6 +254,8 @@ export async function appendFailureEvent(ledgerPath, event) {
 	if (!ledger.valid) throw new Error(`refusing to append to an invalid failure ledger: ${ledger.issues.join("; ")}`);
 	const previous = ledger.events.at(-1);
 	const record = eventPayload(event, ledger.events.length + 1, previous?.eventHash ?? null);
+	const semanticIssue = semanticEventIssue(record, ledger.events, "new failure ledger event");
+	if (semanticIssue) throw new Error(`refusing to append invalid failure evidence: ${semanticIssue}`);
 	await mkdir(path.dirname(ledgerPath), { recursive: true });
 	await appendFile(ledgerPath, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
 	await chmod(ledgerPath, 0o600);
@@ -190,8 +275,8 @@ export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, run
 	if (!reliability?.evaluatedSystem?.code?.commit || reliability.evaluatedSystem.code.dirty !== false) {
 		throw new Error("held-out reliability must pin a clean evaluated system");
 	}
-	const evaluatedSystemDigest = digest(reliability.evaluatedSystem);
-	if (systemDigest !== evaluatedSystemDigest) throw new Error("systemDigest must match the complete evaluated-system provenance");
+	const completeSystemDigest = evaluatedSystemDigest(reliability);
+	if (systemDigest !== completeSystemDigest) throw new Error("systemDigest must match the complete evaluated-system provenance");
 	const suiteIds = reliability?.evaluation?.suite?.caseIds;
 	if (!Array.isArray(suiteIds) || suiteIds.length !== 1 || suiteIds[0] !== caseId) {
 		throw new Error(`held-out reliability suite must contain only ${caseId}`);

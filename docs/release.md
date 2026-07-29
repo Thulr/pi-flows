@@ -101,9 +101,12 @@ trace path must equal `reliability.runtimeTraceFile`; every trial's exact
 trace/root-span link and run/case/trial attributes must resolve in that file.
 The reliability artifact records the actual subject models, per-case topology
 and budget configuration, environment, repository hashes, and clean-tree state
-at evaluation time. The release command requires the current checkout and every
-operator-declared model/topology/budget/suite field to match that recorded
-provenance exactly; these fields are not trusted as standalone assertions.
+at evaluation time. Release evals isolate discovery to the package-owned prompts
+whose hashes enter the manifest. The release command requires the current
+checkout and every operator-declared model/topology/budget/suite/grader field to
+match that recorded provenance exactly; these fields are not trusted as
+standalone assertions. Calibration artifacts retain their blocking decision and
+issues, and a missing or blocking calibration gate fails closed.
 
 ```json
 {
@@ -149,9 +152,9 @@ provenance exactly; these fields are not trusted as standalone assertions.
 }
 ```
 
-Copy `models`, `topology`, `budgets`, and `suite` from the reliability
+Copy `models`, `topology`, `budgets`, `suite`, and `grader` from the reliability
 artifact's `evaluation` object, then add the independently owned hard-blocker
-references and grader attestation. Any edit or substitution blocks release.
+references. Any edit or substitution blocks release.
 
 ```bash
 npm run eval:release -- \
@@ -172,8 +175,9 @@ The resulting `pi-flows.release-manifest.v1` pins:
   topology, harness, and suite hashes;
 - subject/judge model ids, topology, budgets, safe environment identity, suite,
   harness, grader, and calibration versions;
-- hashes of the reliability, calibration, runtime-trace, and optional
-  production-failure ledger artifacts; and
+- hashes of the reliability, calibration, runtime-trace, and required canonical
+  production-failure ledger artifacts (use an empty file when no failures have
+  been imported); and
 - the complete hard-blocker decision plus a digest of the manifest itself.
 
 Store the record and its referenced artifacts together in access-controlled,

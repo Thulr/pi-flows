@@ -34,14 +34,10 @@ async function main() {
 	const calibrationPath = requiredPath("calibration");
 	const runtimeTracePath = requiredPath("runtime-trace");
 	const out = requiredPath("out");
-	const ledgerFlag = flag("failure-ledger", null);
-	const ledgerPath = ledgerFlag ? path.resolve(root, ledgerFlag) : null;
-	let regressionCaseIds = [];
-	if (ledgerPath) {
-		const ledger = await readFailureLedger(ledgerPath);
-		if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
-		regressionCaseIds = promotedRegressionCaseIds(ledger.events);
-	}
+	const ledgerPath = requiredPath("failure-ledger");
+	const ledger = await readFailureLedger(ledgerPath);
+	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
+	const regressionCaseIds = promotedRegressionCaseIds(ledger.events);
 	const inputs = {
 		evidence: readJson(evidencePath, "release evidence"),
 		reliability: readJson(reliabilityPath, "reliability artifact"),
@@ -51,7 +47,7 @@ async function main() {
 			reliability: sha256File(reliabilityPath),
 			calibration: sha256File(calibrationPath),
 			runtimeTrace: sha256File(runtimeTracePath),
-			...(ledgerPath ? { failureLedger: sha256File(ledgerPath) } : {}),
+			failureLedger: sha256File(ledgerPath),
 		},
 		regressionCaseIds,
 	};

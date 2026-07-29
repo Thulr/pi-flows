@@ -333,6 +333,10 @@ export function assessCalibration({
 	});
 	const report = buildCalibrationReport({ key, storedKey: readJsonOrNull(out)?.key ?? null, splitEntries, splits, records, reviewSet, criticalDimensions, abstentionBand });
 	const issues = calibrationGateIssues(report, { criticalMissRateCap });
+	const artifact = {
+		...report,
+		gate: { blocks: issues.length > 0, issues, criticalMissRateCap },
+	};
 
 	log("\njudge calibration:");
 	log(formatCalibrationReport(report));
@@ -342,10 +346,10 @@ export function assessCalibration({
 	}
 	if (out) {
 		mkdirSync(dirname(out), { recursive: true });
-		writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+		writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
 		log(`calibration report written to ${relativeToRepo(out)}`);
 	}
-	return { report, issues, blocks: issues.length > 0, path: out };
+	return { report: artifact, issues, blocks: issues.length > 0, path: out };
 }
 
 /**

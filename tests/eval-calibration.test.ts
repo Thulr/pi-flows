@@ -680,6 +680,7 @@ test("assessCalibration writes a versioned artifact and detects drift against it
 	const written = JSON.parse(readFileSync(out, "utf8"));
 	assert.equal(written.splits["held-out"].caseCount, 2, "both measurement cases are declared or named held-out");
 	assert.equal(written.splits.calibration.caseCount, 3);
+	assert.deepEqual(written.gate, { blocks: false, issues: [], criticalMissRateCap: 0.35 });
 
 	assert.equal(assessCalibration(options).report.drift.status, "valid", "an unchanged run matches its own stored key");
 

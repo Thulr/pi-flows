@@ -13,11 +13,14 @@ export function buildEvaluationProvenance(cases, summaries, {
 	armTimeoutMs,
 	subjectTrials,
 	judgeModel,
+	grader = null,
 	suiteName = "release",
 } = {}) {
 	const subjects = [...new Set(summaries.map((summary) => summary.model).filter(Boolean))].sort();
 	return {
+		agentDiscovery: "package-only",
 		models: { subjects, judge: judgeModel },
+		grader,
 		topology: {
 			arm: "flows",
 			cases: Object.fromEntries(cases.map((entry) => [entry.name, {

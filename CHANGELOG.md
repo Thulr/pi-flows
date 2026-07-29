@@ -31,7 +31,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   dedicated held-out run with independently resolved runtime roots. Release
   records bind operator attestations to evaluation-time models, topology,
   budgets, environment, and repository hashes, and reject empty or untyped
-  hard-blocker references.
+  hard-blocker references. Release evals isolate package-owned prompts, bind the
+  actual grader version and calibration gate decision, and require the canonical
+  failure ledger so promoted regressions cannot be omitted.
 
 - Inter-agent injection handling is now an enforceable, flow-scoped policy.
   `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding

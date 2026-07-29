@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,10 +16,12 @@ import {
 	buildFailureImport,
 	buildHeldOutTrialEvents,
 	buildPromotionDecision,
+	evaluatedSystemDigest,
 	failureCasesFromLedger,
 	readFailureLedger,
 } from "../evals/failure-ledger.mjs";
 import { buildEvaluationProvenance } from "../evals/evaluation-provenance.mjs";
+import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 
 const blockerEvidence = () => Object.fromEntries(HARD_BLOCKER_KEYS.map((key) => [
 	key,
@@ -65,7 +67,7 @@ function releaseInputs() {
 			key: { schemaVersion: "pi-flows.calibration-key.v1", digest: "calibration-key" },
 			drift: { status: "valid", changed: [] },
 			authority: { critical: ["criterion"], authoritative: ["criterion"], provisional: [] },
-			blocks: false,
+			gate: { blocks: false, issues: [], criticalMissRateCap: 0.35 },
 		},
 		system: {
 			code: { commit: "0123456789abcdef", dirty: false },
@@ -83,13 +85,16 @@ function releaseInputs() {
 			reliability: "reliability-hash",
 			calibration: "calibration-hash",
 			runtimeTrace: "runtime-trace-hash",
+			failureLedger: "failure-ledger-hash",
 		},
 		runtimeTraceValidation: { valid: true, issues: [], matchedTrials: 5 },
 		generatedAt: "2026-07-28T12:30:00.000Z",
 	};
 	inputs.reliability.evaluatedSystem = structuredClone(inputs.system);
 	inputs.reliability.evaluation = {
+		agentDiscovery: "package-only",
 		models: structuredClone(inputs.evidence.models),
+		grader: structuredClone(inputs.evidence.grader),
 		topology: structuredClone(inputs.evidence.topology),
 		budgets: structuredClone(inputs.evidence.budgets),
 		suite: structuredClone(inputs.evidence.suite),
@@ -133,6 +138,27 @@ test("evaluation provenance records effective per-case flow budgets", () => {
 	});
 });
 
+test("release eval prompt isolation ignores user prompt shadows", async () => {
+	const agentRoot = await mkdtemp(path.join(tmpdir(), "pi-flow-agent-root-"));
+	const userAgents = path.join(agentRoot, "flow-agents");
+	await mkdir(userAgents, { recursive: true });
+	await writeFile(path.join(userAgents, "recon.md"), "---\nname: recon\ndescription: shadow\n---\nuser shadow\n", "utf8");
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	const previousIsolation = process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
+	process.env.PI_CODING_AGENT_DIR = agentRoot;
+	process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
+	try {
+		const discovery = discoverFlowAgents(process.cwd(), "user");
+		assert.equal(discovery.agents.find((agent) => agent.name === "recon")?.source, "package");
+		assert.equal(discovery.issues.some((issue) => issue.code === "AGENT_NAME_SHADOWED"), false);
+	} finally {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDir;
+		if (previousIsolation === undefined) delete process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
+		else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = previousIsolation;
+	}
+});
+
 test("release evaluation fails closed on every catastrophic blocker and incomplete evidence", () => {
 	for (const key of HARD_BLOCKER_KEYS) {
 		const inputs = releaseInputs();
@@ -154,6 +180,10 @@ test("release evaluation fails closed on every catastrophic blocker and incomple
 	const staleCalibration = releaseInputs();
 	staleCalibration.calibration.drift.status = "stale";
 	assert.match(evaluateRelease(staleCalibration).blockers.join("\n"), /calibration key is stale/);
+
+	const blockingCalibration = releaseInputs();
+	blockingCalibration.calibration.gate = { blocks: true, issues: ["critical miss-rate bound exceeded"], criticalMissRateCap: 0.35 };
+	assert.match(evaluateRelease(blockingCalibration).blockers.join("\n"), /critical miss-rate bound exceeded/);
 
 	const dirty = releaseInputs();
 	dirty.system.code.dirty = true;
@@ -180,6 +210,18 @@ test("release evaluation fails closed on every catastrophic blocker and incomple
 	const assertedModel = releaseInputs();
 	assertedModel.evidence.models.subjects = ["operator/assertion"];
 	assert.match(evaluateRelease(assertedModel).blockers.join("\n"), /model identifiers do not match evaluation-time provenance/);
+
+	const assertedGrader = releaseInputs();
+	assertedGrader.evidence.grader.version = "operator/assertion";
+	assert.match(evaluateRelease(assertedGrader).blockers.join("\n"), /grader does not match evaluation-time provenance/);
+
+	const shadowablePrompts = releaseInputs();
+	shadowablePrompts.reliability.evaluation.agentDiscovery = "user";
+	assert.match(evaluateRelease(shadowablePrompts).blockers.join("\n"), /did not isolate the package prompts/);
+
+	const missingLedger = releaseInputs();
+	delete missingLedger.artifactHashes.failureLedger;
+	assert.match(evaluateRelease(missingLedger).blockers.join("\n"), /failureLedger artifact hash is missing/);
 
 	const changedSystem = releaseInputs();
 	changedSystem.reliability.evaluatedSystem.hashes.harness = "evaluated-harness";
@@ -295,7 +337,7 @@ test("promotion is append-only and requires stable held-out success on one syste
 	const trials = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability,
-		systemDigest: releaseDigest(reliability.evaluatedSystem),
+		systemDigest: evaluatedSystemDigest(reliability),
 		runtimeTraceValidation: heldOutTrace(reliability),
 		recordedAt: "2026-07-28T12:00:00.000Z",
 	});
@@ -333,7 +375,7 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	const trialEvents = buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability: clean,
-		systemDigest: releaseDigest(clean.evaluatedSystem),
+		systemDigest: evaluatedSystemDigest(clean),
 		runtimeTraceValidation: heldOutTrace(clean),
 	});
 
@@ -357,19 +399,22 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	oldFailed.passed = false;
 	const cleanDecision = buildPromotionDecision([imported, oldFailed, ...trialEvents], "production-routing-failure", { cohortId: clean.runId });
 	assert.equal(cleanDecision.decision, "approved", "an older failed cohort must not poison a later stable cohort");
+	const differentModel = structuredClone(clean);
+	differentModel.evaluation.models.subjects = ["provider/different-subject"];
+	assert.notEqual(evaluatedSystemDigest(differentModel), evaluatedSystemDigest(clean), "promotion identity includes model/topology/budget provenance");
 
 	const ordinaryReliability = structuredClone(clean);
 	delete ordinaryReliability.evidencePurpose;
 	assert.throws(() => buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability: ordinaryReliability,
-		systemDigest: releaseDigest(ordinaryReliability.evaluatedSystem),
+		systemDigest: evaluatedSystemDigest(ordinaryReliability),
 		runtimeTraceValidation: heldOutTrace(ordinaryReliability),
 	}), /dedicated held-out promotion run/);
 	assert.throws(() => buildHeldOutTrialEvents({
 		caseId: "production-routing-failure",
 		reliability: clean,
-		systemDigest: releaseDigest(clean.evaluatedSystem),
+		systemDigest: evaluatedSystemDigest(clean),
 		runtimeTraceValidation: { valid: false, issues: ["missing root"], matchedTrials: 2 },
 	}), /runtime trace validation failed/);
 });
@@ -387,4 +432,15 @@ test("failure ledger detects edits to prior append-only records", async () => {
 	const ledger = await readFailureLedger(ledgerPath);
 	assert.equal(ledger.valid, false);
 	assert.match(ledger.issues.join("\n"), /broken eventHash/);
+});
+
+test("failure ledger refuses persisted imports that bypass canonical sanitation", async () => {
+	const directory = await mkdtemp(path.join(tmpdir(), "pi-flow-invalid-failure-ledger-"));
+	const ledgerPath = path.join(directory, "ledger.jsonl");
+	const imported = buildFailureImport(failureInput(), { traceValidation: validProductionTrace() });
+	imported.case.initialState.files[0].path = "../outside.txt";
+	await assert.rejects(
+		appendFailureEvent(ledgerPath, imported),
+		/refusing to append invalid failure evidence.*must stay inside the case workspace/,
+	);
 });

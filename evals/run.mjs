@@ -20,8 +20,6 @@
 // exit code only says whether a judgeable trace was emitted — the driver
 // (thulr run-experiment / optimize) owns judging and selection.
 //
-// The five phases (argv -> preflight -> run arms -> trace -> judge/gate) live in
-// evals/pipeline.mjs and evals/run-report.mjs; this file wires them together.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
@@ -40,8 +38,8 @@ import { captureReleaseSystem } from "./release-system.mjs";
 import * as thulr from "./thulr.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
+process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
 
-// Load a local .env (provider keys) if present, before any child pi inherits env.
 loadDotenv();
 
 const { flag, has, bool, flags, rateFlag, positiveNumberFlag, positiveIntegerFlag } = createFlagReader(process.argv.slice(2));
@@ -368,6 +366,9 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, 
 
 async function main() {
 	if (!preflight()) process.exit(2);
+	const evaluatedGrader = dryRun || traceOnly
+		? null
+		: { name: "thulr", version: thulr.doctor().report?.version ?? null };
 
 	const selected = selectMeasurementCases(CASES, { filter, includeControls });
 	const selectedCalibration = CALIBRATION_CASES.filter((c) => !filter || c.name.includes(filter));
@@ -415,7 +416,7 @@ async function main() {
 		runId: EVAL_RUN_ID,
 		runtimeTraceFile: rel(RUNTIME_TRACE),
 		evaluatedSystem: EVALUATED_SYSTEM,
-		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel }),
+		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel, grader: evaluatedGrader }),
 		evidencePurpose: promotionCaseId ? { kind: "failure-promotion-held-out", caseId: promotionCaseId } : null,
 	};
 
