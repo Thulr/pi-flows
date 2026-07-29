@@ -127,7 +127,13 @@ provenance exactly; these fields are not trusted as standalone assertions.
     "defaultTimeoutMs": 120000,
     "armTimeoutMs": null,
     "cases": {
-      "release-case": { "maxCostUsd": 1, "timeoutMs": 120000 }
+      "release-case": {
+        "maxCostUsd": 1,
+        "maxTokens": null,
+        "maxGeneratedTokens": null,
+        "caseTimeoutMs": 120000,
+        "effectiveTimeoutMs": 120000
+      }
     }
   },
   "suite": { "name": "release", "caseIds": ["release-case"] },

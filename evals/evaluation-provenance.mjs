@@ -32,7 +32,10 @@ export function buildEvaluationProvenance(cases, summaries, {
 			armTimeoutMs,
 			cases: Object.fromEntries(cases.map((entry) => [entry.name, {
 				maxCostUsd: entry.params.maxCostUsd ?? capUsd,
-				timeoutMs: Math.min(entry.timeoutMs ?? timeoutMs, armTimeoutMs ?? Number.POSITIVE_INFINITY),
+				maxTokens: entry.params.maxTokens ?? null,
+				maxGeneratedTokens: entry.params.maxGeneratedTokens ?? null,
+				caseTimeoutMs: entry.params.timeoutMs ?? timeoutMs,
+				effectiveTimeoutMs: armTimeoutMs ?? entry.params.timeoutMs ?? timeoutMs,
 			}])),
 		},
 		suite: { name: suiteName, caseIds: cases.map((entry) => entry.name).sort() },

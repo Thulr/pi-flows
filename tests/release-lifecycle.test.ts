@@ -19,6 +19,7 @@ import {
 	failureCasesFromLedger,
 	readFailureLedger,
 } from "../evals/failure-ledger.mjs";
+import { buildEvaluationProvenance } from "../evals/evaluation-provenance.mjs";
 
 const blockerEvidence = () => Object.fromEntries(HARD_BLOCKER_KEYS.map((key) => [
 	key,
@@ -115,6 +116,21 @@ test("release manifest pins the complete evaluated system and approves clean evi
 	assert.equal(manifest.evaluation.calibration.keyDigest, "calibration-key");
 	assert.equal(manifest.artifacts.runtimeTrace.sha256, "runtime-trace-hash");
 	assert.match(manifest.manifestDigest, /^[a-f0-9]{64}$/);
+});
+
+test("evaluation provenance records effective per-case flow budgets", () => {
+	const provenance = buildEvaluationProvenance(
+		[{ name: "budgeted", params: { agent: "recon", task: "inspect", timeoutMs: 600_000, maxTokens: 12_000, maxGeneratedTokens: 4_000 } }],
+		[{ model: "provider/subject" }],
+		{ capUsd: 0.5, timeoutMs: 120_000, armTimeoutMs: 90_000, subjectTrials: 3, judgeModel: "provider/judge" },
+	);
+	assert.deepEqual(provenance.budgets.cases.budgeted, {
+		maxCostUsd: 0.5,
+		maxTokens: 12_000,
+		maxGeneratedTokens: 4_000,
+		caseTimeoutMs: 600_000,
+		effectiveTimeoutMs: 90_000,
+	});
 });
 
 test("release evaluation fails closed on every catastrophic blocker and incomplete evidence", () => {
