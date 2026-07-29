@@ -474,8 +474,11 @@ test("route dispatch runs through the recorded selection, not around it", async 
 	// classification -> selection -> dispatch: the decision is the boundary that
 	// connects the two, so it must not sit beside the chain as an orphan.
 	assert.equal(attr(selection, "flow.unit_key"), "selection");
-	assert.equal(attr(selection, "flow.depends_on"), "router");
-	assert.equal(attr(selection, "flow.depends_on_span_ids"), unit(spans, "router")!.span_id);
+	const routerHandoff = unit(spans, "router.handoff")!;
+	assert.equal(attr(routerHandoff, "flow.depends_on"), "router");
+	assert.equal(attr(routerHandoff, "flow.depends_on_span_ids"), unit(spans, "router")!.span_id);
+	assert.equal(attr(selection, "flow.depends_on"), "router.handoff");
+	assert.equal(attr(selection, "flow.depends_on_span_ids"), routerHandoff.span_id);
 	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on"), "selection");
 	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on_span_ids"), selection.span_id);
 });

@@ -10,6 +10,21 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Inter-agent injection handling is now an enforceable, flow-scoped policy.
+  `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding
+  `quarantine`, and `fail` before the recipient process spawns;
+  `modeHandoffPolicy` declares non-downgradable per-mode minimums for
+  high-consequence flows and workflow approval receipts bind the resolved
+  policy. Bounded cross-handoff state detects conjunctive attacks assembled from
+  individually benign fragments. The deterministic fault manifest now covers
+  malicious child output, retrieved content, poisoned routing metadata,
+  repeated poisoned consensus, and multi-boundary composition. Its
+  ground-truth portfolio report keeps benign utility, attack success,
+  propagation, containment, sensitive exposure, and false-positive block rates
+  separate; runtime traces record enforcement facts without pretending scanner
+  labels are outcome truth. New structured error:
+  `HANDOFF_POLICY_VIOLATION`.
+
 - A deterministic, model-free coordination fault-injection suite runs offline in
   `npm test`, so failures a live run reproduces once a month are reproduced on
   every check. A reusable adapter over the child-run seam (`ModeDeps.runChild`)
@@ -23,11 +38,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   merging the bad work is not contained. Benign controls run through the same
   harness, so false containment stays measurable, and every case carries explicit
   attack-opportunity and benign-opportunity denominators: containment is reported
-  as a rate over what the scenarios actually did — 13/14 attack opportunities
-  contained, 0/8 control deliveries falsely blocked — instead of as a pile of
-  passing assertions. The one uncontained case, a replayed untyped ballot that
-  nothing in that path can distinguish from independent agreement, is kept in the
-  suite rather than dropped from it.
+  as rates over what the scenarios actually did, including explicit attack and
+  benign-control opportunities, instead of as a pile of passing assertions. The
+  one uncontained case, a replayed untyped ballot that nothing in that path can
+  distinguish from independent agreement, is kept in the suite rather than
+  dropped from it.
 
 - Coordination traces now capture the boundaries a delegated run actually
   crosses, instead of flattening every child under one root span. Spans declare a

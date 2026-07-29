@@ -73,7 +73,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 		priorArguments = roundResults.map((result) => {
 			if (isFailed(result)) return "[advocate failed]";
-			return warnings.addFrom(prepareResultHandoff(result, policy)).text;
+			return warnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard)).text;
 		});
 		// The transcript is built from each advocate's validated handoff, so that is
 		// what the next round and the adjudicator actually read.
@@ -104,7 +104,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const decision = await runIntegrationPlan(deps, planned.plan!, "debate", allResults.length + 1, allResults);
 	allResults.push(decision);
 	if (isFailed(decision)) return { content: [{ type: "text", text: sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(decision)}`, policy) }], details: deps.makeDetails("debate")(allResults) };
-	const handoffError = acceptIntegrationResult(deps, planned.plan!, decision);
+	const handoffError = acceptIntegrationResult(deps, planned.plan!, decision, undefined, { consumed: false });
 	if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: deps.makeDetails("debate")(allResults, handoffError) };
 
 	return {

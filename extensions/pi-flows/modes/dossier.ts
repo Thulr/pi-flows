@@ -54,7 +54,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		.map((result, index) => ({ result, index }))
 		.filter(({ result }) => !isFailed(result))
 		.map(({ result, index }) => {
-			const prepared = warnings.addFrom(prepareResultHandoff(result, policy));
+			const prepared = warnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
 			return `### Evidence section ${index + 1}: ${sanitizeText(sections[index]?.task ?? "", policy, 1024)}\n\n${prepared.text}`;
 		})
 		.join("\n\n---\n\n");
@@ -80,7 +80,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);
 	results.push(debriefed);
 	if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow dossier: synthesizer failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("dossier")(results) };
-	const debriefHandoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);
+	const debriefHandoffError = acceptIntegrationResult(deps, planned.plan!, debriefed, undefined, { consumed: false });
 	if (debriefHandoffError) return { content: [{ type: "text", text: formatFlowError(debriefHandoffError) }], details: deps.makeDetails("dossier")(results, debriefHandoffError) };
 
 	return {

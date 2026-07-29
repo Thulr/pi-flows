@@ -71,6 +71,8 @@ if no justification can be stated, the task belongs in the parent context.
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
 | `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. Redacted, bounded identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
 | `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, or failed writes fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates; ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
+| `handoffPolicy` | `warn` | Call-level injection handling at inter-agent boundaries: `warn` preserves the flagged payload with a warning, `quarantine` substitutes a payload-free marker, and `fail` returns `HANDOFF_POLICY_VIOLATION` before the recipient spawns. |
+| `modeHandoffPolicy` | (none) | Per-mode minimums, e.g. `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`; a call cannot downgrade a high-consequence mode. |
 | `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
 | `contract` | (none) | Typed delegation contract. It may replace prose `task` in single/evaluate, acts as the final-role fallback in integration modes, and requires a validated `pi-flows.return-envelope.v1` response. Fan-out tasks, graph nodes, workflow phases, worktree tasks, voters/participants, dossier sections, and agent refs can set role-specific contracts. |
@@ -87,6 +89,33 @@ The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
 voters, subtasks, worktree writers, debate participants, and dossier sections --
 not a per-call input. It is enforced by the runtime and surfaced read-only in
 `details.config`.
+
+### Handoff injection policy
+
+Every value that crosses from one coordination role into another is treated as
+untrusted data. The flow-scoped guard strips invisible/bidi controls, scans
+high-signal instruction-override and exfiltration markers, and retains a bounded
+history so fragments that are benign alone but malicious when joined across
+several boundaries are detected as a compositional attack. This includes child
+output, retrieved content repeated by a child, routing metadata, ballots,
+critic/check-command feedback, graph dependencies, workflow phases, and
+synthesis inputs.
+
+`handoffPolicy` selects the call behavior:
+
+- `warn` (default) preserves current compatibility: the cleaned payload crosses
+  with a visible untrusted-data notice.
+- `quarantine` withholds the flagged payload and carries only a fixed
+  quarantine marker. Downstream coordination may continue, but it cannot read
+  the flagged content.
+- `fail` returns `HANDOFF_POLICY_VIOLATION` and the child-dispatch seam refuses
+  the recipient before a process is spawned.
+
+`modeHandoffPolicy` declares a non-downgradable minimum for a mode. Resolution
+uses `warn < quarantine < fail`, so
+`handoffPolicy:"warn", modeHandoffPolicy:{"workflow":"fail"}` resolves to
+`fail`. Workflow approval receipts bind that resolution; resuming with a changed
+call or mode policy requires fresh approval.
 
 `maxCostUsd` / `maxTokens` / `maxGeneratedTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero.
 
@@ -115,7 +144,7 @@ Dependencies are recorded as **links, not parentage**: a graph node that consume
 
 Not every failure happens inside a child run. Approvals, state transitions, budget refusals, gate results, and handoff acceptance move the flow without spawning anything, so each is written as its own zero-duration span with `flow.event_kind` ∈ `artifact`, `state`, `retry`, `approval`, `budget`, `validation`, `handoff`.
 
-Handoff events record what crossed the boundary — `flow.handoff.status`, `.compatibility`, `.acceptance` (`accepted` or `rejected:<CODE>`), `.raw_bytes` / `.carried_bytes` / `.filtered`, `.injection_warnings`, `.artifact_refs`, and `.preserved_constraint_ids` — but never the summary prose or the envelope `data`. Constraint ids are content-derived (`constraint.1:<digest>`), so the same constraint keeps the same id at every hop and "was this preserved?" is answerable without copying the constraint text into the trace.
+Handoff events record what crossed the boundary — `flow.handoff.status`, `.compatibility`, `.acceptance` (`accepted` or `rejected:<CODE>`), `.raw_bytes` / `.carried_bytes` / `.filtered`, `.injection_warnings`, `.policy`, `.policy_action`, `.compositional`, `.scan_flagged`, `.payload_propagated`, `.payload_withheld`, `.sensitive_request_propagated`, `.artifact_refs`, and `.preserved_constraint_ids` — but never the summary prose or the envelope `data`. Constraint ids are content-derived (`constraint.1:<digest>`), so the same constraint keeps the same id at every hop and "was this preserved?" is answerable without copying the constraint text into the trace. These are operational enforcement facts, not ground-truth attack outcomes. The deterministic fault-portfolio report, whose scripted scenarios know whether content was benign and what the recipient actually did, keeps benign utility, attack success, propagation, containment, sensitive exposure, and false-positive block rates separate rather than deriving them from scanner labels.
 
 Child spans additionally identify the authority they ran under: `flow.agent_prompt_version` (a digest of the system prompt that actually ran), `flow.allowed_tools`, `flow.authority_may` / `_must_not` / `_requires_approval`, `flow.side_effect_class`, `flow.contract_id`, `flow.return_schema_digest`, `flow.constraint_ids`, `flow.delegation_reason` (the call's `why`), and the budget state after the run.
 

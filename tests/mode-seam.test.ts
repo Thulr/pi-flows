@@ -9,6 +9,7 @@ import { handleGraph } from "../extensions/pi-flows/modes/graph.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleSingle } from "../extensions/pi-flows/modes/single.ts";
 import { emptyUsage, type FlowDiscovery, type FlowRunResult, type ModeDeps, type RunChildOptions } from "../extensions/pi-flows/types.ts";
+import { createHandoffGuard, resolveHandoffPolicy } from "../extensions/pi-flows/handoff.ts";
 
 const discovery: FlowDiscovery = {
 	agents: [
@@ -40,6 +41,7 @@ function makeDeps(params: Record<string, unknown>, runChild: ModeDeps["runChild"
 		params,
 		discovery,
 		policy: { recordContent: true, redactSecrets: true },
+		handoffGuard: createHandoffGuard(resolveHandoffPolicy(params, "parallel")),
 		agentScope: "user",
 		defaultCwd: "/tmp",
 		makeDetails: catalog.makeDetails,

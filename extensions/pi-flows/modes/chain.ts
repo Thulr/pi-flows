@@ -63,18 +63,22 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			if (validated.error) {
 				return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("chain")(results, validated.error) };
 			}
-			const handoff = prepareTextHandoff(canonicalEnvelope(validated.envelope!), policy);
+			if (!handsOff) continue;
+			const handoff = prepareTextHandoff(canonicalEnvelope(validated.envelope!), policy, undefined, deps.handoffGuard);
+			recordStepHandoff(deps, { result, contract, envelope: validated.envelope, prepared: handoff, scope: { key: stepKey(index) } });
+			if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("chain")(results, handoff.error) };
 			previous = withInjectionNotice(handoff, `chain step ${index + 1} envelope`);
 			// The step validated its own envelope, so it records its own boundary:
 			// this is where one agent's output becomes the next agent's prompt.
-			if (handsOff) recordStepHandoff(deps, { result, contract, envelope: validated.envelope, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
 			continue;
 		}
 		// {previous} is this step's output reused as the next step's prompt — a trust
 		// boundary. Strip invisible chars and flag injection markers before handoff.
-		const handoff = prepareResultHandoff(result, policy);
+		if (!handsOff) continue;
+		const handoff = prepareResultHandoff(result, policy, undefined, deps.handoffGuard);
+		recordStepHandoff(deps, { result, prepared: handoff, scope: { key: stepKey(index) } });
+		if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("chain")(results, handoff.error) };
 		previous = withInjectionNotice(handoff, `chain step ${index + 1} output`);
-		if (handsOff) recordStepHandoff(deps, { result, carried: handoff.text, warnings: handoff.warnings, scope: { key: stepKey(index) } });
 	}
 
 	return {

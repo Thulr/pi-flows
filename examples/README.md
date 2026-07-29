@@ -93,6 +93,7 @@ incomplete synthesis is an intentional policy choice.
 ```json
 {
   "task": "Improve flow error messages",
+  "handoffPolicy": "quarantine",
   "chain": [
     { "agent": "recon", "task": "Find error-handling code for this task: {task}" },
     { "agent": "strategist", "task": "Plan the change using this context:\n\n{previous}" }
@@ -100,6 +101,12 @@ incomplete synthesis is an intentional policy choice.
   "why": "research and planning benefit from a fresh planning context fed a bounded handoff"
 }
 ```
+
+`quarantine` lets the planning step run but replaces any injection-shaped recon
+payload with a fixed marker. For a high-consequence resumable workflow, combine
+`"handoffPolicy":"warn"` with
+`"modeHandoffPolicy":{"workflow":"fail"}`; the mode requirement wins and is
+bound into workflow approval receipts.
 
 Expected: recon output is capped/redacted before it becomes strategist context.
 

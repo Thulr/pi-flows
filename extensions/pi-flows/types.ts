@@ -1,5 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
+import type { HandoffGuard } from "./handoff-types.ts";
 
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
 // it can be re-exported here without a cycle) and is part of this module's
@@ -16,6 +17,7 @@ export type {
 	SpanStage,
 } from "./trace-scope.ts";
 export { encodeAuthorKey } from "./trace-scope.ts";
+export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
 
 export const PI_FLOWS_VERSION = "0.3.0";
 
@@ -56,6 +58,7 @@ export const CHECK_OUTPUT_CAP = 16 * 1024;
 
 export type AgentSource = "package" | "user" | "project";
 export type AgentScope = "user" | "project" | "all";
+export type HandoffPolicy = "warn" | "quarantine" | "fail";
 
 /**
  * The single source of the mode union. `RunMode`, `FlowMode`, the contract
@@ -124,6 +127,7 @@ export const FLOW_ERROR_CODES = [
 	"RETURN_CONTRACT_MISMATCH",
 	"RETURN_ENVELOPE_INCOMPLETE",
 	"RETURN_DIGEST_MISMATCH",
+	"HANDOFF_POLICY_VIOLATION",
 	"CHILD_PROTOCOL_ERROR",
 	"CHILD_EXIT_NONZERO",
 	"CHILD_ABORTED",
@@ -232,6 +236,7 @@ export interface FlowDetails {
 		defaultTimeoutMs: number;
 		recordContentDefault: boolean;
 		redactSecretsDefault: boolean;
+		handoffPolicyDefault: HandoffPolicy;
 	};
 	agentsDir: {
 		package: string;
@@ -464,6 +469,8 @@ export interface ModeDeps {
 	params: any;
 	discovery: FlowDiscovery;
 	policy: CapturePolicy;
+	/** Flow-scoped injection policy and bounded cross-handoff detection state. */
+	handoffGuard: HandoffGuard;
 	agentScope: AgentScope;
 	defaultCwd: string;
 	signal?: AbortSignal;

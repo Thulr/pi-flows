@@ -142,7 +142,7 @@ Or install your working copy as a package with `pi install -l ./`. See [Developm
 
 Project-local agents are repo-controlled prompts. In interactive pi sessions, pi-flows asks before running them. In headless (non-UI) runs, pi-flows **fails closed by default** and refuses project-local agents unless you explicitly pass `confirmProjectAgents:false` after reviewing the files.
 
-pi-flows also redacts secret-shaped content and home paths from returned content/details by default. Inter-agent **handoffs** — where one child's output becomes another child's prompt (`{previous}` in chain, the evaluate artifact, vote ballots, orchestrate findings) — are an indirect prompt-injection surface, so pi-flows strips invisible/bidi characters and flags instruction-override markers in that content before reuse, surfacing a warning rather than silently trusting it. See [Privacy & telemetry](./docs/privacy-telemetry.md).
+pi-flows also redacts secret-shaped content and home paths from returned content/details by default. Inter-agent **handoffs** — where one child's output becomes another child's prompt (`{previous}` in chain, the evaluate artifact, vote ballots, routing metadata, orchestrate findings) — are an indirect prompt-injection surface. A flow-scoped guard strips invisible/bidi characters, scans instruction-override markers, and detects attacks assembled from individually benign fragments across several boundaries. `handoffPolicy` selects `warn` (compatibility default), `quarantine` (withhold the payload), or `fail` (stop before the recipient spawns); `modeHandoffPolicy` can impose a stricter non-downgradable minimum for high-consequence modes. See [Flow reference](./docs/flow-reference.md#handoff-injection-policy) and [Privacy & telemetry](./docs/privacy-telemetry.md).
 
 Cost is bounded as well as count and time: pass `maxCostUsd`, `maxTokens`, or `maxGeneratedTokens` to cap cumulative spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Concurrent fan-out also refuses multiple write-capable agents in the same `cwd` (`SHARED_WRITE_CWD`) unless `allowSharedWriteCwd:true` is explicit. Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
 
@@ -239,7 +239,7 @@ Defaults: `concurrency=4` (per-call). `maxParallelTasks` is a fixed hard cap of 
 }
 ```
 
-Chain `{previous}` handoffs are capped, redacted, and scanned for injection before they become the next prompt.
+Chain `{previous}` handoffs are capped, redacted, and scanned for injection before they become the next prompt. Set `"handoffPolicy":"quarantine"` to continue without carrying flagged text, or `"fail"` to refuse the next child before spawn.
 
 ### Evaluate (generator-evaluator loop)
 

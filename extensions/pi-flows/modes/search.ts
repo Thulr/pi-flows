@@ -81,10 +81,10 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			.map((result, index) => ({ result, dependency: generatorKey(roundStage.key, index) }))
 			.filter(({ result }) => !isFailed(result))
 			.map(({ result, dependency }) => {
-				const prepared = handoffWarnings.addFrom(prepareResultHandoff(result, policy));
+				const prepared = handoffWarnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
 				// The scorer judges this prepared candidate; the boundary is where the
 				// generator's output became text another agent reads.
-				recordStepHandoff(deps, { result, carried: prepared.text, warnings: prepared.warnings, scope: { stage: generateStage, key: dependency } });
+				recordStepHandoff(deps, { result, prepared, scope: { stage: generateStage, key: dependency } });
 				return { text: prepared.text, dependency: `${dependency}.handoff` };
 			});
 		const candidates = candidateEntries.map((entry) => entry.text);

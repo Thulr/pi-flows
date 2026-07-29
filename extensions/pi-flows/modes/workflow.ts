@@ -364,7 +364,9 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": run.error?.code ?? "(none)" });
 			return { content: [{ type: "text", text: sanitizeText(`Flow workflow stopped in phase "${phase.id}" (${phase.agent}).\n\n${resultText(run)}`, policy) }], details: workflowDetails(deps, results, state) };
 		}
-		const handoffError = acceptIntegrationResult(deps, planned.plan!, run);
+		const consumed = Boolean(spec.debrief?.agent)
+			|| phases.slice(phaseIndex + 1).some((candidate: any) => candidate?.agent && candidate?.task);
+		const handoffError = acceptIntegrationResult(deps, planned.plan!, run, undefined, { consumed });
 		if (handoffError) {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
@@ -373,7 +375,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			return stateError(deps, results, handoffError, state);
 		}
 
-		const output = prepareResultHandoff(run, policy).text;
+		const output = prepareResultHandoff(run, policy, undefined, consumed ? deps.handoffGuard : undefined).text;
 		if (phase.checkCommand) {
 			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, resolveFlowCommandTimeoutMs(undefined, params.timeoutMs), policy, deps.signal);
 			deps.recordEvent?.({
@@ -404,11 +406,10 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		state.updatedAt = new Date().toISOString();
 		await persistState(stateFile, state);
 		recordPhaseState(deps, phase.id, "phase.completed", state, { "flow.handoff.status": run.handoff!.status, "flow.handoff.compatibility": run.handoff!.compatibility });
-		// The next phase and the debrief read `prepareResultHandoff(...).text`, not
-		// the child's raw output, so they depend on the handoff event that records
-		// that crossing. Pointing at the child instead would export a causal path
-		// that skips the validation, filtering, and byte accounting it went through.
-		registerPhaseUnit(`${phaseWorkKey(phase.id)}.handoff`);
+		// A later child reads the prepared output through its task, so it depends on
+		// the handoff boundary. A terminal phase has no such boundary and remains a
+		// child dependency instead of inventing a handoff to the caller.
+		registerPhaseUnit(consumed ? `${phaseWorkKey(phase.id)}.handoff` : phaseWorkKey(phase.id));
 	}
 
 	// A trailing approval gates the workflow's own completion (and its debrief),
@@ -456,7 +457,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			await persistState(stateFile, state);
 			return { content: [{ type: "text", text: sanitizeText(`Flow workflow debrief failed.\n\n${resultText(debriefed)}`, policy) }], details: workflowDetails(deps, results, state) };
 		}
-		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);
+		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed, undefined, { consumed: false });
 		if (handoffError) {
 			state.status = "failed";
 			delete state.nextPhaseId;

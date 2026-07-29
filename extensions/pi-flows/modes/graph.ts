@@ -4,7 +4,7 @@ import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { acceptIntegrationResult, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
 	let rendered = template.replace(/\{task\}/g, task ?? "");
@@ -16,6 +16,9 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
 	const spec = params.graph ?? {};
 	const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
+	const hasDebrief = Boolean(spec.debrief?.agent);
+	const nodeHasConsumer = (id: string) => hasDebrief
+		|| nodes.some((candidate: any) => (candidate.dependsOn ?? []).includes(id));
 	if (nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) {
 		const error = flowError(
 			"GRAPH_INVALID",
@@ -86,10 +89,15 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			(done) => `Flow graph: ${completed.size + done}/${nodes.length} nodes done`,
 			{ key: `wave-${wave}`, name: `wave ${wave}` },
 		);
-		const handoffError = acceptIntegrationResults(deps, waveItems, waveRunResults);
-		if (handoffError) {
-			results.push(...waveRunResults);
-			return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("graph")(results, handoffError) };
+		for (const [index, result] of waveRunResults.entries()) {
+			if (isFailed(result)) continue;
+			const node = ready[index];
+			const consumed = nodeHasConsumer(node.id);
+			const handoffError = acceptIntegrationResult(deps, waveItems[index], result, undefined, { consumed });
+			if (handoffError) {
+				results.push(...waveRunResults);
+				return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("graph")(results, handoffError) };
+			}
 		}
 		const waveResults = waveRunResults.map((result, index) => ({ node: ready[index], result }));
 		for (const { node, result } of waveResults) {
@@ -98,7 +106,8 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			if (isFailed(result)) {
 				return { content: [{ type: "text", text: sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy) }], details: makeDetails("graph")(results) };
 			}
-			const prep = prepareResultHandoff(result, policy);
+			const consumed = nodeHasConsumer(node.id);
+			const prep = prepareResultHandoff(result, policy, undefined, consumed ? deps.handoffGuard : undefined);
 			outputs.set(node.id, withInjectionNotice(prep, `graph node ${node.id} output`));
 			completed.add(node.id);
 		}
@@ -126,7 +135,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		const debriefed = await runIntegrationPlan(deps, planned.plan!, "graph", results.length + 1, results);
 		results.push(debriefed);
 		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
-		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed);
+		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed, undefined, { consumed: false });
 		if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("graph")(results, handoffError) };
 		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
 	}
