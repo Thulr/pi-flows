@@ -8,6 +8,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.4.0 - 2026-07-29
+
 ### Added
 
 - The `flow` tool row is now a live dashboard while children run: per-agent

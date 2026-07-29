@@ -25,8 +25,8 @@ export const SELECTION_CASES = defineCases([
 		name: "package-version-no-flow",
 		task: "In package.json, what is the current package version? Answer with only the version string.",
 		expectFlow: false,
-		answerPattern: "\\b0\\.3\\.0\\b",
-		mock: { flowCalls: 0, answer: "0.3.0" },
+		answerPattern: "\\b0\\.4\\.0\\b",
+		mock: { flowCalls: 0, answer: "0.4.0" },
 		sourceExpectation: {
 			path: "package.json",
 			jsonPath: ["version"],
@@ -140,12 +140,12 @@ export const SELECTION_CASES = defineCases([
 		name: "plausible-release-summary-no-flow",
 		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
 		expectFlow: false,
-		answerPattern: "corpus|preflight|provider|stalls|CHILD_PROVIDER_ERROR",
-		mock: { flowCalls: 0, answer: "- Eval commands now preflight corpus metadata and source expectations, then report portfolio coverage.\n- Children that stall after terminal provider errors are terminated and return CHILD_PROVIDER_ERROR." },
+		answerPattern: "nothing|unreleased|0\\.4\\.0",
+		mock: { flowCalls: 0, answer: "- Nothing is unreleased yet — the most recent release, 0.4.0, shipped the live tool-row board, F8 fleet panel, and durable run-cards." },
 		sourceExpectation: {
 			format: "text",
 			path: "CHANGELOG.md",
-			patterns: ["## Unreleased[\\s\\S]*Eval, comparison, selection[\\s\\S]*terminal provider error[\\s\\S]*## 0\\.3\\.0"],
+			patterns: ["## Unreleased[\\s\\S]*Nothing yet[\\s\\S]*## 0\\.4\\.0[\\s\\S]*## 0\\.3\\.0"],
 		},
 	},
 	{
