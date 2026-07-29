@@ -347,10 +347,14 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   older than `0.82.0` are no longer supported.
 - `npm run preflight` now enforces the pi version floor instead of only checking
   that the binary exists. It reads the floor from `engines.pi` rather than
-  restating it, reports the version it found alongside the one it needs, and
-  treats a prerelease as below the release it precedes. A `pi --version` banner
-  with no readable version warns rather than fails, since pi answering at all
-  is not evidence of an unsupported host.
+  restating it, names the executable and version it found alongside the one it
+  needs, and treats a prerelease as below the release it precedes. A
+  `pi --version` banner with no readable version warns rather than fails, since
+  pi answering at all is not evidence of an unsupported host. The check resolves
+  `pi` the way your shell would, skipping the `node_modules/.bin` copy npm
+  injects while running a script: in a clone that copy is the pi-coding-agent
+  peer dependency, so validating it would green-light a host that the documented
+  `pi -e ./extensions/pi-flows/index.ts` never runs.
 - The Codex control arm reads model pricing through `getBuiltinModel` from
   `@earendil-works/pi-ai/providers/all`. pi-ai `0.82` removed `getModel` from
   the package root (it survives only as a deprecated alias on the `/compat`

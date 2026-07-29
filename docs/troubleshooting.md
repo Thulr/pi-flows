@@ -40,7 +40,7 @@ hosts are unsupported and can fail when the extension loads. `npm run preflight`
 reports this as, for example:
 
 ```
-✗ pi 0.81.0 is older than the minimum supported version 0.82.0.
+✗ pi 0.81.0 is older than the minimum supported version 0.82.0 (/opt/homebrew/bin/pi).
 ```
 
 Fix: upgrade the CLI, then re-run the check:
@@ -54,9 +54,13 @@ If preflight instead warns that it could not read a version, `pi` answered but
 its `--version` output had no recognizable `major.minor.patch` in it. That is a
 warning rather than a failure — confirm your version by hand with `pi --version`.
 
-Note that inside npm scripts, `pi` resolves from `node_modules/.bin` first when
-this repo is checked out, so preflight may report a different version than the
-`pi` you get in a plain shell.
+Preflight names the executable it checked, and that executable is the one your
+shell would run. In a clone, npm prepends `node_modules/.bin` to PATH while it
+runs a script, and `@earendil-works/pi-coding-agent` is a peer dependency — so
+there is a `pi` there that your shell never sees. Preflight skips it deliberately:
+the host that loads the extension is the `pi` from `pi -e ./extensions/pi-flows/index.ts`,
+not npm's copy. If your only `pi` is that local one, preflight reports it as not
+found and points at it, because the documented command would fail.
 
 ### Provider/auth failures
 

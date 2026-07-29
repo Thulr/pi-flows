@@ -5,9 +5,34 @@
 // old pi that loads the extension and then fails. This fails fast with an
 // actionable message instead.
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
+import path from "node:path";
 
 const PI_PROJECT = "https://github.com/earendil-works/pi";
+
+/** npm prepends `node_modules/.bin` — this package's and every ancestor's — to
+ * PATH while it runs a script, and `@earendil-works/pi-coding-agent` is a peer
+ * dependency, so a repo clone has a `pi` there. The host that actually loads the
+ * extension is the one the user's shell finds (`pi -e ./extensions/pi-flows/index.ts`
+ * in the documented workflow), so checking npm's injected copy would validate a
+ * binary the very next command never runs. */
+function isNpmInjectedBin(entry) {
+  return path.basename(entry) === ".bin" && path.basename(path.dirname(entry)) === "node_modules";
+}
+
+/** Resolve a command the way a shell would: first executable match wins. */
+function resolveOnPath(command, entries) {
+  for (const entry of entries) {
+    const candidate = path.join(entry, command);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not executable or not there — keep looking, exactly like PATH lookup.
+    }
+  }
+  return undefined;
+}
 
 /** Extract the first `major.minor.patch[-prerelease]` triple from a string. For
  * `engines.pi` (`>=0.82.0`) that is the supported floor; for a `pi --version`
@@ -47,20 +72,34 @@ if (!minimum) {
   process.exit(1);
 }
 
-const result = spawnSync("pi", ["--version"], { encoding: "utf8" });
+const pathEntries = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+const piPath = resolveOnPath("pi", pathEntries.filter((entry) => !isNpmInjectedBin(entry)));
 
-if (result.error?.code === "ENOENT") {
+if (!piPath) {
   console.error("✗ pi CLI not found on PATH.");
   console.error("");
   console.error(`  pi-flows is a pi extension — it needs the pi host CLI (>=${minimum.text}) to run.`);
+  const injected = resolveOnPath("pi", pathEntries.filter(isNpmInjectedBin));
+  if (injected) {
+    console.error(`  There is a local copy at ${injected}, but npm only puts it on PATH inside npm`);
+    console.error("  scripts, so `pi -e ./extensions/pi-flows/index.ts` in your shell would still fail.");
+  }
   console.error("  The `pi` binary ships in @earendil-works/pi-coding-agent.");
   console.error(`  Install it from the pi project, then re-run this check: ${PI_PROJECT}`);
   console.error("  e.g.  npm i -g @earendil-works/pi-coding-agent");
   process.exit(1);
 }
 
+const result = spawnSync(piPath, ["--version"], { encoding: "utf8" });
+
+if (result.error) {
+  console.error(`✗ \`${piPath} --version\` could not be run: ${result.error.message}`);
+  console.error(`  Verify your pi install (>=${minimum.text}): ${PI_PROJECT}`);
+  process.exit(1);
+}
+
 if (result.status !== 0) {
-  console.error(`✗ \`pi --version\` exited with code ${result.status}.`);
+  console.error(`✗ \`pi --version\` exited with code ${result.status} (${piPath}).`);
   const stderr = (result.stderr || "").trim();
   if (stderr) console.error(`  ${stderr}`);
   console.error(`  Verify your pi install (>=${minimum.text}): ${PI_PROJECT}`);
@@ -75,13 +114,13 @@ const found = parseVersion(banner);
 // so the install works. Say what could not be checked rather than failing a
 // setup that is probably fine.
 if (!found) {
-  console.warn(`⚠ pi is on PATH, but \`pi --version\` reported no readable version: ${banner || "(no output)"}`);
+  console.warn(`⚠ pi is on PATH (${piPath}), but \`pi --version\` reported no readable version: ${banner || "(no output)"}`);
   console.warn(`  pi-flows needs pi >=${minimum.text} — confirm your version by hand: ${PI_PROJECT}`);
   process.exit(0);
 }
 
 if (compareVersions(found, minimum) < 0) {
-  console.error(`✗ pi ${found.text} is older than the minimum supported version ${minimum.text}.`);
+  console.error(`✗ pi ${found.text} is older than the minimum supported version ${minimum.text} (${piPath}).`);
   console.error("");
   console.error(`  pi-flows is built and tested against pi >=${minimum.text}; older hosts are unsupported`);
   console.error("  and can fail when the extension loads. Upgrade the pi CLI, then re-run this check:");
@@ -90,4 +129,4 @@ if (compareVersions(found, minimum) < 0) {
   process.exit(1);
 }
 
-console.log(`✓ pi found on PATH: ${banner} (satisfies >=${minimum.text})`);
+console.log(`✓ pi ${found.text} at ${piPath} (satisfies >=${minimum.text})`);
