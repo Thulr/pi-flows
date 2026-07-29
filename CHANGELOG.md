@@ -8,7 +8,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Changed
+
+- Single-child flow runs no longer render a `0/1` done/total counter, progress
+  bar, or token rollup in the live tool-row and fleet-panel headers. With one
+  agent those only restated the agent line below and `0/1` read as "stuck",
+  not as progress; fan-outs (2+ children) keep the counter and bar.
 
 ## 0.4.1 - 2026-07-29
 

@@ -86,6 +86,13 @@ test("FleetPanel renders a bounded bordered box and closes on the cancel key", (
 	panel.dispose();
 });
 
+test("fleetRunLines drops the done/total counter for single-child runs", () => {
+	const run = { mode: "single" as const, redactSecrets: true, details: details([result()]) };
+	const lines = fleetRunLines(run as any, theme, 0);
+	assert.doesNotMatch(lines[0]!, /0\/1/);
+	assert.match(lines[0]!, /flow single/);
+});
+
 test("FleetPanel falls back to the last finished run when nothing is active", () => {
 	const registry = new FlowRunRegistry();
 	registry.start("flow-1", "single", details([result()]));
