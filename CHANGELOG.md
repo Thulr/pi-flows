@@ -24,8 +24,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   initial state and exact runtime-trace linkage become executable capability
   cases under `npm run eval -- --failure-ledger=...`; promotion to regression
   requires at least three distinct, passing, policy-compliant, fully traced
-  held-out repetitions of one code revision, and every import, trial, denial,
-  or approval is append-only.
+  held-out repetitions from one explicit run cohort and code revision, and every
+  import, trial, denial, or approval is append-only. Older failed cohorts remain
+  auditable without permanently poisoning a later fixed cohort.
 
 - Inter-agent injection handling is now an enforceable, flow-scoped policy.
   `handoffPolicy` supports compatibility-preserving `warn`, payload-withholding

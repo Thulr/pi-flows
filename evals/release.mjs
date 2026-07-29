@@ -7,6 +7,7 @@ import path from "node:path";
 import { createFlagReader } from "./cli-flags.mjs";
 import { buildReleaseManifest } from "./release-manifest.mjs";
 import { captureReleaseSystem, sha256File } from "./release-system.mjs";
+import { validateReleaseRuntimeTrace } from "./release-trace.mjs";
 import { promotedRegressionCaseIds, readFailureLedger } from "./failure-ledger.mjs";
 
 const moduleRoot = path.resolve(import.meta.dirname, "..");
@@ -54,6 +55,7 @@ async function main() {
 		},
 		regressionCaseIds,
 	};
+	inputs.runtimeTraceValidation = validateReleaseRuntimeTrace(runtimeTracePath, inputs.reliability, { repoRoot: root });
 	const manifest = buildReleaseManifest(inputs);
 	mkdirSync(path.dirname(out), { recursive: true });
 	writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });

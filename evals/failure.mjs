@@ -52,10 +52,10 @@ async function recordTrials() {
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
 	if (!ledger.events.some((event) => event.type === "failure.imported" && event.case?.id === caseId)) throw new Error(`failure ${caseId} has not been imported`);
-	const existing = new Set(ledger.events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId).map((event) => event.trialId));
+	const existing = new Set(ledger.events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId).map((event) => `${event.runId}:${event.trialId}`));
 	const records = buildHeldOutTrialEvents({ caseId, reliability, systemDigest });
-	const duplicates = records.filter((record) => existing.has(record.trialId));
-	if (duplicates.length) throw new Error(`held-out trials already recorded: ${duplicates.map((record) => record.trialId).join(", ")}`);
+	const duplicates = records.filter((record) => existing.has(`${record.runId}:${record.trialId}`));
+	if (duplicates.length) throw new Error(`held-out cohort trials already recorded: ${duplicates.map((record) => record.trialId).join(", ")}`);
 	for (const record of records) await appendFailureEvent(ledgerPath, record);
 	console.log(`recorded ${records.length} held-out trial(s) for ${caseId}`);
 	return 0;
@@ -63,9 +63,10 @@ async function recordTrials() {
 
 async function promoteFailure() {
 	const caseId = required("case");
+	const cohortId = required("cohort");
 	const ledger = await readFailureLedger(ledgerPath);
 	if (!ledger.valid) throw new Error(`failure ledger is invalid: ${ledger.issues.join("; ")}`);
-	const decision = buildPromotionDecision(ledger.events, caseId);
+	const decision = buildPromotionDecision(ledger.events, caseId, { cohortId });
 	await appendFailureEvent(ledgerPath, decision);
 	console.log(`${decision.decision}: ${caseId}${decision.toSuite ? ` -> ${decision.toSuite}` : ""}`);
 	for (const reason of decision.reasons) console.log(`- ${reason}`);

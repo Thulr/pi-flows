@@ -775,15 +775,18 @@ npm run eval:failure -- record \
   --ledger=/secure/failures.jsonl
 npm run eval:failure -- promote \
   --case=production-routing-failure \
+  --cohort=production-routing-failure-held-out \
   --ledger=/secure/failures.jsonl
 ```
 
 Promotion is denied unless every distinct held-out trial passed, retained a
 recorded runtime trace, passed policy compliance, had a verified successful
-outcome, and used the same system digest. An approval changes the derived suite
-from `capability` to `regression`; future release evals must keep passing the same
-ledger with `--failure-ledger`. The release-record command also reads that ledger
-and blocks if any promoted case is absent from its reliability artifact.
+outcome, and used the same system digest. `--cohort` is the exact eval `--run-id`;
+older failed cohorts remain in the ledger without poisoning a later clean cohort.
+An approval changes the derived suite from `capability` to `regression`; future
+release evals must keep passing the same ledger with `--failure-ledger`. The
+release-record command also reads that ledger and blocks if any promoted case is
+absent from its reliability artifact.
 
 ## Add a case
 

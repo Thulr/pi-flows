@@ -94,7 +94,10 @@ must be `status:"passed"` and carry at least one attributable evidence reference
 Missing evidence is a failure, not a warning. The command also blocks a dirty
 tree, version disagreement, any failed/excluded/unverified trial, incomplete
 runtime traces, stale or blocking calibration, a critical dimension without
-authority, or a promoted regression absent from the reliability artifact.
+authority, a declared suite that differs from the measured reliability cases, or
+a promoted regression absent from the reliability artifact. The supplied runtime
+trace path must equal `reliability.runtimeTraceFile`; every trial's exact
+trace/root-span link and run/case/trial attributes must resolve in that file.
 
 ```json
 {

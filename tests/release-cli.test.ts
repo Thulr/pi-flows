@@ -94,7 +94,7 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 		grader: { name: "thulr", version: "0.3.0" },
 		hardBlockers: hardBlockers(),
 	});
-	const reliabilityPath = await writeJson(directory, "reliability.json", reliability());
+	const releaseReliability = reliability();
 	const calibration = await writeJson(directory, "calibration.json", {
 		schemaVersion: "pi-flows.calibration.v1",
 		key: { schemaVersion: "pi-flows.calibration-key.v1", digest: "calibration-key" },
@@ -103,7 +103,35 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 		blocks: false,
 	});
 	const trace = path.join(directory, "runtime.jsonl");
-	await writeFile(trace, `${JSON.stringify({ trace_id: "trace", span_id: "root" })}\n`, "utf8");
+	releaseReliability.runtimeTraceFile = trace;
+	const traceRows = releaseReliability.cases[0].trials.map((trial, index) => {
+		trial.runtimeTrace = {
+			health: "recorded",
+			traceFile: trace,
+			traceId: `trace-${index + 1}`,
+			rootSpanId: `root-${index + 1}`,
+			context: {
+				runId: "release-run",
+				caseId: "release-case",
+				trialId: trial.trialId,
+				trialIndex: index + 1,
+				arm: "flows",
+			},
+		};
+		return {
+			trace_id: `trace-${index + 1}`,
+			span_id: `root-${index + 1}`,
+			parent_span_id: null,
+			name: "flow.release-case",
+			attributes: {
+				"flow.run_id": "release-run",
+				"flow.case_id": "release-case",
+				"flow.trial_id": trial.trialId,
+			},
+		};
+	});
+	const reliabilityPath = await writeJson(directory, "reliability.json", releaseReliability);
+	await writeFile(trace, `${traceRows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 	const out = path.join(directory, "release.json");
 	const child = run("evals/release.mjs", [
 		`--evidence=${evidence}`,
@@ -122,6 +150,11 @@ test("release command writes a pinned blocked record for a dirty evaluated tree"
 	assert.match(manifest.system.hashes.prompts.aggregate, /^[a-f0-9]{64}$/);
 	assert.match(manifest.system.hashes.toolSchema, /^[a-f0-9]{64}$/);
 	assert.equal(manifest.system.package.version, "0.3.0");
+	assert.deepEqual(manifest.artifacts.runtimeTrace, {
+		sha256: manifest.artifacts.runtimeTrace.sha256,
+		matchedTrials: 3,
+		valid: true,
+	});
 });
 
 test("failure command imports, records held-out reliability, and appends promotion", async () => {
@@ -188,7 +221,7 @@ test("failure command imports, records held-out reliability, and appends promoti
 	]);
 	assert.equal(recorded.status, 0, recorded.stderr);
 
-	const promoted = run("evals/failure.mjs", ["promote", "--case=production-routing-failure", `--ledger=${ledger}`]);
+	const promoted = run("evals/failure.mjs", ["promote", "--case=production-routing-failure", "--cohort=release-run", `--ledger=${ledger}`]);
 	assert.equal(promoted.status, 0, promoted.stderr);
 	const records = (await readFile(ledger, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
 	assert.deepEqual(records.map((record) => record.type), [

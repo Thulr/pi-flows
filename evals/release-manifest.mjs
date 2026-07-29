@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { canonicalDigest } from "./calibration-key.mjs";
 
 export const RELEASE_EVIDENCE_SCHEMA_VERSION = "pi-flows.release-evidence.v1";
 export const RELEASE_MANIFEST_SCHEMA_VERSION = "pi-flows.release-manifest.v1";
@@ -12,14 +12,8 @@ export const HARD_BLOCKER_KEYS = [
 	"requiredTraceLoss",
 ];
 
-function canonicalValue(value) {
-	if (Array.isArray(value)) return value.map(canonicalValue);
-	if (!value || typeof value !== "object") return value;
-	return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]));
-}
-
 export function releaseDigest(value) {
-	return createHash("sha256").update(JSON.stringify(canonicalValue(value))).digest("hex");
+	return canonicalDigest(value, 64);
 }
 
 function nonEmptyString(value) {
@@ -66,7 +60,7 @@ function systemIssues(system) {
  * Pure release policy. Every issue here is a hard blocker; there is no warning
  * path for catastrophic safety evidence, unpinned code, or an unauditable run.
  */
-export function evaluateRelease({ evidence, reliability, calibration, system, artifactHashes, regressionCaseIds = [] }) {
+export function evaluateRelease({ evidence, reliability, calibration, system, artifactHashes, regressionCaseIds = [], runtimeTraceValidation }) {
 	const blockers = [];
 	if (evidence?.schemaVersion !== RELEASE_EVIDENCE_SCHEMA_VERSION) {
 		blockers.push(`release evidence must use ${RELEASE_EVIDENCE_SCHEMA_VERSION}`);
@@ -83,6 +77,11 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	if (!evidence?.budgets || typeof evidence.budgets !== "object") blockers.push("evaluation budgets are missing");
 	if (!nonEmptyString(evidence?.suite?.name) || !Array.isArray(evidence?.suite?.caseIds)) blockers.push("suite identity and case ids are missing");
 	if (!nonEmptyString(evidence?.grader?.name) || !nonEmptyString(evidence?.grader?.version)) blockers.push("grader identity and version are missing");
+	const declaredCases = evidence?.suite?.caseIds ?? [];
+	const measuredCases = (reliability?.cases ?? []).map((entry) => entry.caseId);
+	const sameCases = new Set(declaredCases).size === declaredCases.length
+		&& [...declaredCases].sort().join("\0") === [...measuredCases].sort().join("\0");
+	if (!sameCases) blockers.push("declared suite case ids do not match measured reliability cases");
 
 	for (const key of HARD_BLOCKER_KEYS) {
 		const result = evidence?.hardBlockers?.[key];
@@ -95,6 +94,9 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	const health = reliability?.overall?.traceHealth;
 	if (!health?.complete || health.recorded !== health.trials || health.trials < 1) {
 		blockers.push("required runtime trace evidence is incomplete");
+	}
+	if (!runtimeTraceValidation?.valid) {
+		blockers.push(`runtime trace artifact does not match reliability evidence: ${(runtimeTraceValidation?.issues ?? ["validation was not run"]).join("; ")}`);
 	}
 	blockers.push(...releaseTrialIssues(reliability));
 
@@ -110,9 +112,9 @@ export function evaluateRelease({ evidence, reliability, calibration, system, ar
 	for (const key of ["reliability", "calibration", "runtimeTrace"]) {
 		if (!nonEmptyString(artifactHashes?.[key])) blockers.push(`${key} artifact hash is missing`);
 	}
-	const measuredCases = new Set((reliability?.cases ?? []).map((entry) => entry.caseId));
+	const measuredCaseSet = new Set(measuredCases);
 	for (const caseId of regressionCaseIds) {
-		if (!measuredCases.has(caseId)) blockers.push(`promoted regression case ${caseId} is absent from release evidence`);
+		if (!measuredCaseSet.has(caseId)) blockers.push(`promoted regression case ${caseId} is absent from release evidence`);
 	}
 	return { status: blockers.length === 0 ? "approved" : "blocked", blockers };
 }
@@ -152,7 +154,11 @@ export function buildReleaseManifest(inputs) {
 		artifacts: {
 			reliability: { schemaVersion: inputs.reliability?.schemaVersion ?? null, sha256: inputs.artifactHashes?.reliability ?? null },
 			calibration: { schemaVersion: calibration.schemaVersion ?? null, sha256: inputs.artifactHashes?.calibration ?? null },
-			runtimeTrace: { sha256: inputs.artifactHashes?.runtimeTrace ?? null },
+			runtimeTrace: {
+				sha256: inputs.artifactHashes?.runtimeTrace ?? null,
+				matchedTrials: inputs.runtimeTraceValidation?.matchedTrials ?? 0,
+				valid: inputs.runtimeTraceValidation?.valid ?? false,
+			},
 			failureLedger: inputs.artifactHashes?.failureLedger ? { sha256: inputs.artifactHashes.failureLedger } : null,
 		},
 	};

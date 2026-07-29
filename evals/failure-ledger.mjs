@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { redactText } from "../extensions/pi-flows/sanitize.ts";
+import { canonicalDigest } from "./calibration-key.mjs";
 
 export const FAILURE_INPUT_SCHEMA_VERSION = "pi-flows.validated-production-failure.v1";
 export const FAILURE_LEDGER_SCHEMA_VERSION = "pi-flows.failure-ledger-event.v1";
@@ -14,14 +14,8 @@ const STRUCTURE_VALUES = {
 	reversibility: new Set(["not-applicable", "reversible", "partially-reversible", "irreversible"]),
 };
 
-function canonicalValue(value) {
-	if (Array.isArray(value)) return value.map(canonicalValue);
-	if (!value || typeof value !== "object") return value;
-	return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]));
-}
-
 function digest(value) {
-	return createHash("sha256").update(JSON.stringify(canonicalValue(value))).digest("hex");
+	return canonicalDigest(value, 64);
 }
 
 function requireKeys(value, allowed, label) {
@@ -174,6 +168,7 @@ export async function appendFailureEvent(ledgerPath, event) {
 
 export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, recordedAt = new Date().toISOString() }) {
 	if (!ID_PATTERN.test(caseId ?? "")) throw new Error("caseId must be a stable kebab-case identifier");
+	if (typeof reliability?.runId !== "string" || reliability.runId.length === 0) throw new Error("reliability artifact must identify its held-out run");
 	const matching = (reliability?.cases ?? []).find((entry) => entry.caseId === caseId);
 	if (!matching || !Array.isArray(matching.trials) || matching.trials.length === 0) throw new Error(`reliability artifact has no trials for ${caseId}`);
 	return matching.trials.map((trial) => ({
@@ -191,12 +186,13 @@ export function buildHeldOutTrialEvents({ caseId, reliability, systemDigest, rec
 	}));
 }
 
-export function buildPromotionDecision(events, caseId, { decidedAt = new Date().toISOString() } = {}) {
+export function buildPromotionDecision(events, caseId, { cohortId, decidedAt = new Date().toISOString() } = {}) {
 	const imported = events.find((event) => event.type === "failure.imported" && event.case?.id === caseId);
 	if (!imported) throw new Error(`failure ${caseId} has not been imported`);
 	const previousApproval = events.find((event) => event.type === "failure.promotion" && event.caseId === caseId && event.decision === "approved");
 	if (previousApproval) throw new Error(`failure ${caseId} is already promoted`);
-	const trials = events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId);
+	if (typeof cohortId !== "string" || cohortId.length === 0) throw new Error("promotion requires an explicit held-out cohort id");
+	const trials = events.filter((event) => event.type === "failure.held-out-trial" && event.caseId === caseId && event.runId === cohortId);
 	const uniqueTrials = new Map(trials.map((trial) => [trial.trialId, trial]));
 	const evidence = [...uniqueTrials.values()];
 	const policy = imported.case.promotionPolicy;
@@ -211,6 +207,7 @@ export function buildPromotionDecision(events, caseId, { decidedAt = new Date().
 		type: "failure.promotion",
 		recordedAt: decidedAt,
 		caseId,
+		cohortId,
 		fromSuite: "capability",
 		toSuite: reasons.length === 0 ? "regression" : null,
 		decision: reasons.length === 0 ? "approved" : "denied",

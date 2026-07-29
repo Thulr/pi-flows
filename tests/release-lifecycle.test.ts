@@ -41,6 +41,7 @@ function releaseInputs() {
 		reliability: {
 			schemaVersion: "pi-flows.reliability.v1",
 			runId: "release-run-123",
+			runtimeTraceFile: "release.runtime.jsonl",
 			subjectTrials: 5,
 			cases: [{
 				caseId: "release-case",
@@ -81,6 +82,7 @@ function releaseInputs() {
 			calibration: "calibration-hash",
 			runtimeTrace: "runtime-trace-hash",
 		},
+		runtimeTraceValidation: { valid: true, issues: [], matchedTrials: 5 },
 		generatedAt: "2026-07-28T12:30:00.000Z",
 	};
 }
@@ -120,6 +122,10 @@ test("release evaluation fails closed on every catastrophic blocker and incomple
 	missingTrace.reliability.overall.traceHealth.missing = 1;
 	assert.match(evaluateRelease(missingTrace).blockers.join("\n"), /required runtime trace evidence is incomplete/);
 
+	const unrelatedTrace = releaseInputs();
+	unrelatedTrace.runtimeTraceValidation = { valid: false, issues: ["release-case::trial-001 root span is absent"], matchedTrials: 4 };
+	assert.match(evaluateRelease(unrelatedTrace).blockers.join("\n"), /runtime trace artifact does not match reliability evidence/);
+
 	const staleCalibration = releaseInputs();
 	staleCalibration.calibration.drift.status = "stale";
 	assert.match(evaluateRelease(staleCalibration).blockers.join("\n"), /calibration key is stale/);
@@ -135,6 +141,10 @@ test("release evaluation fails closed on every catastrophic blocker and incomple
 	const missingRegression = releaseInputs();
 	missingRegression.regressionCaseIds = ["promoted-production-failure"];
 	assert.match(evaluateRelease(missingRegression).blockers.join("\n"), /promoted regression case promoted-production-failure is absent/);
+
+	const wrongSuite = releaseInputs();
+	wrongSuite.evidence.suite.caseIds = ["different-case"];
+	assert.match(evaluateRelease(wrongSuite).blockers.join("\n"), /declared suite case ids do not match measured reliability cases/);
 });
 
 function failureInput() {
@@ -234,14 +244,14 @@ test("promotion is append-only and requires stable held-out success on one syste
 	for (const trial of trials.slice(0, 2)) await appendFailureEvent(ledgerPath, trial);
 
 	let ledger = await readFailureLedger(ledgerPath);
-	const denied = buildPromotionDecision(ledger.events, "production-routing-failure", { decidedAt: "2026-07-28T12:30:00.000Z" });
+	const denied = buildPromotionDecision(ledger.events, "production-routing-failure", { cohortId: "held-out-run", decidedAt: "2026-07-28T12:30:00.000Z" });
 	assert.equal(denied.decision, "denied");
 	assert.match(denied.reasons.join("\n"), /requires 3 held-out trials/);
 	await appendFailureEvent(ledgerPath, denied);
 
 	await appendFailureEvent(ledgerPath, trials[2]);
 	ledger = await readFailureLedger(ledgerPath);
-	const approved = buildPromotionDecision(ledger.events, "production-routing-failure", { decidedAt: "2026-07-28T13:00:00.000Z" });
+	const approved = buildPromotionDecision(ledger.events, "production-routing-failure", { cohortId: "held-out-run", decidedAt: "2026-07-28T13:00:00.000Z" });
 	assert.equal(approved.decision, "approved");
 	assert.equal(approved.toSuite, "regression");
 	assert.deepEqual(approved.trialIds, trials.map((trial) => trial.trialId));
@@ -272,13 +282,19 @@ test("held-out evidence rejects failures, trace loss, policy failure, and mixed 
 	]) {
 		const events = [imported, ...structuredClone(trialEvents)];
 		mutate(events[1]);
-		const decision = buildPromotionDecision(events, "production-routing-failure");
+		const decision = buildPromotionDecision(events, "production-routing-failure", { cohortId: clean.runId });
 		assert.equal(decision.decision, "denied");
 	}
 
 	const mixed = [imported, ...structuredClone(trialEvents)];
 	mixed[1].systemDigest = "commit-b";
-	assert.match(buildPromotionDecision(mixed, "production-routing-failure").reasons.join("\n"), /same evaluated system/);
+	assert.match(buildPromotionDecision(mixed, "production-routing-failure", { cohortId: clean.runId }).reasons.join("\n"), /same evaluated system/);
+
+	const oldFailed = structuredClone(trialEvents[0]);
+	oldFailed.runId = "old-failed-run";
+	oldFailed.passed = false;
+	const cleanDecision = buildPromotionDecision([imported, oldFailed, ...trialEvents], "production-routing-failure", { cohortId: clean.runId });
+	assert.equal(cleanDecision.decision, "approved", "an older failed cohort must not poison a later stable cohort");
 });
 
 test("failure ledger detects edits to prior append-only records", async () => {
