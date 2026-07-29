@@ -140,12 +140,12 @@ export const SELECTION_CASES = defineCases([
 		name: "plausible-release-summary-no-flow",
 		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
 		expectFlow: false,
-		answerPattern: "nothing|unreleased|0\\.4\\.2",
-		mock: { flowCalls: 0, answer: "- Nothing is unreleased yet — the most recent release, 0.4.2, removed the confusing 0/1 counter from single-child flow run headers." },
+		answerPattern: "flow card|glossary|per-run|fleet",
+		mock: { flowCalls: 0, answer: "- The durable session entry is now the flow card, docs say per-run where runs are listed, and the domain glossary gains Fleet, Flow card, Settled, and Budget." },
 		sourceExpectation: {
 			format: "text",
 			path: "CHANGELOG.md",
-			patterns: ["## Unreleased[\\s\\S]*Nothing yet[\\s\\S]*## 0\\.4\\.2[\\s\\S]*Single-child[\\s\\S]*## 0\\.4\\.1"],
+			patterns: ["## Unreleased[\\s\\S]*flow card[\\s\\S]*## 0\\.4\\.2[\\s\\S]*## 0\\.4\\.1"],
 		},
 	},
 	{

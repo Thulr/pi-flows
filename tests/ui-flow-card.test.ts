@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Text } from "@earendil-works/pi-tui";
 import { appendFlowSessionEntry } from "../extensions/pi-flows/ui.ts";
-import { durationBar, flowRunCardLines, renderFlowRunCard, type FlowRunEntryData } from "../extensions/pi-flows/ui-run-card.ts";
+import { durationBar, flowCardLines, renderFlowCard, type FlowRunEntryData } from "../extensions/pi-flows/ui-flow-card.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
 
@@ -27,8 +27,8 @@ test("durationBar scales against the longest child and stays in-bounds", () => {
 	assert.equal(durationBar(1, 100000, 4), "█░░░", "tiny durations still render one cell");
 });
 
-test("run card header rolls up status, agents, tokens, cost, and duration", () => {
-	const lines = flowRunCardLines(entryData(), theme, false);
+test("flow card header rolls up status, agents, tokens, cost, and duration", () => {
+	const lines = flowCardLines(entryData(), theme, false);
 	assert.match(lines[0]!, /flow evaluate ok/);
 	assert.match(lines[0]!, /3 agents/);
 	assert.match(lines[0]!, /59k tok/);
@@ -40,23 +40,23 @@ test("run card header rolls up status, agents, tokens, cost, and duration", () =
 	assert.match(text, /ctrl\+o for failure detail/);
 });
 
-test("run card expanded view spells out failures; trace pointer is linked with health", () => {
-	const lines = flowRunCardLines(entryData({ trace: { traceFile: "audit/flow-trace.jsonl", health: "complete" } }), theme, true);
+test("flow card expanded view spells out failures; trace pointer is linked with health", () => {
+	const lines = flowCardLines(entryData({ trace: { traceFile: "audit/flow-trace.jsonl", health: "complete" } }), theme, true);
 	const text = lines.join("\n");
 	assert.match(text, /CHILD_EXIT · stop: error · exit 1/);
 	assert.match(text, /trace:.*audit\/flow-trace\.jsonl.*\(complete\)/);
 	assert.doesNotMatch(text, /ctrl\+o for failure detail/, "the hint disappears once expanded");
 });
 
-test("run card marks error status with the flow error code", () => {
-	const lines = flowRunCardLines(entryData({ status: "error", errorCode: "BUDGET_EXCEEDED" }), theme, false);
+test("flow card marks error status with the flow error code", () => {
+	const lines = flowCardLines(entryData({ status: "error", errorCode: "BUDGET_EXCEEDED" }), theme, false);
 	assert.match(lines[0]!, /error:BUDGET_EXCEEDED/);
 });
 
-test("renderFlowRunCard tolerates entries written by other versions", () => {
-	assert.equal(renderFlowRunCard(undefined, false, theme), undefined);
-	assert.equal(renderFlowRunCard({ mode: "single" }, false, theme), undefined, "entries without results are skipped, not crashed");
-	assert.ok(renderFlowRunCard(entryData(), false, theme) instanceof Text);
+test("renderFlowCard tolerates entries written by other versions", () => {
+	assert.equal(renderFlowCard(undefined, false, theme), undefined);
+	assert.equal(renderFlowCard({ mode: "single" }, false, theme), undefined, "entries without results are skipped, not crashed");
+	assert.ok(renderFlowCard(entryData(), false, theme) instanceof Text);
 });
 
 test("appendFlowSessionEntry persists the trace pointer for reload-safe rendering", () => {
@@ -74,5 +74,5 @@ test("appendFlowSessionEntry persists the trace pointer for reload-safe renderin
 
 	assert.equal(entries[0]?.customType, "pi-flows.run");
 	assert.deepEqual(entries[0]?.data.trace, { traceFile: "flow-trace.jsonl", health: "complete" });
-	assert.ok(renderFlowRunCard(entries[0]?.data, false, theme) instanceof Text, "the persisted entry must round-trip through the card renderer");
+	assert.ok(renderFlowCard(entries[0]?.data, false, theme) instanceof Text, "the persisted entry must round-trip through the card renderer");
 });

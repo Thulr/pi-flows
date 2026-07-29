@@ -41,6 +41,14 @@ A task produced by orchestrate's decomposition rather than authored upstream. A 
 One child executing one task. A flow contains one or more runs.
 _Avoid_: execution, invocation
 
+**Settled**:
+A run (or a whole flow) that has finished executing, whether it completed or failed. The opposite of live.
+_Avoid_: done, finished (both read as "succeeded")
+
+**Fleet**:
+Every run currently queued or executing, across all live flows.
+_Avoid_: dashboard, active agents (runs execute; agents are profiles)
+
 ### Coordination evidence
 
 **Span**:
@@ -71,6 +79,10 @@ _Avoid_: gate (a gate is machine-evaluated)
 How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed.
 _Avoid_: trace status, telemetry health
 
+**Flow card**:
+The durable summary of one settled flow — status, per-run outcomes, spend, and evidence pointer — that outlives any live view of it.
+_Avoid_: run-card (it summarizes a flow, not a run)
+
 ### Guardrails and selection
 
 **Gate**:
@@ -80,6 +92,10 @@ _Avoid_: check, approval
 **Checkpoint**:
 A human approval point in a flow, before spawning or before finalizing. A checkpoint is not a gate.
 _Avoid_: approval gate, human gate
+
+**Budget**:
+A machine-enforced spending ceiling for one flow — cost or tokens — charged as runs settle. A budget is a gate, not a checkpoint: exceeding it stops the flow without a human decision.
+_Avoid_: quota, allowance
 
 **Tier**:
 A portable capability level (fast, capable, deep) that resolves to a concrete model per install.

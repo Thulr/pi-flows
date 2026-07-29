@@ -8,7 +8,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Changed
+
+- Domain glossary alignment: the durable session entry is now the "flow card"
+  (it summarizes a flow, not a single run), monitoring docs say "per-run"
+  where runs are listed, and `CONTEXT.md` gains **Fleet**, **Flow card**,
+  **Settled**, and **Budget**. The persisted entry type keeps its
+  `pi-flows.run` name for session compatibility.
 
 ## 0.4.2 - 2026-07-29
 

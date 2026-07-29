@@ -7,7 +7,7 @@ import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
- * so while children run it renders per-agent state, each child's current
+ * so while children run it renders per-run state, each child's current
  * activity, and a cost rollup — updating in place instead of a frozen snapshot.
  *
  * Everything that produces *strings* is exported and pure so offline tests can
@@ -156,7 +156,7 @@ export interface FlowRenderContextLike {
 
 /**
  * The `flow` tool's renderResult body. Collapsed while running: the live
- * board. Expanded (or settled + expanded): full per-agent detail with
+ * board. Expanded (or settled + expanded): full per-run detail with
  * markdown outputs, matching the pre-live behavior.
  */
 export function renderFlowResultRow(
