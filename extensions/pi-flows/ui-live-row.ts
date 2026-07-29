@@ -31,13 +31,17 @@ export function progressBar(done: number, total: number, width = 12): string {
 	return "▰".repeat(filled) + "▱".repeat(width - filled);
 }
 
-/** The one-line "what is this child doing right now" summary for a running agent. */
-export function currentActivityText(result: FlowRunResult, redactSecrets: boolean): string {
+/**
+ * The one-line "what is this child doing right now" summary for a running
+ * agent. Capped so a chatty child cannot wrap its row into a paragraph.
+ */
+export function currentActivityText(result: FlowRunResult, redactSecrets: boolean, maxLength = 72): string {
 	const items = flowAgentActivity(result, redactSecrets);
 	const last = items[items.length - 1];
 	if (!last) return "waiting for activity…";
 	const prefix = last.kind === "tool" ? "→ " : last.kind === "result" ? "← " : "";
-	return `${prefix}${last.text}`;
+	const text = `${prefix}${last.text}`;
+	return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
 /**

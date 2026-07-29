@@ -50,6 +50,12 @@ test("currentActivityText surfaces the child's latest tool call", () => {
 	});
 	assert.match(currentActivityText(running, true), /^→ \$ npm test/);
 	assert.match(currentActivityText(result(), true), /waiting for activity/);
+
+	const chatty = result({
+		messages: [{ role: "assistant", content: [{ type: "text", text: "word ".repeat(60) }] }],
+	});
+	assert.ok(currentActivityText(chatty, true).length <= 72, "activity must not wrap the row into a paragraph");
+	assert.match(currentActivityText(chatty, true), /…$/);
 });
 
 test("flowLiveBoardLines shows progress, per-agent state, and activity while running", () => {
