@@ -351,11 +351,14 @@ export default function (pi: ExtensionAPI) {
 			const approvalActor = process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR;
 			let liveDetails = makeDetails(mode)([]);
 			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets, budget);
-			updateFlowUi(ctx, liveDetails);
+			// Every update before the handler returns is `live`, however settled the runs
+			// in it look: a multi-stage mode reports one stage's results while the next
+			// stage is still ahead of it, and a verdict there would be premature.
+			updateFlowUi(ctx, liveDetails, { live: true });
 			const statusOnUpdate: Update = (partial) => {
 				liveDetails = partial.details;
 				liveRuns.update(toolCallId, liveDetails);
-				updateFlowUi(ctx, liveDetails);
+				updateFlowUi(ctx, liveDetails, { live: true });
 				onUpdate?.(partial);
 			};
 

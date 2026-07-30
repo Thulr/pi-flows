@@ -4,7 +4,7 @@ import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRunRe
 import { formatUsage } from "./trace.ts";
 import { spinnerFrame } from "./ui-live-row.ts";
 import type { FlowBudget, FlowRunResult } from "./types.ts";
-import { flowProgressText } from "./ui.ts";
+import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
 
 /**
  * The mission-control fleet panel: a persistent, *non-capturing* overlay that
@@ -31,13 +31,13 @@ function agentStateColor(state: ReturnType<typeof flowAgentState>): "error" | "s
 }
 
 /** Panel body lines for one run (no borders). Exported for offline tests. */
-export function fleetRunLines(run: LiveFlowRun, theme: Theme, tick: number): string[] {
+export function fleetRunLines(run: LiveFlowRun, theme: Theme, tick: number, options: FlowProgressOptions = {}): string[] {
 	// Same rule as the live tool row: state text only earns its place on a fan-out;
 	// for one child it reads as "0/1 = stuck". This header carries no status icon,
 	// so that text is its only state signal — all the more reason it comes from the
 	// shared helper rather than a locally formatted ratio.
 	const total = run.details.results.length;
-	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(run.details))}` : "";
+	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(run.details, options))}` : "";
 	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${run.mode}`))}${progress}`];
 	const budget = budgetLine(run.budget, theme);
 	if (budget) lines.push(budget);
@@ -108,14 +108,16 @@ export class FleetPanel {
 			const last = this.registry.lastFinishedRun();
 			if (last) {
 				lines.push(row(this.theme.fg("muted", "no active flow runs · last run:")));
-				for (const line of fleetRunLines(last, this.theme, this.tick)) lines.push(row(line));
+				// The registry is the liveness authority here: a run it still holds has a
+				// handler that may spawn another stage, and the one it finished cannot.
+				for (const line of fleetRunLines(last, this.theme, this.tick, { live: false })) lines.push(row(line));
 			} else {
 				lines.push(row(this.theme.fg("muted", "no active flow runs")));
 			}
 		} else {
 			active.forEach((run, index) => {
 				if (index > 0) lines.push(separator());
-				for (const line of fleetRunLines(run, this.theme, this.tick)) lines.push(row(line));
+				for (const line of fleetRunLines(run, this.theme, this.tick, { live: true })) lines.push(row(line));
 			});
 		}
 

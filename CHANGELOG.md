@@ -31,13 +31,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 - The live progress counter says what it counts. A fan-out header rendered a
   bare `settled/total`, so `0/2` read as "no runs started" and `2/2` read as
   "both runs succeeded" even when both failed with `BUDGET_EXCEEDED`. While any
-  run is outstanding every surface now renders `0/2 settled`; once all have
+  run is outstanding every surface now renders `0/2 settled`; once the flow has
   settled the ratio gives way to the verdict (`2 failed`, `2 ok`). The live tool
   row, fleet panel, status line, and widget all take that text from one new
-  exported helper, `flowProgressText(details)`, so they cannot drift apart
-  again. Single-run flows keep their bare board headers, and a flow-level error
-  keeps its precedence on the status line. **String changes:** the status line
-  and widget report `{total} ok` where they previously reported `ok`, and a
+  exported helper, `flowProgressText(details, options)`, so they cannot drift
+  apart again. A verdict now waits for the *flow* to settle rather than for the
+  runs it has spawned so far: between the stages of a multi-stage mode — after
+  `evaluate`'s generator returns, before its check command and critic panel — the
+  header holds `2/2 settled` and its spinner instead of claiming `2 ok`.
+  Single-run flows keep their bare board headers, and a flow-level error keeps
+  its precedence on the status line. **String changes:** the status line and
+  widget report `{total} ok` where they previously reported `ok`, and a
   dispatched flow whose first run has not registered yet reports `starting`
   instead of a runless `ok`.
 

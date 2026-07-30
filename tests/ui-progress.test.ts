@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { Text, visibleWidth } from "@earendil-works/pi-tui";
 import { FleetPanel, fleetRunLines } from "../extensions/pi-flows/fleet-panel.ts";
 import { FlowRunRegistry } from "../extensions/pi-flows/inspector.ts";
-import { flowLiveBoardLines } from "../extensions/pi-flows/ui-live-row.ts";
+import { flowLiveBoardLines, renderFlowResultRow } from "../extensions/pi-flows/ui-live-row.ts";
 import { flowProgressText, flowStatusText, flowWidgetLines } from "../extensions/pi-flows/ui.ts";
 
 /**
@@ -58,6 +58,56 @@ test("flowProgressText names what the numerator counts, then replaces it with th
 	// A dispatched flow hits the status line before its first run registers.
 	assert.equal(flowProgressText(details([])), "starting", "no runs yet is not a clean sweep");
 	assert.equal(flowStatusText(details([])), "flow parallel: starting");
+});
+
+/**
+ * Between the stages of a multi-stage mode, every run *so far* has settled while
+ * the flow is still working: `evaluate` emits an update after its generator
+ * settles, before the check command and the critic panel. A verdict there would
+ * announce an outcome the flow has not reached, so callers that know the flow is
+ * still live say so and keep the labeled ratio.
+ */
+test("a live flow between stages reports settled runs, not a verdict", () => {
+	const betweenStages = details([result({ exitCode: 0 }), result({ agent: "analyst", exitCode: 0 })], { mode: "evaluate" });
+	assert.equal(flowProgressText(betweenStages, { live: true }), "2/2 settled");
+	assert.equal(flowProgressText(betweenStages), "2 ok", "an unqualified call still settles into the verdict");
+
+	assert.equal(flowStatusText(betweenStages, { live: true }), "flow evaluate: 2/2 settled");
+	assert.equal(flowWidgetLines(betweenStages, { live: true })[0], "flow evaluate: 2/2 settled");
+
+	const board = flowLiveBoardLines(betweenStages, theme, { tick: 0, redactSecrets: true, live: true });
+	assert.match(board[0]!, /flow evaluate 2\/2 settled/);
+	assert.equal(board[0]!.includes("2 ok"), false, "the next stage has not run yet");
+	assert.equal(board[0]!.startsWith("✓"), false, "a ✓ beside 'settled so far' contradicts itself");
+	assert.doesNotMatch(board[0]!, /▰|▱/, "the bar measures outstanding runs, and between stages there are none");
+	assert.match(board.join("\n"), /F8 fleet panel/, "a live flow still points at the fleet panel");
+
+	assert.match(fleetRunLines({ mode: "evaluate", redactSecrets: true, details: betweenStages } as any, theme, 0, { live: true })[0]!, /flow evaluate 2\/2 settled/);
+});
+
+test("the live tool row takes its liveness from the tool call, not just its runs", () => {
+	const settledRuns = details([result({ exitCode: 0 }), result({ agent: "analyst", exitCode: 0 })], { mode: "chain" });
+	const context = { invalidate: () => {}, state: {}, lastComponent: undefined } as any;
+	const flowResult = { content: [{ type: "text", text: "done" }], details: settledRuns };
+
+	const partialRow = renderFlowResultRow(flowResult as any, { expanded: false, isPartial: true }, theme, context, (() => "agents") as any) as Text;
+	assert.match(partialRow.text ?? String(partialRow), /flow chain 2\/2 settled/, "a partial tool row means another stage may still spawn");
+
+	context.lastComponent = undefined;
+	const finalRow = renderFlowResultRow(flowResult as any, { expanded: false, isPartial: false }, theme, context, (() => "agents") as any) as Text;
+	assert.match(finalRow.text ?? String(finalRow), /flow chain 2 ok/, "the settled row reports the verdict");
+});
+
+test("the fleet panel treats registered runs as live and the last finished run as settled", () => {
+	const registry = new FlowRunRegistry();
+	const settledRuns = details([result({ exitCode: 0 }), result({ agent: "analyst", exitCode: 0 })], { mode: "evaluate" });
+	registry.start("flow-1", "evaluate", settledRuns, true);
+	const panel = new FleetPanel({ requestRender: () => {} } as any, theme, { matches: () => false, getKeys: () => ["esc"] } as any, registry, () => {});
+	assert.match(panel.render(60).join("\n"), /flow evaluate 2\/2 settled/, "an active run is mid-flow by definition");
+
+	registry.finish("flow-1", settledRuns);
+	assert.match(panel.render(60).join("\n"), /flow evaluate 2 ok/, "the last finished run has nothing left to spawn");
+	panel.dispose();
 });
 
 test("the live tool row labels the ratio while running and shows the verdict on settle", () => {

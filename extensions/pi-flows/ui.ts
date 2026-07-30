@@ -4,6 +4,15 @@ import { isFailed, sanitizeText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 
 /**
+ * What a caller knows about the flow beyond its results. `live` means the flow
+ * itself has not settled — see {@link flowProgressText} for why that is not the
+ * same question as whether its runs have.
+ */
+export interface FlowProgressOptions {
+	live?: boolean;
+}
+
+/**
  * The header state text every live surface shows, so none of them can drift into
  * its own vocabulary. A bare `settled/total` was ambiguous in both directions:
  * `0/2` read as "no runs have started" and `2/2` read as "both runs succeeded"
@@ -12,30 +21,37 @@ import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
  * because `N/N` is the exact string that reads as a success total while carrying
  * nothing the verdict and the per-run rows do not.
  *
+ * `results` alone cannot date that handover. A multi-stage mode settles every run
+ * of one stage before spawning the next — `evaluate` emits an update after its
+ * generator returns, ahead of the check command and the critic panel — so
+ * `settled === total` there means "this stage is done", not "the flow is". A
+ * caller that knows the flow is still `live` keeps the labeled ratio, which is
+ * safe to hold at `2/2` precisely because the label says what it counts.
+ *
  * A flow-level error is the caller's to render: it takes precedence over this
  * text on the status line, and sits beside it on the board surfaces.
  */
-export function flowProgressText(details: FlowDetails): string {
+export function flowProgressText(details: FlowDetails, options: FlowProgressOptions = {}): string {
 	const total = details.results.length;
 	// A dispatched flow reaches the status line before its first run registers.
 	// Reporting that as `0 ok` would be the same false success the ratio was.
 	if (total === 0) return "starting";
 	const settled = details.results.filter((result) => result.exitCode !== -1).length;
-	if (settled < total) return `${settled}/${total} settled`;
+	if (options.live || settled < total) return `${settled}/${total} settled`;
 	const failed = details.results.filter((result) => isFailed(result)).length;
 	return failed ? `${failed} failed` : `${total} ok`;
 }
 
-export function flowStatusText(details: FlowDetails): string {
+export function flowStatusText(details: FlowDetails, options: FlowProgressOptions = {}): string {
 	const usage = flowUsageTotals(details.results.filter((result) => result.exitCode !== -1));
-	const state = details.error ? `error:${details.error.code}` : flowProgressText(details);
+	const state = details.error ? `error:${details.error.code}` : flowProgressText(details, options);
 	const cost = usage.cost ? ` $${usage.cost.toFixed(4)}` : "";
 	const tokens = usage.input || usage.output ? ` ${formatTokens(usage.input + usage.output)} tok` : "";
 	return `flow ${details.mode}: ${state}${cost}${tokens}`;
 }
 
-export function flowWidgetLines(details: FlowDetails): string[] {
-	const lines = [flowStatusText(details)];
+export function flowWidgetLines(details: FlowDetails, options: FlowProgressOptions = {}): string[] {
+	const lines = [flowStatusText(details, options)];
 	for (const result of details.results.slice(0, 6)) {
 		const status = result.exitCode === -1 ? "running" : isFailed(result) ? `failed${result.error?.code ? `:${result.error.code}` : ""}` : "ok";
 		const usage = formatUsage(result.usage, result.model, result.durationMs);
@@ -46,10 +62,11 @@ export function flowWidgetLines(details: FlowDetails): string[] {
 	return lines;
 }
 
-export function updateFlowUi(ctx: any, details: FlowDetails | undefined): void {
+/** `live` while the flow's handler is still running; omit it for the final update. */
+export function updateFlowUi(ctx: any, details: FlowDetails | undefined, options: FlowProgressOptions = {}): void {
 	if (!details) return;
-	ctx.ui?.setStatus?.("pi-flows", flowStatusText(details));
-	ctx.ui?.setWidget?.("pi-flows", flowWidgetLines(details), { placement: "aboveEditor" });
+	ctx.ui?.setStatus?.("pi-flows", flowStatusText(details, options));
+	ctx.ui?.setWidget?.("pi-flows", flowWidgetLines(details, options), { placement: "aboveEditor" });
 }
 
 export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): void {
