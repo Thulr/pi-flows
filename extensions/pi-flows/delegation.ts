@@ -14,15 +14,12 @@ const integrationValidationReceipts = new WeakMap<object, {
 	result: FlowRunResult;
 	contractId: string;
 	cwd: string;
+	policy: CapturePolicy;
 	envelope: DelegationReturnEnvelope;
 	handoff: DelegationHandoffEnvelope;
 }>();
 
 type RecordValue = Record<string, any>;
-
-function cloneJson<T>(value: T): T {
-	return JSON.parse(JSON.stringify(value)) as T;
-}
 
 export interface PersistedHandoffAttestation {
 	schemaVersion: "pi-flows.handoff-attestation.v1";
@@ -440,11 +437,13 @@ export function prepareIntegrationHandoff(
 		const reusable = received?.result === result
 			&& received.contractId === expectedContractId
 			&& received.cwd === options.cwd
+			&& received.policy.recordContent === options.policy.recordContent
+			&& received.policy.redactSecrets === options.policy.redactSecrets
 			? received
 			: undefined;
 		if (reusable) {
-			returned = cloneJson(reusable.envelope);
-			handoff = cloneJson(reusable.handoff);
+			returned = structuredClone(reusable.envelope);
+			handoff = structuredClone(reusable.handoff);
 		} else {
 			const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
 			if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
@@ -455,8 +454,9 @@ export function prepareIntegrationHandoff(
 				result,
 				contractId: expectedContractId,
 				cwd: options.cwd,
-				envelope: cloneJson(returned),
-				handoff: cloneJson(handoff),
+				policy: { ...options.policy },
+				envelope: structuredClone(returned),
+				handoff: structuredClone(handoff),
 			});
 		}
 	} else {

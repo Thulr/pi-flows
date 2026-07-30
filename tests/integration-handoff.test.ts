@@ -137,6 +137,29 @@ test("validation receipts retain an immutable private snapshot", () => {
 	assert.equal(reused.handoff?.status, "completed");
 });
 
+test("validation receipts cannot carry permissive content into a stricter capture policy", () => {
+	const secret = "secret=private-value";
+	const child = result(typedEnvelope({ summary: secret }));
+	const permissive = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy: { recordContent: true, redactSecrets: false },
+	});
+	assert.ok(permissive.validation);
+	assert.match(permissive.handoff?.summary ?? "", /private-value/);
+
+	const restrictive = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy: { recordContent: false, redactSecrets: true },
+		validation: permissive.validation,
+	});
+
+	assert.equal(restrictive.error, undefined);
+	assert.doesNotMatch(canonicalHandoff(restrictive.handoff!), /private-value/);
+	assert.equal(restrictive.handoff?.summary, "[content omitted: recordContent=false]");
+});
+
 test("integration handoffs reject digest-mismatched artifacts", async () => {
 	const cwd = await freshDir();
 	await writeFile(`${cwd}/artifact.txt`, "actual content\n");
