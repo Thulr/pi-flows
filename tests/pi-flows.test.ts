@@ -613,22 +613,6 @@ test("trace reports distinguish execution from verified outcomes and label legac
   assert.match(__test.formatTraceReport(report), /legacy `flow\.duration_ms_total` compatibility: 1 trace/);
 });
 
-test("flow status helpers summarize live and completed runs", () => {
-  const details = {
-    mode: "parallel",
-    version: PI_FLOWS_VERSION,
-    agentScope: "user",
-    config: {},
-    agentsDir: {},
-    results: [
-      { agent: "recon", agentSource: "package", task: "a", exitCode: 0, messages: [], stderr: "", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.001, contextTokens: 15, turns: 1 } },
-      { agent: "operator", agentSource: "package", task: "b", exitCode: -1, messages: [], stderr: "", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 } },
-    ],
-  } as any;
-  assert.match(__test.flowStatusText(details), /flow parallel: 1\/2/);
-  assert.ok(__test.flowWidgetLines(details).some((line: string) => /running\s+operator/.test(line)));
-});
-
 test("detectRunMode treats evaluate with checkCommand and a critic panel as evaluate", () => {
   assert.deepEqual(__test.detectRunMode({ task: "g", evaluate: { checkCommand: "npm test", redteam: [{ agent: "a" }, { agent: "b" }] } }), { mode: "evaluate" });
 });

@@ -33,7 +33,7 @@ import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summa
 import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
-import { appendFlowSessionEntry, checkpointApproval, flowProgressText, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
+import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
 import { renderFlowResultRow } from "./ui-live-row.ts";
@@ -104,8 +104,6 @@ export const __test = {
 	summarizeTraceSpans,
 	formatTraceReport,
 	flowProgressText,
-	flowStatusText,
-	flowWidgetLines,
 };
 
 export default function (pi: ExtensionAPI) {
@@ -351,14 +349,10 @@ export default function (pi: ExtensionAPI) {
 			const approvalActor = process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR;
 			let liveDetails = makeDetails(mode)([]);
 			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets, budget);
-			// Every update before the handler returns is `live`, however settled the runs
-			// in it look: a multi-stage mode reports one stage's results while the next
-			// stage is still ahead of it, and a verdict there would be premature.
-			updateFlowUi(ctx, liveDetails, { live: true });
-			const statusOnUpdate: Update = (partial) => {
+			clearFlowUi(ctx);
+			const liveUpdate: Update = (partial) => {
 				liveDetails = partial.details;
 				liveRuns.update(toolCallId, liveDetails);
-				updateFlowUi(ctx, liveDetails, { live: true });
 				onUpdate?.(partial);
 			};
 
@@ -380,7 +374,7 @@ export default function (pi: ExtensionAPI) {
 					agentScope,
 					defaultCwd: ctx.cwd,
 					signal,
-					onUpdate: statusOnUpdate,
+					onUpdate: liveUpdate,
 					budget,
 					recordSpan: traceSink?.record,
 					recordEvent: traceSink?.event,
@@ -415,7 +409,6 @@ export default function (pi: ExtensionAPI) {
 				}
 				liveDetails = output.details;
 				liveRuns.update(toolCallId, liveDetails);
-				updateFlowUi(ctx, liveDetails);
 				if (traceSink) {
 					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
 					output.details.trace = await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
@@ -429,7 +422,6 @@ export default function (pi: ExtensionAPI) {
 					output.content = [{ type: "text", text: `${formatFlowError(traceError)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
 					liveDetails = output.details;
 					liveRuns.update(toolCallId, liveDetails);
-					updateFlowUi(ctx, liveDetails);
 				}
 				// Persisted last, so the durable history cannot record a run as `ok`
 				// that the caller was told failed — and so it carries the trace link.

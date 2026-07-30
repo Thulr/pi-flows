@@ -4,7 +4,7 @@ import { Text, visibleWidth } from "@earendil-works/pi-tui";
 import { FleetPanel, fleetRunLines } from "../extensions/pi-flows/fleet-panel.ts";
 import { FlowRunRegistry } from "../extensions/pi-flows/inspector.ts";
 import { flowLiveBoardLines, renderFlowResultRow } from "../extensions/pi-flows/ui-live-row.ts";
-import { flowProgressText, flowStatusText, flowWidgetLines } from "../extensions/pi-flows/ui.ts";
+import { clearFlowUi, flowProgressText } from "../extensions/pi-flows/ui.ts";
 
 /**
  * The header counter's *meaning*, across every surface that renders it. A bare
@@ -55,9 +55,8 @@ test("flowProgressText names what the numerator counts, then replaces it with th
 	assert.equal(flowProgressText(singleRun), "0/1 settled");
 	assert.doesNotMatch(flowProgressText(allFailed), /\d+\/\d+/, "no ratio survives settling");
 	assert.doesNotMatch(flowProgressText(allOk), /\d+\/\d+/);
-	// A dispatched flow hits the status line before its first run registers.
+	// A dispatched flow can be rendered before its first run registers.
 	assert.equal(flowProgressText(details([])), "starting", "no runs yet is not a clean sweep");
-	assert.equal(flowStatusText(details([])), "flow parallel: starting");
 });
 
 /**
@@ -71,9 +70,6 @@ test("a live flow between stages reports settled runs, not a verdict", () => {
 	const betweenStages = details([result({ exitCode: 0 }), result({ agent: "analyst", exitCode: 0 })], { mode: "evaluate" });
 	assert.equal(flowProgressText(betweenStages, { live: true }), "2/2 settled");
 	assert.equal(flowProgressText(betweenStages), "2 ok", "an unqualified call still settles into the verdict");
-
-	assert.equal(flowStatusText(betweenStages, { live: true }), "flow evaluate: 2/2 settled");
-	assert.equal(flowWidgetLines(betweenStages, { live: true })[0], "flow evaluate: 2/2 settled");
 
 	const board = flowLiveBoardLines(betweenStages, theme, { tick: 0, redactSecrets: true, live: true });
 	assert.match(board[0]!, /flow evaluate 2\/2 settled/);
@@ -127,32 +123,26 @@ test("the live tool row labels the ratio while running and shows the verdict on 
 	}
 });
 
-test("the status line and widget report the same state text as the board", () => {
-	assert.equal(flowStatusText(inFlight), "flow parallel: 0/2 settled");
-	assert.equal(flowStatusText(allFailed), "flow parallel: 2 failed");
-	assert.equal(flowStatusText(allOk), "flow parallel: 2 ok");
-	assert.equal(flowStatusText(partial), "flow parallel: 1 failed");
-	// A standalone one-liner has no agent rows beside it, so a one-run flow still
-	// gets its state text — unlike the two board surfaces.
-	assert.equal(flowStatusText(singleRun), "flow single: 0/1 settled");
+test("a live flow clears duplicate transient progress surfaces", () => {
+	const statusCalls: unknown[][] = [];
+	const widgetCalls: unknown[][] = [];
+	const ctx = {
+		ui: {
+			setStatus: (...args: unknown[]) => statusCalls.push(args),
+			setWidget: (...args: unknown[]) => widgetCalls.push(args),
+		},
+	};
 
-	for (const state of [inFlight, allFailed, allOk, partial, singleRun]) {
-		assert.equal(flowWidgetLines(state)[0], flowStatusText(state), "the widget header is the status line");
-	}
-});
+	clearFlowUi(ctx);
 
-test("a flow-level error still outranks the counter on the status line", () => {
-	const errored = details([result({ exitCode: 0 }), result({ agent: "analyst" })], { error: { code: "BUDGET_EXCEEDED", message: "over budget" } });
-	assert.equal(flowStatusText(errored), "flow parallel: error:BUDGET_EXCEEDED");
-	assert.doesNotMatch(flowStatusText(errored), /1\/2/);
-	assert.match(flowWidgetLines(errored).join("\n"), /error: over budget/);
+	assert.deepEqual(statusCalls, [["pi-flows", undefined]], "the inline tool row is the one primary live view");
+	assert.deepEqual(widgetCalls, [["pi-flows", undefined]], "the detailed inline tool row is the one primary live view");
 });
 
 test("the board surfaces report a flow-level error beside the run counts, as before", () => {
-	// Only the status line gives the error precedence *over* the state text. On the
-	// boards it has always been a separate signal, because the runs it reports are
-	// a different fact from the flow-level failure (a denied checkpoint or an
-	// incomplete trace can fail a flow whose every run succeeded).
+	// Progress text describes run state. A flow-level failure remains a separate
+	// signal because a denied checkpoint or incomplete trace can fail a flow whose
+	// every run succeeded.
 	const errored = details([result({ exitCode: 0 }), result({ agent: "analyst", exitCode: 0 })], { error: { code: "TRACE_INCOMPLETE", message: "trace incomplete" } });
 	const board = flowLiveBoardLines(errored, theme, { tick: 0, redactSecrets: true });
 	assert.match(board[0]!, /flow parallel 2 ok/);
