@@ -33,6 +33,8 @@ export interface ConsumeResultOptions {
 	contract?: Parameters<typeof prepareIntegrationHandoff>[1]["contract"];
 	cwd?: string;
 	incompletePolicy?: IncompleteHandoffPolicy;
+	/** Terminal reports validate their contract and artifacts without integration-status eligibility. */
+	completion?: "integrate" | "terminal";
 	scope?: ChildSpanScope;
 	consumed?: boolean;
 	noticeLabel?: string;
@@ -94,6 +96,7 @@ export class HandoffConsumer {
 			policy: this.options.policy,
 			incompletePolicy: options.incompletePolicy ?? this.options.params.incompleteHandoffPolicy ?? "fail",
 			attach: payload === "handoff",
+			enforceCompletion: options.completion !== "terminal",
 		});
 		if (accepted.error) {
 			if (options.consumed !== false) {

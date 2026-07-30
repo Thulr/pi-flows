@@ -150,6 +150,28 @@ test("incomplete policy defaults fail closed and explicitly includes partial Han
 	assert.match(included.text, /"status":"partial"/);
 });
 
+test("terminal completion validates typed reports without applying integration eligibility", () => {
+	for (const status of ["partial", "blocked", "failed"] as const) {
+		const result = typedResult({ status });
+		const terminal = createHandoffConsumer({
+			params: {},
+			mode: "single",
+			policy: { recordContent: true, redactSecrets: true },
+			defaultCwd: "/tmp",
+		}).consumeResult({
+			result,
+			contract,
+			consumed: false,
+			completion: "terminal",
+			payload: "source",
+		});
+
+		assert.equal(terminal.error, undefined, status);
+		assert.equal(result.envelope?.status, status);
+		assert.equal(result.handoff, undefined);
+	}
+});
+
 test("compositional injection is enforced across consumed source boundaries", () => {
 	const handoffs = createHandoffConsumer({
 		params: { handoffPolicy: "fail" },

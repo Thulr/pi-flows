@@ -415,6 +415,7 @@ export function prepareIntegrationHandoff(
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
 		attach?: boolean;
+		enforceCompletion?: boolean;
 	},
 ): { handoff?: DelegationHandoffEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	let handoff: DelegationHandoffEnvelope;
@@ -427,7 +428,7 @@ export function prepareIntegrationHandoff(
 	} else {
 		handoff = compatibilityHandoff(result, options.policy);
 	}
-	if (handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
+	if (options.enforceCompletion !== false && handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
 		// A partial or blocked envelope is refused, but its artifact and digest
 		// claims are the evidence of what the child touched before it stopped.
 		// Returning them as rejected evidence keeps those artifacts in the trace,

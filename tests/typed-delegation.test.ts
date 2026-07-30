@@ -71,6 +71,20 @@ test("single accepts a delegation contract as the task and retains a validated r
 	assert.match(text, /xyzzy-42/);
 });
 
+test("single preserves valid partial and failed typed terminal reports", async () => {
+	for (const status of ["partial", "failed"] as const) {
+		const { result, calls, text } = await runFlow(
+			{ agent: "recon", contract },
+			{ recon: envelope({ status }) },
+		);
+
+		assert.equal(calls.length, 1, status);
+		assert.equal(result.details.error, undefined, status);
+		assert.equal(result.details.results[0].envelope?.status, status);
+		assert.match(text, new RegExp(`"status":"${status}"`));
+	}
+});
+
 test("delegation contracts fail before dispatch when required fields are malformed", async () => {
 	const { result, calls, text } = await runFlow(
 		{ agent: "recon", contract: { ...contract, owner: "" } },

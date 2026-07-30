@@ -34,6 +34,7 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 			contract: params.contract,
 			cwd: resolvedCwd(defaultCwd, params.cwd),
 			consumed: false,
+			completion: "terminal",
 			payload: "source",
 		});
 		if (handoff.error) {
