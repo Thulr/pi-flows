@@ -28,6 +28,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- Non-retryable failures now expose `Retryable unchanged: no` in the
+  model-visible error text instead of keeping that fact only in structured
+  details. `BUDGET_EXCEEDED` explicitly forbids automatic replay of the same
+  Flow: the parent must preserve the configured ceiling unless the user
+  explicitly approves changing it, then ask for direction or materially narrow
+  the task or fan-out before starting another Flow.
 - Live flows no longer repeat progress across the inline tool row, footer
   status, and above-editor widget. The inline row is now the single primary
   detailed view; the obsolete secondary surfaces are explicitly cleared so

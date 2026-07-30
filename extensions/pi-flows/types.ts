@@ -403,8 +403,8 @@ export function budgetExceededError(budget: BudgetUsageState, authority: "flow" 
 		`${label} exhausted (${spent}).`,
 		`${label} usage reached a configured cost or token ceiling, so the active child was stopped when enforceable and later children are refused.`,
 		authority === "contract"
-			? "Raise contract.budget, narrow the contracted task, or reduce the runs needed to fulfill it."
-			: "Raise the flow budget, narrow the task, or reduce fan-out (fewer voters/subtasks/iterations). Omit the flow-budget fields to run uncapped.",
+			? "Do not automatically replay this flow. Preserve contract.budget unless the user explicitly approves changing it. Ask the user for direction, or make a material, visible change that stays within the ceiling: narrow the contracted task or reduce the runs needed to fulfill it."
+			: "Do not automatically replay this flow. Preserve the flow budget unless the user explicitly approves changing it. Ask the user for direction, or make a material, visible change that stays within the ceiling: narrow the task or reduce fan-out (fewer voters/subtasks/iterations).",
 	);
 }
 
@@ -425,7 +425,7 @@ export function flowError(code: FlowErrorCode, message: string, cause: string, f
 }
 
 export function formatFlowError(error: FlowError): string {
-	return [`${error.message}`, `Cause: ${error.cause}`, `Fix: ${error.fix}`, `Code: ${error.code}`].join("\n");
+	return [`${error.message}`, `Cause: ${error.cause}`, `Retryable unchanged: ${error.retryable === true ? "yes" : "no"}`, `Fix: ${error.fix}`, `Code: ${error.code}`].join("\n");
 }
 
 export function emptyUsage(): UsageStats {

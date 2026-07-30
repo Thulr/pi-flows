@@ -475,6 +475,11 @@ Any mode accepts a flow budget and a trace sink:
 
 `maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form a flow budget that caps total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling prevents subsequent child spawns after the completed response. A delegation contract may independently impose a contract budget, including a tighter timeout. `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends OpenInference-shaped JSON spans — JSONL any OpenTelemetry backend, or a coding agent, can read. Children nest under the wave, round, iteration, or phase that scheduled them, dependencies are recorded as links rather than fake parentage, and the boundaries that are not child runs at all (approvals, state transitions, retries, budget refusals, validation results, handoffs, artifacts) get their own attributable event spans. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim verified outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Eval harnesses also set `traceContext` so `details.trace` and eval artifacts link stable run/case/trial/arm ids to the exact runtime trace and root span without weakening redaction. Tracing is best-effort by default and never fails a flow; `traceStrict:true` makes evidence a gate for evaluation and release runs, failing with `TRACE_INCOMPLETE` when spans were dropped or nothing was exported. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
 
+`BUDGET_EXCEEDED` is terminal for an unchanged call. The parent must not
+automatically replay the same Flow. It preserves the configured ceiling unless
+the user explicitly approves changing it, then asks for direction or materially
+narrows the task or fan-out before another Flow.
+
 ### Human checkpoints and Reflexion
 
 ```json

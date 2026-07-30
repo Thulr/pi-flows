@@ -199,9 +199,12 @@ ceiling preserves that response. All three prevent further child spawns. This
 bounds the **cost** dimension of runaway delegation that the iteration, fan-out,
 and time caps do not cover.
 
-Fix: raise the owning flow or contract budget, narrow the task, or reduce fan-out
-(fewer voters, subtasks, or `maxIterations`). Omit the relevant budget fields to run uncapped. The partial
-results produced before the ceiling was hit are still in `details`.
+Fix: do not automatically replay the same Flow unchanged. Ask for direction, or
+make a material, visible change that stays within the configured ceiling:
+narrow the task or reduce fan-out (fewer voters, subtasks, or `maxIterations`).
+Preserve the owning flow/contract budget unless the user explicitly approves
+raising or removing it. The partial results produced before the ceiling was hit
+are still in `details`.
 
 ### `BUDGET_UNOBSERVABLE`
 
