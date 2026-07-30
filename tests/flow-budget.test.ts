@@ -75,7 +75,7 @@ test("eval treats a binding budget stop as an invalid outcome, not infrastructur
 	assert.equal(infraError(result), null);
 });
 
-test("generated-token budget stops the active child at a response boundary", async () => {
+test("generated-token budget stops the active child and forbids unchanged replay", async () => {
 	const startedAt = Date.now();
 	const { result } = await runFlow(
 		{ agent: "recon", task: "return a bounded answer", maxGeneratedTokens: 4, timeoutMs: 2_000 },
@@ -87,6 +87,8 @@ test("generated-token budget stops the active child at a response boundary", asy
 	assert.equal(child.exitCode, 1);
 	assert.equal(child.error.code, "BUDGET_EXCEEDED");
 	assert.match(result.content[0].text, /Code: BUDGET_EXCEEDED/);
+	assert.match(result.content[0].text, /Retryable unchanged: no/);
+	assert.match(result.content[0].text, /Do not automatically replay this flow/);
 	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
 });
 

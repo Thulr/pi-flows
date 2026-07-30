@@ -788,6 +788,13 @@ Every error returned by the `flow` tool is structured:
 - `fix` — the suggested next action
 - `retryable` — whether retrying unchanged may succeed
 
+The model-visible error text repeats that last field as
+`Retryable unchanged: yes|no`. A `no` is terminal for the unchanged call:
+the parent must apply the stated fix before another Flow. In particular,
+`BUDGET_EXCEEDED` must not automatically replay the same work; the parent asks
+for direction or makes a material, visible change to the owning budget, Task,
+or fan-out first.
+
 The full list of `code` values, each with its cause and fix, lives in the
 **[canonical error-code catalog](./troubleshooting.md#error-codes)** in
 Troubleshooting. That catalog is the single source of truth and is verified in
