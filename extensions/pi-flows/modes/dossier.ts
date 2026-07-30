@@ -40,7 +40,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")([], planned.error) };
 		sectionItems.push(planned.plan!);
 	}
-	const results: FlowRunResult[] = await runAgentFanout(deps, "dossier", sectionItems, concurrency, [], (done, total) => `Flow dossier: ${done}/${total} evidence sections extracted`, { key: "sections", name: "evidence sections" });
+	const results: FlowRunResult[] = await runAgentFanout(deps, "dossier", sectionItems, concurrency, [], (settled, total) => `Flow dossier: ${settled}/${total} evidence sections extracted`, { key: "sections", name: "evidence sections" });
 	const sectionHandoffError = acceptIntegrationResults(deps, sectionItems, results);
 	if (sectionHandoffError) return { content: [{ type: "text", text: formatFlowError(sectionHandoffError) }], details: deps.makeDetails("dossier")(results, sectionHandoffError) };
 	const successful = results.filter((result) => !isFailed(result));

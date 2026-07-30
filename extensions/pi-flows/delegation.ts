@@ -4,8 +4,8 @@ import * as path from "node:path";
 import { Compile } from "typebox/compile";
 import { extractLastJsonBlock } from "./protocol.ts";
 import { capModelVisibleText, isFailed, redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
-import { flowError, type CapturePolicy, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowBudget, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
-import { appendReturnContract } from "./validate.ts";
+import { flowError, type CapturePolicy, type ContractBudget, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
+import { appendReturnRequirements } from "./validate.ts";
 
 const ENVELOPE_VERSION = "pi-flows.return-envelope.v1";
 const SIDE_EFFECT_CLASSES = new Set(["none", "read-only", "reversible", "irreversible"]);
@@ -53,7 +53,7 @@ export function delegationContractId(contract: DelegationContract): string {
 function contractError(reason: string): FlowError {
 	return flowError(
 		"INVALID_DELEGATION_CONTRACT",
-		"Typed delegation contract is invalid.",
+		"Delegation contract is invalid.",
 		reason,
 		"Provide every required contract field with the documented type before dispatching a child.",
 	);
@@ -105,8 +105,8 @@ export function renderDelegationTask(
 	const goal = task?.trim() || contract.objective;
 	const contractId = delegationContractId(contract);
 	return [
-		appendReturnContract(goal, returnContract, requireEvidence),
-		"\n## Typed delegation contract",
+		appendReturnRequirements(goal, returnContract, requireEvidence),
+			"\n## Delegation contract",
 		JSON.stringify(contract, null, 2),
 		"\n## Required return protocol",
 		`Return one JSON object in a fenced \`json\` block using schemaVersion "${ENVELOPE_VERSION}".`,
@@ -117,7 +117,7 @@ export function renderDelegationTask(
 	].join("\n");
 }
 
-export function createDelegationBudget(contract: DelegationContract): FlowBudget | undefined {
+export function createDelegationBudget(contract: DelegationContract): ContractBudget | undefined {
 	const { maxCostUsd, maxTokens, maxGeneratedTokens } = contract.budget;
 	if (maxCostUsd === undefined && maxTokens === undefined && maxGeneratedTokens === undefined) return undefined;
 	return { maxCostUsd, maxTokens, maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
@@ -206,7 +206,7 @@ function validateEnvelopeAgainstContract(
 			"RETURN_CONTRACT_MISMATCH",
 			"Child return envelope did not match the dispatched contract.",
 			`Expected contractId ${expected}, received ${actual}.`,
-			"Discard the stale or unbound handoff and rerun the child with the current typed contract.",
+			"Discard the stale or unbound handoff and rerun the child with the current delegation contract.",
 		);
 	}
 	let validator;
@@ -360,7 +360,7 @@ export function validatePersistedIntegrationHandoff(
 	}
 	if (options.contract) {
 		if (value.compatibility !== "typed") {
-			return storedError(envelopeError("Persisted contracted workflow phase is not a typed handoff."), options.policy);
+			return storedError(envelopeError("Persisted contracted workflow phase is not a contract-bound handoff envelope."), options.policy);
 		}
 		const expected = delegationContractId(options.contract);
 		if (envelope.contractId !== expected) {
@@ -368,7 +368,7 @@ export function validatePersistedIntegrationHandoff(
 				"RETURN_CONTRACT_MISMATCH",
 				"Persisted workflow handoff did not match the current phase contract.",
 				`Expected contractId ${expected}, received ${envelope.contractId ?? "(missing)"}.`,
-				"Discard the stale workflow state and rerun the phase with the current typed contract.",
+				"Discard the stale workflow state and rerun the phase with the current delegation contract.",
 			), options.policy);
 		}
 	} else if (value.compatibility !== "legacy-prose" || value.contractId !== null) {

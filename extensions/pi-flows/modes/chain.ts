@@ -1,7 +1,7 @@
 import { formatFlowError, type DelegationContract, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, prepareTextHandoff, withInjectionNotice } from "../handoff.ts";
-import { appendReturnContract, resolvedCwd } from "../validate.ts";
+import { appendReturnRequirements, resolvedCwd } from "../validate.ts";
 import { renderTaskTemplate } from "../parse.ts";
 import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
@@ -29,7 +29,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 		const rendered = renderTaskTemplate(step.task, params.task ?? params.contract?.objective, previous);
 		const task = contract
 			? renderDelegationTask(rendered, contract, step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence)
-			: appendReturnContract(rendered, step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence);
+			: appendReturnRequirements(rendered, step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence);
 		const result = await runAgentRef(
 			deps,
 			{ agent: step.agent, cwd: step.cwd, model: step.model, tier: step.tier, tools: step.tools },

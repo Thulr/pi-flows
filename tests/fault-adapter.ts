@@ -24,7 +24,7 @@ import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffGuard, resolveHandoffPolicy } from "../extensions/pi-flows/handoff.ts";
 import { budgetAttributes } from "../extensions/pi-flows/trace-attributes.ts";
-import { budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type FlowAgent, type FlowBudget, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
+import { budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type BudgetUsageState, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
 export type FaultKind = "delay" | "loss" | "duplicate" | "reorder" | "failure" | "stale";
 
@@ -171,21 +171,26 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 		// The seam's own pre-spawn policy, modelled faithfully: the real adapter
 		// refuses to spawn once a ceiling is spent, and a fake that ignored budgets
 		// would let a budget-exhaustion scenario "pass" without a budget ever biting.
-		const budgets = [childOptions.budget, childOptions.contractBudget].filter((budget): budget is FlowBudget => Boolean(budget));
+		const budgets = [childOptions.budget, childOptions.contractBudget].filter((budget): budget is BudgetUsageState => Boolean(budget));
 		const exhausted = budgets.find((budget) => budgetExceeded(budget));
-		if (exhausted) {
-			// The same event the real adapter emits, so a scenario can observe the
-			// refusal that leaves no child span behind.
-			childOptions.recordEvent?.({
+			if (exhausted) {
+				const authority = exhausted === childOptions.contractBudget ? "contract" : "flow";
+				// The same event the real adapter emits, so a scenario can observe the
+				// refusal that leaves no child span behind.
+				childOptions.recordEvent?.({
 				kind: "budget",
 				name: "child.refused",
 				ok: false,
 				scope: childOptions.scope,
-				attributes: { "flow.budget.refused_agent": agent, ...budgetAttributes(exhausted) },
-			});
-			const refused = baseResult(childOptions, "", { input: 0, output: 0, cost: 0 });
-			refused.exitCode = 1;
-			refused.error = budgetExceededError(exhausted);
+					attributes: {
+						"flow.budget.refused_agent": agent,
+						"flow.budget.authority": authority,
+						...budgetAttributes(exhausted, authority === "contract" ? "flow.contract_budget" : "flow.budget"),
+					},
+				});
+				const refused = baseResult(childOptions, "", { input: 0, output: 0, cost: 0 });
+				refused.exitCode = 1;
+				refused.error = budgetExceededError(exhausted, authority);
 			refused.errorMessage = refused.error.message;
 			refused.stopReason = "budget_exceeded";
 			refused.durationMs = 0;

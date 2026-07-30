@@ -25,9 +25,9 @@ export function spinnerFrame(tick: number, offset = 0): string {
 	return SPINNER_FRAMES[(index + SPINNER_FRAMES.length) % SPINNER_FRAMES.length] as string;
 }
 
-export function progressBar(done: number, total: number, width = 12): string {
+export function progressBar(settled: number, total: number, width = 12): string {
 	if (total <= 0 || width <= 0) return "";
-	const filled = Math.min(width, Math.max(0, Math.round((done / total) * width)));
+	const filled = Math.min(width, Math.max(0, Math.round((settled / total) * width)));
 	return "▰".repeat(filled) + "▱".repeat(width - filled);
 }
 
@@ -83,9 +83,9 @@ function agentIcon(result: FlowRunResult, index: number, tick: number, theme: Th
 	return state === "failed" ? theme.fg("error", "✗") : theme.fg("success", "✓");
 }
 
-function headerIcon(details: FlowDetails, done: number, failed: number, tick: number, theme: Theme): string {
+function headerIcon(details: FlowDetails, settled: number, failed: number, tick: number, theme: Theme): string {
 	if (details.error) return theme.fg("error", "✗");
-	if (done < details.results.length) return theme.fg("warning", spinnerFrame(tick));
+	if (settled < details.results.length) return theme.fg("warning", spinnerFrame(tick));
 	return failed ? theme.fg("warning", "◐") : theme.fg("success", "✓");
 }
 
@@ -105,19 +105,19 @@ export interface LiveBoardOptions {
 
 /** Collapsed-view lines for a run in progress or settled. First line is the header. */
 export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: LiveBoardOptions): string[] {
-	const done = details.results.filter((item) => item.exitCode !== -1).length;
+	const settled = details.results.filter((item) => item.exitCode !== -1).length;
 	const failed = details.results.filter((item) => item.exitCode !== -1 && isFailed(item)).length;
 	const total = details.results.length;
-	const running = done < total;
+	const running = settled < total;
 
-	let header = `${headerIcon(details, done, failed, options.tick, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`;
-	// The done/total counter, progress bar, and rollup exist to summarize a
+	let header = `${headerIcon(details, settled, failed, options.tick, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`;
+	// The settled/total counter, progress bar, and rollup exist to summarize a
 	// fan-out. With one child they only restate (or worse, appear to
 	// contradict) the agent line below — "0/1" reads as stuck, and the rollup
 	// counts input+output while the agent line also shows cache traffic.
 	if (total > 1) {
-		header += ` ${theme.fg("accent", `${done}/${total}`)}`;
-		const bar = progressBar(done, total);
+		header += ` ${theme.fg("accent", `${settled}/${total}`)}`;
+		const bar = progressBar(settled, total);
 		if (bar && running) header += ` ${theme.fg("dim", bar)}`;
 		const totals = totalsText(details);
 		if (totals) header += ` ${theme.fg("muted", totals)}`;
@@ -177,8 +177,8 @@ export function renderFlowResultRow(
 		return new Text(text?.type === "text" ? (text.text ?? "") : summarizeAgentsFn((details.agents ?? []) as FlowAgent[], details.discoveryIssues ?? []), 0, 0);
 	}
 
-	const done = details.results.filter((item) => item.exitCode !== -1).length;
-	const running = options.isPartial || done < details.results.length;
+	const settled = details.results.filter((item) => item.exitCode !== -1).length;
+	const running = options.isPartial || settled < details.results.length;
 	ensureRowTicker(context.state, running, context.invalidate);
 
 	if (!options.expanded) {
@@ -196,7 +196,7 @@ export function renderFlowResultRow(
 
 	const failed = details.results.filter((item) => item.exitCode !== -1 && isFailed(item)).length;
 	const container = new Container();
-	container.addChild(new Text(`${headerIcon(details, done, failed, context.state.tick ?? 0, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`, 0, 0));
+	container.addChild(new Text(`${headerIcon(details, settled, failed, context.state.tick ?? 0, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`, 0, 0));
 	const mdTheme = getMarkdownTheme();
 
 	details.results.forEach((item, index) => {

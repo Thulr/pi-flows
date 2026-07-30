@@ -457,15 +457,6 @@ test("control-marker protocol keeps prompt instructions aligned with parsers", (
   assert.deepEqual(__test.parseSubtasks('```json\n["a","b","c"]\n```', 2), ["a", "b"]);
 });
 
-test("return contracts append explicit output and evidence requirements", () => {
-  const task = __test.appendReturnContract("Map the auth flow.", "Return a table with path, purpose, and evidence.", true);
-  assert.match(task, /Map the auth flow/);
-  assert.match(task, /## Return contract/);
-  assert.match(task, /Return a table with path, purpose, and evidence/);
-  assert.match(task, /file:line references/);
-  assert.equal(__test.appendReturnContract("plain", undefined, false), "plain");
-});
-
 test("shared-write cwd guard blocks concurrent mutating agents but allows read-only fan-out", async () => {
   const repo = await makeTempRepo();
   const discovery = __test.discoverFlowAgents(repo, "user");

@@ -58,6 +58,7 @@ test("budget errors name the ceiling that actually crossed", () => {
 	};
 	assert.match(budgetExceededError(generated).message, /8 of 4 generated tokens/);
 	assert.match(budgetExceededError(total).message, /20 of 10 total tokens/);
+	assert.match(budgetExceededError(generated, "contract").message, /^Contract budget exhausted/);
 });
 
 test("eval treats a binding budget stop as an invalid outcome, not infrastructure", () => {
@@ -89,7 +90,7 @@ test("generated-token budget stops the active child at a response boundary", asy
 	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
 });
 
-test("typed contract cost and token budgets stop the contracted child", async () => {
+test("delegation-contract cost and token budgets stop the contracted child", async () => {
 	for (const budget of [{ maxCostUsd: 0.00001 }, { maxTokens: 4 }, { maxGeneratedTokens: 4 }]) {
 		const { result } = await runFlow(
 			{ agent: "recon", contract: contractWithBudget(budget), timeoutMs: 2_000 },
@@ -98,10 +99,11 @@ test("typed contract cost and token budgets stop the contracted child", async ()
 		const child = result.details.results[0];
 		assert.equal(child.stopReason, "budget_exceeded", JSON.stringify(budget));
 		assert.equal(child.error.code, "BUDGET_EXCEEDED");
+		assert.match(child.error.message, /^Contract budget exhausted/);
 	}
 });
 
-test("typed contract timeout tightens the top-level child timeout", async () => {
+test("delegation-contract timeout tightens the top-level child timeout", async () => {
 	const startedAt = Date.now();
 	const { result } = await runFlow(
 		{ agent: "recon", contract: contractWithBudget({ timeoutMs: 50 }), timeoutMs: 2_000 },
@@ -135,6 +137,16 @@ test("cost budget fails closed when provider cost telemetry is absent", async ()
 	assert.equal(child.stopReason, "budget_unobservable");
 	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
 	assert.match(result.content[0].text, /Code: BUDGET_UNOBSERVABLE/);
+});
+
+test("contract cost budget names its authority when telemetry is absent", async () => {
+	const { result } = await runFlow(
+		{ agent: "recon", contract: contractWithBudget({ maxCostUsd: 1 }), timeoutMs: 2_000 },
+		{ recon: { reply: "unpriced answer", omitCost: true, holdOpenMs: 5_000 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.error.code, "BUDGET_UNOBSERVABLE");
+	assert.match(child.error.message, /^Contract cost budget cannot be enforced/);
 });
 
 test("cost budget fails closed when provider usage telemetry is absent", async () => {

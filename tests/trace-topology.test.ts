@@ -479,8 +479,8 @@ test("route dispatch runs through the recorded selection, not around it", async 
 	assert.equal(attr(routerHandoff, "flow.depends_on_span_ids"), unit(spans, "router")!.span_id);
 	assert.equal(attr(selection, "flow.depends_on"), "router.handoff");
 	assert.equal(attr(selection, "flow.depends_on_span_ids"), routerHandoff.span_id);
-	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on"), "selection");
-	assert.equal(attr(unit(spans, "specialist"), "flow.depends_on_span_ids"), selection.span_id);
+	assert.equal(attr(unit(spans, "selected"), "flow.depends_on"), "selection");
+	assert.equal(attr(unit(spans, "selected"), "flow.depends_on_span_ids"), selection.span_id);
 });
 
 test("a chain step consumes the handoff, not the step that produced it", async () => {

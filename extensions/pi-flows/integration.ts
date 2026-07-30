@@ -25,7 +25,7 @@ import type {
 	PreparedHandoff,
 	RecordEvent,
 } from "./types.ts";
-import { appendReturnContract, resolvedCwd } from "./validate.ts";
+import { appendReturnRequirements, resolvedCwd } from "./validate.ts";
 
 export interface IntegrationRunPlan extends AgentFanoutItem {
 	contract?: DelegationContract;
@@ -59,7 +59,7 @@ export function integrationRunPlan(
 	if (error) return { error };
 	const renderedTask = contract
 		? renderDelegationTask(task, contract, options.returnContract, options.requireEvidence)
-		: appendReturnContract(task, options.returnContract, options.requireEvidence);
+		: appendReturnRequirements(task, options.returnContract, options.requireEvidence);
 	return {
 		plan: {
 			ref,

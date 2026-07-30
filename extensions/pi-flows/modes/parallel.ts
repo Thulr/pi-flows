@@ -49,7 +49,7 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 		plans,
 		concurrency,
 		[],
-		(done, total) => `Flow parallel: ${done}/${total} done`,
+		(settled, total) => `Flow parallel: ${settled}/${total} settled`,
 		{ key: "tasks", name: "parallel tasks" },
 	);
 	// Validated, but no boundary: these outputs go into the response the caller

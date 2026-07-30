@@ -56,14 +56,14 @@ const envelope = (data: unknown = { answer: "package.json" }, overrides: Record<
 	...overrides,
 });test("child spans identify prompt version, allowed tools, authority, contract, and delegation reason", async () => {
 	const { stubDir } = await runFlow(
-		{ agent: "recon", task: "find the version", contract, tools: "read", traceFile: TRACE, why: "independent scout with a typed contract" },
+		{ agent: "recon", task: "find the version", contract, tools: "read", traceFile: TRACE, why: "independent scout with a delegation contract" },
 		{ recon: envelope() },
 	);
 	const spans = await readSpans(stubDir);
 	const child = byRole(spans, "child")[0];
 
 	assert.equal(attr(child, "flow.allowed_tools"), "read");
-	assert.equal(attr(child, "flow.delegation_reason"), "independent scout with a typed contract");
+	assert.equal(attr(child, "flow.delegation_reason"), "independent scout with a delegation contract");
 	assert.equal(attr(child, "flow.side_effect_class"), "read-only");
 	assert.equal(attr(child, "flow.authority_may"), "read repository files");
 	assert.equal(attr(child, "flow.authority_must_not"), "push to a remote");

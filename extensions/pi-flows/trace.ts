@@ -169,7 +169,7 @@ function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { ver
 	return { verified: false };
 }
 
-/** Refusals that mean "a human gate stopped this run" — surfaced on the trace so an audit can tell a blocked flow from a failed one. */
+/** Refusals that mean "a human decision stopped this run" — surfaced on the trace so an audit can tell a blocked flow from a failed one. */
 const APPROVAL_BLOCKING_CODES = new Set<string>([
 	"WORKFLOW_APPROVAL_REQUIRED",
 	"WORKFLOW_APPROVAL_DENIED",

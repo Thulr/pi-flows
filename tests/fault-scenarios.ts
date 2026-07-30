@@ -489,7 +489,7 @@ function retryAfterPartialControlScenario(): FaultScenario {
 			residualState: { retryable: false, acceptedHandoffs: 2 },
 		},
 		// A real retry: the same workspace the refused partial run left behind,
-		// still holding the half-finished artifact that run produced. A fresh
+		// still holding the partial artifact that run produced. A fresh
 		// workspace would prove nothing about whether the refusal left recoverable
 		// state — it would only prove that a clean run is clean.
 		run: async () => {

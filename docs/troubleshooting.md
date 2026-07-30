@@ -176,7 +176,7 @@ Fix: tighten the `controller` prompt, widen/adjust `route.candidates`, or set
 
 ### `ORCHESTRATE_NO_SUBTASKS`
 
-Cause: the `commander` (orchestrator) did not return a JSON array of subtasks.
+Cause: the `commander` decomposer did not return a JSON array of subtasks.
 
 Fix: tighten the `commander` prompt to return a JSON array of strings. For work
 that does not decompose, use `chain` or `single` mode instead.
@@ -192,25 +192,27 @@ discipline against runaway nested delegation, not a bug.
 
 ### `BUDGET_EXCEEDED`
 
-Cause: the flow tree's cumulative child spend reached the `maxCostUsd`,
-`maxTokens`, or `maxGeneratedTokens` ceiling. Cost and generated-output ceilings
+Cause: a flow budget or contract budget reached its `maxCostUsd`, `maxTokens`,
+or `maxGeneratedTokens` ceiling. Cost and generated-output ceilings
 stop the active child after its completed model response; the legacy total-token
 ceiling preserves that response. All three prevent further child spawns. This
 bounds the **cost** dimension of runaway delegation that the iteration, fan-out,
 and time caps do not cover.
 
-Fix: raise the configured budget, narrow the task, or reduce fan-out (fewer
-voters, subtasks, or `maxIterations`). Omit all budget fields to run uncapped. The partial
+Fix: raise the owning flow or contract budget, narrow the task, or reduce fan-out
+(fewer voters, subtasks, or `maxIterations`). Omit the relevant budget fields to run uncapped. The partial
 results produced before the ceiling was hit are still in `details`.
 
 ### `BUDGET_UNOBSERVABLE`
 
-Cause: `maxCostUsd` was configured, but a completed model response omitted its
-numeric cost telemetry. The child stops at that response boundary because treating
-unknown spend as zero would silently make the cost ceiling non-binding.
+Cause: a flow budget or contract budget set `maxCostUsd`, but a completed model
+response omitted its numeric cost telemetry. The child stops at that response
+boundary because treating unknown spend as zero would silently make the cost
+ceiling non-binding.
 
-Fix: use a provider/model that reports cost telemetry, or bind execution with
-`maxTokens`, `maxGeneratedTokens`, or `timeoutMs` instead.
+Fix: use a provider/model that reports cost telemetry, or bind the same flow or
+delegation contract with `maxTokens`, `maxGeneratedTokens`, or `timeoutMs`
+instead.
 
 ### `CHECK_COMMAND_FAILED`
 
@@ -478,17 +480,17 @@ non-UI run.
 
 ### `INVALID_DELEGATION_CONTRACT`
 
-Cause: a typed `contract` is missing a required field, contains a malformed
+Cause: a delegation `contract` is missing a required field, contains a malformed
 authority/budget/side-effect value, or has a `returnSchema` that cannot compile.
 
-Fix: provide the complete typed contract documented in
-[Flow reference](./flow-reference.md#return-contracts-and-write-isolation).
-Contract validation happens before the affected single, chain, or evaluate child
+Fix: provide the complete delegation contract documented in
+[Flow reference](./flow-reference.md#return-requirements-delegation-contracts-and-write-isolation).
+Delegation-contract validation happens before the affected single, chain, or evaluate child
 is dispatched.
 
 ### `RETURN_ENVELOPE_INVALID`
 
-Cause: a child governed by a typed contract returned prose or malformed JSON,
+Cause: a child governed by a delegation contract returned prose or malformed JSON,
 its `data` did not satisfy `contract.returnSchema`, or an artifact reference was
 missing or escaped the child working directory.
 
@@ -498,16 +500,16 @@ declared JSON Schema. The handoff is not passed downstream until it validates.
 
 ### `RETURN_CONTRACT_MISMATCH`
 
-Cause: a contracted child returned a typed envelope with no `contractId`, or
-with an identity from an older/different contract.
+Cause: a contracted child returned a return envelope with no `contractId`, or
+with an identity from an older/different delegation contract.
 
-Fix: discard the stale handoff and rerun the child with the current contract.
+Fix: discard the stale handoff and rerun the child with the current delegation contract.
 Contracted modes compare the echoed `sha256:` identity before dependent
 dispatch, synthesis, persisted state, or worktree merge.
 
 ### `RETURN_ENVELOPE_INCOMPLETE`
 
-Cause: a typed child reported `partial`, `blocked`, or `failed`, and the
+Cause: a contracted child reported `partial`, `blocked`, or `failed`, and the
 integration mode refused to summarize it as complete.
 
 Fix: resolve/retry the child. If incomplete evidence is intentionally useful,
@@ -585,7 +587,7 @@ fewer files), or pick a larger-context model via `tier`/`model`, then retry.
 Cause: the call ran with strict tracing on (`traceStrict:true` or
 `PI_FLOWS_TRACE_STRICT=1`) and the coordination trace it produced is not
 complete evidence. Either no `traceFile` was configured at all, or the export
-finished with dropped spans / failed writes — for example an unwritable trace
+settled with dropped spans / failed writes — for example an unwritable trace
 path or a full disk.
 
 The in-process gate sees what the exporter failed to write. Spans lost *after* a

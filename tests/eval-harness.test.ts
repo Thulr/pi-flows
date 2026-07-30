@@ -763,7 +763,7 @@ test("selection eval keeps simple use-cases as no-flow negatives", () => {
 	assert.ok(noFlow.length >= 5, "simple prompts should dominate the no-flow selection suite");
 	assert.ok(flow.length >= 6, "selection needs explicit and implicit positive flow controls");
 	for (const testCase of noFlow) {
-		assert.equal(testCase.mock.flowCalls, 0, `${testCase.name} mock must prove no sub-agent invocation`);
+		assert.equal(testCase.mock.flowCalls, 0, `${testCase.name} mock must prove no child run`);
 	}
 	for (const testCase of flow) {
 		assert.ok(testCase.expectedFlowCall ?? testCase.expectedFlowCalls, `${testCase.name} must assert the selected flow shape`);

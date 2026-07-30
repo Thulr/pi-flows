@@ -337,14 +337,7 @@ export interface CapturePolicy {
 	redactSecrets: boolean;
 }
 
-/**
- * Cumulative spend ceiling for a whole flow call. The wiki's "Uncontrolled
- * Recursion" anti-pattern names cost — alongside iterations and time — as a
- * dimension that must be hard-bounded. Iterations/time were already capped;
- * this closes the cost dimension. `spent*` accumulate across every child in the
- * delegation tree; once a ceiling is hit, no further child is spawned.
- */
-export interface FlowBudget {
+export interface BudgetUsageState {
 	maxCostUsd?: number;
 	maxTokens?: number;
 	maxGeneratedTokens?: number;
@@ -352,6 +345,12 @@ export interface FlowBudget {
 	spentTokens: number;
 	spentGeneratedTokens: number;
 }
+
+/** Cumulative cost/token ceiling shared across one flow. */
+export interface FlowBudget extends BudgetUsageState {}
+
+/** Cost/token portion of the budget scoped to one delegation contract. */
+export interface ContractBudget extends BudgetUsageState {}
 
 /** Everything the sink needs beyond the run itself to place and describe a child span. */
 export interface ChildSpanContext {
@@ -362,28 +361,28 @@ export interface ChildSpanContext {
 /** Records one completed child run as a trace span. See makeTraceSink. */
 export type RecordSpan = (result: FlowRunResult, span?: ChildSpanContext) => void;
 
-export function budgetExceeded(budget: FlowBudget | undefined): boolean {
+export function budgetExceeded(budget: BudgetUsageState | undefined): boolean {
 	if (activeBudgetExceeded(budget)) return true;
 	if (!budget) return false;
 	if (budget.maxTokens !== undefined && budget.spentTokens >= budget.maxTokens) return true;
 	return false;
 }
 
-export function activeBudgetExceeded(budget: FlowBudget | undefined): boolean {
+export function activeBudgetExceeded(budget: BudgetUsageState | undefined): boolean {
 	if (!budget) return false;
 	if (budget.maxCostUsd !== undefined && budget.spentCost >= budget.maxCostUsd) return true;
 	if (budget.maxGeneratedTokens !== undefined && budget.spentGeneratedTokens >= budget.maxGeneratedTokens) return true;
 	return false;
 }
 
-export function chargeBudget(budget: FlowBudget | undefined, usage: UsageStats): void {
+export function chargeBudget(budget: BudgetUsageState | undefined, usage: UsageStats): void {
 	if (!budget) return;
 	budget.spentCost += usage.cost || 0;
 	budget.spentTokens += (usage.input || 0) + (usage.output || 0);
 	budget.spentGeneratedTokens += usage.output || 0;
 }
 
-export function budgetExceededError(budget: FlowBudget): FlowError {
+export function budgetExceededError(budget: BudgetUsageState, authority: "flow" | "contract" = "flow"): FlowError {
 	const costLimit = budget.maxCostUsd;
 	const generatedLimit = budget.maxGeneratedTokens;
 	const totalLimit = budget.maxTokens;
@@ -397,20 +396,26 @@ export function budgetExceededError(budget: FlowBudget): FlowError {
 			: totalExceeded
 				? `${budget.spentTokens} of ${totalLimit} total tokens`
 				: "configured ceiling (usage unavailable)";
+	const label = authority === "contract" ? "Contract budget" : "Flow budget";
 	return flowError(
 		"BUDGET_EXCEEDED",
-		`Flow budget exhausted (${spent}).`,
-		"Cumulative child spend reached a configured cost or token ceiling, so no further child was spawned. This bounds the cost dimension of runaway delegation that iteration/time caps do not cover.",
-		"Raise the configured budget, narrow the task, or reduce fan-out (fewer voters/subtasks/iterations). Omit budget fields to run uncapped.",
+		`${label} exhausted (${spent}).`,
+		`${label} usage reached a configured cost or token ceiling, so the active child was stopped when enforceable and later children are refused.`,
+		authority === "contract"
+			? "Raise contract.budget, narrow the contracted task, or reduce the runs needed to fulfill it."
+			: "Raise the flow budget, narrow the task, or reduce fan-out (fewer voters/subtasks/iterations). Omit the flow-budget fields to run uncapped.",
 	);
 }
 
-export function budgetUnobservableError(): FlowError {
+export function budgetUnobservableError(authority: "flow" | "contract" = "flow"): FlowError {
+	const label = authority === "contract" ? "Contract cost budget" : "Flow cost budget";
 	return flowError(
 		"BUDGET_UNOBSERVABLE",
-		"Flow cost budget cannot be enforced because the provider omitted cost telemetry.",
+		`${label} cannot be enforced because the provider omitted cost telemetry.`,
 		"The child completed a model response without a numeric usage.cost.total value, so treating its spend as zero would make maxCostUsd non-binding.",
-		"Use a provider/model that reports cost telemetry, or bind the run by maxTokens, maxGeneratedTokens, or timeoutMs instead.",
+		authority === "contract"
+			? "Use a provider/model that reports cost telemetry, or bind the delegation contract with maxTokens, maxGeneratedTokens, or timeoutMs instead."
+			: "Use a provider/model that reports cost telemetry, or bind the flow with maxTokens, maxGeneratedTokens, or timeoutMs instead.",
 	);
 }
 
@@ -447,8 +452,8 @@ export interface RunChildOptions {
 	recordContent?: boolean;
 	redactSecrets?: boolean;
 	captureRawOutput?: boolean;
-	contractBudget?: FlowBudget;
-	/** The typed contract this child was dispatched under, for trace identity attributes. */
+	contractBudget?: ContractBudget;
+	/** The delegation contract this child was dispatched under, for trace identity attributes. */
 	contract?: DelegationContract;
 	/** The call's `why` — the delegation reason recorded alongside the child span. */
 	delegationReason?: string;

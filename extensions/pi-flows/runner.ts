@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, activeBudgetExceeded, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type CapturePolicy, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowBudget, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, activeBudgetExceeded, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type BudgetUsageState, type CapturePolicy, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
@@ -110,8 +110,8 @@ function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefi
 /** Production adapter for the child-run seam (ModeDeps.runChild): one real pi subprocess per call. */
 export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunResult> {
 	const policy: CapturePolicy = { recordContent: options.recordContent ?? true, redactSecrets: options.redactSecrets ?? true };
-	const budgets = [options.budget, options.contractBudget].filter((budget): budget is FlowBudget => Boolean(budget));
-	// Cost ceiling: refuse to spawn once the flow tree's cumulative spend is spent.
+	const budgets = [options.budget, options.contractBudget].filter((budget): budget is BudgetUsageState => Boolean(budget));
+	// Flow or contract ceiling: refuse to spawn once the applicable budget is spent.
 	const exhaustedBudget = budgets.find((budget) => budgetExceeded(budget));
 	if (exhaustedBudget) {
 		// A budget refusal spawns nothing, so it produces no child span. Without an
@@ -132,7 +132,12 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				...budgetAttributes(exhaustedBudget, exhaustedBudget === options.contractBudget ? "flow.contract_budget" : "flow.budget"),
 			},
 		});
-		return makeEmptyRunResult(options.agentName, options.task, policy, budgetExceededError(exhaustedBudget));
+		return makeEmptyRunResult(
+			options.agentName,
+			options.task,
+			policy,
+			budgetExceededError(exhaustedBudget, exhaustedBudget === options.contractBudget ? "contract" : "flow"),
+		);
 	}
 	const agent = options.agents.find((candidate) => candidate.name === options.agentName);
 	if (!agent) {
@@ -193,7 +198,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	let timedOut = false;
 	let budgetTerminated = false;
 	let budgetUnobservable = false;
-	let terminatingBudget: FlowBudget | undefined;
+	let terminatingBudget: BudgetUsageState | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -293,11 +298,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		result.exitCode = budgetTerminated || budgetUnobservable ? 1 : run.exitCode;
 		if (budgetUnobservable) {
 			result.stopReason = "budget_unobservable";
-			result.error = budgetUnobservableError();
+			result.error = budgetUnobservableError(terminatingBudget === options.contractBudget ? "contract" : "flow");
 			result.errorMessage = result.error.message;
 		} else if (budgetTerminated) {
 			result.stopReason = "budget_exceeded";
-			result.error = budgetExceededError(terminatingBudget as FlowBudget);
+			result.error = budgetExceededError(
+				terminatingBudget as BudgetUsageState,
+				terminatingBudget === options.contractBudget ? "contract" : "flow",
+			);
 			result.errorMessage = result.error.message;
 		} else if (timedOut) {
 			result.stopReason = "timeout";

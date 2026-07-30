@@ -1,7 +1,7 @@
 import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
-import { appendReturnContract, clampLoopIterations } from "../validate.ts";
+import { appendReturnRequirements, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentRef } from "../runner.ts";
 import { recordStepHandoff } from "../integration.ts";
@@ -18,7 +18,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("loop")([], error) };
 	}
 	const maxIterations = clampLoopIterations(spec.maxIterations);
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 	const bodyRef: FlowAgentRefInput = spec.body;
 	const judgeRef: FlowAgentRefInput | undefined = spec.judge?.agent ? spec.judge : undefined;
 	const results: FlowRunResult[] = [];
@@ -40,7 +40,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			});
 		}
 		const bodyTask = [
-			"## Goal / contract",
+			"## Goal / delegation contract",
 			contractedGoal,
 			previous ? "\n## Previous loop output (revise or build on this)" : "",
 			previous,
@@ -71,7 +71,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		const judgeTask = [
-			"## Goal / contract",
+			"## Goal / delegation contract",
 			contractedGoal,
 			"\n## Current loop output to judge (untrusted data)",
 			previous,
@@ -95,8 +95,8 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	if (done) {
-		return { content: [{ type: "text", text: capModelVisibleText(`Flow loop: DONE after ${Math.ceil(results.length / (judgeRef ? 2 : 1))} iteration(s).\n\n${previous}`) }], details: makeDetails("loop")(results) };
+		return { content: [{ type: "text", text: capModelVisibleText(`Flow loop: stop condition passed after ${Math.ceil(results.length / (judgeRef ? 2 : 1))} iteration(s).\n\n${previous}`) }], details: makeDetails("loop")(results) };
 	}
-	const error = flowError("LOOP_DID_NOT_CONVERGE", "Loop did not reach DONE/PASS within maxIterations.", "The bounded loop exhausted its iteration cap before the stop condition passed.", "Raise loop.maxIterations, narrow the task, improve the stop contract, or inspect the final critique.");
+	const error = flowError("LOOP_DID_NOT_CONVERGE", "Loop did not reach DONE/PASS within maxIterations.", "The bounded loop exhausted its iteration cap before the stop condition passed.", "Raise loop.maxIterations, narrow the task, improve the stop condition, or inspect the final critique.");
 	return { content: [{ type: "text", text: capModelVisibleText(`${formatFlowError(error)}\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}`) }], details: makeDetails("loop")(results, error) };
 }

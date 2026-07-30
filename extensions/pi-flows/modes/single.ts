@@ -1,7 +1,7 @@
 import type { ModeDeps, ModeOutput } from "../types.ts";
 import { formatFlowError } from "../types.ts";
 import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { appendReturnContract, resolvedCwd } from "../validate.ts";
+import { appendReturnRequirements, resolvedCwd } from "../validate.ts";
 import { createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
 
@@ -13,7 +13,7 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 	}
 	const task = params.contract
 		? renderDelegationTask(params.task, params.contract, params.returnContract, params.requireEvidence)
-		: appendReturnContract(params.task, params.returnContract, params.requireEvidence);
+		: appendReturnRequirements(params.task, params.returnContract, params.requireEvidence);
 	const result = await runAgentRef(
 		deps,
 		{ agent: params.agent, cwd: params.cwd, tools: params.tools },

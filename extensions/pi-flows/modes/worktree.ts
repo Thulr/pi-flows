@@ -171,7 +171,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 					"flow.worktree.integration_branch": integrationBranch,
 				},
 			});
-			const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (done, total) => `Flow worktree: ${done}/${total} isolated writers done`, { key: "workers", name: "isolated writers" });
+			const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (settled, total) => `Flow worktree: ${settled}/${total} isolated writers settled`, { key: "workers", name: "isolated writers" });
 			results.push(...workerResults);
 			const failedWorkerIds = workers.filter((_, index) => isFailed(workerResults[index])).map((worker) => worker.id);
 			if (failedWorkerIds.length > 0) {

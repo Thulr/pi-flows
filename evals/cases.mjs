@@ -79,7 +79,7 @@ export const CASES = defineCases([
 		criteria: {
 			exactness: "Reports the exact value `xyzzy-42`.",
 			evidence_quality: "Names the evidence location, such as `settings.txt` or the `SAMPLE_IDENTIFIER` assignment.",
-			contract_adherence: "Uses the requested compact return contract: one sentence containing both the value and the evidence path.",
+			contract_adherence: "Uses the requested compact return requirements: one sentence containing both the value and the evidence path.",
 		},
 		journeyStage: "contract",
 		score(r) {

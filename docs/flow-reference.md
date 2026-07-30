@@ -84,15 +84,15 @@ if no justification can be stated, the task belongs in the parent context.
 | `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached, no further child spawns. |
 | `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across the flow tree. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
 | `traceFile` | (none) | Append OpenInference-shaped JSON spans to this JSONL file — one per child run, one per stage (wave/round/phase), one per coordination event, plus a root span. Trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
-| `traceLabel` | (none) | Use-case label attached to trace spans so reports can group success rate, TPSO, cost, and warning counts by journey/release gate. |
+| `traceLabel` | (none) | Use-case label attached to trace spans so reports can group execution success, verified outcome success, TPSO, cost, and warning counts by journey/release gate. |
 | `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. Redacted, bounded identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
 | `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, or failed writes fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates; ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
 | `handoffPolicy` | `warn` | Call-level injection handling at inter-agent boundaries: `warn` preserves the flagged payload with a warning, `quarantine` substitutes a payload-free marker, and `fail` returns `HANDOFF_POLICY_VIOLATION` before the recipient spawns. |
 | `modeHandoffPolicy` | (none) | Per-mode minimums, e.g. `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`; a call cannot downgrade a high-consequence mode. |
-| `returnContract` | (none) | Output contract appended to delegated worker/generator/synthesis prompts. Use it to require a shape, fields, max length, or evidence format. |
+| `returnContract` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
-| `contract` | (none) | Typed delegation contract. It may replace prose `task` in single/evaluate, acts as the final-role fallback in integration modes, and requires a validated `pi-flows.return-envelope.v1` response. Fan-out tasks, graph nodes, workflow phases, worktree tasks, voters/participants, dossier sections, and agent refs can set role-specific contracts. |
-| `incompleteHandoffPolicy` | `fail` | Integration modes reject typed `partial`/`blocked` envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
+| `contract` | (none) | Machine-checked delegation contract. It may replace prose `task` in single/evaluate, acts as the final-role fallback in integration modes, and requires a validated `pi-flows.return-envelope.v1` response. Fan-out tasks, graph nodes, workflow phases, worktree tasks, voters/participants, dossier sections, and agent refs can set role-specific delegation contracts. |
+| `incompleteHandoffPolicy` | `fail` | Integration modes reject `partial`/`blocked` return envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
@@ -133,7 +133,7 @@ uses `warn < quarantine < fail`, so
 `fail`. Workflow approval receipts bind that resolution; resuming with a changed
 call or mode policy requires fresh approval.
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` close the **cost** dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero. A delegation contract may independently impose a **contract budget**, including a tighter timeout.
 
 ### Trace export (observability)
 
@@ -185,47 +185,47 @@ npm run trace:report -- flow-trace.jsonl
 npm run trace:report -- --strict flow-trace.jsonl   # exit 1 on incomplete evidence
 ```
 
-The report groups runs by `flow.mode` and `traceLabel`. It labels a clean child/process run as **execution success**. **Verified outcome success** and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence; ordinary process completion is never promoted to task success. Elapsed, worker, and critical-path time remain separate. A trace-health line reports observed-vs-expected spans, drops, redactions, failed exports, and how many runs are incomplete, plus a topology line counting stage spans and coordination events. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data; traces written before span roles existed are read as root-plus-children.
+The report groups runs by `flow.mode` and `traceLabel`. **Execution success** means a run or flow settled without a process or coordination failure; it does not establish that the requested outcome was correct. **Verified outcome success** means an independent verifier established that the requested outcome met its acceptance criteria. It and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence; ordinary process completion is never promoted to verified outcome success. Elapsed, worker, and critical-path time remain separate. A trace-health line reports observed-vs-expected spans, drops, redactions, failed exports, and how many runs are incomplete, plus a topology line counting stage spans and coordination events. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data; traces written before span roles existed are read as root-plus-children.
 
-## Return contracts and write isolation
+## Return requirements, delegation contracts, and write isolation
 
-`returnContract` and `requireEvidence` exist to prevent summary loss at handoff
-boundaries. They are appended to child prompts in `single`, `parallel`, `chain`,
+`returnContract` and `requireEvidence` supply prose **return requirements** that
+prevent summary loss at handoff boundaries. They are appended to child tasks in `single`, `parallel`, `chain`,
 `evaluate`, `vote`, `route`, and to `orchestrate` workers/synthesis. Workflow
-phases, worktree tasks, and dossier sections accept task-level contracts; those
-override the top-level contract. Dossier sections and worktree tasks require
+phases, worktree tasks, and dossier sections accept task-level return requirements; those
+override the top-level return requirements. Dossier sections and worktree tasks require
 evidence by default. `orchestrate.workerReturnContract` can set a worker-specific
-contract while the top-level `returnContract` still applies to synthesis.
+set of return requirements while the top-level `returnContract` still applies to synthesis.
 
-For durable machine-checked handoffs, `contract` is the structured alternative.
+For durable machine-checked handoffs, a delegation `contract` is the structured alternative.
 It contains `objective`, `constraints`, `nonGoals`, `dependencies`, `authority`
 (`may`, `mustNot`, `requiresApproval`), `sideEffectClass`, `budget`,
 `acceptanceChecks`, a JSON Schema `returnSchema`, and `owner`. All fields are
-required; arrays and the budget object may be empty. Each dispatched contract has
+required; arrays and the budget object may be empty. Each dispatched delegation contract has
 a canonical `sha256:` identity. Every contracted mode, chain steps included, requires the child to echo
 that identity as `contractId`, so missing/stale returns fail with
 `RETURN_CONTRACT_MISMATCH` before a dependent child, synthesizer, or worktree
 merge can consume them. JSON Schema, artifact-boundary, and digest validation
 also happen before integration.
 
-Single/evaluate use the top-level contract and chain uses it as the step fallback.
+Single/evaluate use the top-level delegation contract and chain uses it as the step fallback.
 Parallel tasks and vote/debate roles may use it directly; graph nodes, workflow
 phases, worktree tasks, dossier sections, and orchestrate roles can set their own
-contract because their objectives and return schemas often differ. Final
-debrief/integrator roles fall back to the top-level contract.
+delegation contract because their objectives and return schemas often differ. Final
+debrief/integrator roles fall back to the top-level delegation contract.
 
-Every consumed result becomes a `pi-flows.handoff-envelope.v1` with source agent
-and step provenance. Typed results retain contract identity, status, evidence,
+Every consumed result becomes a **handoff envelope** (`pi-flows.handoff-envelope.v1`)
+with source agent and step provenance. Return envelopes retain delegation-contract identity, status, evidence,
 artifact references/digests, and schema-checked data. Existing prose-only results
 remain supported as `compatibility:"legacy-prose"` handoff envelopes with
 `contractId:null`; downstream prompts receive that explicit compatibility shape
-instead of trusting unlabelled prose. Partial and blocked typed envelopes fail
+instead of trusting unlabelled prose. Partial and blocked return envelopes fail
 closed unless `incompleteHandoffPolicy:"include"` is explicitly selected.
 
 Contract budgets apply at dispatch: timeout tightens the top-level limit, while
 cost and token limits are independently enforced. Chain resets the contract
-budget per step; evaluate shares it across generator revisions. Top-level
-budgets remain flow-wide.
+budget per step; evaluate shares it across generator revisions. Flow budgets
+remain shared across the flow.
 
 ```json
 {
@@ -334,7 +334,7 @@ At least 2 voters are required (`TOO_FEW_VOTERS` otherwise) and at most `maxPara
 
 ## Route mode (classify → dispatch)
 
-The `controller` reads the `task` plus the candidate descriptions and picks one specialist to run.
+The `controller` reads the `task` plus the candidate descriptions and picks one agent to run.
 
 ```json
 {
@@ -353,7 +353,7 @@ The `controller` signals its choice with a `ROUTE: <agent>` line (JSON `{ "route
 
 ## Orchestrate mode (decompose → fan out → synthesize)
 
-The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results — the deep-research / orchestrator-workers shape. Top-level `task` is preferred; `orchestrate.task` is accepted as its fallback. Each worker sees both the overall goal/contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
+The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results — the deep-research / orchestrator-workers shape. Top-level `task` is preferred; `orchestrate.task` is accepted as its fallback. Each worker sees both the overall goal or delegation contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
 
 ```json
 {
@@ -371,12 +371,12 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 |---|---|---|
 | `orchestrate.task` | (none) | Goal fallback when top-level `task` is omitted. Prefer top-level `task` for new calls. |
 | `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON array of subtask strings. |
-| `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel, with the overall goal/contract included for context. Use `analyst` for deeper per-subtask investigation. |
+| `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel, with the overall goal or delegation contract included for context. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
-| `orchestrate.verify` | (none) | Optional critic that checks the merged answer against the goal/contract (orchestrator-workers composed with evaluator-optimizer). |
+| `orchestrate.verify` | (none) | Optional critic that checks the merged answer against the goal or delegation contract (orchestrator-workers composed with evaluator-optimizer). |
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict; `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`; `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
-| `orchestrate.workerReturnContract` | (none) | Contract appended to every worker subtask before fan-out. |
+| `orchestrate.workerReturnContract` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
 | `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`; when top-level `task` is also omitted, this text may serve as the goal fallback for model-generated calls. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Cap on subtasks (also bounded by `maxParallelTasks`). |
 
@@ -510,7 +510,8 @@ with `workflow.resume:true`. A denied approval returns
 
 ### Approval receipts
 
-A granted approval becomes a `pi-flows.approval-receipt.v1` receipt in the state
+A granted approval becomes a durable, expiring, single-use **approval receipt**
+(`pi-flows.approval-receipt.v1`) in the state
 file rather than a bare `APPROVED` marker. Each receipt binds one action — the
 approval phase and the contiguous run of work phases it gates — to the exact
 parameters approved, plus the requesting and approving actors, the workflow
@@ -612,10 +613,10 @@ The source checkout is never switched or merged by the mode. On success,
 temporary worktrees and worker branches are removed, while the durable
 `pi-flow/<run>/integration` branch remains for explicit review/merge. Verification
 failure returns the integration branch name instead of merging an unverified
-result. Worker failure or typed-handoff rejection retains the isolated worker
+result. Worker failure or return-envelope rejection retains the isolated worker
 state and returns every branch and worktree path needed for recovery.
 Conflict-resolution prompts include the validated handoff envelopes for
-the already-integrated and incoming workers, preserving contract identity,
+the already-integrated and incoming workers, preserving delegation-contract identity,
 evidence, artifact references, and digests through each conflict choice and into
 the final integration review. Use this mode only when the tasks are genuinely
 independent; one writer belongs in `single` or `evaluate`.
@@ -730,7 +731,7 @@ contexts, checkpoints fail closed with `CHECKPOINT_APPROVAL_REQUIRED`.
 This top-level checkpoint wraps any mode. `workflow` approval phases are different:
 they can appear between persisted work phases and resume from `workflow.stateFile`.
 
-`reflexion` is opt-in local cross-run learning:
+`reflexion` provides opt-in local cross-run lessons:
 
 ```json
 { "task": "...", "loop": { "body": { "agent": "operator" } }, "reflexion": { "enabled": true } }
@@ -754,11 +755,11 @@ lesson-augmented.
 - `agentsDir`: package/user/project directories with home paths redacted to `~`.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
-- `results`: child run summaries with redacted task preview, usage, duration, stderr, optional validated typed-contract `envelope`, and structured error when applicable. On error, `results` still contains every run that completed before the failure — a graph that ran two waves before hitting a cycle reports those runs' usage and cost alongside `error`.
+- `results`: child run summaries with redacted task preview, usage, duration, stderr, optional validated return `envelope`, and structured error when applicable. On error, `results` still contains every run that completed before the failure — a graph that ran two waves before hitting a cycle reports those runs' usage and cost alongside `error`.
 
-## Error contract
+## Structured errors
 
-Every error returned by the `flow` tool is a structured envelope:
+Every error returned by the `flow` tool is structured:
 
 - `code` — a stable identifier from a fixed set (see catalog below)
 - `message` — what happened

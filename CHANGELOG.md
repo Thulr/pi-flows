@@ -10,11 +10,19 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
-- Domain glossary alignment: the durable session entry is now the "flow card"
-  (it summarizes a flow, not a single run), monitoring docs say "per-run"
-  where runs are listed, and `CONTEXT.md` gains **Fleet**, **Flow card**,
-  **Settled**, and **Budget**. The persisted entry type keeps its
-  `pi-flows.run` name for session compatibility.
+- Domain glossary alignment: the durable session entry is now the **Flow card**
+  (it summarizes a flow, not a single run), monitoring language names runs
+  rather than agents, and `CONTEXT.md` defines **Fleet**, **Settled**,
+  **Delegation contract**, **Return requirements**, **Return envelope**,
+  **Handoff**, **Handoff envelope**, **Execution success**,
+  **Verified outcome success**, **Approval receipt**, **Flow budget**, and
+  **Contract budget**. Runtime budget errors now identify whether the flow or
+  delegation contract owns the exhausted ceiling. The existing `returnContract`
+  JSON field remains compatible but now emits a **Return requirements** section,
+  with `appendReturnContract` retained as an alias for
+  `appendReturnRequirements`. Route traces use the canonical `selected` unit key
+  instead of `specialist`. Other existing JSON fields and the persisted
+  `pi-flows.run` entry name remain compatible.
 
 ## 0.4.2 - 2026-07-29
 

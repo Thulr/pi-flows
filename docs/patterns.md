@@ -8,7 +8,7 @@ The patterns come from a companion agent-design knowledge base (the **ai-wiki**)
 
 | Mode | Pattern | Canonical source |
 |---|---|---|
-| `single` | Tool Use / single sub-agent | Ng pattern 2; wiki `sub-agent-pattern` |
+| `single` | Tool Use / single child | Ng pattern 2; wiki `sub-agent-pattern` |
 | `parallel` | Parallelization (sectioning) + Orchestrator-Workers fan-out | Anthropic patterns 3 & 8 |
 | `chain` | Prompt Chaining | Anthropic pattern 1 |
 | `evaluate` | Evaluator-Optimizer / Generator-Evaluator | Anthropic pattern 5; wiki `generator-evaluator-harness` |
@@ -27,10 +27,10 @@ The wiki's central discipline: add the **minimum** coordination that solves the 
 2. Independent sub-tasks with no ordering → **`parallel`**; a fixed pipeline where each step feeds the next → **`chain`**.
 3. Output quality must be verified against criteria a separate critic can check → **`evaluate`**.
 4. A high-stakes answer where non-deterministic errors matter → **`vote`** (use different models to break correlated blind spots).
-5. A heterogeneous request that should go to one specialist → **`route`**.
+5. A heterogeneous request that should go to one agent → **`route`**.
 6. One large task that splits into independent parts needing a merged answer → **`orchestrate`**.
 7. Explicit dependencies or conditional handoffs across several steps → **`graph`**.
-8. Repeat-until-done work that is not just generator/evaluator → **`loop`**.
+8. Repeat-until-stop work that is not just generator/evaluator → **`loop`**.
 9. Several plausible plans/artifacts should be generated, scored, and refined → **`search`**.
 
 Reach for the first mode that fits. If `single` works, do not `orchestrate`.
@@ -40,7 +40,7 @@ Reach for the first mode that fits. If `single` works, do not `orchestrate`.
 - **`evaluate`** — separate contexts for generator and critic; the evaluator judges the *artifact, not the generator's reasoning trace*; a hard iteration cap; critique-not-binary feedback; an unparseable verdict fails **safe** to REVISE so a flaky critic cannot false-pass. Three further levers from the wiki: an optional **`checkCommand`** deterministic gate (level-1 *code assertions* that must exit 0 — verification guaranteed by the harness, not requested in the prompt; `code-assertions-vs-llm-as-judge`, Stripe minions in `generator-evaluator-harness`); **`redteam` as a panel** of per-dimension critics where PASS requires all of them (`god-metric-vs-decomposed-evaluators`); and on REVISE the generator is re-shown its prior artifact so it revises in place rather than rebuilding (durable hand-off). (`generator-evaluator-harness`)
 - **`vote`** — independent voters suppress non-deterministic errors; *different models* additionally break correlated blind spots, and pi-flows **warns when every voter shares one model**. Same-agent/model voters receive complementary stances (solver, skeptic, evidence checker, etc.) so same-model voting is less of an identical prompt replay; free-text answers are reconciled by an aggregator agent, since exact-match majority is meaningless for prose. (`effective-agent-patterns` §Parallelization)
 - **`route`** — the router sees each candidate's description, its choice is validated against the candidate set, and a `fallback` handles the wiki's "misclassification" failure mode; an ambiguous mention is never guessed. (`effective-agent-patterns` §Routing)
-- **`orchestrate`** — star topology, one-way dispatch, workers return compact summaries, fan-out is capped; the deep-research shape. Workers see the overall goal/contract plus their assigned subtask, so terse decomposition still stays aimed at the final answer. An optional **`verify`** critic checks the merged answer against the goal in the same call, composing orchestrator-workers with evaluator-optimizer. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` turns `REVISE` into a structured gate failure, and `"revise"` feeds the verifier critique back into `debrief` for bounded synthesize→verify repair. (`sub-agent-pattern`, `generator-evaluator-harness`)
+- **`orchestrate`** — star topology, one-way dispatch, workers return compact summaries, fan-out is capped; the deep-research shape. Workers see the overall goal or delegation contract plus their assigned subtask, so terse decomposition still stays aimed at the final answer. An optional **`verify`** critic checks the merged answer against the goal in the same call, composing orchestrator-workers with evaluator-optimizer. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` turns `REVISE` into a structured gate failure, and `"revise"` feeds the verifier critique back into `debrief` for bounded synthesize→verify repair. (`sub-agent-pattern`, `generator-evaluator-harness`)
 - **`graph`** — explicit static DAG: node ids, dependencies, wave-by-wave execution, `{node.id}` handoffs, and optional synthesis. It stays bounded (16 nodes) and inherits the existing write-collision and budget guards.
 - **`loop`** — generic loop with a hard iteration cap. Without a judge, the body must emit `LOOP: DONE`; with a judge, `VERDICT: PASS` stops the loop. This covers ADK-style loop agents without opening unbounded recursion.
 - **`search`** — bounded beam search: generate candidates, score each with `SCORE: 0..100`, keep a beam, refine for capped rounds, and synthesize the winner.
@@ -78,12 +78,12 @@ What the harness enforces regardless of what an agent does — the bounded-execu
 - **Per-child timeout.** `timeoutMs` kills a stalled child (SIGTERM, then SIGKILL).
 - **Fail-closed project agents.** Repo-controlled `.pi/flow-agents` prompts are refused in headless runs unless explicitly trusted.
 - **Redaction + output caps.** Secret-shaped strings and home paths are redacted, and model-visible output is byte-capped, before anything returns to the parent.
-- **Return contracts.** `returnContract` / `requireEvidence` append explicit output and evidence requirements to delegated prompts, reducing summary loss at handoff boundaries.
+- **Return requirements.** `returnContract` / `requireEvidence` append explicit output and evidence requirements to delegated tasks, reducing summary loss at handoff boundaries.
 - **Shared-write isolation.** Concurrent write-capable fan-out is refused when multiple writers share one `cwd` (`SHARED_WRITE_CWD`) unless explicitly overridden, nudging write work into separate worktrees.
 - **Enforced handoff injection policy.** Child output reused as another child's prompt is stripped of invisible/bidi characters and scanned for instruction-override markers, including conjunctive attacks assembled across several boundaries. `handoffPolicy` chooses compatible warning, payload quarantine, or fail-before-recipient-spawn; `modeHandoffPolicy` can impose a stricter minimum (`prompt-injection-defense`).
 - **Native read-only agents.** `recon` and `analyst` ship without a shell, so their read-only boundary is enforced by the toolset, not prompt instructions (`native-enforcement-vs-prompt-enforcement`).
 - **Deterministic verification available.** `evaluate.checkCommand` makes verification a harness-run command (level-1 code assertions), not a property the critic is merely asked to check.
-- **Trace export + reports.** `traceFile` / `PI_FLOWS_TRACE_FILE` emit OpenInference-shaped JSONL spans per child; `/flows report` and `npm run trace:report` summarize success rate, cost, TPSO, budget hits, and routing/voting warnings by mode and trace label (`llm-observability`).
+- **Trace export + reports.** `traceFile` / `PI_FLOWS_TRACE_FILE` emit OpenInference-shaped JSONL spans per child; `/flows report` and `npm run trace:report` separate execution success from verified outcome success while summarizing cost, TPSO, budget hits, and routing/voting warnings by mode and trace label (`llm-observability`).
 - **Human checkpoints.** `checkpoint.before:"spawn"` or `"finalize"` asks for explicit UI approval and fails closed in headless runs.
 - **Opt-in Reflexion lessons.** `reflexion.enabled:true` reads/appends redacted local lessons in `.pi/flow-reflections.jsonl`; it is disabled by default.
 - **Star topology.** One-way dispatch with a compact return — no agent-to-agent chatter, so there is no coordination surface to runaway.
@@ -94,8 +94,8 @@ Verification of a returned artifact is **not** automatic for most modes — that
 
 Honest gaps, with rationale:
 
-- **Mesh / peer-to-peer (pi-to-pi).** pi-flows is deliberately star-topology only — one-way dispatch with a compact summary return, no agent-to-agent chatter. The wiki rates mesh topologies experimental and higher-overhead, and the star/sub-agent shape is the one it rates most reliable. Peer-to-peer is a separate tool's job.
-- **Automatic Reflexion memory.** pi-flows has opt-in local lessons (`reflexion.enabled:true`) but does not persist lessons automatically. The open problem is still summarizing/consolidating old episodes so they do not bloat context or smuggle stale guidance into future runs.
+- **Mesh / peer-to-peer (pi-to-pi).** pi-flows is deliberately star-topology only — one-way dispatch with a compact summary return, no agent-to-agent chatter. The wiki rates mesh topologies experimental and higher-overhead, and the parent-child shape is the one it rates most reliable. Peer-to-peer belongs in a separate tool.
+- **Automatic Reflexion persistence.** pi-flows has opt-in local lessons (`reflexion.enabled:true`) but does not persist lessons automatically. The open problem is still summarizing/consolidating old episodes so they do not bloat context or smuggle stale guidance into future runs.
 - **Programmatic majority voting.** `vote` returns free-text answers, so consensus is decided by an aggregator agent rather than exact-match majority (the runtime does warn when voters share one model). A discrete-answer weighted/majority tally for classification-style tasks could be added later.
 - **Structured-output decoding for control tokens.** Verdict/route/subtask decisions are parsed from the child's free text with marker-first, fail-safe parsers. Constrained decoding (`structured-generation`) would make them airtight, but that needs host-side support in `pi`; the fail-safe fallbacks (unparseable verdict → REVISE, bad route → fallback) are the mitigation until then.
 
@@ -107,4 +107,4 @@ Honest gaps, with rationale:
 - Shinn et al., *Reflexion: Language Agents with Verbal Reinforcement Learning* (2023).
 - Google Cloud Tech, *AI Agent Design Patterns* (ADK workflow agents).
 
-See [Flow reference](./flow-reference.md) for the exact tool contract of each mode.
+See [Flow reference](./flow-reference.md) for the exact tool interface of each mode.

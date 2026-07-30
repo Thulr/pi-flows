@@ -1,7 +1,7 @@
 import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff, prepareTextHandoff } from "../handoff.ts";
-import { appendReturnContract, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
+import { appendReturnRequirements, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
 import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
@@ -27,14 +27,14 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const error = flowError(
 			"INVALID_MODE",
 			"Evaluate mode requires a task.",
-			"evaluate mode needs a top-level `task` describing the goal/contract the generator must satisfy and the evaluator must judge.",
+			"evaluate mode needs a top-level `task` describing the goal, or a delegation contract whose objective the generator must satisfy and the evaluator must judge.",
 			'Add a `task` string, e.g. { "task": "Add a /health endpoint with a test", "evaluate": {} }.',
 		);
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")([], error) };
 	}
 	const contractedGoal = contract
 		? renderDelegationTask(goal, contract, params.returnContract, params.requireEvidence)
-		: appendReturnContract(goal, params.returnContract, params.requireEvidence);
+		: appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 
 	const generatorRef: FlowAgentRefInput = spec.operator ?? { agent: "operator" };
 	// The critic may be a single agent or a panel (god-metric → decomposed evaluators:
@@ -57,7 +57,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const handoffWarnings = new HandoffWarnings();
 	const emitLive = (inFlight?: FlowRunResult) => {
 		onUpdate?.({
-			content: [{ type: "text", text: `Flow evaluate: ${results.length} step(s) done` }],
+			content: [{ type: "text", text: `Flow evaluate: ${results.length} step(s) settled` }],
 			details: makeDetails("evaluate")([...results, ...(inFlight ? [inFlight] : [])]),
 		});
 	};
@@ -224,7 +224,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// generator's reasoning trace. PASS requires every critic to pass.
 		const checkContext = checkCommand ? `\n## Automated check (already passing)\nThe deterministic gate \`${checkCommand}\` exited 0. Judge quality and correctness beyond what that command covers.` : "";
 		const evaluatorTask = [
-			"## Goal / contract",
+			"## Goal / delegation contract",
 			contractedGoal,
 			passContract ? `\n## Explicit acceptance criteria\n${passContract}` : "",
 			checkContext,
@@ -242,7 +242,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [`${generatorKey(stage.key)}.handoff`] } })),
 			concurrency,
 			results,
-			(done) => `Flow evaluate: ${results.length + done} step(s) done`,
+			(settled) => `Flow evaluate: ${results.length + settled} step(s) settled`,
 			stage,
 		);
 		results.push(...critics);

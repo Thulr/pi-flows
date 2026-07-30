@@ -79,7 +79,7 @@ test("worktree recovery details redact home paths while preserving usable locati
 	assert.match(details, /`pi-flow\/run\/a` at `~[\\/]AppData[\\/]Local[\\/]Temp[\\/]pi-flow-worker`/);
 });
 
-test("typed prompts carry a stable contract identity", () => {
+test("contracted prompts carry a stable delegation-contract identity", () => {
 	const id = delegationContractId(contract);
 	assert.equal(id, delegationContractId(structuredClone(contract)));
 	assert.match(id, /^sha256:[a-f0-9]{64}$/);

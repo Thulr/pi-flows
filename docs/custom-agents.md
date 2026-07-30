@@ -1,6 +1,6 @@
 # Custom flow agents
 
-The nine bundled agents are markdown files, and yours work exactly the same way: one `.md` file per agent — YAML frontmatter for the contract, body for the system prompt. Drop a file in the right directory and it appears in `flow list:true` and `/flows` with no extension code, restart, or configuration.
+The nine bundled agents are markdown files, and yours work exactly the same way: one `.md` file per agent — YAML frontmatter for configuration, body for the system prompt. Drop a file in the right directory and it appears in `flow list:true` and `/flows` with no extension code, restart, or configuration.
 
 ## Where agents live
 
@@ -40,7 +40,7 @@ Have sql-reviewer check the migrations in db/migrate added this week.
 
 (the call behind it: `{ "agent": "sql-reviewer", "task": "Check the migrations in db/migrate added this week" }`).
 
-## Frontmatter contract
+## Frontmatter schema
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -52,7 +52,7 @@ Have sql-reviewer check the migrations in db/migrate added this week.
 
 A file missing `name` or `description` is skipped with an `AGENT_FRONTMATTER_INVALID` warning in `/flows status` — it does not break discovery of the other agents.
 
-Everything below the frontmatter is the agent's system prompt. Write it for a child that starts with zero context: state the job, the output shape, and that the parent only sees the final summary. The bundled [`agents/*.md`](../agents/) are working examples of the style.
+Everything below the frontmatter is the agent's system prompt. Write it for a child that starts with zero context: state the task, the output shape, and that the parent only sees the final summary. The bundled [`agents/*.md`](../agents/) are working examples of the style.
 
 ## Verify what's loaded
 

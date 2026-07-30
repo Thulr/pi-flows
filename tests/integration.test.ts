@@ -25,7 +25,7 @@ test("single: spawns the stub child, returns its text, and accumulates usage", a
 	assert.ok(result.details.results[0].usage.cost > 0, "usage.cost should be accumulated from the child JSONL");
 });
 
-test("single: appends return contracts, updates UI status, and writes a session summary entry", async () => {
+test("single: appends return requirements, updates UI status, and writes a session summary entry", async () => {
 	const statuses: string[] = [];
 	const widgets: string[][] = [];
 	const entries: Array<{ customType: string; data: any }> = [];
@@ -41,7 +41,7 @@ test("single: appends return contracts, updates UI status, and writes a session 
 		},
 	);
 
-	assert.match(calls[0].task, /## Return contract/);
+	assert.match(calls[0].task, /## Return requirements/);
 	assert.match(calls[0].task, /Return one sentence with value and evidence path/);
 	assert.match(calls[0].task, /file:line references/);
 	assert.ok(statuses.some((status) => /flow single: ok/.test(status)), "completion status should reach the UI");
@@ -357,7 +357,7 @@ test("loop: judge feedback drives another body iteration until PASS", async () =
 
 	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam", "operator", "redteam"]);
 	assert.match(byAgent(calls, "operator")[1].task, /missing migration note/);
-	assert.match(text, /DONE/);
+	assert.match(text, /stop condition passed/);
 	assert.match(text, /DRAFT_B/);
 });
 

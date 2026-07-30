@@ -114,7 +114,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		voterPlans,
 		concurrency,
 		[],
-		(done, total) => `Flow vote: ${done}/${total} voters done`,
+		(settled, total) => `Flow vote: ${settled}/${total} voters settled`,
 		{ key: "voters", name: "voters" },
 	);
 	const aggregatorRef: FlowAgentRefInput | undefined = spec.debrief?.agent ? spec.debrief : undefined;

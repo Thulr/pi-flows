@@ -55,7 +55,7 @@ test("arm planning derives alternatives without mutating the case definition", (
 test("supported controls separate compute, ensembling, and routing", () => {
 	const selfReview = planExperimentArm("compute-matched-self-review", baseCase, { bindingConstraint: binding, seed: "trial-1" });
 	assert.equal(selfReview.runner, "flow");
-	assert.equal(selfReview.params.chain.length, 2, "route full arm has controller + selected specialist");
+	assert.equal(selfReview.params.chain.length, 2, "route full arm has controller + selected agent");
 	assert.deepEqual(selfReview.computeAllocation, { modelCalls: 2, binding: "generated_tokens:4000" });
 	assert.match(selfReview.configurationIdentity, /calls:2/);
 	assert.match(selfReview.params.chain[1].task, /review and revise/i);
@@ -122,7 +122,7 @@ test("mode-specific ablations remove integration and verification", () => {
 	assert.equal(worktreeWithoutVerifier.params.worktree.checkCommand, undefined);
 });
 
-test("no-verifier preserves evaluate aliases and the effective typed contract", () => {
+test("no-verifier preserves evaluate aliases and the effective delegation contract", () => {
 	const options = { bindingConstraint: binding, seed: "trial-1" };
 	const operatorTask = planExperimentArm("no-verifier", {
 		name: "operator-task", params: { evaluate: { operator: { agent: "operator", task: "Operator-owned goal." } } },
