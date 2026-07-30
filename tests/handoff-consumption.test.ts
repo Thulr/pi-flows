@@ -4,6 +4,7 @@ import { writeFile } from "node:fs/promises";
 import test from "node:test";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
+import { captureRawFinalAssistantText } from "../extensions/pi-flows/sanitize.ts";
 import { emptyUsage, type CoordinationEvent, type DelegationContract, type FlowRunResult } from "../extensions/pi-flows/types.ts";
 import { freshDir } from "./stub-harness.ts";
 
@@ -169,6 +170,38 @@ test("terminal completion validates typed reports without applying integration e
 		assert.equal(terminal.error, undefined, status);
 		assert.equal(result.envelope?.status, status);
 		assert.equal(result.handoff, undefined);
+	}
+});
+
+test("deferred integration reuses validated typed state when stored content is omitted", () => {
+	for (const status of ["completed", "partial"] as const) {
+		const raw = typedResult({ status });
+		const result = childResult("[content omitted: recordContent=false]");
+		captureRawFinalAssistantText(result, raw.messages[0]!);
+		const handoffs = createHandoffConsumer({
+			params: {},
+			mode: "evaluate",
+			policy: { recordContent: false, redactSecrets: true },
+			defaultCwd: "/tmp",
+		});
+
+		const terminal = handoffs.consumeResult({
+			result,
+			contract,
+			consumed: false,
+			completion: "terminal",
+			payload: "source",
+		});
+		assert.equal(terminal.error, undefined, status);
+
+		const integrated = handoffs.consumeResult({
+			result,
+			contract,
+			scope: { key: "iteration-1.generator" },
+			payload: "source",
+		});
+		assert.equal(integrated.error?.code, status === "partial" ? "RETURN_ENVELOPE_INCOMPLETE" : undefined, status);
+		if (status === "completed") assert.equal(integrated.dependencyKey, "iteration-1.generator.handoff");
 	}
 });
 

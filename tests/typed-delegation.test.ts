@@ -247,6 +247,20 @@ test("evaluate validates the generator envelope before the critic consumes it", 
 	assert.match(calls[1].task, /"schemaVersion":"pi-flows\.return-envelope\.v1"/);
 });
 
+test("evaluate reuses typed validation when stored child content is omitted", async () => {
+	const { result, calls } = await runFlow(
+		{
+			contract,
+			recordContent: false,
+			evaluate: { operator: { agent: "operator" }, redteam: { agent: "redteam" }, maxIterations: 1 },
+		},
+		{ operator: envelope(), redteam: "VERDICT: PASS" },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam"]);
+});
+
 test("evaluate applies completion eligibility only when a critic consumes the report", async () => {
 	const terminal = await runFlow(
 		{
@@ -372,4 +386,49 @@ test("a resynthesis carries the accepted handoff, not the raw prior answer", asy
 		.split("## Previous synthesized answer (revise this in place)\n")[1]
 		?.split("\n## ")[0] ?? "";
 	assert.match(priorAnswer, /^\{"schemaVersion":"pi-flows\.handoff-envelope\.v1"/);
+});
+
+test("orchestrate reuses verifier validation before deferred resynthesis", async () => {
+	const commanderContract = {
+		...contract,
+		objective: "Decompose the goal.",
+		returnSchema: { type: "array", items: { type: "string" } },
+	};
+	const { result, calls } = await runFlow(
+		{
+			task: "map the system",
+			concurrency: 1,
+			contract,
+			recordContent: false,
+			orchestrate: {
+				commander: { agent: "commander", contract: commanderContract },
+				recon: { agent: "recon" },
+				debrief: { agent: "debrief" },
+				verify: { agent: "overwatch", contract },
+				maxSubtasks: 1,
+				verifyPolicy: "revise",
+				verifyMaxIterations: 2,
+			},
+		},
+		{
+			commander: envelope({
+				contractId: delegationContractId(commanderContract),
+				data: ["only"],
+			}),
+			recon: envelope(),
+			debrief: [envelope({ summary: "First pass." }), envelope({ summary: "Revised." })],
+			overwatch: [
+				envelope({ data: { answer: "VERDICT: REVISE" } }),
+				envelope({ data: { answer: "VERDICT: PASS" } }),
+			],
+		},
+	);
+
+	// Content omission hides the verdict marker, so the verifier conservatively
+	// remains REVISE. Reaching both resynthesis rounds proves deferred validation
+	// reused the accepted envelope instead of reparsing the omitted message.
+	assert.equal(result.details.error?.code, "ORCHESTRATE_VERIFY_FAILED");
+	assert.notEqual(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.equal(calls.filter((call) => call.agent === "debrief").length, 2);
+	assert.equal(calls.filter((call) => call.agent === "overwatch").length, 2);
 });

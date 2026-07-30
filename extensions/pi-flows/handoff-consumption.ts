@@ -1,4 +1,4 @@
-import { canonicalEnvelope, prepareIntegrationHandoff } from "./delegation.ts";
+import { canonicalEnvelope, delegationContractId, prepareIntegrationHandoff } from "./delegation.ts";
 import { createHandoffGuard, HandoffWarnings, prepareResultHandoff, prepareTextHandoff, resolveHandoffPolicy, withInjectionNotice } from "./handoff.ts";
 import { artifactAttributes, handoffAttributes, type ArtifactSource } from "./trace-attributes.ts";
 import { resultText } from "./sanitize.ts";
@@ -69,6 +69,12 @@ export interface HandoffConsumptions {
 export class HandoffConsumer {
 	private readonly guard;
 	private readonly warnings = new HandoffWarnings();
+	private readonly validatedResults = new WeakMap<FlowRunResult, {
+		contractId: string;
+		cwd: string;
+		envelope: NonNullable<FlowRunResult["envelope"]>;
+		handoff: NonNullable<FlowRunResult["handoff"]>;
+	}>();
 
 	constructor(private readonly options: HandoffConsumerOptions) {
 		this.guard = createHandoffGuard(resolveHandoffPolicy(options.params, options.mode));
@@ -90,19 +96,36 @@ export class HandoffConsumer {
 		const contract = options.contract ?? options.plan?.contract;
 		const scope = options.scope ?? options.plan?.scope;
 		const payload = options.payload ?? "handoff";
+		const cwd = options.cwd ?? options.plan?.cwd ?? this.options.defaultCwd;
+		const expectedContractId = contract ? delegationContractId(contract) : undefined;
+		const cached = this.validatedResults.get(options.result);
+		const validated = expectedContractId
+			&& cached?.contractId === expectedContractId
+			&& cached.cwd === cwd
+			? cached
+			: undefined;
 		const accepted = prepareIntegrationHandoff(options.result, {
 			contract,
-			cwd: options.cwd ?? options.plan?.cwd ?? this.options.defaultCwd,
+			cwd,
 			policy: this.options.policy,
 			incompletePolicy: options.incompletePolicy ?? this.options.params.incompleteHandoffPolicy ?? "fail",
 			attach: payload === "handoff",
 			enforceCompletion: options.completion !== "terminal",
+			validated,
 		});
 		if (accepted.error) {
 			if (options.consumed !== false) {
 				this.recordRejected({ ...options, contract, scope }, accepted.error, accepted.rejected);
 			}
 			return { text: "", warnings: [], action: "fail", error: accepted.error };
+		}
+		if (expectedContractId && accepted.handoff && options.result.envelope) {
+			this.validatedResults.set(options.result, {
+				contractId: expectedContractId,
+				cwd,
+				envelope: options.result.envelope,
+				handoff: accepted.handoff,
+			});
 		}
 		if (options.consumed === false) {
 			const prepared = this.prepareResult(options.result, contract, payload);

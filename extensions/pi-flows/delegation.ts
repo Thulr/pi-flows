@@ -416,15 +416,32 @@ export function prepareIntegrationHandoff(
 		incompletePolicy?: IncompleteHandoffPolicy;
 		attach?: boolean;
 		enforceCompletion?: boolean;
+		validated?: {
+			contractId: string;
+			envelope: DelegationReturnEnvelope;
+			handoff: DelegationHandoffEnvelope;
+		};
 	},
 ): { handoff?: DelegationHandoffEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	let handoff: DelegationHandoffEnvelope;
 	let returned: DelegationReturnEnvelope | undefined;
 	if (options.contract) {
-		const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
-		if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
-		returned = validated.envelope!;
-		handoff = typedHandoff(result, returned, options.contract);
+		const expectedContractId = delegationContractId(options.contract);
+		const reusable = options.validated?.contractId === expectedContractId
+			&& options.validated.envelope.contractId === expectedContractId
+			&& options.validated.handoff.contractId === expectedContractId
+			&& options.validated.handoff.compatibility === "typed"
+			? options.validated
+			: undefined;
+		if (reusable) {
+			returned = reusable.envelope;
+			handoff = reusable.handoff;
+		} else {
+			const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
+			if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
+			returned = validated.envelope!;
+			handoff = typedHandoff(result, returned, options.contract);
+		}
 	} else {
 		handoff = compatibilityHandoff(result, options.policy);
 	}
