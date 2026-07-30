@@ -44,7 +44,7 @@ test("single: appends return requirements, updates UI status, and writes a sessi
 	assert.match(calls[0].task, /## Return requirements/);
 	assert.match(calls[0].task, /Return one sentence with value and evidence path/);
 	assert.match(calls[0].task, /file:line references/);
-	assert.ok(statuses.some((status) => /flow single: ok/.test(status)), "completion status should reach the UI");
+	assert.ok(statuses.some((status) => /flow single: 1 ok/.test(status)), "completion status should reach the UI, counting the run it summarizes");
 	assert.ok(widgets.some((widget) => widget.some((line) => /recon/.test(line))), "widget should show child agent status");
 	assert.equal(entries[0]?.customType, "pi-flows.run");
 	assert.equal(entries[0]?.data.mode, "single");

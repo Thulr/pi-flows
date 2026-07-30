@@ -4,6 +4,7 @@ import { flowAgentActivity, flowAgentState } from "./inspector.ts";
 import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
+import { flowProgressText } from "./ui.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -83,9 +84,12 @@ function agentIcon(result: FlowRunResult, index: number, tick: number, theme: Th
 	return state === "failed" ? theme.fg("error", "✗") : theme.fg("success", "✓");
 }
 
-function headerIcon(details: FlowDetails, settled: number, failed: number, tick: number, theme: Theme): string {
+function headerIcon(details: FlowDetails, settled: number, failed: number, tick: number, theme: Theme, live = false): string {
 	if (details.error) return theme.fg("error", "✗");
-	if (settled < details.results.length) return theme.fg("warning", spinnerFrame(tick));
+	// `live` covers the gap between a multi-stage mode's stages, where every run so
+	// far has settled but the next stage has not spawned. A ✓ there would claim an
+	// outcome beside a header that only claims progress.
+	if (live || settled < details.results.length) return theme.fg("warning", spinnerFrame(tick));
 	return failed ? theme.fg("warning", "◐") : theme.fg("success", "✓");
 }
 
@@ -101,6 +105,8 @@ function totalsText(details: FlowDetails): string {
 export interface LiveBoardOptions {
 	tick: number;
 	redactSecrets: boolean;
+	/** The flow is still working, whether or not every run so far has settled. */
+	live?: boolean;
 }
 
 /** Collapsed-view lines for a run in progress or settled. First line is the header. */
@@ -108,17 +114,20 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	const settled = details.results.filter((item) => item.exitCode !== -1).length;
 	const failed = details.results.filter((item) => item.exitCode !== -1 && isFailed(item)).length;
 	const total = details.results.length;
-	const running = settled < total;
+	const outstanding = settled < total;
+	const running = options.live === true || outstanding;
 
-	let header = `${headerIcon(details, settled, failed, options.tick, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`;
-	// The settled/total counter, progress bar, and rollup exist to summarize a
-	// fan-out. With one child they only restate (or worse, appear to
-	// contradict) the agent line below — "0/1" reads as stuck, and the rollup
-	// counts input+output while the agent line also shows cache traffic.
+	let header = `${headerIcon(details, settled, failed, options.tick, theme, options.live)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`;
+	// The state text, progress bar, and rollup exist to summarize a fan-out. With
+	// one child they only restate (or worse, appear to contradict) the agent line
+	// below — "0/1" reads as stuck, and the rollup counts input+output while the
+	// agent line also shows cache traffic.
 	if (total > 1) {
-		header += ` ${theme.fg("accent", `${settled}/${total}`)}`;
+		header += ` ${theme.fg("accent", flowProgressText(details, { live: options.live }))}`;
+		// The bar measures settled-ness, so it belongs to outstanding runs — not to a
+		// flow that is between stages with nothing currently running.
 		const bar = progressBar(settled, total);
-		if (bar && running) header += ` ${theme.fg("dim", bar)}`;
+		if (bar && outstanding) header += ` ${theme.fg("dim", bar)}`;
 		const totals = totalsText(details);
 		if (totals) header += ` ${theme.fg("muted", totals)}`;
 	}
@@ -185,6 +194,10 @@ export function renderFlowResultRow(
 		const lines = flowLiveBoardLines(details, theme, {
 			tick: context.state.tick ?? 0,
 			redactSecrets: details.config?.redactSecretsDefault ?? true,
+			// A partial row is the tool's own statement that it has not finished, which
+			// outranks what the results say: between a mode's stages they have all
+			// settled and the next stage has yet to spawn.
+			live: options.isPartial,
 		});
 		const previous = context.lastComponent;
 		if (previous instanceof Text) {

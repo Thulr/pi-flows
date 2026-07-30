@@ -33,7 +33,7 @@ import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summa
 import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
-import { appendFlowSessionEntry, checkpointApproval, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
+import { appendFlowSessionEntry, checkpointApproval, flowProgressText, flowStatusText, flowWidgetLines, flowsHelpText, parseFlowsCommandArgs, updateFlowUi } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
 import { renderFlowResultRow } from "./ui-live-row.ts";
@@ -103,6 +103,7 @@ export const __test = {
 	parseTraceJsonl,
 	summarizeTraceSpans,
 	formatTraceReport,
+	flowProgressText,
 	flowStatusText,
 	flowWidgetLines,
 };
@@ -350,11 +351,14 @@ export default function (pi: ExtensionAPI) {
 			const approvalActor = process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR;
 			let liveDetails = makeDetails(mode)([]);
 			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets, budget);
-			updateFlowUi(ctx, liveDetails);
+			// Every update before the handler returns is `live`, however settled the runs
+			// in it look: a multi-stage mode reports one stage's results while the next
+			// stage is still ahead of it, and a verdict there would be premature.
+			updateFlowUi(ctx, liveDetails, { live: true });
 			const statusOnUpdate: Update = (partial) => {
 				liveDetails = partial.details;
 				liveRuns.update(toolCallId, liveDetails);
-				updateFlowUi(ctx, liveDetails);
+				updateFlowUi(ctx, liveDetails, { live: true });
 				onUpdate?.(partial);
 			};
 
