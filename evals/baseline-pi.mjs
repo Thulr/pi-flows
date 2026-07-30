@@ -1,7 +1,7 @@
 // Plain-pi control arm for the flows-vs-plain A/B. Runs a case's raw task through a
 // headless `pi` with NO pi-flows — `--no-extensions`, pi's default system prompt,
 // default tools — on the SAME model as the flows arm. So the only thing that varies
-// between arms is pi-flows' specialist agents + orchestration, which is exactly what
+// between arms is pi-flows' agent profiles + orchestration, which is exactly what
 // the comparison is trying to isolate.
 //
 // It speaks the same `--mode json` protocol the flow tool's children use, and

@@ -218,7 +218,7 @@ export function verifyApprovalReceipt(
 		return flowError(
 			"APPROVAL_RECEIPT_STALE",
 			`The approval for "${binding.action}" no longer matches the action it would authorize.`,
-			"The approved action or its effective parameters (agent scope, return contract, evidence requirement, incomplete-handoff policy, injection-handoff policy, or delegation contract) changed after approval was granted.",
+			"The approved action or its effective parameters (agent scope, return requirements, evidence requirement, incomplete-handoff policy, injection-handoff policy, or delegation contract) changed after approval was granted.",
 			"Re-run in an interactive Pi UI to approve the current action, or restore the parameters that were approved and resume again.",
 		);
 	}

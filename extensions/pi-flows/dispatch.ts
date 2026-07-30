@@ -6,7 +6,7 @@
  * plumbing around it stay separately reviewable. Handlers keep importing both
  * from runner.ts, which re-exports this module.
  */
-import type { ChildSpanScope, DelegationContract, FlowAgentRefInput, FlowBudget, FlowMode, FlowRunResult, ModeDeps, RunChildOptions, SpanStage } from "./types.ts";
+import type { ChildSpanScope, ContractBudget, DelegationContract, FlowAgentRefInput, FlowMode, FlowRunResult, ModeDeps, RunChildOptions, SpanStage } from "./types.ts";
 import { makeEmptyRunResult } from "./sanitize.ts";
 
 export async function mapWithConcurrency<TIn, TOut>(
@@ -42,7 +42,7 @@ export interface AgentFanoutItem {
 export interface AgentRunLimits {
 	captureRawOutput?: boolean;
 	timeoutMs?: number;
-	contractBudget?: FlowBudget;
+	contractBudget?: ContractBudget;
 	/** Carried for trace identity only; the enforced ceiling is `contractBudget`. */
 	contract?: DelegationContract;
 }
@@ -93,7 +93,7 @@ export async function runAgentFanout(
 	items: AgentFanoutItem[],
 	concurrency: number,
 	priorResults: FlowRunResult[],
-	statusText: (done: number, total: number) => string,
+	statusText: (settled: number, total: number) => string,
 	stage?: SpanStage,
 ): Promise<FlowRunResult[]> {
 	if (deps.handoffGuard.blockingError) {

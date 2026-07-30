@@ -20,7 +20,7 @@ const keybindings = {
 	getKeys: (binding: string) => (binding === "tui.select.cancel" ? ["x"] : []),
 } as any;
 
-test("registry exposes active runs, budget references, and the last finished run", () => {
+test("registry exposes active runs, budget references, and the last settled run", () => {
 	const registry = new FlowRunRegistry();
 	const budget = { maxCostUsd: 2, spentCost: 0.5, spentTokens: 0, spentGeneratedTokens: 0 };
 	registry.start("flow-1", "parallel", details([result()]), true, budget);
@@ -86,14 +86,14 @@ test("FleetPanel renders a bounded bordered box and closes on the cancel key", (
 	panel.dispose();
 });
 
-test("fleetRunLines drops the done/total counter for single-child runs", () => {
+test("fleetRunLines drops the settled/total counter for single-child runs", () => {
 	const run = { mode: "single" as const, redactSecrets: true, details: details([result()]) };
 	const lines = fleetRunLines(run as any, theme, 0);
 	assert.doesNotMatch(lines[0]!, /0\/1/);
 	assert.match(lines[0]!, /flow single/);
 });
 
-test("FleetPanel falls back to the last finished run when nothing is active", () => {
+test("FleetPanel falls back to the last settled run when nothing is active", () => {
 	const registry = new FlowRunRegistry();
 	registry.start("flow-1", "single", details([result()]));
 	registry.finish("flow-1", details([result({ exitCode: 0 })]));

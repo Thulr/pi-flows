@@ -22,21 +22,21 @@ export const FlowDelegationContract = Type.Object({
 	}),
 	sideEffectClass: StringEnum(["none", "read-only", "reversible", "irreversible"] as const),
 	budget: Type.Object({
-		timeoutMs: Type.Optional(Type.Number({ minimum: 0 })),
-		maxCostUsd: Type.Optional(Type.Number({ minimum: 0 })),
-		maxTokens: Type.Optional(Type.Number({ minimum: 0 })),
-		maxGeneratedTokens: Type.Optional(Type.Number({ minimum: 0 })),
+		timeoutMs: Type.Optional(Type.Number({ minimum: 0, description: "Contract-budget timeout for the runs fulfilling this delegation contract." })),
+		maxCostUsd: Type.Optional(Type.Number({ minimum: 0, description: "Contract-budget USD cost ceiling, enforced independently of the flow budget." })),
+		maxTokens: Type.Optional(Type.Number({ minimum: 0, description: "Contract-budget input+output token ceiling, enforced independently of the flow budget." })),
+		maxGeneratedTokens: Type.Optional(Type.Number({ minimum: 0, description: "Contract-budget generated/output token ceiling, enforced independently of the flow budget." })),
 	}),
 	acceptanceChecks: StringList,
 	returnSchema: Type.Record(Type.String(), Type.Any(), { description: "JSON Schema applied to the return envelope's data field." }),
 	owner: Type.String({ minLength: 1 }),
 }, {
-	description: "Typed delegation contract. When present, the child must return a validated pi-flows.return-envelope.v1 JSON object.",
+	description: "Machine-checked delegation contract. When present, the child must return a validated pi-flows.return-envelope.v1 JSON object.",
 });
 
 export const FlowReturnEnvelope = Type.Object({
 	schemaVersion: Type.Literal("pi-flows.return-envelope.v1"),
-	contractId: Type.Optional(Type.String({ pattern: "^sha256:[a-fA-F0-9]{64}$", description: "Stable digest of the dispatched typed contract. Required when an integration mode consumes the envelope." })),
+	contractId: Type.Optional(Type.String({ pattern: "^sha256:[a-fA-F0-9]{64}$", description: "Stable digest of the dispatched delegation contract. Required when an integration mode consumes the envelope." })),
 	status: StringEnum(["completed", "partial", "blocked", "failed"] as const),
 	summary: Type.String({ minLength: 1 }),
 	evidence: Type.Array(Type.Object({ claim: Type.String({ minLength: 1 }), source: Type.String({ minLength: 1 }) })),
@@ -65,7 +65,7 @@ export const FlowReturnEnvelope = Type.Object({
 		turns: Type.Number({ minimum: 0 }),
 	})),
 }, {
-	description: "Durable child return envelope used when a typed delegation contract is supplied. Runtime usage is attached to the validated envelope when available.",
+	description: "Durable child return envelope used when a delegation contract is supplied. Runtime usage is attached to the validated envelope when available.",
 });
 
 const FlowTaskProperties = {
@@ -77,7 +77,7 @@ const FlowTaskProperties = {
 	tools: Type.Optional(
 		Type.String({ description: 'Optional comma-separated tool override. Use "none" for no built-in tools or "default" for pi defaults.' }),
 	),
-	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this agent's task. Use it to specify summary shape, required fields, or max length." })),
+	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this agent's task. Use them to specify summary shape, required fields, or max length." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return.", default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 };
@@ -160,7 +160,7 @@ export const FlowOrchestrate = Type.Object({
 		}),
 	),
 	verifyMaxIterations: Type.Optional(Type.Number({ description: "Max synthesize->verify rounds when verifyPolicy is revise. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
-	workerReturnContract: Type.Optional(Type.String({ description: "Return contract appended to every worker subtask before fan-out." })),
+	workerReturnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to every worker subtask before fan-out." })),
 	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
 	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on decomposed subtasks (also bounded by maxParallelTasks). Integer 1..${MAX_PARALLEL_TASKS}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS })),
 }, {
@@ -176,7 +176,7 @@ export const FlowGraphNode = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this node. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
-	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this node's task." })),
+	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this node's task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this node's return.", default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -219,7 +219,7 @@ export const FlowWorkflowPhase = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this phase. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
-	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this phase task." })),
+	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this phase task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this phase output.", default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -241,7 +241,7 @@ export const FlowWorktreeTask = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this worker. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
-	returnContract: Type.Optional(Type.String({ description: "Output contract appended to this worker task." })),
+	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this worker task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require evidence in this worker output.", default: true })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -306,11 +306,11 @@ export const FlowParams = Type.Object({
 	why: Type.Optional(
 		Type.String({
 			minLength: 1,
-			description: "One sentence: why this work needs isolated child agents instead of being done directly in the parent context (explicit user request for delegation, fan-out one context cannot hold, or author-independent verification). Required for every mode that spawns agents; list/showConfig do not need it. If you cannot state a reason, do the work directly instead of calling flow.",
+			description: "One sentence: why this work needs isolated children instead of direct execution in the parent context (explicit user request for delegation, fan-out one context cannot hold, or author-independent verification). Required for every mode that runs children; list/showConfig do not need it. If you cannot state a reason, do the work directly instead of calling flow.",
 		}),
 	),
 	agent: Type.Optional(Type.String({ minLength: 1, description: "Single-agent mode: agent name, e.g. recon for a read-only scout or analyst for deeper investigation. Use with task; never pass an empty agent." })),
-	task: Type.Optional(Type.String({ minLength: 1, description: "Single-agent task, shared {task} value for chain steps, or the goal/contract for evaluate mode. For a named-agent request like 'ask recon to inspect package.json', set agent:'recon' and put the complete requested work here; never use a vague one-word task." })),
+	task: Type.Optional(Type.String({ minLength: 1, description: "Single-agent task, shared {task} value for chain steps, or the goal paired with a delegation contract in evaluate mode. For a named-agent request like 'ask recon to inspect package.json', set agent:'recon' and put the complete requested work here; never use a vague one-word task." })),
 	contract: Type.Optional(FlowDelegationContract),
 	tasks: Type.Optional(Type.Array(FlowTask, { description: "Parallel mode: tasks to run concurrently" })),
 	chain: Type.Optional(Type.Array(FlowContractTask, { description: "Chain mode: tasks to run sequentially" })),
@@ -339,11 +339,11 @@ export const FlowParams = Type.Object({
 	),
 	concurrency: Type.Optional(Type.Number({ description: "Parallel mode concurrency. Must be an integer from 1 to 8.", minimum: 1, maximum: 8, default: DEFAULT_CONCURRENCY })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Per-agent child process timeout in milliseconds. Default 36000000 (10 hours).", minimum: 1000, default: DEFAULT_TIMEOUT_MS })),
-	maxCostUsd: Type.Optional(Type.Number({ description: "Cumulative USD cost ceiling across every child in this flow tree. Once reached at a completed model-response boundary, the active child stops and no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
-	maxTokens: Type.Optional(Type.Number({ description: "Cumulative input+output token ceiling across every child in this flow tree. Once reached, no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
-	maxGeneratedTokens: Type.Optional(Type.Number({ description: "Cumulative generated/output token ceiling across every child in this flow tree. Once reached at a completed model-response boundary, the active child stops and no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
+	maxCostUsd: Type.Optional(Type.Number({ description: "Flow-budget USD cost ceiling across every child in this flow tree. Once reached at a completed model-response boundary, the active child stops and no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
+	maxTokens: Type.Optional(Type.Number({ description: "Flow-budget input+output token ceiling across every child in this flow tree. Once reached, no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
+	maxGeneratedTokens: Type.Optional(Type.Number({ description: "Flow-budget generated/output token ceiling across every child in this flow tree. Once reached at a completed model-response boundary, the active child stops and no further child is spawned (BUDGET_EXCEEDED). Omit to run uncapped.", minimum: 0 })),
 	traceFile: Type.Optional(Type.String({ description: "Append OpenInference-shaped JSON spans to this file (JSONL any OpenTelemetry pipeline can ingest): one per delegated child, one per stage (wave/round/iteration/phase), one per coordination event (approval, state, retry, budget, validation, handoff, artifact), plus a root span for the flow call, with redacted token/cost/model/status attributes. Also settable via PI_FLOWS_TRACE_FILE. Relative paths resolve against cwd." })),
-	traceLabel: Type.Optional(Type.String({ description: "Use-case label attached to trace spans so reports can group TPSO and success rate by journey." })),
+	traceLabel: Type.Optional(Type.String({ description: "Use-case label attached to trace spans so reports can group execution success, verified outcome success, and TPSO by journey." })),
 	traceContext: Type.Optional(Type.Object({
 		runId: Type.String({ minLength: 1, description: "Stable identifier for the enclosing eval or runtime run." }),
 		caseId: Type.String({ minLength: 1, description: "Stable case identifier." }),
@@ -377,11 +377,11 @@ export const FlowParams = Type.Object({
 		description: "Minimum handoff policy required by each mode. The effective policy is the stricter of this mode requirement and handoffPolicy, so a high-consequence mode cannot be downgraded by a call-level override.",
 	})),
 	incompleteHandoffPolicy: Type.Optional(StringEnum(["fail", "include"] as const, {
-		description: 'How integration modes handle typed child envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
+		description: 'How integration modes handle return envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
 		default: "fail",
 	})),
-	returnContract: Type.Optional(Type.String({ description: "Output contract appended to delegated agent prompts and synthesis prompts. Use it to prevent summary loss on handoffs." })),
-	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in delegated outputs when a return contract is appended.", default: false })),
+	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to delegated and synthesis tasks. Use them to prevent summary loss on handoffs." })),
+	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in delegated outputs when return requirements are appended.", default: false })),
 	allowSharedWriteCwd: Type.Optional(Type.Boolean({ description: "Allow concurrent write-capable agents to share a cwd. Default false; prefer distinct cwd/worktrees.", default: false })),
 	recordContent: Type.Optional(Type.Boolean({ description: "Store and return child message content after redaction. Set false to retain only structural usage/status data.", default: true })),
 	redactSecrets: Type.Optional(Type.Boolean({ description: "Redact secret-shaped strings, emails, and home-directory paths from content/details. Default true.", default: true })),

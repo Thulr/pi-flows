@@ -67,12 +67,12 @@ export const SELECTION_CASES = defineCases([
 		task: "Summarize the description field in package.json in one sentence. This is one local lookup, not a research dossier.",
 		expectFlow: false,
 		answerPattern: "flow|agent|pi",
-		mock: { flowCalls: 0, answer: "The package provides bounded sub-agent workflows for Pi." },
+		mock: { flowCalls: 0, answer: "The package delegates Pi work to isolated, budgeted children." },
 		sourceExpectation: {
 			path: "package.json",
 			jsonPath: ["description"],
 			patternPath: ["answerPattern"],
-			patterns: ["budgeted", "sub-agents?", "pi"],
+			patterns: ["budgeted", "children", "pi"],
 		},
 	},
 	{

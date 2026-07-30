@@ -1,12 +1,12 @@
 import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { appendReturnContract } from "../validate.ts";
+import { appendReturnRequirements } from "../validate.ts";
 import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
 import { prepareResultHandoff } from "../handoff.ts";
 import { recordStepHandoff } from "../integration.ts";
 import { runAgentRef } from "../runner.ts";
 
-/** One place each route unit key is derived, so the specialist's dependency link names the router that chose it. */
+/** One place each route unit key is derived, so the selected run's dependency link names the router that chose it. */
 const ROUTER_KEY = "router";
 const SELECTION_KEY = "selection";
 
@@ -33,7 +33,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		);
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 
 	const results: FlowRunResult[] = [];
 	const routerRef: FlowAgentRefInput = spec.controller ?? { agent: "controller" };
@@ -74,16 +74,16 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [`${ROUTER_KEY}.handoff`] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(routingMetadata.text, candidates), "flow.handoff.policy": deps.handoffGuard.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
-	const specialist = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results, { scope: { key: "specialist", dependsOn: [SELECTION_KEY] } });
-	results.push(specialist);
-	if (isFailed(specialist)) {
+	const selected = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results, { scope: { key: "selected", dependsOn: [SELECTION_KEY] } });
+	results.push(selected);
+	if (isFailed(selected)) {
 		return {
-			content: [{ type: "text", text: sanitizeText(`Flow route: ${routerRef.agent} → ${choice}, but "${choice}" failed.\n\n${resultText(specialist)}`, policy) }],
+			content: [{ type: "text", text: sanitizeText(`Flow route: ${routerRef.agent} → ${choice}, but "${choice}" failed.\n\n${resultText(selected)}`, policy) }],
 			details: makeDetails("route")(results),
 		};
 	}
 	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow route: ${routerRef.agent} → ${choice}.\n\n${sanitizeText(resultText(specialist), policy)}`) }],
+		content: [{ type: "text", text: capModelVisibleText(`Flow route: ${routerRef.agent} → ${choice}.\n\n${sanitizeText(resultText(selected), policy)}`) }],
 		details: makeDetails("route")(results),
 	};
 }

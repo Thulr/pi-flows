@@ -80,7 +80,7 @@ test("flowLiveBoardLines shows progress, per-agent state, and activity while run
 	assert.match(text, /F8 fleet panel/);
 });
 
-test("single-child runs drop the done/total counter, bar, and rollup from the header", () => {
+test("single-child runs drop the settled/total counter, bar, and rollup from the header", () => {
 	const board = flowLiveBoardLines(details([
 		result({ usage: { ...usage, input: 2000, output: 300, cost: 0.94 } }),
 	], { mode: "single" }), theme, { tick: 0, redactSecrets: true });

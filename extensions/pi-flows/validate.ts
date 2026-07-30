@@ -12,15 +12,18 @@ export function parseToolsOverride(tools: string | undefined, fallback: string[]
 		.filter(Boolean);
 }
 
-export function appendReturnContract(task: string, contract: string | undefined, requireEvidence: boolean | undefined): string {
+export function appendReturnRequirements(task: string, requirements: string | undefined, requireEvidence: boolean | undefined): string {
 	const sections: string[] = [];
-	if (contract?.trim()) sections.push(contract.trim());
+	if (requirements?.trim()) sections.push(requirements.trim());
 	if (requireEvidence) {
 		sections.push("Ground every load-bearing claim in concrete evidence: file:line references, command output, citations, or explicit gaps when evidence is unavailable.");
 	}
 	if (sections.length === 0) return task;
-	return [task, "\n## Return contract", ...sections.map((section) => `- ${section}`)].join("\n");
+	return [task, "\n## Return requirements", ...sections.map((section) => `- ${section}`)].join("\n");
 }
+
+/** Compatibility alias for the original helper name; prefer appendReturnRequirements. */
+export const appendReturnContract = appendReturnRequirements;
 
 export function effectiveTools(discovery: FlowDiscovery, ref: { agent: string; tools?: string }): string[] | undefined | null {
 	const agent = discovery.agents.find((candidate) => candidate.name === ref.agent);

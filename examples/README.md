@@ -6,7 +6,7 @@ These examples are designed to be copy/pasteable in pi after loading the extensi
 pi -e ./extensions/pi-flows/index.ts
 ```
 
-> **You don't type these JSON objects.** You talk to pi in plain English and it builds the `flow` call for you — choosing the agent and mode from what you ask. The objects below are the exact contract pi produces, copy/pasteable when you want to verify behavior or take manual control. Most have a natural-language equivalent; the single-agent example below, for instance, is just *"scout the repo for the extension entrypoint and summarize what it registers."*
+> **You don't type these JSON objects.** You talk to pi in plain English and it builds the `flow` call for you — choosing the agent and mode from what you ask. The objects below use the exact tool interface, copy/pasteable when you want to verify behavior or take manual control. Most have a natural-language equivalent; the single-agent example below, for instance, is just *"scout the repo for the extension entrypoint and summarize what it registers."*
 
 ## No-model smoke checks
 
@@ -29,7 +29,7 @@ Plain English: *"scout the repo for the extension entrypoint and summarize what 
 
 Expected: recon returns paths including `extensions/pi-flows/index.ts` and mentions `flow` plus `/flows`.
 
-## Typed-contract single-agent example
+## Delegation-contract single-agent example
 
 ```json
 {
@@ -60,7 +60,7 @@ Expected: recon returns paths including `extensions/pi-flows/index.ts` and menti
 ```
 
 Expected: `details.results[0].envelope` has
-`schemaVersion:"pi-flows.return-envelope.v1"`, the dispatched contract's
+`schemaVersion:"pi-flows.return-envelope.v1"`, the dispatched delegation contract's
 `sha256:` `contractId`, validated evidence and `data`, plus runtime usage. A
 response whose `data` violates `returnSchema` returns
 `RETURN_ENVELOPE_INVALID`; a declared SHA-256 digest that does not match its
@@ -81,10 +81,10 @@ missing/stale identities with `RETURN_CONTRACT_MISMATCH`.
 ```
 
 Expected: both tasks complete; details include one result per agent and durations.
-Each task may also set `contract`. Valid typed and legacy prose results are
+Each task may also set a delegation `contract`. Valid return envelopes and legacy prose results are
 normalized into `details.results[*].handoff`; prose uses
-`compatibility:"legacy-prose"`, while typed handoffs preserve contract identity,
-status, evidence, artifacts, and source provenance. `partial`/`blocked` typed
+`compatibility:"legacy-prose"`, while contracted handoffs preserve delegation-contract identity,
+status, evidence, artifacts, and source provenance. `partial`/`blocked` contracted
 returns stop by default; set `incompleteHandoffPolicy:"include"` only when
 incomplete synthesis is an intentional policy choice.
 
@@ -165,7 +165,7 @@ Expected: three independent answers; the `debrief` agent returns one consensus a
 {
   "task": "Plan how to add rate limiting to the public API",
   "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "strategist" },
-  "why": "the right specialist for this request is not obvious up front"
+  "why": "the right agent for this request is not obvious up front"
 }
 ```
 
@@ -379,7 +379,7 @@ Expected in non-UI: `PROJECT_AGENT_APPROVAL_REQUIRED`.
 
 ## Cleanup
 
-Remove example agents when done:
+Remove the example agents after the checks:
 
 ```bash
 rm -f ~/.pi/agent/flow-agents/hello.md

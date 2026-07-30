@@ -22,7 +22,7 @@ import {
 	type Update,
 } from "./types.ts";
 import { capModelVisibleText, isFailed, redactText, resultText, safePath, sanitizeText, scanForInjection, stripControlChars } from "./sanitize.ts";
-import { appendReturnContract, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd } from "./validate.ts";
+import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd } from "./validate.ts";
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
 import { HandoffWarnings, createHandoffGuard, prepareHandoff, prepareTextHandoff, resolveHandoffPolicy } from "./handoff.ts";
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
@@ -96,6 +96,7 @@ export const __test = {
 	resolveAgentModel,
 	configuredTierModels,
 	appendReturnContract,
+	appendReturnRequirements,
 	canMutateWorkspace,
 	validateSharedWriteCwd,
 	parseTraceJsonl,
@@ -181,7 +182,7 @@ export default function (pi: ExtensionAPI) {
 			"Always fill `why` with the one-sentence justification for spawning (which of: explicit user request, fan-out one context cannot hold, author-independent verification). If you cannot state one, that is the signal to work directly instead.",
 			"When calling a named agent, copy the complete work request into task; do not send vague one-word tasks like \"Inspect\".",
 			"If the user names a bundled agent such as recon, analyst, strategist, operator, redteam, or debrief, call that agent directly; do not call list/showConfig first unless the user asks to inspect available agents.",
-			"Map plain English to flow modes: read-only repo scouting -> single recon/analyst; independent areas in parallel -> parallel; implementation plus separate review or command gate -> evaluate; broad codebase mapping -> orchestrate; explicit gated phases or resumable approvals -> workflow; concurrent writers needing isolation and integration -> worktree; explicitly requested opposing advocates/rebuttal/adjudication -> debate; multi-source evidence reconciliation -> dossier; bounded poll-until-event response -> monitor; uncertain specialist choice -> route.",
+			"Map plain English to flow modes: read-only repo scouting -> single recon/analyst; independent areas in parallel -> parallel; implementation plus separate review or command gate -> evaluate; broad codebase mapping -> orchestrate; explicit gated phases or resumable approvals -> workflow; concurrent writers needing isolation and integration -> worktree; explicitly requested opposing advocates/rebuttal/adjudication -> debate; multi-source evidence reconciliation -> dossier; bounded poll-until-event response -> monitor; uncertain agent choice -> route.",
 			"Match child model capability to the task with tier, not hard-coded model ids: tier 'fast' for mechanical scouting, extraction, or classification; omit it (capable) for ordinary work; 'deep' for the hardest reasoning or final adjudication. Tiers resolve to models the user configured (PI_FLOWS_FAST_MODEL / PI_FLOWS_DEEP_MODEL) and fall back to their default model, so they stay portable across providers. Pass an explicit model only when the user named one.",
 			"Use debate only when the user explicitly requests opposing advocates, rebuttal, or adjudication; direct execution has matched its quality with lower cost. Use worktree only for multiple write-capable agents needing a verified integration branch; use ordinary parallel for read-only fan-out. Use monitor only for bounded polling inside one flow call, never as durable scheduling.",
 			"Use checkpoint for human approval before spawning children or before finalizing a result; it fails closed in headless contexts.",

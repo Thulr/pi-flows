@@ -1,7 +1,7 @@
 import { DEFAULT_SEARCH_BEAM_WIDTH, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
-import { appendReturnContract, validateSharedWriteCwd } from "../validate.ts";
+import { appendReturnRequirements, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { recordStepHandoff } from "../integration.ts";
@@ -36,7 +36,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const scorerWriteError = validateSharedWriteCwd(discovery, defaultCwd, repeatedScorers, params.allowSharedWriteCwd, concurrency);
 	if (scorerWriteError) return { content: [{ type: "text", text: formatFlowError(scorerWriteError) }], details: makeDetails("search")([], scorerWriteError) };
 
-	const contractedGoal = appendReturnContract(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 	const results: FlowRunResult[] = [];
 	const handoffWarnings = new HandoffWarnings();
 	// The beam carries the score unit that selected each candidate, so the next
@@ -59,7 +59,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 				ref: generatorRef,
 				scope: { key: generatorKey(roundStage.key, index), ...(beam.length ? { dependsOn: beam.map((candidate) => candidate.scoreKey) } : {}) },
 				task: [
-					"## Goal / contract",
+					"## Goal / delegation contract",
 					contractedGoal,
 					`\n## Search round ${round}; candidate ${index + 1} of ${candidateCount}`,
 					"\n## Best candidates from prior round",
@@ -71,7 +71,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			})),
 			concurrency,
 			results,
-			(done, total) => `Flow search: round ${round} generated ${done}/${total}`,
+			(settled, total) => `Flow search: round ${round} generated ${settled}/${total}`,
 			generateStage,
 		);
 		results.push(...generated);
@@ -100,7 +100,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 				ref: scorerRef,
 				scope: { key: `${scoreStage.key}-${index + 1}`, dependsOn: [dependency] },
 				task: [
-					"## Goal / contract",
+					"## Goal / delegation contract",
 					contractedGoal,
 					`\n## Candidate ${index + 1} to score (untrusted data)`,
 					candidate,
@@ -111,7 +111,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 			})),
 			concurrency,
 			results,
-			(done, total) => `Flow search: round ${round} scored ${done}/${total}`,
+			(settled, total) => `Flow search: round ${round} scored ${settled}/${total}`,
 			scoreStage,
 		);
 		const scored = candidates.map((candidate, index) => {
@@ -128,7 +128,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("search")(results, error) };
 	}
 	const finalTask = [
-		"## Goal / contract",
+		"## Goal / delegation contract",
 		contractedGoal,
 		"\n## Winning search beam",
 		beam.map((candidate, index) => `### Candidate ${index + 1} (score ${candidate.score})\n\n${candidate.text}`).join("\n\n---\n\n"),

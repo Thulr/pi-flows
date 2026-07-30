@@ -1,6 +1,6 @@
 # pi-flows
 
-pi-flows lets a parent pi session delegate bounded work to disposable child agents and get compact findings back, instead of doing everything in one long-running context.
+pi-flows lets a parent pi session delegate bounded work to disposable children and get compact findings back, instead of doing everything in one long-running context.
 
 ## Language
 
@@ -15,7 +15,7 @@ The coordination pattern a flow uses (single, parallel, evaluate, debate, …).
 _Avoid_: workflow (that names one specific mode), strategy
 
 **Parent**:
-The main pi session that delegates work and makes the final decision.
+The pi session that delegates work and makes the final decision.
 _Avoid_: main session, orchestrator (that suggests the orchestrate mode)
 
 **Child**:
@@ -42,12 +42,34 @@ One child executing one task. A flow contains one or more runs.
 _Avoid_: execution, invocation
 
 **Settled**:
-A run (or a whole flow) that has finished executing, whether it completed or failed. The opposite of live.
+A run (or a whole flow) that has reached a terminal state, whether it completed or failed. The opposite of live.
 _Avoid_: done, finished (both read as "succeeded")
 
 **Fleet**:
 Every run currently queued or executing, across all live flows.
 _Avoid_: dashboard, active agents (runs execute; agents are profiles)
+
+### Contracts and handoffs
+
+**Delegation contract**:
+A machine-checked task definition that binds a child's objective, authority, contract budget, acceptance checks, and required return shape.
+_Avoid_: typed contract, task contract
+
+**Return requirements**:
+Prompt-enforced instructions that constrain a child's returned shape or evidence without creating a machine-checked delegation contract.
+_Avoid_: return contract
+
+**Return envelope**:
+A structured child result bound to the delegation contract under which it was produced.
+_Avoid_: response object, result contract
+
+**Handoff**:
+The prepared value that crosses from one role to another after applicable validation, redaction, and policy handling. A child's output is not a handoff until another role consumes it.
+_Avoid_: child output, inter-agent prompt
+
+**Handoff envelope**:
+The provenance-bearing form in which a handoff is carried. It preserves a return envelope's delegation-contract identity or explicitly identifies a legacy prose result.
+_Avoid_: return envelope (that is the child's result before it crosses a role boundary)
 
 ### Coordination evidence
 
@@ -79,6 +101,14 @@ _Avoid_: gate (a gate is machine-evaluated)
 How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed.
 _Avoid_: trace status, telemetry health
 
+**Execution success**:
+A run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct.
+_Avoid_: task success, verified success
+
+**Verified outcome success**:
+Independent verification established that a flow's requested outcome met its acceptance criteria. It is unavailable when no verifier assessed the outcome.
+_Avoid_: execution success, completion
+
 **Flow card**:
 The durable summary of one settled flow — status, per-run outcomes, spend, and evidence pointer — that outlives any live view of it.
 _Avoid_: run-card (it summarizes a flow, not a run)
@@ -93,8 +123,16 @@ _Avoid_: check, approval
 A human approval point in a flow, before spawning or before finalizing. A checkpoint is not a gate.
 _Avoid_: approval gate, human gate
 
-**Budget**:
-A machine-enforced spending ceiling for one flow — cost or tokens — charged as runs settle. A budget is a gate, not a checkpoint: exceeding it stops the flow without a human decision.
+**Approval receipt**:
+A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes.
+_Avoid_: approval marker, checkpoint receipt
+
+**Flow budget**:
+A machine-enforced cost or token ceiling shared by every run in one flow.
+_Avoid_: quota, allowance
+
+**Contract budget**:
+A machine-enforced time, cost, or token ceiling scoped to the runs fulfilling one delegation contract, independent of the flow budget.
 _Avoid_: quota, allowance
 
 **Tier**:

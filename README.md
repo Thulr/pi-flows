@@ -1,18 +1,18 @@
 # pi-flows
 
-**Use [pi](https://github.com/earendil-works/pi) for the work you want to keep out of your main session: repo scouting, parallel investigation, implementation plus review, and large-task decomposition.**
+**Use [pi](https://github.com/earendil-works/pi) for the work you want to keep out of your parent session: repo scouting, parallel investigation, implementation plus review, and large-task decomposition.**
 
-pi-flows adds a `flow` tool that runs separate, disposable pi subprocesses and returns compact findings to the parent session. Instead of asking one long-running chat to explore, edit, review, remember every file it opened, and stay within budget, you can send bounded work to specialized child agents and keep the main thread focused on the decision.
+pi-flows adds a `flow` tool that runs separate, disposable pi subprocesses and returns compact findings to the parent session. Instead of asking one long-running chat to explore, edit, review, remember every file it opened, and stay within budget, you can send bounded work to children running purpose-built agents and keep the parent focused on the decision.
 
 ## When it helps you
 
-Use pi-flows when the next step would otherwise make your main pi session noisy, expensive, or hard to trust:
+Use pi-flows when the next step would otherwise make your parent pi session noisy, expensive, or hard to trust:
 
 | Your situation | What you ask pi | What pi-flows gives back |
 |---|---|---|
 | You need to understand a code path before touching it. | "Have a read-only agent find the billing routes." | A compact, cited recon report from an agent that cannot mutate the repo or run shell commands. |
 | You have several independent areas to inspect. | "Check frontend auth and backend auth in parallel." | Separate child runs with capped fan-out instead of one context stuffed with every file. |
-| You want an implementation checked before you accept it. | "Add `/health` with a test, and don't call it done until `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
+| You want an implementation checked before you accept it. | "Add `/health` with a test, and accept it only after `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
 | You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
 | A release or migration has named gates and an approval point. | "Analyze, plan, verify, then pause for approval before rollout." | Persisted phase state, deterministic gates, and a resumable human approval node. |
 | Several independent writers need to land one verified result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
@@ -33,17 +33,17 @@ reasoning, deterministic gates, or bounded multi-step control materially changes
 correctness. The [flow reference](./docs/flow-reference.md#activation-thresholds)
 spells out the threshold for each advanced mode.
 
-## Why this instead of another sub-agent extension
+## Why this instead of another delegation extension
 
-pi-flows is a small harness, not just a folder of specialist prompts. The distinction matters when you want delegation to be repeatable and auditable.
+pi-flows is a small harness, not just a folder of agent prompts. The distinction matters when you want delegation to be repeatable and auditable.
 
 - **Native isolation over prompt promises.** `recon` and `analyst` run with read-only tools and no shell, so exploration cannot accidentally edit files. Concurrent write-capable agents cannot share one checkout unless you explicitly opt in.
 - **Verification is a first-class mode.** `evaluate` runs builder and critic in separate child contexts, can require `npm test` or another `checkCommand`, and revises under a hard iteration cap. This is stronger than asking one agent to "double-check itself."
-- **Multiple proven patterns share one contract.** From `single`, `parallel`, and `evaluate` through explicit `workflow`, isolated `worktree`, adjudicated `debate`, evidence `dossier`, and bounded `monitor`, every mode uses the same `flow` tool. Start with the least coordination the task needs. See [Patterns](./docs/patterns.md).
+- **Multiple proven patterns share one interface.** From `single`, `parallel`, and `evaluate` through explicit `workflow`, isolated `worktree`, adjudicated `debate`, evidence `dossier`, and bounded `monitor`, every mode uses the same `flow` tool. Start with the least coordination the task needs. See [Patterns](./docs/patterns.md).
 - **Delegation is bounded.** Count, concurrency, timeout, nesting depth, total tokens, and total USD spend are capped by the harness. A runaway fan-out returns `BUDGET_EXCEEDED` instead of quietly burning through the rest of the task.
 - **Handoffs are treated as an attack surface.** Content passed from one child to another is capped, redacted, stripped of invisible/bidi characters, and scanned for instruction-override markers before reuse.
-- **You can inspect what happened.** Structured errors include cause and fix fields, traces are plain JSONL, and `/flows report` summarizes success rate, cost, token use, budget hits, route choices, and voting warnings.
-- **It stays inside pi.** You install it as a pi package, use your existing pi provider setup, and talk to pi in plain English. The JSON in these docs is the contract behind the scenes, not something you must write for normal use.
+- **You can inspect what happened.** Structured errors include cause and fix fields, traces are plain JSONL, and `/flows report` separates execution success from verified outcome success while summarizing cost, token use, budget hits, route choices, and voting warnings.
+- **It stays inside pi.** You install it as a pi package, use your existing pi provider setup, and talk to pi in plain English. The JSON in these docs is the tool interface behind the scenes, not something you must write for normal use.
 
 You probably do **not** need pi-flows if you only want a single custom prompt, a long-lived autonomous swarm, or peer-to-peer agents that talk to each other. pi-flows deliberately uses a star topology: parent delegates bounded work, children return compact results, parent decides.
 
@@ -55,12 +55,12 @@ You talk to pi in plain English — it reads the `flow` tool and writes the call
 Have a read-only agent find the API routes for billing.
 ```
 
-pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; these docs show the JSON as the exact contract, for when you want to verify it or take manual control.)
+pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; these docs show the exact JSON interface for when you want to verify it or take manual control.)
 
 Ask for a *verified* result and pi reaches for a stronger mode on its own:
 
 ```text
-Add a /health endpoint that returns 200 and a JSON status, with a test — and don't call it done until `npm test` passes.
+Add a /health endpoint that returns 200 and a JSON status, with a test — accept it only after `npm test` passes.
 ```
 
 pi runs this as an evaluate loop — the `operator` builds the change, a separate `redteam` critic judges the result, and `npm test` must exit `0`, revising until both pass or it hits `maxIterations`. The call behind it:
@@ -142,13 +142,13 @@ Or install your working copy as a package with `pi install -l ./`. See [Developm
 
 Project-local agents are repo-controlled prompts. In interactive pi sessions, pi-flows asks before running them. In headless (non-UI) runs, pi-flows **fails closed by default** and refuses project-local agents unless you explicitly pass `confirmProjectAgents:false` after reviewing the files.
 
-pi-flows also redacts secret-shaped content and home paths from returned content/details by default. Inter-agent **handoffs** — where one child's output becomes another child's prompt (`{previous}` in chain, the evaluate artifact, vote ballots, routing metadata, orchestrate findings) — are an indirect prompt-injection surface. A flow-scoped guard strips invisible/bidi characters, scans instruction-override markers, and detects attacks assembled from individually benign fragments across several boundaries. `handoffPolicy` selects `warn` (compatibility default), `quarantine` (withhold the payload), or `fail` (stop before the recipient spawns); `modeHandoffPolicy` can impose a stricter non-downgradable minimum for high-consequence modes. See [Flow reference](./docs/flow-reference.md#handoff-injection-policy) and [Privacy & telemetry](./docs/privacy-telemetry.md).
+pi-flows also redacts secret-shaped content and home paths from returned content/details by default. A **handoff** is the prepared value that crosses from one role to another after applicable validation, redaction, and policy handling (`{previous}` in chain, the evaluate artifact, vote ballots, routing metadata, orchestrate findings). Handoffs are an indirect prompt-injection surface. A flow-scoped guard strips invisible/bidi characters, scans instruction-override markers, and detects attacks assembled from individually benign fragments across several boundaries. `handoffPolicy` selects `warn` (compatibility default), `quarantine` (withhold the payload), or `fail` (stop before the recipient spawns); `modeHandoffPolicy` can impose a stricter non-downgradable minimum for high-consequence modes. See [Flow reference](./docs/flow-reference.md#handoff-injection-policy) and [Privacy & telemetry](./docs/privacy-telemetry.md).
 
 Cost is bounded as well as count and time: pass `maxCostUsd`, `maxTokens`, or `maxGeneratedTokens` to cap cumulative spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Concurrent fan-out also refuses multiple write-capable agents in the same `cwd` (`SHARED_WRITE_CWD`) unless `allowSharedWriteCwd:true` is explicit. Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
 
 ## `flow` tool quick reference
 
-You don't type these objects — you describe what you want and pi builds the call. This is the exact contract behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
+You don't type these objects — you describe what you want and pi builds the call. This is the exact tool interface behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
 
 Every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution (missing it returns `WHY_REQUIRED` before any child spawns).
 
@@ -170,8 +170,8 @@ Every spawning call also requires `"why"` — one sentence naming the reason del
 { "agent": "recon", "task": "Find the API routes for billing", "why": "user asked for a delegated read-only scout" }
 ```
 
-For machine-checked handoffs, use a typed `contract` instead of (or alongside)
-prose `task`. Contracts work in single/chain/evaluate and on integration-mode
+For machine-checked handoffs, use a delegation `contract` instead of (or alongside)
+prose `task`. Delegation contracts work in single/chain/evaluate and on integration-mode
 tasks, nodes, phases, writers, voters, advocates, evidence sections, and final
 debrief/integrator roles:
 
@@ -205,11 +205,11 @@ retry information, schema-checked `data`, and runtime usage when available.
 Missing/stale identity, schema, artifact, or digest failures stop before downstream
 dispatch, synthesis, persistence, or merge. Existing prose results remain
 supported through an explicit `pi-flows.handoff-envelope.v1` compatibility
-envelope with source provenance. Typed `partial`/`blocked` handoffs fail closed
+envelope with source provenance. Contracted `partial`/`blocked` handoffs fail closed
 unless `incompleteHandoffPolicy:"include"` records an explicit policy decision.
 Contract budgets tighten child timeouts and enforce cost/token limits separately
-from flow-wide budgets.
-See [Return contracts](./docs/flow-reference.md#return-contracts-and-write-isolation).
+from flow budgets.
+See [Return requirements, delegation contracts, and write isolation](./docs/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation).
 
 ### Parallel
 
@@ -275,7 +275,7 @@ Runs the same task across ≥2 voters (use different models to break correlated 
 ### Route (classify → dispatch)
 
 ```json
-{ "task": "The billing webhook returns 500s in prod", "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "recon" }, "why": "the right specialist for this request is not obvious up front" }
+{ "task": "The billing webhook returns 500s in prod", "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "recon" }, "why": "the right agent for this request is not obvious up front" }
 ```
 
 The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits `ROUTE: none` when nothing fits, falling back instead of forcing a guess.
@@ -297,7 +297,7 @@ The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits
 }
 ```
 
-The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel with the overall goal/contract plus their assigned subtask, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` hard-fails on `REVISE`, and `"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
+The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel with the overall goal or delegation contract plus their assigned subtask, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` hard-fails on `REVISE`, and `"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
 
 ### Graph (static DAG)
 
@@ -318,13 +318,13 @@ The `commander` splits the task into a JSON list of subtasks, `recon` workers ru
 
 Ready nodes run by dependency wave, with the same caps, redaction, trace, and write-collision guards as other modes.
 
-### Loop (bounded repeat-until-done)
+### Loop (bounded repeat-until-stop)
 
 ```json
 {
   "task": "Draft release notes",
   "loop": { "body": { "agent": "operator" }, "judge": { "agent": "redteam" }, "maxIterations": 3 },
-  "why": "drafting needs bounded revise-until-done with an independent judge"
+  "why": "drafting needs bounded revision with an independent judge and stop condition"
 }
 ```
 
@@ -364,10 +364,10 @@ Each work phase persists its redacted output and validated handoff envelope
 before the next phase. Approval nodes prompt in the interactive UI and pause
 safely in headless runs; repeat the same call with `workflow.resume:true` to
 continue after each sanitized envelope is verified against its content-free
-validation attestation and current contract identity. Existing version-1 state
+validation attestation and current delegation-contract identity. Existing version-1 state
 files migrate to legacy compatibility envelopes automatically.
 
-A granted approval becomes a single-use receipt rather than a bare `APPROVED`
+A granted approval becomes a single-use approval receipt rather than a bare `APPROVED`
 marker. The receipt binds the exact action it authorizes — the gated phases and
 their effective parameters, including `agentScope` — along with who approved it
 and when it expires (`workflow.approvalTtlMs`, 24h by default). Every step the approval
@@ -465,15 +465,15 @@ or background automation system. When the trigger fires, one reactor receives th
 captured observation as untrusted evidence. If the bound is reached first, the
 call returns `MONITOR_NOT_TRIGGERED` with the last observations.
 
-### Cost budget and tracing
+### Flow budget and tracing
 
-Any mode accepts a cumulative spend ceiling and a trace sink:
+Any mode accepts a flow budget and a trace sink:
 
 ```json
 { "task": "...", "orchestrate": {}, "why": "...", "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
 ```
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` cap total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling prevents subsequent child spawns after the completed response. `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends OpenInference-shaped JSON spans — JSONL any OpenTelemetry backend, or a coding agent, can read. Children nest under the wave, round, iteration, or phase that scheduled them, dependencies are recorded as links rather than fake parentage, and the boundaries that are not child runs at all (approvals, state transitions, retries, budget refusals, validation results, handoffs, artifacts) get their own attributable event spans. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Eval harnesses also set `traceContext` so `details.trace` and eval artifacts link stable run/case/trial/arm ids to the exact runtime trace and root span without weakening redaction. Tracing is best-effort by default and never fails a flow; `traceStrict:true` makes evidence a gate for evaluation and release runs, failing with `TRACE_INCOMPLETE` when spans were dropped or nothing was exported. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form a flow budget that caps total spend across the whole flow tree (`BUDGET_EXCEEDED` once reached). Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling prevents subsequent child spawns after the completed response. A delegation contract may independently impose a contract budget, including a tighter timeout. `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends OpenInference-shaped JSON spans — JSONL any OpenTelemetry backend, or a coding agent, can read. Children nest under the wave, round, iteration, or phase that scheduled them, dependencies are recorded as links rather than fake parentage, and the boundaries that are not child runs at all (approvals, state transitions, retries, budget refusals, validation results, handoffs, artifacts) get their own attributable event spans. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim verified outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Eval harnesses also set `traceContext` so `details.trace` and eval artifacts link stable run/case/trial/arm ids to the exact runtime trace and root span without weakening redaction. Tracing is best-effort by default and never fails a flow; `traceStrict:true` makes evidence a gate for evaluation and release runs, failing with `TRACE_INCOMPLETE` when spans were dropped or nothing was exported. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
 
 ### Human checkpoints and Reflexion
 

@@ -31,11 +31,11 @@ function agentStateColor(state: ReturnType<typeof flowAgentState>): "error" | "s
 
 /** Panel body lines for one run (no borders). Exported for offline tests. */
 export function fleetRunLines(run: LiveFlowRun, theme: Theme, tick: number): string[] {
-	const done = run.details.results.filter((result) => result.exitCode !== -1).length;
+	const settled = run.details.results.filter((result) => result.exitCode !== -1).length;
 	const total = run.details.results.length;
-	// Same rule as the live tool row: a done/total counter only earns its place
+	// Same rule as the live tool row: a settled/total counter only earns its place
 	// on a fan-out; for one child it reads as "0/1 = stuck".
-	const counter = total > 1 ? ` ${theme.fg("accent", `${done}/${total}`)}` : "";
+	const counter = total > 1 ? ` ${theme.fg("accent", `${settled}/${total}`)}` : "";
 	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${run.mode}`))}${counter}`];
 	const budget = budgetLine(run.budget, theme);
 	if (budget) lines.push(budget);

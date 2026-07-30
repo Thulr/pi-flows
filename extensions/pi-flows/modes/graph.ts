@@ -86,7 +86,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			waveItems,
 			concurrency,
 			results,
-			(done) => `Flow graph: ${completed.size + done}/${nodes.length} nodes done`,
+			(settled) => `Flow graph: ${completed.size + settled}/${nodes.length} nodes settled`,
 			{ key: `wave-${wave}`, name: `wave ${wave}` },
 		);
 		for (const [index, result] of waveRunResults.entries()) {

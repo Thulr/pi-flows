@@ -48,7 +48,7 @@ function envelope(overrides: Record<string, unknown> = {}) {
 	});
 }
 
-test("public schemas expose typed contracts and runtime-enriched envelopes", () => {
+test("public schemas expose delegation contracts and runtime-enriched envelopes", () => {
 	assert.ok(FlowParams.properties.contract);
 	assert.ok(FlowContractTask.properties.contract);
 	assert.ok(FlowTask.properties.contract);
@@ -56,7 +56,7 @@ test("public schemas expose typed contracts and runtime-enriched envelopes", () 
 	assert.ok(FlowReturnEnvelope.properties.usage);
 });
 
-test("single accepts a typed contract as the task and retains a validated return envelope", async () => {
+test("single accepts a delegation contract as the task and retains a validated return envelope", async () => {
 	const { result, calls, text } = await runFlow(
 		{ agent: "recon", contract },
 		{ recon: envelope() },
@@ -71,7 +71,7 @@ test("single accepts a typed contract as the task and retains a validated return
 	assert.match(text, /xyzzy-42/);
 });
 
-test("typed contracts fail before dispatch when required fields are malformed", async () => {
+test("delegation contracts fail before dispatch when required fields are malformed", async () => {
 	const { result, calls, text } = await runFlow(
 		{ agent: "recon", contract: { ...contract, owner: "" } },
 		{ recon: envelope() },
@@ -211,7 +211,7 @@ test("evaluate validates the generator envelope before the critic consumes it", 
 	assert.match(calls[1].task, /"schemaVersion":"pi-flows\.return-envelope\.v1"/);
 });
 
-test("evaluate.operator contract overrides the top-level contract", async () => {
+test("evaluate.operator delegation contract overrides the top-level delegation contract", async () => {
 	const operatorContract = {
 		...contract,
 		objective: "Return a value field.",
@@ -264,7 +264,7 @@ test("chain refuses an envelope that is not bound to the contract it was dispatc
 test("no contracted mode accepts an envelope bound to a different contract", async () => {
 	// One rule, checked at every contracted seam. `single` has no downstream
 	// consumer, but validating an envelope's data against a contract it does not
-	// claim is still reporting success for work done under other terms.
+	// claim is still reporting success for work performed under other terms.
 	const other = delegationContractId({ ...contract, objective: "Something else entirely." } as never);
 
 	const lone = await runFlow({ agent: "recon", task: "Find it.", contract }, { recon: envelope({ contractId: other }) });

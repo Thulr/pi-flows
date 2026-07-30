@@ -2,11 +2,11 @@
   "name": "pi-flows",
   "version": "0.4.2",
   "private": false,
-  "description": "Delegate pi work to isolated, budgeted sub-agents with verification loops and tracing.",
+  "description": "Delegate pi work to isolated, budgeted children with verification loops and tracing.",
   "keywords": [
     "pi-package",
     "pi-extension",
-    "subagents",
+    "agent-delegation",
     "flows"
   ],
   "license": "MIT",

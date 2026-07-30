@@ -233,7 +233,7 @@ contains `VERDICT:`.
 | --- | --- |
 | `route-classifies-bug-to-recon` | the controller routes a real webhook-500 bug to `recon`, which finds the undeclared-`ledger` root cause in the fixture |
 | `recon-retrieves-known-value` | `recon` reads a fixture and reports a known value |
-| `return-contract-preserves-evidence` | a delegated recon task keeps the requested value plus evidence under a return contract |
+| `return-contract-preserves-evidence` | a delegated recon task keeps the requested value plus evidence under prose return requirements |
 | `vote-reaches-known-consensus` | two voters + aggregator reach the correct answer |
 | `vote-warns-on-same-model-voters` | same-agent voting surfaces the correlated-model warning |
 | `evaluate-loop-completes-with-gate` | the operator builds `isPrime.js` against a real `node` gate (asserts 0/1/2/negative edge cases); the loop revises until it passes |
@@ -277,7 +277,7 @@ every case through two arms, writes one thulr trace per arm, judges both with th
 same calibrated cross-model judge, and runs `thulr compare` with the direct arm as
 the baseline and Pi Flows as the candidate:
 
-- **flows** -- the case's flow params, specialist roles, and orchestration.
+- **flows** -- the case's flow parameters, agent profiles, and orchestration.
 - **Codex baseline (default)** -- one direct `codex exec` run with the same
   `openai-codex/<model>`, task, and isolated workspace, without Pi Flows.
 - **plain Pi baseline (optional)** -- `--baseline=pi` uses one headless
@@ -613,7 +613,7 @@ implicit flow-positive controls, and scores actual `flow` tool calls from the JS
 stream. This is intentionally separate from `npm run eval`, because the main
 harness invokes `flow` directly and cannot catch overuse on tiny tasks. Simple
 prompts such as arithmetic, package metadata lookup, and tiny text transforms
-must complete with zero `flow` calls; otherwise sub-agents were invoked when they
+must complete with zero `flow` calls; otherwise children were run when they
 should not have been. Positive controls also assert the selected `flow` argument
 shape — for example read-only scouting should become single-agent `recon` or
 `analyst`, parallel document inspection should become `tasks`, critic loops should

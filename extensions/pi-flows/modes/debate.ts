@@ -64,7 +64,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 			if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
 			items.push(planned.plan!);
 		}
-		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (done, total) => `Flow debate: round ${round}/${rounds}, ${done}/${total} advocates done`, { key: `round-${round}`, name: `round ${round}` });
+		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (settled, total) => `Flow debate: round ${round}/${rounds}, ${settled}/${total} advocates settled`, { key: `round-${round}`, name: `round ${round}` });
 		allResults.push(...roundResults);
 		const handoffError = acceptIntegrationResults(deps, items, roundResults);
 		if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: deps.makeDetails("debate")(allResults, handoffError) };

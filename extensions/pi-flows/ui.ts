@@ -5,10 +5,10 @@ import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 
 export function flowStatusText(details: FlowDetails): string {
 	const total = details.results.length;
-	const done = details.results.filter((result) => result.exitCode !== -1).length;
+	const settled = details.results.filter((result) => result.exitCode !== -1).length;
 	const failed = details.results.filter((result) => result.exitCode !== -1 && isFailed(result)).length;
 	const usage = flowUsageTotals(details.results.filter((result) => result.exitCode !== -1));
-	const state = details.error ? `error:${details.error.code}` : done < total ? `${done}/${total}` : failed ? `${failed} failed` : "ok";
+	const state = details.error ? `error:${details.error.code}` : settled < total ? `${settled}/${total}` : failed ? `${failed} failed` : "ok";
 	const cost = usage.cost ? ` $${usage.cost.toFixed(4)}` : "";
 	const tokens = usage.input || usage.output ? ` ${formatTokens(usage.input + usage.output)} tok` : "";
 	return `flow ${details.mode}: ${state}${cost}${tokens}`;
