@@ -59,11 +59,11 @@ stages the header keeps the labeled ratio and the spinner rather than announcing
 an outcome the flow has not reached, so `2/2 settled` with a spinner means "both
 runs so far are done, the flow is still working".
 
-The Pi status line and the widget above the editor report the same text for every
-flow, including single-run ones (`flow single: 0/1 settled`), and a flow-level
-error takes precedence over it there (`flow single: error:BUDGET_EXCEEDED`). On
-the board surfaces a flow-level error is reported alongside the run counts, as a
-status icon on the tool row and an `error:` line on both.
+The inline tool row is the single primary live progress view. The extension
+clears its footer status and above-editor widget instead of repeating that row's
+summary elsewhere. On the two board surfaces a flow-level error is reported
+alongside the run counts, as a status icon on the tool row and an `error:` line
+on both.
 
 After a flow settles, a durable flow card entry stays in the session transcript
 (and re-renders after `pi` restarts): status, per-run duration bars, cost
