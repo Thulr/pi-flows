@@ -48,6 +48,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 	const { concurrency } = deps;
 	const results: FlowRunResult[] = [];
 	const outputs = new Map<string, string>();
+	const outputKeys = new Map<string, string>();
 	const completed = new Set<string>();
 	const remaining = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
 	const contractedTask = params.task;
@@ -72,7 +73,10 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				placeholderTask: node.task,
 				// A node's dependencies are links, not parentage: node b consumed node
 				// a's output but was scheduled by the wave, not spawned by a.
-				scope: { key: encodeAuthorKey(node.id), dependsOn: (node.dependsOn ?? []).map((dependency: string) => `${encodeAuthorKey(dependency)}.handoff`) },
+				scope: { key: encodeAuthorKey(node.id), dependsOn: (node.dependsOn ?? []).flatMap((dependency: string) => {
+					const key = outputKeys.get(dependency);
+					return key ? [key] : [];
+				}) },
 			});
 			if (planned.error) {
 				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
@@ -113,6 +117,8 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				return { content: [{ type: "text", text: sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy) }], details: makeDetails("graph")(results) };
 			}
 			outputs.set(node.id, preparedOutputs.get(result)?.text ?? "");
+			const dependencyKey = preparedOutputs.get(result)?.dependencyKey;
+			if (dependencyKey) outputKeys.set(node.id, dependencyKey);
 			completed.add(node.id);
 		}
 	}
@@ -133,7 +139,10 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "debrief", dependsOn: terminalIds.map((id: string) => `${id}.handoff`) },
+			scope: { key: "debrief", dependsOn: terminalIds.flatMap((id: string) => {
+				const key = outputKeys.get(id);
+				return key ? [key] : [];
+			}) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
 		const debriefed = await runIntegrationPlan(deps, planned.plan!, "graph", results.length + 1, results);

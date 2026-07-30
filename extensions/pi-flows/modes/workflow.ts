@@ -408,7 +408,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		// A later child reads the prepared output through its task, so it depends on
 		// the handoff boundary. A terminal phase has no such boundary and remains a
 		// child dependency instead of inventing a handoff to the caller.
-		registerPhaseUnit(consumed ? `${phaseWorkKey(phase.id)}.handoff` : phaseWorkKey(phase.id));
+		registerPhaseUnit(handoff.dependencyKey ?? phaseWorkKey(phase.id));
 	}
 
 	// A trailing approval gates the workflow's own completion (and its debrief),

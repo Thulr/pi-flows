@@ -80,10 +80,9 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			verdictProtocolInstruction("actionable feedback if another iteration should run"),
 		].join("\n");
-		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, { scope: { stage, key: `${stage.key}.judge`, dependsOn: [`${bodyKey(stage.key)}.handoff`] } });
+		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, { scope: { stage, key: `${stage.key}.judge`, dependsOn: [bodyHandoff.dependencyKey!] } });
 		results.push(judged);
 		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
-		priorIterationKey = `${stage.key}.judge.handoff`;
 		done = parseVerdict(resultText(judged)) === "pass";
 		if (done) break;
 		const critiqueConsumed = iteration < maxIterations;

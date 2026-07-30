@@ -70,7 +70,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		// Only the sections that succeeded reach the synthesis prompt, so only those
 		// belong in its dependency list — claiming it consumed a failed section's
 		// output would misreport what the answer actually rests on.
-		scope: { key: "debrief", dependsOn: results.flatMap((result, index) => isFailed(result) ? [] : [`${sectionKey(index)}.handoff`]) },
+		scope: { key: "debrief", dependsOn: sectionHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")(results, planned.error) };
 	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);

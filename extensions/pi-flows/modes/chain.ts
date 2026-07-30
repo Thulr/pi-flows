@@ -12,6 +12,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, policy, makeDetails, defaultCwd } = deps;
 	const results: FlowRunResult[] = [];
 	let previous = "";
+	let priorHandoffKey: string | undefined;
 	for (const step of params.chain) {
 		const contract = (step.contract ?? params.contract) as DelegationContract | undefined;
 		const error = contract ? validateDelegationContract(contract, policy) : null;
@@ -45,7 +46,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 				// is not what this step received — validation, filtering, and the
 				// injection scan sit in between, and that boundary is where the
 				// carried text was actually decided.
-				scope: { key: stepKey(index), ...(index > 0 ? { dependsOn: [`${stepKey(index - 1)}.handoff`] } : {}) },
+				scope: { key: stepKey(index), ...(priorHandoffKey ? { dependsOn: [priorHandoffKey] } : {}) },
 			},
 		);
 		results.push(result);
@@ -66,7 +67,10 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			payload: "source",
 		});
 		if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("chain")(results, handoff.error) };
-		if (handsOff) previous = handoff.text;
+		if (handsOff) {
+			previous = handoff.text;
+			priorHandoffKey = handoff.dependencyKey;
+		}
 	}
 
 	return {

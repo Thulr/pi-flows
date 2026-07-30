@@ -79,7 +79,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		});
 		// The transcript is built from each advocate's validated handoff, so that is
 		// what the next round and the adjudicator actually read.
-		consumedAdvocateKeys = roundResults.flatMap((result, index) => isFailed(result) ? [] : [`${advocateKey(round, index)}.handoff`]);
+		consumedAdvocateKeys = handoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []);
 	}
 
 	const adjudicator: FlowAgentRefInput = spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" };

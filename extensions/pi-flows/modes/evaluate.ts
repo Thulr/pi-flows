@@ -237,7 +237,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		const critics = await runAgentFanout(
 			deps,
 			"evaluate",
-			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [`${generatorKey(stage.key)}.handoff`] } })),
+			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [priorArtifactKey!] } })),
 			concurrency,
 			results,
 			(settled) => `Flow evaluate: ${results.length + settled} step(s) settled`,

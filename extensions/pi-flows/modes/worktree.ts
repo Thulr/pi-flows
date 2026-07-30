@@ -158,52 +158,53 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			if (planned.error) return modeError(deps, results, planned.error);
 			workerItems.push(planned.plan!);
 		}
-			deps.recordEvent?.({
-				kind: "state",
-				name: "worktree.branches_created",
-				// Each worker runs inside a worktree this step created, so the setup is
-				// a real input to every worker rather than a bare announcement.
-				scope: { key: BRANCHES_KEY },
-				attributes: {
-					"flow.worktree.base_sha": baseSha,
-					"flow.worktree.worker_count": workers.length,
-					"flow.worktree.integration_branch": integrationBranch,
-				},
-			});
-			const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (settled, total) => `Flow worktree: ${settled}/${total} isolated writers settled`, { key: "workers", name: "isolated writers" });
-			results.push(...workerResults);
-			const failedWorkerIds = workers.filter((_, index) => isFailed(workerResults[index])).map((worker) => worker.id);
-			if (failedWorkerIds.length > 0) {
+		deps.recordEvent?.({
+			kind: "state",
+			name: "worktree.branches_created",
+			// Each worker runs inside a worktree this step created, so the setup is
+			// a real input to every worker rather than a bare announcement.
+			scope: { key: BRANCHES_KEY },
+			attributes: {
+				"flow.worktree.base_sha": baseSha,
+				"flow.worktree.worker_count": workers.length,
+				"flow.worktree.integration_branch": integrationBranch,
+			},
+		});
+		const workerResults = await runAgentFanout(deps, "worktree", workerItems, concurrency, results, (settled, total) => `Flow worktree: ${settled}/${total} isolated writers settled`, { key: "workers", name: "isolated writers" });
+		results.push(...workerResults);
+		const failedWorkerIds = workers.filter((_, index) => isFailed(workerResults[index])).map((worker) => worker.id);
+		if (failedWorkerIds.length > 0) {
+			retainFailureState = true;
+			const error = flowError("WORKTREE_INTEGRATION_FAILED", "One or more required worktree writers failed.", `Failed worker ids: ${failedWorkerIds.join(", ")}. Partial implementation was not integrated.`, "Inspect the retained worker state, fix the failed tasks or provider/tool errors, then rerun all required worktree tasks.");
+			return modeError(deps, results, error, workerRecoveryDetails(workers, policy));
+		}
+		const workerHandoffs = deps.handoffs.consumeResults(workerResults.map((result, index) => ({
+			result,
+			plan: workerItems[index],
+		})));
+		if (workerHandoffs.error) {
+			retainFailureState = true;
+			return modeError(deps, results, workerHandoffs.error, workerRecoveryDetails(workers, policy));
+		}
+		const workerDependencyKey = (worker: WorkerWorktree) => workerHandoffs.items[workers.indexOf(worker)]?.dependencyKey;
+		for (let index = 0; index < workers.length; index += 1) {
+			const committed = commitChanges(workers[index].cwd, `pi-flow(${workers[index].id}): isolated worker changes`);
+			if (!committed.ok) {
 				retainFailureState = true;
-				const error = flowError("WORKTREE_INTEGRATION_FAILED", "One or more required worktree writers failed.", `Failed worker ids: ${failedWorkerIds.join(", ")}. Partial implementation was not integrated.`, "Inspect the retained worker state, fix the failed tasks or provider/tool errors, then rerun all required worktree tasks.");
-				return modeError(deps, results, error, workerRecoveryDetails(workers, policy));
+				const error = flowError("WORKTREE_SETUP_FAILED", `Could not commit worker "${workers[index].id}" changes.`, committed.error ?? "git commit failed", "Inspect the worker branch and git hooks/config, then retry.");
+				const recovery = workerRecoveryLocation(workers[index], policy);
+				return modeError(deps, results, error, `\n\nWorker branch: \`${recovery.branch}\`\nWorker worktree: \`${recovery.cwd}\``);
 			}
-			const workerHandoffs = deps.handoffs.consumeResults(workerResults.map((result, index) => ({
-				result,
-				plan: workerItems[index],
-			})));
-			if (workerHandoffs.error) {
+			const branchState = branchHasCommitsSince(workers[index].cwd, baseSha);
+			if (!branchState.ok) {
 				retainFailureState = true;
-				return modeError(deps, results, workerHandoffs.error, workerRecoveryDetails(workers, policy));
+				const error = flowError("WORKTREE_SETUP_FAILED", `Could not inspect worker "${workers[index].id}" branch.`, branchState.error ?? "git rev-list failed", "Inspect the retained worker branch and git repository state, then retry.");
+				const recovery = workerRecoveryLocation(workers[index], policy);
+				return modeError(deps, results, error, `\n\nWorker branch: \`${recovery.branch}\`\nWorker worktree: \`${recovery.cwd}\``);
 			}
-			for (let index = 0; index < workers.length; index += 1) {
-				const committed = commitChanges(workers[index].cwd, `pi-flow(${workers[index].id}): isolated worker changes`);
-				if (!committed.ok) {
-					retainFailureState = true;
-					const error = flowError("WORKTREE_SETUP_FAILED", `Could not commit worker "${workers[index].id}" changes.`, committed.error ?? "git commit failed", "Inspect the worker branch and git hooks/config, then retry.");
-					const recovery = workerRecoveryLocation(workers[index], policy);
-					return modeError(deps, results, error, `\n\nWorker branch: \`${recovery.branch}\`\nWorker worktree: \`${recovery.cwd}\``);
-				}
-				const branchState = branchHasCommitsSince(workers[index].cwd, baseSha);
-				if (!branchState.ok) {
-					retainFailureState = true;
-					const error = flowError("WORKTREE_SETUP_FAILED", `Could not inspect worker "${workers[index].id}" branch.`, branchState.error ?? "git rev-list failed", "Inspect the retained worker branch and git repository state, then retry.");
-					const recovery = workerRecoveryLocation(workers[index], policy);
-					return modeError(deps, results, error, `\n\nWorker branch: \`${recovery.branch}\`\nWorker worktree: \`${recovery.cwd}\``);
-				}
-				workers[index].changed = branchState.changed;
-			}
-			const usableWorkers = workers;
+			workers[index].changed = branchState.changed;
+		}
+		const usableWorkers = workers;
 
 		integrationCwd = path.join(tempRoot, "integration");
 		const integrationAdded = git(repoRoot, ["worktree", "add", "-b", integrationBranch, integrationCwd, baseSha]);
@@ -234,10 +235,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Could not merge worker branch "${worker.branch}".`, merged.stderr, "Inspect the retained worker/integration branches and resolve the git error.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			}
-				const conflictProvenance = [...integratedWorkers, worker].map((source) => {
-					const index = workers.indexOf(source);
-					return `### ${source.id} (${source.branch})\n${workerHandoffs.items[index]?.text ?? ""}`;
-				}).join("\n\n");
+			const conflictProvenance = [...integratedWorkers, worker].map((source) => {
+				const index = workers.indexOf(source);
+				return `### ${source.id} (${source.branch})\n${workerHandoffs.items[index]?.text ?? ""}`;
+			}).join("\n\n");
 			const conflictTask = [
 				"## Integration goal", params.task ?? "Integrate the worker branches.",
 				`\n## Merge conflict from ${worker.branch}`, unmerged.stdout,
@@ -258,7 +259,14 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				fallbackContract: params.contract as DelegationContract | undefined,
 				scope: {
 					key: `conflict-${worker.id}`,
-					dependsOn: [`conflict-${worker.id}.observed`, ...[...integratedWorkers, worker].map((source) => `${workerKey(source.id)}.handoff`), ...resolvedConflictKeys],
+					dependsOn: [
+						`conflict-${worker.id}.observed`,
+						...[...integratedWorkers, worker].flatMap((source) => {
+							const key = workerDependencyKey(source);
+							return key ? [key] : [];
+						}),
+						...resolvedConflictKeys,
+					],
 				},
 			});
 			if (conflictPlan.error) return modeError(deps, results, conflictPlan.error);
@@ -268,8 +276,8 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Integrator could not resolve merge conflicts from "${worker.branch}".`, resultText(resolved) || unmerged.stdout, "Inspect the retained integration and worker branches, resolve the conflicts, and verify before merging.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			}
-				const conflictHandoff = deps.handoffs.consumeResult({ plan: conflictPlan.plan!, result: resolved, consumed: false });
-				if (conflictHandoff.error) return modeError(deps, results, conflictHandoff.error, `\n\nIntegration branch: \`${integrationBranch}\``);
+			const conflictHandoff = deps.handoffs.consumeResult({ plan: conflictPlan.plan!, result: resolved, consumed: false });
+			if (conflictHandoff.error) return modeError(deps, results, conflictHandoff.error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			const committed = commitChanges(integrationCwd, `pi-flow: resolve ${worker.id} integration conflicts`);
 			if (!committed.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not commit resolved integration conflicts.", committed.error ?? "git commit failed", "Inspect the retained integration branch and commit the resolved merge."));
 			const previousPreserved = git(integrationCwd, ["merge-base", "--is-ancestor", preMergeHead.stdout, "HEAD"]).ok;
@@ -284,10 +292,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			for (const file of unmerged.stdout.split("\n").filter(Boolean)) resolvedConflictFiles.add(file);
 		}
 
-			const summaries = usableWorkers.map((worker) => {
-				const index = workers.indexOf(worker);
-				return `### ${worker.id} (${worker.branch}; ${worker.changed ? "changed" : "no changes"})\n\n${workerHandoffs.items[index]?.text ?? ""}`;
-			}).join("\n\n---\n\n");
+		const summaries = usableWorkers.map((worker) => {
+			const index = workers.indexOf(worker);
+			return `### ${worker.id} (${worker.branch}; ${worker.changed ? "changed" : "no changes"})\n\n${workerHandoffs.items[index]?.text ?? ""}`;
+		}).join("\n\n---\n\n");
 		const diffStat = git(integrationCwd, ["diff", "--stat", `${baseSha}...HEAD`]).stdout;
 		const reviewTask = [
 			"## Integration goal", params.task ?? "Review the integrated worker changes.",
@@ -305,7 +313,16 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			requireEvidence: params.requireEvidence,
 			// The branch under review contains any conflict resolution that produced
 			// it, so the reviewed result's provenance includes the resolvers.
-			scope: { key: "integration-review", dependsOn: [...usableWorkers.map((worker) => `${workerKey(worker.id)}.handoff`), ...resolvedConflictKeys] },
+			scope: {
+				key: "integration-review",
+				dependsOn: [
+					...usableWorkers.flatMap((worker) => {
+						const key = workerDependencyKey(worker);
+						return key ? [key] : [];
+					}),
+					...resolvedConflictKeys,
+				],
+			},
 		});
 		if (reviewPlan.error) return modeError(deps, results, reviewPlan.error);
 		const reviewed = await runIntegrationPlan(deps, reviewPlan.plan!, "worktree", results.length + 1, results);
@@ -314,8 +331,8 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			const error = flowError("WORKTREE_INTEGRATION_FAILED", "Integration review agent failed.", resultText(reviewed), "Inspect the retained integration branch and run review/verification manually.");
 			return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 		}
-			const reviewHandoff = deps.handoffs.consumeResult({ plan: reviewPlan.plan!, result: reviewed, consumed: false });
-			if (reviewHandoff.error) return modeError(deps, results, reviewHandoff.error, `\n\nIntegration branch: \`${integrationBranch}\``);
+		const reviewHandoff = deps.handoffs.consumeResult({ plan: reviewPlan.plan!, result: reviewed, consumed: false });
+		if (reviewHandoff.error) return modeError(deps, results, reviewHandoff.error, `\n\nIntegration branch: \`${integrationBranch}\``);
 		const reviewCommit = commitChanges(integrationCwd, "pi-flow: integration review fixes");
 		if (!reviewCommit.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not commit integration review fixes.", reviewCommit.error ?? "git commit failed", "Inspect and commit the retained integration branch."));
 		const changedFiles = git(integrationCwd, ["diff", "--name-only", `${baseSha}...HEAD`]).stdout.split("\n").filter(Boolean);

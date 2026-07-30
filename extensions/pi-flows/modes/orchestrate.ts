@@ -99,7 +99,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(subtask), {
 			returnContract: spec.workerReturnContract,
 			placeholderTask: subtask,
-			scope: { key: workerKey(index), dependsOn: [`${DECOMPOSE_KEY}.handoff`] },
+			scope: { key: workerKey(index), dependsOn: [decomposerHandoff.dependencyKey!] },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("orchestrate")(results, planned.error) };
 		workerPlans.push(planned.plan!);
@@ -152,6 +152,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			.join("\n");
 
 	let synthesisRound = 0;
+	let revisionDependencies: string[] = [];
 	const makeSynthesisPlan = (task: string) => {
 		synthesisRound += 1;
 		return integrationRunPlan(deps, synthesizerRef, task, {
@@ -167,7 +168,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				// prior answer it revises and the critique that sent it back.
 				dependsOn: synthesisRound === 1
 					? consumedWorkerKeys
-					: [...consumedWorkerKeys, `${synthesisKey(synthesisRound - 1)}.handoff`, `${verifyKey(synthesisRound - 1)}.handoff`],
+					: [...consumedWorkerKeys, ...revisionDependencies],
 			},
 		});
 	};
@@ -208,7 +209,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Your job",
 				`Judge whether the synthesized answer fully and correctly addresses the goal or delegation contract. ${verdictProtocolInstruction("specific, actionable gaps")} Judge only the answer above.`,
 			].join("\n");
-			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: verifyKey(round), dependsOn: [`${synthesisKey(synthesisRound)}.handoff`] } });
+			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: verifyKey(round), dependsOn: [synthesisHandoff.dependencyKey!] } });
 			if (verifyPlan.error) return { content: [{ type: "text", text: formatFlowError(verifyPlan.error) }], details: makeDetails("orchestrate")(results, verifyPlan.error) };
 			const verified = await runIntegrationPlan(deps, verifyPlan.plan!, "orchestrate", results.length + 1, results);
 			results.push(verified);
@@ -268,6 +269,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			// warnings the handoff event recorded. `sanitizeText` alone skips the
 			// injection scan and, for a typed return, hands over the raw output
 			// rather than the validated canonical envelope.
+			revisionDependencies = [synthesisHandoff.dependencyKey!, critiqueHandoff.dependencyKey!];
 			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(synthesisHandoff.text, critiqueHandoff.text));
 			if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
 			synthesized = await runIntegrationPlan(deps, synthesisPlan.plan!, "orchestrate", results.length + 1, results);
