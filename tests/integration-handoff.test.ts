@@ -102,6 +102,41 @@ test("integration handoffs reject missing and stale contract identities", () => 
 	assert.equal(stale.error?.code, "RETURN_CONTRACT_MISMATCH");
 });
 
+test("callers cannot forge a prior-validation receipt", () => {
+	const forged = prepareIntegrationHandoff(result("ordinary prose"), {
+		contract,
+		cwd: "/tmp",
+		policy,
+		validation: {},
+	});
+
+	assert.equal(forged.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.equal(forged.handoff, undefined);
+});
+
+test("validation receipts retain an immutable private snapshot", () => {
+	const child = result(typedEnvelope());
+	const validated = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy,
+		enforceCompletion: false,
+	});
+	assert.ok(validated.validation);
+	validated.handoff!.status = "failed";
+	child.envelope!.status = "failed";
+
+	const reused = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy,
+		validation: validated.validation,
+	});
+
+	assert.equal(reused.error, undefined);
+	assert.equal(reused.handoff?.status, "completed");
+});
+
 test("integration handoffs reject digest-mismatched artifacts", async () => {
 	const cwd = await freshDir();
 	await writeFile(`${cwd}/artifact.txt`, "actual content\n");
