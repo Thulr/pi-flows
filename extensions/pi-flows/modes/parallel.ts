@@ -3,7 +3,7 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResults, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
@@ -54,9 +54,11 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 	);
 	// Validated, but no boundary: these outputs go into the response the caller
 	// reads, and parallel spawns nothing that consumes them.
-	const handoffError = acceptIntegrationResults(deps, plans, results, undefined, { consumed: false });
-	if (handoffError) {
-		return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("parallel")(results, handoffError) };
+	const handoffs = deps.handoffs.consumeResults(results.flatMap((result, index) =>
+		isFailed(result) ? [] : [{ plan: plans[index], result, consumed: false }],
+	));
+	if (handoffs.error) {
+		return { content: [{ type: "text", text: formatFlowError(handoffs.error) }], details: makeDetails("parallel")(results, handoffs.error) };
 	}
 
 	const success = results.filter((result) => !isFailed(result)).length;

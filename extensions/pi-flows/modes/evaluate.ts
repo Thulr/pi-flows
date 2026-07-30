@@ -1,11 +1,9 @@
 import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { HandoffWarnings, prepareResultHandoff, prepareTextHandoff } from "../handoff.ts";
 import { appendReturnRequirements, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
-import { canonicalEnvelope, createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
+import { createDelegationBudget, renderDelegationTask, validateDelegationContract } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { recordStepHandoff, recordTextHandoff } from "../integration.ts";
 import { runCheckCommand } from "../commands.ts";
 
 /** One place the generator's unit key is derived, so each critic's dependency link names the draft it judged. */
@@ -54,7 +52,6 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const checkTimeoutMs = Math.min(normalizeTimeout(params.timeoutMs), DEFAULT_CHECK_COMMAND_TIMEOUT_MS);
 
 	const results: FlowRunResult[] = [];
-	const handoffWarnings = new HandoffWarnings();
 	const emitLive = (inFlight?: FlowRunResult) => {
 		onUpdate?.({
 			content: [{ type: "text", text: `Flow evaluate: ${results.length} step(s) settled` }],
@@ -135,34 +132,32 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				details: makeDetails("evaluate")(results),
 			};
 		}
-		let envelopeText: string | null = null;
-		if (contract) {
-			const validated = validateReturnEnvelope(generated, contract, resolvedCwd(defaultCwd, generatorRef.cwd), policy);
-			if (validated.error) {
-				return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("evaluate")(results, validated.error) };
-			}
-			envelopeText = canonicalEnvelope(validated.envelope!);
-		}
-
-		// The artifact crosses a trust boundary into the critic prompt: strip
-		// invisible characters and flag injection markers before reuse.
-		const artifactPrep = handoffWarnings.addFrom(envelopeText === null
-			? prepareResultHandoff(generated, policy, undefined, deps.handoffGuard)
-			: prepareTextHandoff(envelopeText, policy, undefined, deps.handoffGuard));
-		const artifact = artifactPrep.text;
+		const validatedArtifact = deps.handoffs.consumeResult({
+			result: generated,
+			contract,
+			cwd: resolvedCwd(defaultCwd, generatorRef.cwd),
+			scope: { stage, key: generatorKey(stage.key) },
+			consumed: false,
+			payload: "source",
+		});
+		if (validatedArtifact.error) return { content: [{ type: "text", text: formatFlowError(validatedArtifact.error) }], details: makeDetails("evaluate")(results, validatedArtifact.error) };
+		let artifact = validatedArtifact.text;
 		// The critics judge this text, not the generator's raw output: it has been
 		// validated, capped, and injection-scanned on the way here. Emitted only
 		// once a consumer is known — a failed check on the final iteration ends the
 		// run, and nothing ever reads this artifact.
-		const emitArtifactHandoff = () => {
-			recordStepHandoff(deps, {
+		const consumeArtifactHandoff = () => {
+			const handoff = deps.handoffs.consumeResult({
 				result: generated,
 				contract,
-				envelope: generated.envelope,
-				prepared: { ...artifactPrep, text: artifact },
+				cwd: resolvedCwd(defaultCwd, generatorRef.cwd),
 				scope: { stage, key: generatorKey(stage.key) },
+				payload: "source",
 			});
-			priorArtifactKey = `${generatorKey(stage.key)}.handoff`;
+			artifact = handoff.text;
+			priorArtifact = handoff.text;
+			priorArtifactKey = handoff.dependencyKey;
+			return handoff.error;
 		};
 		priorArtifact = artifact;
 
@@ -196,21 +191,23 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				// invisible characters, and injection-scanned. A check that prints an
 				// attacker-controlled file is no more trustworthy than an agent.
 				const checkRaw = `## Automated check FAILED: \`${checkCommand}\`\n\n${check.output}\n\nFix the failing check before anything else — a separate critic will not run until it passes.`;
-				const checkPrep = handoffWarnings.addFrom(prepareTextHandoff(checkRaw, policy, undefined, deps.handoffGuard));
-				critique = checkPrep.text;
 				feedbackKey = `${stage.key}.check`;
 				// Only when a generator will actually read it: on the final iteration
 				// the run ends here, and recording a boundary nothing crossed would
 				// invent one. The same applies to the artifact that revision revises.
 				if (iteration < maxIterations) {
-					emitArtifactHandoff();
-					recordTextHandoff(deps, {
+					const artifactError = consumeArtifactHandoff();
+					if (artifactError) return { content: [{ type: "text", text: formatFlowError(artifactError) }], details: makeDetails("evaluate")(results, artifactError) };
+					const checkHandoff = deps.handoffs.consumeText({
 						fromAgent: `checkCommand:${checkCommand}`,
-						raw: checkRaw,
-						prepared: { ...checkPrep, text: critique },
-						scope: { stage, key: `${stage.key}.check.handoff`, dependsOn: [`${stage.key}.check`] },
+						text: checkRaw,
+						scope: { stage, key: `${stage.key}.check` },
 					});
-					feedbackKey = `${stage.key}.check.handoff`;
+					if (checkHandoff.error) return { content: [{ type: "text", text: formatFlowError(checkHandoff.error) }], details: makeDetails("evaluate")(results, checkHandoff.error) };
+					critique = checkHandoff.text;
+					feedbackKey = checkHandoff.dependencyKey;
+				} else {
+					critique = deps.handoffs.prepareText(checkRaw).text;
 				}
 				emitLive();
 				continue;
@@ -218,7 +215,8 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		// The critics below read the artifact, so the boundary is real from here on.
-		emitArtifactHandoff();
+		const artifactError = consumeArtifactHandoff();
+		if (artifactError) return { content: [{ type: "text", text: formatFlowError(artifactError) }], details: makeDetails("evaluate")(results, artifactError) };
 
 		// 3. Critic panel (level-2 / LLM-as-judge) judges the ARTIFACT — not the
 		// generator's reasoning trace. PASS requires every critic to pass.
@@ -279,20 +277,21 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// Critique fed back = the REVISE critics' output (a handoff: clean + scan).
 		const revising = verdicts.filter((verdict) => !verdict.pass);
 		const critiqueRaw = revising.map((verdict, index) => `### Critic ${index + 1} (${verdict.agent})\n\n${verdict.text}`).join("\n\n---\n\n");
-		const critiquePrep = handoffWarnings.addFrom(prepareTextHandoff(critiqueRaw, policy, undefined, deps.handoffGuard));
-		critique = critiquePrep.text;
 		// The next generator reads this combined critique, not the panel verdict:
 		// the text was aggregated, capped, and injection-scanned on the way here.
 		// A REVISE on the final iteration ends the run: the critique reaches the
 		// caller, not another agent, so no boundary was crossed.
 		if (iteration < maxIterations) {
-			recordTextHandoff(deps, {
+			const critiqueHandoff = deps.handoffs.consumeText({
 				fromAgent: revising.map((verdict) => verdict.agent).join(","),
-				raw: critiqueRaw,
-				prepared: { ...critiquePrep, text: critique },
+				text: critiqueRaw,
 				scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
 			});
-			feedbackKey = `${stage.key}.feedback`;
+			if (critiqueHandoff.error) return { content: [{ type: "text", text: formatFlowError(critiqueHandoff.error) }], details: makeDetails("evaluate")(results, critiqueHandoff.error) };
+			critique = critiqueHandoff.text;
+			feedbackKey = critiqueHandoff.dependencyKey;
+		} else {
+			critique = deps.handoffs.prepareText(critiqueRaw).text;
 		}
 	}
 
@@ -302,7 +301,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const header = passed
 		? `Flow evaluate: PASS after ${rounds} iteration${rounds === 1 ? "" : "s"} via ${criticLabel}${gate}.`
 		: `Flow evaluate: did not pass within ${maxIterations} iteration${maxIterations === 1 ? "" : "s"}${gate} — returning the last attempt with the final critique.`;
-	const warningNote = handoffWarnings.summary();
+	const warningNote = deps.handoffs.warningSummary();
 	const body = passed ? finalArtifact : `## Last attempt\n\n${finalArtifact}\n\n## Final critique\n\n${critique}`;
 	return {
 		content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${body}`) }],

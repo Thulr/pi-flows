@@ -1,10 +1,9 @@
 import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 const VOTER_STANCES = [
 	"Primary solver: answer the task directly and state the strongest evidence for your conclusion.",
@@ -118,9 +117,12 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		{ key: "voters", name: "voters" },
 	);
 	const aggregatorRef: FlowAgentRefInput | undefined = spec.debrief?.agent ? spec.debrief : undefined;
-	const voterHandoffError = acceptIntegrationResults(deps, voterPlans, voterResults, undefined, { consumed: Boolean(aggregatorRef) });
-	if (voterHandoffError) {
-		return { content: [{ type: "text", text: formatFlowError(voterHandoffError) }], details: makeDetails("vote")(voterResults, voterHandoffError) };
+	const voterEntries = voterResults.flatMap((result, index) =>
+		isFailed(result) ? [] : [{ result, plan: voterPlans[index], consumed: Boolean(aggregatorRef) }],
+	);
+	const voterHandoffs = deps.handoffs.consumeResults(voterEntries);
+	if (voterHandoffs.error) {
+		return { content: [{ type: "text", text: formatFlowError(voterHandoffs.error) }], details: makeDetails("vote")(voterResults, voterHandoffs.error) };
 	}
 
 	// Vendor-diversity check: same-model voters share training-data blind spots, so
@@ -137,21 +139,16 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	// was never cast.
 	// Through each ballot's handoff: what the aggregator reads is the validated,
 	// filtered, injection-scanned text, not the voter's raw output.
-	const consumedBallotKeys = voterResults.flatMap((result, index) => isFailed(result) ? [] : [`${voterKey(index)}.handoff`]);
+	const consumedBallotKeys = aggregatorRef ? voterHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) : [];
 	if (succeeded.length === 0) {
 		return { content: [{ type: "text", text: sanitizeText(`${diversityWarning}Flow vote: all ${voterResults.length} voters failed.`, policy) }], details: makeDetails("vote")(voterResults) };
 	}
 
 	// Ballots feed the aggregator prompt — a trust boundary. Clean + scan each.
-	const ballotWarnings = new HandoffWarnings();
 	const ballots = succeeded
-		.map((result, i) => {
-			const prepared = prepareResultHandoff(result, policy, undefined, aggregatorRef ? deps.handoffGuard : undefined);
-			const prep = aggregatorRef ? ballotWarnings.addFrom(prepared) : prepared;
-			return `### Voter ${i + 1} (${result.agent})\n\n${prep.text}`;
-		})
+		.map((result, i) => `### Voter ${i + 1} (${result.agent})\n\n${voterHandoffs.items[i]?.text ?? ""}`)
 		.join("\n\n---\n\n");
-	const ballotSummary = ballotWarnings.summary("Handoff injection check flagged in voter output").trim();
+	const ballotSummary = deps.handoffs.warningSummary("Handoff injection check flagged in voter output").trim();
 	const ballotWarningNote = ballotSummary ? `${ballotSummary}\n\n` : "";
 
 	const results = [...voterResults];
@@ -176,8 +173,8 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		if (isFailed(aggregated)) {
 			return { content: [{ type: "text", text: sanitizeText(`Flow vote: aggregator "${aggregatorRef.agent}" failed.\n\n${resultText(aggregated)}`, policy) }], details: makeDetails("vote")(results) };
 		}
-		const aggregatorHandoffError = acceptIntegrationResult(deps, planned.plan!, aggregated, undefined, { consumed: false });
-		if (aggregatorHandoffError) return { content: [{ type: "text", text: formatFlowError(aggregatorHandoffError) }], details: makeDetails("vote")(results, aggregatorHandoffError) };
+		const aggregatorHandoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: aggregated, consumed: false });
+		if (aggregatorHandoff.error) return { content: [{ type: "text", text: formatFlowError(aggregatorHandoff.error) }], details: makeDetails("vote")(results, aggregatorHandoff.error) };
 		return {
 			content: [{ type: "text", text: capModelVisibleText(`${diversityWarning}${ballotWarningNote}Flow vote: ${succeeded.length}/${voterResults.length} voters succeeded; aggregated by ${aggregatorRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(aggregated), policy)}`) }],
 			details: makeDetails("vote")(results),

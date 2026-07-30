@@ -1,10 +1,8 @@
 import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { appendReturnRequirements, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentRef } from "../runner.ts";
-import { recordStepHandoff } from "../integration.ts";
 
 /** One place each loop unit key is derived, so the judge's dependency link names the body that actually ran. */
 const bodyKey = (stageKey: string) => `${stageKey}.body`;
@@ -54,16 +52,20 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
 		const bodyDone = judgeRef ? false : parseLoopStatus(resultText(body)) === "done";
 		const bodyConsumed = Boolean(judgeRef) || (!bodyDone && iteration < maxIterations);
-		const bodyPrep = prepareResultHandoff(body, policy, undefined, bodyConsumed ? deps.handoffGuard : undefined);
-		previous = withInjectionNotice(bodyPrep, `loop iteration ${iteration} output`);
+		const bodyHandoff = deps.handoffs.consumeResult({
+			result: body,
+			scope: { stage, key: bodyKey(stage.key) },
+			consumed: bodyConsumed,
+			noticeLabel: `loop iteration ${iteration} output`,
+			payload: "source",
+		});
+		previous = bodyHandoff.text;
 		// This output crosses to a judge, or to the next iteration. On a final pass
 		// with neither, it is the answer — no boundary was crossed, and recording
 		// one would invent an inter-agent handoff in a healthy trace.
-		if (bodyConsumed) {
-			recordStepHandoff(deps, { result: body, prepared: { ...bodyPrep, text: previous }, scope: { stage, key: bodyKey(stage.key) } });
-		}
+		if (bodyHandoff.error) return { content: [{ type: "text", text: formatFlowError(bodyHandoff.error) }], details: makeDetails("loop")(results, bodyHandoff.error) };
 
-		priorIterationKey = `${bodyKey(stage.key)}.handoff`;
+		priorIterationKey = bodyHandoff.dependencyKey;
 		if (!judgeRef) {
 			done = bodyDone;
 			if (done) break;
@@ -85,13 +87,18 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		done = parseVerdict(resultText(judged)) === "pass";
 		if (done) break;
 		const critiqueConsumed = iteration < maxIterations;
-		const critiquePrep = prepareResultHandoff(judged, policy, undefined, critiqueConsumed ? deps.handoffGuard : undefined);
-		critique = withInjectionNotice(critiquePrep, `loop judge iteration ${iteration}`);
+		const critiqueHandoff = deps.handoffs.consumeResult({
+			result: judged,
+			scope: { stage, key: `${stage.key}.judge` },
+			consumed: critiqueConsumed,
+			noticeLabel: `loop judge iteration ${iteration}`,
+			payload: "source",
+		});
+		critique = critiqueHandoff.text;
 		// Likewise: a REVISE on the final iteration ends the loop, so nothing reads
 		// this critique and no boundary was crossed.
-		if (critiqueConsumed) {
-			recordStepHandoff(deps, { result: judged, prepared: { ...critiquePrep, text: critique }, scope: { stage, key: `${stage.key}.judge` } });
-		}
+		if (critiqueHandoff.error) return { content: [{ type: "text", text: formatFlowError(critiqueHandoff.error) }], details: makeDetails("loop")(results, critiqueHandoff.error) };
+		priorIterationKey = critiqueHandoff.dependencyKey;
 	}
 
 	if (done) {

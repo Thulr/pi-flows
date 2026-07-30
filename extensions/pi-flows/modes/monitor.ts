@@ -1,6 +1,5 @@
 import * as path from "node:path";
 import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
-import { prepareTextHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../commands.ts";
@@ -86,7 +85,12 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: `${formatFlowError(error)}\n\n${sanitizeText(observations.join("\n\n"), policy)}` }], details: deps.makeDetails("monitor")([], error) };
 	}
 
-	const prepared = prepareTextHandoff(triggered.output, policy, undefined, deps.handoffGuard);
+	const prepared = deps.handoffs.consumeText({
+		fromAgent: `monitor:${spec.command}`,
+		text: triggered.output,
+		scope: { key: TRIGGER_KEY },
+	});
+	if (prepared.error) return { content: [{ type: "text", text: formatFlowError(prepared.error) }], details: deps.makeDetails("monitor")([], prepared.error) };
 	const reactor: FlowAgentRefInput = spec.reactor?.agent ? spec.reactor : { agent: "analyst" };
 	const reactTask = [
 		"## Monitor goal",
@@ -98,7 +102,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 	].join("\n");
 	// The reactor's whole input is the triggering observation, so the diagnosis
 	// must not export as independent of what it diagnosed.
-	const reacted = await runAgentRef(deps, reactor, reactTask, "monitor", 1, [], { scope: { key: "reactor", dependsOn: [TRIGGER_KEY] } });
+	const reacted = await runAgentRef(deps, reactor, reactTask, "monitor", 1, [], { scope: { key: "reactor", dependsOn: [prepared.dependencyKey!] } });
 	if (isFailed(reacted)) return { content: [{ type: "text", text: sanitizeText(`Flow monitor triggered on check ${triggered.check}, but reactor ${reactor.agent} failed.\n\n${resultText(reacted)}`, policy) }], details: deps.makeDetails("monitor")([reacted]) };
 	return {
 		content: [{ type: "text", text: capModelVisibleText(`Flow monitor: trigger "${trigger}" fired on check ${triggered.check}/${maxChecks}; reactor ${reactor.agent} completed.${prepared.warnings.length ? " Probe output contained injection-like text and was treated as data." : ""}\n\n${sanitizeText(resultText(reacted), policy)}`) }],

@@ -4,7 +4,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createHandoffGuard, resolveHandoffPolicy } from "../extensions/pi-flows/handoff.ts";
+import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { handleChain } from "../extensions/pi-flows/modes/chain.ts";
 import { handleRoute } from "../extensions/pi-flows/modes/route.ts";
 import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
@@ -19,9 +19,18 @@ function workspace(): string {
 }
 
 function depsFor(params: Record<string, unknown>, adapter: FaultAdapter, mode: FlowMode) {
-	return faultDeps(params, adapter, workspace(), {
-		handoffGuard: createHandoffGuard(resolveHandoffPolicy(params, mode)),
-	});
+	const cwd = workspace();
+	const deps = faultDeps(params, adapter, cwd);
+	return {
+		...deps,
+		handoffs: createHandoffConsumer({
+			params,
+			mode,
+			policy: deps.policy,
+			defaultCwd: cwd,
+			recordEvent: deps.recordEvent,
+		}),
+	};
 }
 
 function observed(

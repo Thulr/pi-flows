@@ -1,10 +1,8 @@
 import { DEFAULT_SEARCH_BEAM_WIDTH, flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { appendReturnRequirements, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { recordStepHandoff } from "../integration.ts";
 import { searchTopology } from "../topology.ts";
 
 /** One place each search unit key is derived, so a later dependency link names a unit that exists. */
@@ -38,7 +36,6 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 
 	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 	const results: FlowRunResult[] = [];
-	const handoffWarnings = new HandoffWarnings();
 	// The beam carries the score unit that selected each candidate, so the next
 	// round's generators can link to the evidence they are refining rather than
 	// appearing as unrelated siblings.
@@ -77,16 +74,17 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		results.push(...generated);
 		// Keep each surviving candidate tied to the generator span that produced it,
 		// so its score links back to the right candidate rather than to the round.
-		const candidateEntries = generated
-			.map((result, index) => ({ result, dependency: generatorKey(roundStage.key, index) }))
-			.filter(({ result }) => !isFailed(result))
-			.map(({ result, dependency }) => {
-				const prepared = handoffWarnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
-				// The scorer judges this prepared candidate; the boundary is where the
-				// generator's output became text another agent reads.
-				recordStepHandoff(deps, { result, prepared, scope: { stage: generateStage, key: dependency } });
-				return { text: prepared.text, dependency: `${dependency}.handoff` };
+		const candidateEntries: Array<{ text: string; dependency: string }> = [];
+		for (const [index, result] of generated.entries()) {
+			if (isFailed(result)) continue;
+			const handoff = deps.handoffs.consumeResult({
+				result,
+				scope: { stage: generateStage, key: generatorKey(roundStage.key, index) },
+				payload: "source",
 			});
+			if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("search")(results, handoff.error) };
+			candidateEntries.push({ text: handoff.text, dependency: handoff.dependencyKey! });
+		}
 		const candidates = candidateEntries.map((entry) => entry.text);
 		if (candidates.length === 0) {
 			const error = flowError("SEARCH_NO_CANDIDATES", "Search generated no usable candidates.", "Every candidate generator failed or returned unusable output.", "Narrow the task, reduce candidates, or use a different search.generator.");
@@ -138,5 +136,5 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const final = await runAgentRef(deps, debriefRef, finalTask, "search", results.length + 1, results, { scope: { key: "debrief", dependsOn: beam.map((candidate) => candidate.scoreKey) } });
 	results.push(final);
 	if (isFailed(final)) return { content: [{ type: "text", text: sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy) }], details: makeDetails("search")(results) };
-	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${handoffWarnings.summary()}\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };
+	return { content: [{ type: "text", text: capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(final), policy)}`) }], details: makeDetails("search")(results) };
 }

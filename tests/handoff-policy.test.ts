@@ -273,7 +273,7 @@ test("fail-policy aggregated feedback is traced as rejected", async () => {
 	);
 	assert.equal(calls.filter((call) => call.agent === "operator").length, 1);
 	const parsed = parseTraceJsonl(await readFile(`${stubDir}/trace.jsonl`, "utf8"));
-	const feedback = parsed.spans.find((span) => span.attributes?.["flow.unit_key"] === "iteration-1.feedback");
+	const feedback = parsed.spans.find((span) => span.attributes?.["flow.unit_key"] === "iteration-1.feedback.handoff");
 	assert.ok(feedback);
 	assert.equal(feedback.attributes?.["flow.handoff.acceptance"], "rejected:HANDOFF_POLICY_VIOLATION");
 	assert.equal(feedback.attributes?.["flow.handoff.policy_action"], "fail");

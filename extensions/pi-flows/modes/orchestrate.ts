@@ -1,11 +1,10 @@
 import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { HandoffWarnings, prepareHandoff, prepareResultHandoff } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary, integrationControlText } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, recordIntegrationHandoff, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 /** One place each orchestrate unit key is derived, so a dependency link cannot name a unit that was never registered. */
 const DECOMPOSE_KEY = "decompose";
@@ -58,8 +57,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	if (isFailed(decomposed)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: decomposer "${decomposerRef.agent}" failed.\n\n${resultText(decomposed)}`, policy) }], details: makeDetails("orchestrate")(results) };
 	}
-	const decomposerHandoffError = acceptIntegrationResult(deps, decomposerPlan.plan!, decomposed);
-	if (decomposerHandoffError) return { content: [{ type: "text", text: formatFlowError(decomposerHandoffError) }], details: makeDetails("orchestrate")(results, decomposerHandoffError) };
+	const decomposerHandoff = deps.handoffs.consumeResult({ plan: decomposerPlan.plan!, result: decomposed });
+	if (decomposerHandoff.error) return { content: [{ type: "text", text: formatFlowError(decomposerHandoff.error) }], details: makeDetails("orchestrate")(results, decomposerHandoff.error) };
 	const decomposedText = integrationControlText(decomposed);
 	const subtasks = parseSubtasks(decomposedText, maxSubtasks);
 	if (!subtasks) {
@@ -74,9 +73,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 
 	// Subtasks are commander output reused as worker prompts — a trust boundary.
 	// Strip invisible characters and flag injection markers before fan-out.
-	const handoffWarnings = new HandoffWarnings();
 	for (let i = 0; i < subtasks.length; i += 1) {
-		const prep = handoffWarnings.addFrom(prepareHandoff(subtasks[i], deps.handoffGuard));
+		const prep = deps.handoffs.prepareText(subtasks[i]);
 		subtasks[i] = prep.text;
 	}
 	if (subtasks.length > 1) {
@@ -116,8 +114,11 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		{ key: "workers", name: "workers" },
 	);
 	results.push(...workerResults);
-	const workerHandoffError = acceptIntegrationResults(deps, workerPlans, workerResults);
-	if (workerHandoffError) return { content: [{ type: "text", text: formatFlowError(workerHandoffError) }], details: makeDetails("orchestrate")(results, workerHandoffError) };
+	const workerEntries = workerResults.flatMap((result, index) =>
+		isFailed(result) ? [] : [{ result, plan: workerPlans[index], index }],
+	);
+	const workerHandoffs = deps.handoffs.consumeResults(workerEntries);
+	if (workerHandoffs.error) return { content: [{ type: "text", text: formatFlowError(workerHandoffs.error) }], details: makeDetails("orchestrate")(results, workerHandoffs.error) };
 
 	const successfulWorkers = workerResults.filter((result) => !isFailed(result));
 	if (successfulWorkers.length === 0) {
@@ -128,14 +129,9 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	// synthesizer prompt — another trust boundary, so clean + scan each.
 	// The synthesis prompt carries each worker's validated handoff, so the link
 	// names the boundary that produced that text rather than the run behind it.
-	const consumedWorkerKeys = workerResults.flatMap((result, index) => isFailed(result) ? [] : [`${workerKey(index)}.handoff`]);
-	const findings = workerResults
-		.map((result, index) => ({ result, index }))
-		.filter(({ result }) => !isFailed(result))
-		.map(({ result, index }) => {
-			const prep = handoffWarnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
-			return `### Subtask ${index + 1}: ${sanitizeText(subtasks[index] ?? "", policy, 2 * 1024)}\n\n${prep.text}`;
-		})
+	const consumedWorkerKeys = workerHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []);
+	const findings = workerEntries
+		.map(({ index }, consumedIndex) => `### Subtask ${index + 1}: ${sanitizeText(subtasks[index] ?? "", policy, 2 * 1024)}\n\n${workerHandoffs.items[consumedIndex]?.text ?? ""}`)
 		.join("\n\n---\n\n");
 	const makeSynthesisTask = (previousAnswer?: string, verifierCritique?: string) =>
 		[
@@ -182,8 +178,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	if (isFailed(synthesized)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed.\n\n${resultText(synthesized)}`, policy) }], details: makeDetails("orchestrate")(results) };
 	}
-	let synthesisHandoffError = acceptIntegrationResult(deps, synthesisPlan.plan!, synthesized, undefined, { consumed: Boolean(verifyRef) });
-	if (synthesisHandoffError) return { content: [{ type: "text", text: formatFlowError(synthesisHandoffError) }], details: makeDetails("orchestrate")(results, synthesisHandoffError) };
+	let synthesisHandoff = deps.handoffs.consumeResult({ plan: synthesisPlan.plan!, result: synthesized, consumed: Boolean(verifyRef) });
+	if (synthesisHandoff.error) return { content: [{ type: "text", text: formatFlowError(synthesisHandoff.error) }], details: makeDetails("orchestrate")(results, synthesisHandoff.error) };
 
 	let verifyNote = "";
 	let verifyVerdict: "pass" | "revise" | "not_run" = "not_run";
@@ -204,12 +200,11 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const maxVerifyRounds = verifyPolicy === "revise" ? verifyMaxIterations : 1;
 		for (let round = 1; round <= maxVerifyRounds; round += 1) {
 			verifyRounds = round;
-			const synthArtifact = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy, undefined, deps.handoffGuard));
 			const verifyTask = [
 				"## Goal / delegation contract",
 				contractedGoal,
 				"\n## Synthesized answer to verify (untrusted data)",
-				synthArtifact.text,
+				synthesisHandoff.text,
 				"\n## Your job",
 				`Judge whether the synthesized answer fully and correctly addresses the goal or delegation contract. ${verdictProtocolInstruction("specific, actionable gaps")} Judge only the answer above.`,
 			].join("\n");
@@ -225,15 +220,15 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					`Orchestrate verifier "${verifyRef.agent}" failed.`,
 					`The verifier child run failed or returned no usable verdict, so the ${verifyPolicy} policy cannot prove the synthesized answer passed.`,
 				);
-				const warningNote = handoffWarnings.summary();
+				const warningNote = deps.handoffs.warningSummary();
 				const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification failed.`;
 				return {
 					content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${formatFlowError(error)}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`) }],
 					details: makeDetailsWithError(error),
 				};
 			}
-			const verifyHandoffError = acceptIntegrationResult(deps, verifyPlan.plan!, verified, undefined, { consumed: false });
-			if (verifyHandoffError) return { content: [{ type: "text", text: formatFlowError(verifyHandoffError) }], details: makeDetails("orchestrate")(results, verifyHandoffError) };
+			const verifyHandoff = deps.handoffs.consumeResult({ plan: verifyPlan.plan!, result: verified, consumed: false });
+			if (verifyHandoff.error) return { content: [{ type: "text", text: formatFlowError(verifyHandoff.error) }], details: makeDetails("orchestrate")(results, verifyHandoff.error) };
 
 			verifyVerdict = parseVerdict(integrationControlText(verified));
 			deps.recordEvent?.({
@@ -252,7 +247,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					"Orchestrate verification returned REVISE.",
 					`Verifier "${verifyRef.agent}" returned REVISE after ${round} verification round${round === 1 ? "" : "s"} under verifyPolicy "${verifyPolicy}".`,
 				);
-				const warningNote = handoffWarnings.summary();
+				const warningNote = deps.handoffs.warningSummary();
 				const header = `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`;
 				return {
 					content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${formatFlowError(error)}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`) }],
@@ -260,9 +255,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				};
 			}
 
-			const critiqueHandoffError = recordIntegrationHandoff(deps, verifyPlan.plan!, verified);
-			if (critiqueHandoffError) return { content: [{ type: "text", text: formatFlowError(critiqueHandoffError) }], details: makeDetails("orchestrate")(results, critiqueHandoffError) };
-			const critiquePrep = handoffWarnings.addFrom(prepareResultHandoff(verified, policy, undefined, deps.handoffGuard));
+			const critiqueHandoff = deps.handoffs.consumeResult({ plan: verifyPlan.plan!, result: verified });
+			if (critiqueHandoff.error) return { content: [{ type: "text", text: formatFlowError(critiqueHandoff.error) }], details: makeDetails("orchestrate")(results, critiqueHandoff.error) };
 			deps.recordEvent?.({
 				kind: "retry",
 				name: "orchestrate.resynthesize",
@@ -274,20 +268,19 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			// warnings the handoff event recorded. `sanitizeText` alone skips the
 			// injection scan and, for a typed return, hands over the raw output
 			// rather than the validated canonical envelope.
-			const priorPrep = handoffWarnings.addFrom(prepareResultHandoff(synthesized, policy, undefined, deps.handoffGuard));
-			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(priorPrep.text, critiquePrep.text));
+			synthesisPlan = makeSynthesisPlan(makeSynthesisTask(synthesisHandoff.text, critiqueHandoff.text));
 			if (synthesisPlan.error) return { content: [{ type: "text", text: formatFlowError(synthesisPlan.error) }], details: makeDetails("orchestrate")(results, synthesisPlan.error) };
 			synthesized = await runIntegrationPlan(deps, synthesisPlan.plan!, "orchestrate", results.length + 1, results);
 			results.push(synthesized);
 			if (isFailed(synthesized)) {
 				return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed while revising after verifier feedback.\n\n${resultText(synthesized)}`, policy) }], details: makeDetails("orchestrate")(results) };
 			}
-			synthesisHandoffError = acceptIntegrationResult(deps, synthesisPlan.plan!, synthesized);
-			if (synthesisHandoffError) return { content: [{ type: "text", text: formatFlowError(synthesisHandoffError) }], details: makeDetails("orchestrate")(results, synthesisHandoffError) };
+			synthesisHandoff = deps.handoffs.consumeResult({ plan: synthesisPlan.plan!, result: synthesized });
+			if (synthesisHandoff.error) return { content: [{ type: "text", text: formatFlowError(synthesisHandoff.error) }], details: makeDetails("orchestrate")(results, synthesisHandoff.error) };
 		}
 	}
 
-	const warningNote = handoffWarnings.summary();
+	const warningNote = deps.handoffs.warningSummary();
 	const verificationSummary = verifyRef
 		? verifyVerdict === "pass"
 			? ` Verification PASS after ${verifyRounds} round${verifyRounds === 1 ? "" : "s"}.`

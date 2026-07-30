@@ -414,6 +414,7 @@ export function prepareIntegrationHandoff(
 		cwd: string;
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
+		attach?: boolean;
 	},
 ): { handoff?: DelegationHandoffEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	let handoff: DelegationHandoffEnvelope;
@@ -433,7 +434,7 @@ export function prepareIntegrationHandoff(
 		// exactly as a digest mismatch does.
 		return { error: storedError(incompleteEnvelopeError(handoff), options.policy), ...(returned ? { rejected: returned } : {}) };
 	}
-	result.handoff = handoff;
+	if (options.attach !== false) result.handoff = handoff;
 	return { handoff };
 }
 
