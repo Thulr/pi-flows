@@ -89,6 +89,7 @@ test("generated-token budget stops the active child and forbids unchanged replay
 	assert.match(result.content[0].text, /Code: BUDGET_EXCEEDED/);
 	assert.match(result.content[0].text, /Retryable unchanged: no/);
 	assert.match(result.content[0].text, /Do not automatically replay this flow/);
+	assert.match(result.content[0].text, /Preserve the flow budget unless the user explicitly approves changing it/);
 	assert.ok(Date.now() - startedAt < 1_500, "budget should stop the held-open child before timeout");
 });
 

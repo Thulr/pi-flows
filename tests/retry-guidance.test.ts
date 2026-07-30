@@ -19,8 +19,9 @@ test("the parent is told not to replay a non-retryable budget failure", () => {
 		flowTool.promptGuidelines.some((line: string) =>
 			line.includes("retryable:false")
 			&& line.includes("BUDGET_EXCEEDED")
-			&& line.includes("do not automatically replay"),
+			&& line.includes("do not automatically replay")
+			&& line.includes("Preserve the configured budget unless the user explicitly approves changing it"),
 		),
-		"the parent-facing tool contract must treat unchanged budget replay as terminal",
+		"the parent-facing tool contract must treat unchanged budget replay as terminal without loosening the ceiling",
 	);
 });

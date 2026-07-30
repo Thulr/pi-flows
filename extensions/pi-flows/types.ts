@@ -403,8 +403,8 @@ export function budgetExceededError(budget: BudgetUsageState, authority: "flow" 
 		`${label} exhausted (${spent}).`,
 		`${label} usage reached a configured cost or token ceiling, so the active child was stopped when enforceable and later children are refused.`,
 		authority === "contract"
-			? "Do not automatically replay this flow. Ask the user for direction, or make a material, visible change: raise contract.budget, narrow the contracted task, or reduce the runs needed to fulfill it."
-			: "Do not automatically replay this flow. Ask the user for direction, or make a material, visible change: raise or omit the flow budget, narrow the task, or reduce fan-out (fewer voters/subtasks/iterations).",
+			? "Do not automatically replay this flow. Preserve contract.budget unless the user explicitly approves changing it. Ask the user for direction, or make a material, visible change that stays within the ceiling: narrow the contracted task or reduce the runs needed to fulfill it."
+			: "Do not automatically replay this flow. Preserve the flow budget unless the user explicitly approves changing it. Ask the user for direction, or make a material, visible change that stays within the ceiling: narrow the task or reduce fan-out (fewer voters/subtasks/iterations).",
 	);
 }
 
