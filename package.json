@@ -33,7 +33,8 @@
     "LICENSE",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "CONTEXT.md"
   ],
   "pi": {
     "extensions": [

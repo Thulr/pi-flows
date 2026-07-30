@@ -3,12 +3,32 @@ import { PI_FLOWS_VERSION, flowError, type AgentScope, type FlowDetails, type Fl
 import { isFailed, sanitizeText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 
-export function flowStatusText(details: FlowDetails): string {
+/**
+ * The header state text every live surface shows, so none of them can drift into
+ * its own vocabulary. A bare `settled/total` was ambiguous in both directions:
+ * `0/2` read as "no runs have started" and `2/2` read as "both runs succeeded"
+ * even when both failed. So the ratio names what it counts (**settled** runs —
+ * see CONTEXT.md) while any run is outstanding, then gives way to the verdict,
+ * because `N/N` is the exact string that reads as a success total while carrying
+ * nothing the verdict and the per-run rows do not.
+ *
+ * A flow-level error is the caller's to render: it takes precedence over this
+ * text on the status line, and sits beside it on the board surfaces.
+ */
+export function flowProgressText(details: FlowDetails): string {
 	const total = details.results.length;
+	// A dispatched flow reaches the status line before its first run registers.
+	// Reporting that as `0 ok` would be the same false success the ratio was.
+	if (total === 0) return "starting";
 	const settled = details.results.filter((result) => result.exitCode !== -1).length;
-	const failed = details.results.filter((result) => result.exitCode !== -1 && isFailed(result)).length;
+	if (settled < total) return `${settled}/${total} settled`;
+	const failed = details.results.filter((result) => isFailed(result)).length;
+	return failed ? `${failed} failed` : `${total} ok`;
+}
+
+export function flowStatusText(details: FlowDetails): string {
 	const usage = flowUsageTotals(details.results.filter((result) => result.exitCode !== -1));
-	const state = details.error ? `error:${details.error.code}` : settled < total ? `${settled}/${total}` : failed ? `${failed} failed` : "ok";
+	const state = details.error ? `error:${details.error.code}` : flowProgressText(details);
 	const cost = usage.cost ? ` $${usage.cost.toFixed(4)}` : "";
 	const tokens = usage.input || usage.output ? ` ${formatTokens(usage.input + usage.output)} tok` : "";
 	return `flow ${details.mode}: ${state}${cost}${tokens}`;

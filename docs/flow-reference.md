@@ -44,6 +44,21 @@ in-memory flow updates:
   scroll, End to return to the latest activity, and Escape to close the overlay
   without interrupting the child.
 
+### What the fan-out counter counts
+
+The tool row and the fleet panel head a fan-out with `1/3 settled`: the numerator
+counts [**settled**](../CONTEXT.md#delegation-model) runs, not successful ones.
+Once every run has settled the ratio is replaced by the outcome — `2 failed` or
+`3 ok` — because `3/3` reads as a success total. On those two surfaces a
+single-run flow shows neither, since the header would only restate the one run
+below it.
+
+The Pi status line and the widget above the editor report the same text for every
+flow, including single-run ones (`flow single: 0/1 settled`), and a flow-level
+error takes precedence over it there (`flow single: error:BUDGET_EXCEEDED`). On
+the board surfaces a flow-level error is reported alongside the run counts, as a
+status icon on the tool row and an `error:` line on both.
+
 After a flow settles, a durable flow card entry stays in the session transcript
 (and re-renders after `pi` restarts): status, per-run duration bars, cost
 rollup, failure codes, and the trace file pointer when tracing was on.

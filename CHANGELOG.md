@@ -23,6 +23,23 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `appendReturnRequirements`. Route traces use the canonical `selected` unit key
   instead of `specialist`. Other existing JSON fields and the persisted
   `pi-flows.run` entry name remain compatible.
+- `CONTEXT.md` now ships in the package, because README and the flow reference
+  point at its term definitions instead of restating them.
+
+### Fixed
+
+- The live progress counter says what it counts. A fan-out header rendered a
+  bare `settled/total`, so `0/2` read as "no runs started" and `2/2` read as
+  "both runs succeeded" even when both failed with `BUDGET_EXCEEDED`. While any
+  run is outstanding every surface now renders `0/2 settled`; once all have
+  settled the ratio gives way to the verdict (`2 failed`, `2 ok`). The live tool
+  row, fleet panel, status line, and widget all take that text from one new
+  exported helper, `flowProgressText(details)`, so they cannot drift apart
+  again. Single-run flows keep their bare board headers, and a flow-level error
+  keeps its precedence on the status line. **String changes:** the status line
+  and widget report `{total} ok` where they previously reported `ok`, and a
+  dispatched flow whose first run has not registered yet reports `starting`
+  instead of a runless `ok`.
 
 ## 0.4.2 - 2026-07-29
 

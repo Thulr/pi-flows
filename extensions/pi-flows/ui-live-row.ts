@@ -4,6 +4,7 @@ import { flowAgentActivity, flowAgentState } from "./inspector.ts";
 import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
+import { flowProgressText } from "./ui.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -111,12 +112,12 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	const running = settled < total;
 
 	let header = `${headerIcon(details, settled, failed, options.tick, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`;
-	// The settled/total counter, progress bar, and rollup exist to summarize a
-	// fan-out. With one child they only restate (or worse, appear to
-	// contradict) the agent line below — "0/1" reads as stuck, and the rollup
-	// counts input+output while the agent line also shows cache traffic.
+	// The state text, progress bar, and rollup exist to summarize a fan-out. With
+	// one child they only restate (or worse, appear to contradict) the agent line
+	// below — "0/1" reads as stuck, and the rollup counts input+output while the
+	// agent line also shows cache traffic.
 	if (total > 1) {
-		header += ` ${theme.fg("accent", `${settled}/${total}`)}`;
+		header += ` ${theme.fg("accent", flowProgressText(details))}`;
 		const bar = progressBar(settled, total);
 		if (bar && running) header += ` ${theme.fg("dim", bar)}`;
 		const totals = totalsText(details);
