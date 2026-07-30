@@ -53,6 +53,7 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 		mode: details.mode,
 		status: details.error ? "error" : details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
 		errorCode: details.error?.code,
+		budgetCeilings: details.budgetCeilings,
 		// Trace pointer travels with the entry so the flow card can link evidence
 		// after session reload, when the in-memory details are gone.
 		trace: details.trace ? { traceFile: details.trace.traceFile, health: details.trace.health } : undefined,
@@ -62,6 +63,7 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 			exitCode: result.exitCode,
 			stopReason: result.stopReason,
 			errorCode: result.error?.code,
+			budgetCeiling: result.error?.budgetCeiling,
 			model: result.model,
 			durationMs: result.durationMs,
 			usage: result.usage,

@@ -33,10 +33,11 @@ import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summa
 import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
+import { collectBudgetCeilings } from "./budget-disclosure.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs } from "./ui.ts";
 import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
-import { renderFlowResultRow } from "./ui-live-row.ts";
+import { flowCallLines, renderFlowResultRow } from "./ui-live-row.ts";
 import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
@@ -196,7 +197,15 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverFlowAgents(ctx.cwd, agentScope);
 			const catalog = createAgentCatalog(discovery, agentScope);
 			const policy: CapturePolicy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
-			const makeDetails = catalog.makeDetails;
+			const budgetCeilings = collectBudgetCeilings(params);
+			const makeDetails: typeof catalog.makeDetails = (detailsMode, agents) => {
+				const build = catalog.makeDetails(detailsMode, agents);
+				return (results, error) => {
+					const details = build(results, error);
+					if (budgetCeilings.length) details.budgetCeilings = budgetCeilings;
+					return details;
+				};
+			};
 
 			if (params.list) {
 				return {
@@ -216,7 +225,7 @@ export default function (pi: ExtensionAPI) {
 			if ("error" in detected) {
 				return {
 					content: [{ type: "text", text: `${formatFlowError(detected.error)}\n\nAvailable agents:\n${catalog.summary()}` }],
-					details: catalog.errorDetails("list", detected.error),
+					details: makeDetails("list")([], detected.error),
 				};
 			}
 
@@ -233,7 +242,7 @@ export default function (pi: ExtensionAPI) {
 				);
 				return {
 					content: [{ type: "text", text: formatFlowError(error) }],
-					details: catalog.errorDetails(mode, error),
+					details: makeDetails(mode)([], error),
 				};
 			}
 
@@ -294,7 +303,7 @@ export default function (pi: ExtensionAPI) {
 				recordEvent: traceSink?.event,
 			});
 			const refuse = async (error: FlowError) => {
-				const details = catalog.errorDetails(mode, error);
+				const details = makeDetails(mode)([], error);
 				// The refusal's own trace exists; without the link a caller carrying a
 				// traceContext cannot correlate the refusal to the spans that describe it.
 				const link = await traceSink?.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
@@ -436,11 +445,7 @@ export default function (pi: ExtensionAPI) {
 			const scope = args.agentScope ?? "user";
 			if (args.showConfig) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `config [${scope}]`), 0, 0);
 			if (args.list) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `list [${scope}]`), 0, 0);
-			return new Text(
-				theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", renderRunModeLabel(args)) + theme.fg("muted", ` [${scope}]`),
-				0,
-				0,
-			);
+			return new Text(flowCallLines(args, theme, renderRunModeLabel(args), scope).join("\n"), 0, 0);
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
 			return renderFlowResultRow(result as Parameters<typeof renderFlowResultRow>[0], { expanded, isPartial }, theme, context, summarizeAgents);
