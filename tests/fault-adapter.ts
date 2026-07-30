@@ -22,7 +22,7 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
-import { createHandoffGuard, resolveHandoffPolicy } from "../extensions/pi-flows/handoff.ts";
+import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { budgetAttributes } from "../extensions/pi-flows/trace-attributes.ts";
 import { budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type BudgetUsageState, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
@@ -336,7 +336,13 @@ export function faultDeps(params: Record<string, unknown>, adapter: FaultAdapter
 		params: { why: "fault-injection scenario", ...params },
 		discovery,
 		policy: { recordContent: true, redactSecrets: true },
-		handoffGuard: createHandoffGuard(resolveHandoffPolicy(params, "parallel")),
+		handoffs: createHandoffConsumer({
+			params,
+			mode: "parallel",
+			policy: { recordContent: true, redactSecrets: true },
+			defaultCwd: cwd,
+			recordEvent,
+		}),
 		agentScope: "user",
 		defaultCwd: cwd,
 		makeDetails: catalog.makeDetails,

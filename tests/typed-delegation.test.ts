@@ -71,6 +71,20 @@ test("single accepts a delegation contract as the task and retains a validated r
 	assert.match(text, /xyzzy-42/);
 });
 
+test("single preserves valid partial and failed typed terminal reports", async () => {
+	for (const status of ["partial", "failed"] as const) {
+		const { result, calls, text } = await runFlow(
+			{ agent: "recon", contract },
+			{ recon: envelope({ status }) },
+		);
+
+		assert.equal(calls.length, 1, status);
+		assert.equal(result.details.error, undefined, status);
+		assert.equal(result.details.results[0].envelope?.status, status);
+		assert.match(text, new RegExp(`"status":"${status}"`));
+	}
+});
+
 test("delegation contracts fail before dispatch when required fields are malformed", async () => {
 	const { result, calls, text } = await runFlow(
 		{ agent: "recon", contract: { ...contract, owner: "" } },
@@ -185,6 +199,28 @@ test("chain validates each envelope before passing canonical data downstream", a
 	assert.match(calls[1].task, /"answer":"xyzzy-42"/);
 });
 
+test("chain preserves incomplete terminal reports but refuses them before downstream consumption", async () => {
+	const terminal = await runFlow(
+		{ chain: [{ agent: "recon", task: "Find the identifier.", contract }] },
+		{ recon: envelope({ status: "partial" }) },
+	);
+	assert.equal(terminal.result.details.error, undefined);
+	assert.equal(terminal.result.details.results[0].envelope?.status, "partial");
+	assert.equal(terminal.calls.length, 1);
+
+	const consumed = await runFlow(
+		{
+			chain: [
+				{ agent: "recon", task: "Find the identifier.", contract },
+				{ agent: "strategist", task: "Use {previous}", contract: secondStepContract },
+			],
+		},
+		{ recon: envelope({ status: "partial" }), strategist: envelope({ contractId: delegationContractId(secondStepContract) }) },
+	);
+	assert.equal(consumed.result.details.error?.code, "RETURN_ENVELOPE_INCOMPLETE");
+	assert.equal(consumed.calls.length, 1);
+});
+
 test("chain stops before downstream consumption when an envelope is invalid", async () => {
 	const { result, calls } = await runFlow(
 		{
@@ -209,6 +245,45 @@ test("evaluate validates the generator envelope before the critic consumes it", 
 	assert.equal(result.details.error, undefined);
 	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam"]);
 	assert.match(calls[1].task, /"schemaVersion":"pi-flows\.return-envelope\.v1"/);
+});
+
+test("evaluate reuses typed validation when stored child content is omitted", async () => {
+	const { result, calls } = await runFlow(
+		{
+			contract,
+			recordContent: false,
+			evaluate: { operator: { agent: "operator" }, redteam: { agent: "redteam" }, maxIterations: 1 },
+		},
+		{ operator: envelope(), redteam: "VERDICT: PASS" },
+	);
+
+	assert.equal(result.details.error, undefined);
+	assert.deepEqual(calls.map((call) => call.agent), ["operator", "redteam"]);
+});
+
+test("evaluate applies completion eligibility only when a critic consumes the report", async () => {
+	const terminal = await runFlow(
+		{
+			contract,
+			evaluate: {
+				operator: { agent: "operator" },
+				redteam: { agent: "redteam" },
+				checkCommand: 'node -e "process.exit(1)"',
+				maxIterations: 1,
+			},
+		},
+		{ operator: envelope({ status: "partial" }), redteam: "VERDICT: PASS" },
+	);
+	assert.equal(terminal.result.details.error, undefined);
+	assert.equal(terminal.result.details.results[0].envelope?.status, "partial");
+	assert.deepEqual(terminal.calls.map((call) => call.agent), ["operator"]);
+
+	const consumed = await runFlow(
+		{ contract, evaluate: { operator: { agent: "operator" }, redteam: { agent: "redteam" }, maxIterations: 1 } },
+		{ operator: envelope({ status: "partial" }), redteam: "VERDICT: PASS" },
+	);
+	assert.equal(consumed.result.details.error?.code, "RETURN_ENVELOPE_INCOMPLETE");
+	assert.deepEqual(consumed.calls.map((call) => call.agent), ["operator"]);
 });
 
 test("evaluate.operator delegation contract overrides the top-level delegation contract", async () => {
@@ -311,4 +386,49 @@ test("a resynthesis carries the accepted handoff, not the raw prior answer", asy
 		.split("## Previous synthesized answer (revise this in place)\n")[1]
 		?.split("\n## ")[0] ?? "";
 	assert.match(priorAnswer, /^\{"schemaVersion":"pi-flows\.handoff-envelope\.v1"/);
+});
+
+test("orchestrate reuses verifier validation before deferred resynthesis", async () => {
+	const commanderContract = {
+		...contract,
+		objective: "Decompose the goal.",
+		returnSchema: { type: "array", items: { type: "string" } },
+	};
+	const { result, calls } = await runFlow(
+		{
+			task: "map the system",
+			concurrency: 1,
+			contract,
+			recordContent: false,
+			orchestrate: {
+				commander: { agent: "commander", contract: commanderContract },
+				recon: { agent: "recon" },
+				debrief: { agent: "debrief" },
+				verify: { agent: "overwatch", contract },
+				maxSubtasks: 1,
+				verifyPolicy: "revise",
+				verifyMaxIterations: 2,
+			},
+		},
+		{
+			commander: envelope({
+				contractId: delegationContractId(commanderContract),
+				data: ["only"],
+			}),
+			recon: envelope(),
+			debrief: [envelope({ summary: "First pass." }), envelope({ summary: "Revised." })],
+			overwatch: [
+				envelope({ data: { answer: "VERDICT: REVISE" } }),
+				envelope({ data: { answer: "VERDICT: PASS" } }),
+			],
+		},
+	);
+
+	// Content omission hides the verdict marker, so the verifier conservatively
+	// remains REVISE. Reaching both resynthesis rounds proves deferred validation
+	// reused the accepted envelope instead of reparsing the omitted message.
+	assert.equal(result.details.error?.code, "ORCHESTRATE_VERIFY_FAILED");
+	assert.notEqual(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.equal(calls.filter((call) => call.agent === "debrief").length, 2);
+	assert.equal(calls.filter((call) => call.agent === "overwatch").length, 2);
 });

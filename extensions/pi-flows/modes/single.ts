@@ -2,7 +2,7 @@ import type { ModeDeps, ModeOutput } from "../types.ts";
 import { formatFlowError } from "../types.ts";
 import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, resolvedCwd } from "../validate.ts";
-import { createDelegationBudget, renderDelegationTask, validateDelegationContract, validateReturnEnvelope } from "../delegation.ts";
+import { createDelegationBudget, renderDelegationTask, validateDelegationContract } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
 
 export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
@@ -28,10 +28,17 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 			scope: { key: "single" },
 		},
 	);
-	if (params.contract && !isFailed(result)) {
-		const validated = validateReturnEnvelope(result, params.contract, resolvedCwd(defaultCwd, params.cwd), policy);
-		if (validated.error) {
-			return { content: [{ type: "text", text: formatFlowError(validated.error) }], details: makeDetails("single")([result], validated.error) };
+	if (!isFailed(result)) {
+		const handoff = deps.handoffs.consumeResult({
+			result,
+			contract: params.contract,
+			cwd: resolvedCwd(defaultCwd, params.cwd),
+			consumed: false,
+			completion: "terminal",
+			payload: "source",
+		});
+		if (handoff.error) {
+			return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("single")([result], handoff.error) };
 		}
 	}
 	return {

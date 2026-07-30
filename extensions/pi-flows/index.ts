@@ -24,7 +24,8 @@ import {
 import { capModelVisibleText, isFailed, redactText, resultText, safePath, sanitizeText, scanForInjection, stripControlChars } from "./sanitize.ts";
 import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd } from "./validate.ts";
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
-import { HandoffWarnings, createHandoffGuard, prepareHandoff, prepareTextHandoff, resolveHandoffPolicy } from "./handoff.ts";
+import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
+import { createHandoffConsumer } from "./handoff-consumption.ts";
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
 import { discoverFlowAgents } from "./agents.ts";
@@ -220,7 +221,6 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const mode: FlowMode = detected.mode;
-			const handoffGuard = createHandoffGuard(resolveHandoffPolicy(params, mode));
 
 			// Structural friction against reflexive delegation: a spawning call must
 			// articulate why isolation beats doing the work in the parent context.
@@ -286,6 +286,13 @@ export default function (pi: ExtensionAPI) {
 			// asked for. Every refusal below finalizes it, so those events never end up
 			// orphaned without a root span.
 			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+			const handoffs = createHandoffConsumer({
+				params,
+				mode,
+				policy,
+				defaultCwd: ctx.cwd,
+				recordEvent: traceSink?.event,
+			});
 			const refuse = async (error: FlowError) => {
 				const details = catalog.errorDetails(mode, error);
 				// The refusal's own trace exists; without the link a caller carrying a
@@ -365,7 +372,7 @@ export default function (pi: ExtensionAPI) {
 					params: paramsForRun,
 					discovery,
 					policy,
-					handoffGuard,
+					handoffs,
 					agentScope,
 					defaultCwd: ctx.cwd,
 					signal,
@@ -388,9 +395,9 @@ export default function (pi: ExtensionAPI) {
 					runChild: runFlowAgent,
 					concurrency,
 				});
-				if (handoffGuard.blockingError && !output.details.error) {
-					output.details.error = handoffGuard.blockingError;
-					output.content = [{ type: "text", text: formatFlowError(handoffGuard.blockingError) }];
+				if (handoffs.blockingError && !output.details.error) {
+					output.details.error = handoffs.blockingError;
+					output.content = [{ type: "text", text: formatFlowError(handoffs.blockingError) }];
 				}
 				// Record the lesson only when at least one run happened — pre-spawn
 				// refusals (validation errors, approvals) are not lessons about the task.

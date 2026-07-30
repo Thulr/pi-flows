@@ -1,10 +1,9 @@
 import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { prepareResultHandoff, withInjectionNotice } from "../handoff.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 export function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
 	let rendered = template.replace(/\{task\}/g, task ?? "");
@@ -49,6 +48,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 	const { concurrency } = deps;
 	const results: FlowRunResult[] = [];
 	const outputs = new Map<string, string>();
+	const outputKeys = new Map<string, string>();
 	const completed = new Set<string>();
 	const remaining = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
 	const contractedTask = params.task;
@@ -73,7 +73,10 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				placeholderTask: node.task,
 				// A node's dependencies are links, not parentage: node b consumed node
 				// a's output but was scheduled by the wave, not spawned by a.
-				scope: { key: encodeAuthorKey(node.id), dependsOn: (node.dependsOn ?? []).map((dependency: string) => `${encodeAuthorKey(dependency)}.handoff`) },
+				scope: { key: encodeAuthorKey(node.id), dependsOn: (node.dependsOn ?? []).flatMap((dependency: string) => {
+					const key = outputKeys.get(dependency);
+					return key ? [key] : [];
+				}) },
 			});
 			if (planned.error) {
 				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
@@ -89,15 +92,22 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			(settled) => `Flow graph: ${completed.size + settled}/${nodes.length} nodes settled`,
 			{ key: `wave-${wave}`, name: `wave ${wave}` },
 		);
+		const preparedOutputs = new Map<FlowRunResult, ReturnType<typeof deps.handoffs.consumeResult>>();
 		for (const [index, result] of waveRunResults.entries()) {
 			if (isFailed(result)) continue;
 			const node = ready[index];
 			const consumed = nodeHasConsumer(node.id);
-			const handoffError = acceptIntegrationResult(deps, waveItems[index], result, undefined, { consumed });
-			if (handoffError) {
+			const handoff = deps.handoffs.consumeResult({
+				plan: waveItems[index],
+				result,
+				consumed,
+				noticeLabel: `graph node ${node.id} output`,
+			});
+			if (handoff.error) {
 				results.push(...waveRunResults);
-				return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("graph")(results, handoffError) };
+				return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("graph")(results, handoff.error) };
 			}
+			preparedOutputs.set(result, handoff);
 		}
 		const waveResults = waveRunResults.map((result, index) => ({ node: ready[index], result }));
 		for (const { node, result } of waveResults) {
@@ -106,9 +116,9 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			if (isFailed(result)) {
 				return { content: [{ type: "text", text: sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy) }], details: makeDetails("graph")(results) };
 			}
-			const consumed = nodeHasConsumer(node.id);
-			const prep = prepareResultHandoff(result, policy, undefined, consumed ? deps.handoffGuard : undefined);
-			outputs.set(node.id, withInjectionNotice(prep, `graph node ${node.id} output`));
+			outputs.set(node.id, preparedOutputs.get(result)?.text ?? "");
+			const dependencyKey = preparedOutputs.get(result)?.dependencyKey;
+			if (dependencyKey) outputKeys.set(node.id, dependencyKey);
 			completed.add(node.id);
 		}
 	}
@@ -129,14 +139,17 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			scope: { key: "debrief", dependsOn: terminalIds.map((id: string) => `${id}.handoff`) },
+			scope: { key: "debrief", dependsOn: terminalIds.flatMap((id: string) => {
+				const key = outputKeys.get(id);
+				return key ? [key] : [];
+			}) },
 		});
 		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
 		const debriefed = await runIntegrationPlan(deps, planned.plan!, "graph", results.length + 1, results);
 		results.push(debriefed);
 		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
-		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed, undefined, { consumed: false });
-		if (handoffError) return { content: [{ type: "text", text: formatFlowError(handoffError) }], details: makeDetails("graph")(results, handoffError) };
+		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, consumed: false });
+		if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("graph")(results, handoff.error) };
 		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
 	}
 

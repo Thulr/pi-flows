@@ -1,10 +1,9 @@
 import { flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { HandoffWarnings, prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { acceptIntegrationResult, acceptIntegrationResults, integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
 
 /** One place a section's unit key is derived, so the synthesizer's dependency links name the sections it read. */
 const sectionKey = (index: number) => `section-${index + 1}`;
@@ -41,22 +40,19 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		sectionItems.push(planned.plan!);
 	}
 	const results: FlowRunResult[] = await runAgentFanout(deps, "dossier", sectionItems, concurrency, [], (settled, total) => `Flow dossier: ${settled}/${total} evidence sections extracted`, { key: "sections", name: "evidence sections" });
-	const sectionHandoffError = acceptIntegrationResults(deps, sectionItems, results);
-	if (sectionHandoffError) return { content: [{ type: "text", text: formatFlowError(sectionHandoffError) }], details: deps.makeDetails("dossier")(results, sectionHandoffError) };
+	const sectionEntries = results.flatMap((result, index) =>
+		isFailed(result) ? [] : [{ result, plan: sectionItems[index], index }],
+	);
+	const sectionHandoffs = deps.handoffs.consumeResults(sectionEntries);
+	if (sectionHandoffs.error) return { content: [{ type: "text", text: formatFlowError(sectionHandoffs.error) }], details: deps.makeDetails("dossier")(results, sectionHandoffs.error) };
 	const successful = results.filter((result) => !isFailed(result));
 	if (successful.length < 2) {
 		const error = flowError("DOSSIER_TOO_FEW_SECTIONS", "Fewer than two evidence extractors produced usable results.", `Only ${successful.length}/${sections.length} sections succeeded, so cross-source reconciliation would be misleading.`, "Fix the failed evidence assignments and rerun; use single mode if only one source is required.");
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("dossier")(results, error) };
 	}
 
-	const warnings = new HandoffWarnings();
-	const evidence = results
-		.map((result, index) => ({ result, index }))
-		.filter(({ result }) => !isFailed(result))
-		.map(({ result, index }) => {
-			const prepared = warnings.addFrom(prepareResultHandoff(result, policy, undefined, deps.handoffGuard));
-			return `### Evidence section ${index + 1}: ${sanitizeText(sections[index]?.task ?? "", policy, 1024)}\n\n${prepared.text}`;
-		})
+	const evidence = sectionEntries
+		.map(({ index }, consumedIndex) => `### Evidence section ${index + 1}: ${sanitizeText(sections[index]?.task ?? "", policy, 1024)}\n\n${sectionHandoffs.items[consumedIndex]?.text ?? ""}`)
 		.join("\n\n---\n\n");
 	const debriefRef: FlowAgentRefInput = spec.debrief?.agent ? spec.debrief : { agent: "debrief" };
 	const synthesisTask = [
@@ -74,17 +70,17 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		// Only the sections that succeeded reach the synthesis prompt, so only those
 		// belong in its dependency list — claiming it consumed a failed section's
 		// output would misreport what the answer actually rests on.
-		scope: { key: "debrief", dependsOn: results.flatMap((result, index) => isFailed(result) ? [] : [`${sectionKey(index)}.handoff`]) },
+		scope: { key: "debrief", dependsOn: sectionHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) },
 	});
 	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")(results, planned.error) };
 	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);
 	results.push(debriefed);
 	if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow dossier: synthesizer failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("dossier")(results) };
-	const debriefHandoffError = acceptIntegrationResult(deps, planned.plan!, debriefed, undefined, { consumed: false });
-	if (debriefHandoffError) return { content: [{ type: "text", text: formatFlowError(debriefHandoffError) }], details: deps.makeDetails("dossier")(results, debriefHandoffError) };
+	const debriefHandoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, consumed: false });
+	if (debriefHandoff.error) return { content: [{ type: "text", text: formatFlowError(debriefHandoff.error) }], details: deps.makeDetails("dossier")(results, debriefHandoff.error) };
 
 	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow dossier: ${successful.length}/${sections.length} evidence sections synthesized.${incompleteHandoffSummary(results)}${warnings.summary()}\n\n${sanitizeText(resultText(debriefed), policy)}`) }],
+		content: [{ type: "text", text: capModelVisibleText(`Flow dossier: ${successful.length}/${sections.length} evidence sections synthesized.${incompleteHandoffSummary(results)}${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(debriefed), policy)}`) }],
 		details: deps.makeDetails("dossier")(results),
 	};
 }

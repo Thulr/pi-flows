@@ -2,8 +2,6 @@ import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult,
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements } from "../validate.ts";
 import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
-import { prepareResultHandoff } from "../handoff.ts";
-import { recordStepHandoff } from "../integration.ts";
 import { runAgentRef } from "../runner.ts";
 
 /** One place each route unit key is derived, so the selected run's dependency link names the router that chose it. */
@@ -56,8 +54,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: sanitizeText(`Flow route: router "${routerRef.agent}" failed.\n\n${resultText(routed)}`, policy) }], details: makeDetails("route")(results) };
 	}
 
-	const routingMetadata = prepareResultHandoff(routed, policy, undefined, deps.handoffGuard);
-	recordStepHandoff(deps, { result: routed, prepared: routingMetadata, scope: { key: ROUTER_KEY } });
+	const routingMetadata = deps.handoffs.consumeResult({ result: routed, scope: { key: ROUTER_KEY }, payload: "source" });
 	if (routingMetadata.error) {
 		return { content: [{ type: "text", text: formatFlowError(routingMetadata.error) }], details: makeDetails("route")(results, routingMetadata.error) };
 	}
@@ -73,7 +70,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("route")([], error) };
 	}
 
-	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [`${ROUTER_KEY}.handoff`] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(routingMetadata.text, candidates), "flow.handoff.policy": deps.handoffGuard.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
+	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [routingMetadata.dependencyKey!] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(routingMetadata.text, candidates), "flow.handoff.policy": deps.handoffs.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
 	const selected = await runAgentRef(deps, { agent: choice }, contractedGoal, "route", results.length + 1, results, { scope: { key: "selected", dependsOn: [SELECTION_KEY] } });
 	results.push(selected);
 	if (isFailed(selected)) {

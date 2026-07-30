@@ -2,12 +2,11 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { MAX_WORKFLOW_PHASES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { prepareResultHandoff } from "../handoff.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
-import { acceptIntegrationResult, integrationRunPlan, runIntegrationPlan } from "../integration.ts";
+import { integrationRunPlan, runIntegrationPlan } from "../integration.ts";
 import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 
@@ -366,16 +365,16 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		}
 		const consumed = Boolean(spec.debrief?.agent)
 			|| phases.slice(phaseIndex + 1).some((candidate: any) => candidate?.agent && candidate?.task);
-		const handoffError = acceptIntegrationResult(deps, planned.plan!, run, undefined, { consumed });
-		if (handoffError) {
+		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: run, consumed });
+		if (handoff.error) {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
-			recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": handoffError.code });
-			return stateError(deps, results, handoffError, state);
+			recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": handoff.error.code });
+			return stateError(deps, results, handoff.error, state);
 		}
 
-		const output = prepareResultHandoff(run, policy, undefined, consumed ? deps.handoffGuard : undefined).text;
+		const output = handoff.text;
 		if (phase.checkCommand) {
 			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, resolveFlowCommandTimeoutMs(undefined, params.timeoutMs), policy, deps.signal);
 			deps.recordEvent?.({
@@ -409,7 +408,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		// A later child reads the prepared output through its task, so it depends on
 		// the handoff boundary. A terminal phase has no such boundary and remains a
 		// child dependency instead of inventing a handoff to the caller.
-		registerPhaseUnit(consumed ? `${phaseWorkKey(phase.id)}.handoff` : phaseWorkKey(phase.id));
+		registerPhaseUnit(handoff.dependencyKey ?? phaseWorkKey(phase.id));
 	}
 
 	// A trailing approval gates the workflow's own completion (and its debrief),
@@ -457,13 +456,13 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			await persistState(stateFile, state);
 			return { content: [{ type: "text", text: sanitizeText(`Flow workflow debrief failed.\n\n${resultText(debriefed)}`, policy) }], details: workflowDetails(deps, results, state) };
 		}
-		const handoffError = acceptIntegrationResult(deps, planned.plan!, debriefed, undefined, { consumed: false });
-		if (handoffError) {
+		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, consumed: false });
+		if (handoff.error) {
 			state.status = "failed";
 			delete state.nextPhaseId;
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
-			return stateError(deps, results, handoffError, state);
+			return stateError(deps, results, handoff.error, state);
 		}
 		finalText = resultText(debriefed);
 	}

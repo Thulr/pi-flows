@@ -10,6 +10,14 @@ import { appendReturnRequirements } from "./validate.ts";
 const ENVELOPE_VERSION = "pi-flows.return-envelope.v1";
 const SIDE_EFFECT_CLASSES = new Set(["none", "read-only", "reversible", "irreversible"]);
 const ENVELOPE_STATUSES = new Set(["completed", "partial", "blocked", "failed"]);
+const integrationValidationReceipts = new WeakMap<object, {
+	result: FlowRunResult;
+	contractId: string;
+	cwd: string;
+	policy: CapturePolicy;
+	envelope: DelegationReturnEnvelope;
+	handoff: DelegationHandoffEnvelope;
+}>();
 
 type RecordValue = Record<string, any>;
 
@@ -414,27 +422,56 @@ export function prepareIntegrationHandoff(
 		cwd: string;
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
+		attach?: boolean;
+		enforceCompletion?: boolean;
+		/** Opaque receipt returned by a prior successful call for deferred consumption. */
+		validation?: object;
 	},
-): { handoff?: DelegationHandoffEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
+): { handoff?: DelegationHandoffEnvelope; validation?: object; error?: FlowError; rejected?: DelegationReturnEnvelope } {
 	let handoff: DelegationHandoffEnvelope;
 	let returned: DelegationReturnEnvelope | undefined;
+	let validation = options.validation;
 	if (options.contract) {
-		const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
-		if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
-		returned = validated.envelope!;
-		handoff = typedHandoff(result, returned, options.contract);
+		const expectedContractId = delegationContractId(options.contract);
+		const received = validation ? integrationValidationReceipts.get(validation) : undefined;
+		const reusable = received?.result === result
+			&& received.contractId === expectedContractId
+			&& received.cwd === options.cwd
+			&& received.policy.recordContent === options.policy.recordContent
+			&& received.policy.redactSecrets === options.policy.redactSecrets
+			? received
+			: undefined;
+		if (reusable) {
+			returned = structuredClone(reusable.envelope);
+			handoff = structuredClone(reusable.handoff);
+		} else {
+			const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
+			if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
+			returned = validated.envelope!;
+			handoff = typedHandoff(result, returned, options.contract);
+			validation = {};
+			integrationValidationReceipts.set(validation, {
+				result,
+				contractId: expectedContractId,
+				cwd: options.cwd,
+				policy: { ...options.policy },
+				envelope: structuredClone(returned),
+				handoff: structuredClone(handoff),
+			});
+		}
 	} else {
 		handoff = compatibilityHandoff(result, options.policy);
+		validation = undefined;
 	}
-	if (handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
+	if (options.enforceCompletion !== false && handoff.status !== "completed" && !canIncludeIncompleteHandoff(handoff, options.incompletePolicy)) {
 		// A partial or blocked envelope is refused, but its artifact and digest
 		// claims are the evidence of what the child touched before it stopped.
 		// Returning them as rejected evidence keeps those artifacts in the trace,
 		// exactly as a digest mismatch does.
 		return { error: storedError(incompleteEnvelopeError(handoff), options.policy), ...(returned ? { rejected: returned } : {}) };
 	}
-	result.handoff = handoff;
-	return { handoff };
+	if (options.attach !== false) result.handoff = handoff;
+	return { handoff, ...(validation ? { validation } : {}) };
 }
 
 export function canonicalHandoff(handoff: DelegationHandoffEnvelope): string {

@@ -5,11 +5,11 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
+import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { handleGraph } from "../extensions/pi-flows/modes/graph.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleSingle } from "../extensions/pi-flows/modes/single.ts";
 import { emptyUsage, type FlowDiscovery, type FlowRunResult, type ModeDeps, type RunChildOptions } from "../extensions/pi-flows/types.ts";
-import { createHandoffGuard, resolveHandoffPolicy } from "../extensions/pi-flows/handoff.ts";
 
 const discovery: FlowDiscovery = {
 	agents: [
@@ -41,7 +41,12 @@ function makeDeps(params: Record<string, unknown>, runChild: ModeDeps["runChild"
 		params,
 		discovery,
 		policy: { recordContent: true, redactSecrets: true },
-		handoffGuard: createHandoffGuard(resolveHandoffPolicy(params, "parallel")),
+		handoffs: createHandoffConsumer({
+			params,
+			mode: "parallel",
+			policy: { recordContent: true, redactSecrets: true },
+			defaultCwd: "/tmp",
+		}),
 		agentScope: "user",
 		defaultCwd: "/tmp",
 		makeDetails: catalog.makeDetails,

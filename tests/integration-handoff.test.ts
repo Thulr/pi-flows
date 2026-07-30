@@ -102,6 +102,64 @@ test("integration handoffs reject missing and stale contract identities", () => 
 	assert.equal(stale.error?.code, "RETURN_CONTRACT_MISMATCH");
 });
 
+test("callers cannot forge a prior-validation receipt", () => {
+	const forged = prepareIntegrationHandoff(result("ordinary prose"), {
+		contract,
+		cwd: "/tmp",
+		policy,
+		validation: {},
+	});
+
+	assert.equal(forged.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.equal(forged.handoff, undefined);
+});
+
+test("validation receipts retain an immutable private snapshot", () => {
+	const child = result(typedEnvelope());
+	const validated = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy,
+		enforceCompletion: false,
+	});
+	assert.ok(validated.validation);
+	validated.handoff!.status = "failed";
+	child.envelope!.status = "failed";
+
+	const reused = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy,
+		validation: validated.validation,
+	});
+
+	assert.equal(reused.error, undefined);
+	assert.equal(reused.handoff?.status, "completed");
+});
+
+test("validation receipts cannot carry permissive content into a stricter capture policy", () => {
+	const secret = "secret=private-value";
+	const child = result(typedEnvelope({ summary: secret }));
+	const permissive = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy: { recordContent: true, redactSecrets: false },
+	});
+	assert.ok(permissive.validation);
+	assert.match(permissive.handoff?.summary ?? "", /private-value/);
+
+	const restrictive = prepareIntegrationHandoff(child, {
+		contract,
+		cwd: "/tmp",
+		policy: { recordContent: false, redactSecrets: true },
+		validation: permissive.validation,
+	});
+
+	assert.equal(restrictive.error, undefined);
+	assert.doesNotMatch(canonicalHandoff(restrictive.handoff!), /private-value/);
+	assert.equal(restrictive.handoff?.summary, "[content omitted: recordContent=false]");
+});
+
 test("integration handoffs reject digest-mismatched artifacts", async () => {
 	const cwd = await freshDir();
 	await writeFile(`${cwd}/artifact.txt`, "actual content\n");

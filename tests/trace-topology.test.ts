@@ -330,11 +330,11 @@ test("iterative modes link each revision to the feedback that caused it", async 
 	);
 	const evaluateSpans = await readSpans(evaluated.stubDir);
 	const secondDraft = unit(evaluateSpans, "iteration-2.generator")!;
-	const feedback = evaluateSpans.find((span) => attr(span, "flow.unit_key") === "iteration-1.feedback")!;
+	const feedback = evaluateSpans.find((span) => attr(span, "flow.unit_key") === "iteration-1.feedback.handoff")!;
 	// Through the feedback boundary: what the revision reads is the aggregated,
 	// capped, scanned critique, and the verdict is what produced it — alongside
 	// the artifact handoff it revises in place.
-	assert.equal(attr(secondDraft, "flow.depends_on"), "iteration-1.generator.handoff,iteration-1.feedback");
+	assert.equal(attr(secondDraft, "flow.depends_on"), "iteration-1.generator.handoff,iteration-1.feedback.handoff");
 	assert.equal(String(attr(secondDraft, "flow.depends_on_span_ids")).split(",")[1], feedback.span_id);
 	assert.equal(attr(feedback, "flow.depends_on"), "iteration-1.panel");
 
@@ -368,9 +368,12 @@ test("the monitor reactor links to the observation it is diagnosing", async () =
 	);
 	const spans = await readSpans(stubDir);
 	const trigger = spans.find((span) => attr(span, "flow.event_name") === "monitor.triggered")!;
+	const handoff = unit(spans, "trigger.handoff")!;
 	const reactor = unit(spans, "reactor")!;
-	assert.equal(attr(reactor, "flow.depends_on"), "trigger");
-	assert.equal(attr(reactor, "flow.depends_on_span_ids"), trigger.span_id);
+	assert.equal(attr(handoff, "flow.depends_on"), "trigger");
+	assert.equal(attr(handoff, "flow.depends_on_span_ids"), trigger.span_id);
+	assert.equal(attr(reactor, "flow.depends_on"), "trigger.handoff");
+	assert.equal(attr(reactor, "flow.depends_on_span_ids"), handoff.span_id);
 });
 
 test("dossier synthesis links only the sections it actually read", async () => {
