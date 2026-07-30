@@ -138,6 +138,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			cwd: resolvedCwd(defaultCwd, generatorRef.cwd),
 			scope: { stage, key: generatorKey(stage.key) },
 			consumed: false,
+			completion: "terminal",
 			payload: "source",
 		});
 		if (validatedArtifact.error) return { content: [{ type: "text", text: formatFlowError(validatedArtifact.error) }], details: makeDetails("evaluate")(results, validatedArtifact.error) };
