@@ -38,6 +38,7 @@ permission, and provenance is generated automatically.
    ```bash
    export PI_FLOWS_EVAL_ATTESTATION_KEY="$(openssl rand -hex 32)"
    npm run eval -- \
+     --release-suite \
      --trials=5 \
      --strict-trace \
      --run-id="release-<version>" \
@@ -46,6 +47,11 @@ permission, and provenance is generated automatically.
      --reliability-out=.thulr/runs/release.reliability.json \
      --calibration-out=.thulr/runs/release.calibration.json
    ```
+
+   The release suite pass-gates behaviour cases and every imported production
+   regression. Hard headroom cases remain score-tracked by the regular internal
+   eval suite; expected partial scores are not represented as failed verified
+   outcomes in the release manifest.
 
 5. Smoke the local package in pi:
 

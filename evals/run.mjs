@@ -1,9 +1,8 @@
 // Opt-in model-in-the-loop eval harness. Unlike the offline test suite, this
 // drives real flow delegations and uses thulr to judge and gate their output.
 // The harness combines deterministic case objectives with thulr's calibrated
-// judge, which grades answer quality and gates regressions. The judge
-//      runs on a different vendor than the subject (default anthropic/claude-
-//      haiku-4-5 — cheap models on both axes) so it never grades its own family.
+// judge, which grades answer quality and gates regressions. The standardized
+// Codex judge is a distinct, stronger model than the cheaper Codex subject.
 // Fixed calibration canaries measure judge behavior outside release case counts.
 // The harness emits one self-contained trace and shells out to thulr for judge,
 // calibration, gate, and baseline operations.
@@ -18,10 +17,10 @@ import { basename, dirname } from "node:path";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
 import { CALIBRATION_CASES, EVAL_CORPUS as BASE_EVAL_CORPUS, corpusWithFailureLedger } from "./corpus.mjs";
-import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
+import { armBudgetSignal, caseWorkspace, exclusionForRun, flowTool, scoreObjective, shouldJudgeProductSpans, subjectModelName, sumTokens, DEFAULT_EVAL_JUDGE_MODEL, DEFAULT_EVAL_MODEL, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { calibrationPreflightStep, resolveCriticalDimensions, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
-import { assessCalibration, baselinePromotionBlocker, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectMeasurementCases, traceEvidenceGate, writeReliabilityArtifact } from "./pipeline.mjs";
+import { assessCalibration, baselinePromotionBlocker, calibrationObjective, calibrationSpanFields, caseSpanFields, gateAgainstBaseline, harnessExitCode, inspectTraceReport, judgeTraceRun, relativeToRepo as rel, repoPath as p, selectCalibrationReviewSet, selectMeasurementCases, traceEvidenceGate, writeReliabilityArtifact } from "./pipeline.mjs";
 import { loadDotenv, requireBinary, requireHealthyThulr, runPreflight } from "./preflight.mjs";
 import { behaviourCountsLine, calibrationLines, caseLines, debugBudgetWarning, finalCountsLine, headerLine, judgeHeaderLine, portfolioExcludedCaseIds, verdictLine, INFRA_WARNING } from "./run-report.mjs";
 import { MAX_SUBJECT_TRIALS, traceHealthRollup, trialIdentity } from "./reliability.mjs";
@@ -54,11 +53,10 @@ const promotionCaseId = flag("failure-promotion", null);
 const RELIABILITY_ATTESTATION_KEY = process.env.PI_FLOWS_EVAL_ATTESTATION_KEY ?? null; delete process.env.PI_FLOWS_EVAL_ATTESTATION_KEY;
 const filter = promotionCaseId ?? flag("filter", "");
 const includeControls = has("include-controls") || filter.length > 0;
-// Cross-model judge: a different vendor than the subject under test breaks
-// self-grading. Default is the cheap anthropic tier — the suite standardizes on
-// cheap models for both axes; escalate per-run (--judge-model=anthropic/claude-
-// sonnet-4-6) when a verdict needs a stronger second opinion.
-const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-haiku-4-5";
+const releaseSuite = bool("release-suite");
+// Standardized Codex judge: use a distinct, stronger model than the cheap
+// subject while keeping eval authentication on the project's required provider.
+const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? DEFAULT_EVAL_JUDGE_MODEL;
 // Judge repeat-sampling: each case judged N times, majority verdict +
 // mean score; the EvalRun's score_stddev becomes judge noise. Costs N× judge spend.
 const samples = Math.min(10, Math.max(1, Number(flag("samples", "1")) || 1));
@@ -301,14 +299,13 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, 
 		if (crit) console.log(`  judge noise across ${samples} samples: score stddev ±${(crit.score_stddev ?? 0).toFixed(3)}`);
 	}
 
-	// Calibration: how well the judge's verdicts track the deterministic labels
-	// (and human SME verdicts too, when a review set is present — judge-vs-human
-	// TPR/TNR). thulr also queues every judge/ground-truth disagreement onto
-	// the triage queue (`thulr queue`) and feeds this calibration into the gate:
-	// a judge blind in either direction downgrades a clean PASS to WARN.
+	// Calibration tracks deterministic labels plus applicable human verdicts.
+	// Thulr queues disagreements for triage and feeds the result into its gate.
+	const reviewCaseIds = [...summaries, ...calibrationSummaries].flatMap((s) => [s.caseId, s.traceCaseId, s.name]);
+	const applicableReviews = selectCalibrationReviewSet({ trace: TRACE, preferredPath: reviews, explicit: Boolean(reviewsFlag), caseIds: reviewCaseIds });
 	console.log("");
-	process.stdout.write(thulr.calibrate(CANDIDATE, { labels: LABELS, reviews }));
-	if (reviews) console.log(`folded human review verdicts from ${rel(reviews)} into calibration (judge-vs-human TPR/TNR above).`);
+	process.stdout.write(thulr.calibrate(CANDIDATE, { labels: LABELS, reviews: applicableReviews }));
+	if (applicableReviews) console.log(`folded human review verdicts from ${rel(applicableReviews)} into calibration (judge-vs-human TPR/TNR above).`);
 	if (calibrationSummaries.length) {
 		console.log(`release gate excludes ${calibrationSummaries.length} calibration canar${calibrationSummaries.length === 1 ? "y" : "ies"} from pass-rate comparison; full judged run remains ${rel(CANDIDATE)}.`);
 	}
@@ -318,7 +315,7 @@ function judgeAndGate({ judgedCount, calibrationSummaries, summaries, verdicts, 
 		summaries: [...summaries, ...calibrationSummaries],
 		verdicts,
 		keyInputs: { judgeModel, judgeSamples: samples, judgeBin, evalSet, promptVersion: PROMPT_VERSION, configVersion: CONFIG_VERSION },
-		reviews: { path: reviews, explicit: Boolean(reviewsFlag) },
+		reviews: { path: applicableReviews, explicit: true },
 		criticalDimensions,
 		criticalMissRateCap,
 		abstentionBand,
@@ -361,7 +358,8 @@ async function main() {
 		? null
 		: { name: "thulr", version: thulr.doctor().report?.version ?? null };
 
-	const selected = selectMeasurementCases(CASES, { filter, includeControls });
+	if (releaseSuite && (filter || includeControls)) { console.error("--release-suite cannot be combined with --filter, --failure-promotion, or --include-controls"); process.exit(2); }
+	const selected = selectMeasurementCases(CASES, { filter, includeControls, releaseSuite });
 	const selectedCalibration = promotionCaseId ? CALIBRATION_CASES : CALIBRATION_CASES.filter((c) => !filter || c.name.includes(filter));
 	if (selected.length + selectedCalibration.length === 0) {
 		console.error(`No eval cases match --filter=${filter}. Available: ${[...CASES, ...CALIBRATION_CASES].map((c) => c.name).join(", ")}`);
@@ -409,7 +407,7 @@ async function main() {
 		runtimeTraceFile: rel(RUNTIME_TRACE),
 		evaluatedSystem: EVALUATED_SYSTEM,
 		attestationKey: RELIABILITY_ATTESTATION_KEY,
-		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel, grader: evaluatedGrader, failureLedger: failureSource.failureLedger }),
+		evaluation: buildEvaluationProvenance(selected, summaries, { capUsd, timeoutMs, armTimeoutMs, subjectTrials, judgeModel, grader: evaluatedGrader, failureLedger: failureSource.failureLedger, suiteName: releaseSuite ? "release-behaviour" : "release" }),
 		evidencePurpose: promotionCaseId ? {
 			kind: "failure-promotion-held-out",
 			caseId: promotionCaseId,

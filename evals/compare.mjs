@@ -15,7 +15,7 @@ import { CALIBRATION_CASES, CASES, EVAL_CORPUS } from "./corpus.mjs";
 import { ablationAttribution, experimentArmInfo, parseArmSelection, planExperimentArm } from "./experiment-arms.mjs";
 import { applyDuelRows, applyJudgedRows, comparisonTotals, dryRunJudgements, duelQualitySummary, exclusionSummary, formatDuration, markUnjudgedRows, scoreText, unjudgedArm } from "./compare-report.mjs";
 import { rawArtifactRows, reportPerCase, reportSummary } from "./comparison-output.mjs";
-import { answerText, answerWithArtifacts, armBudgetSignal, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
+import { answerText, answerWithArtifacts, armBudgetSignal, exclusionForRun, flowTool, scoreObjective, DEFAULT_EVAL_JUDGE_MODEL, DEFAULT_EVAL_MODEL, subjectModelName, sumTokenUsage, timeoutPlanForCase } from "./lib.mjs";
 import { injectModel } from "./model-injection.mjs";
 import { armExecutionTiming, buildPairedAnalysis, evaluatePairConstraint, formatPairedAnalysis, pairedArmOrder, parseBindingConstraint, parsePromotionRule } from "./paired-experiment.mjs";
 import { deadlineExpiredArm, runArmWithRetry } from "./paired-retry.mjs";
@@ -60,7 +60,7 @@ const armPair = { reference: experimentArmInfo(armNames[0]), candidate: experime
 const referenceLabel = armPair.reference.name;
 const candidateLabel = armPair.candidate.name;
 const legacyDefaultArms = referenceLabel === "direct" && candidateLabel === "full";
-const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? "anthropic/claude-haiku-4-5";
+const judgeModel = flag("judge-model", null) ?? process.env.PI_FLOWS_JUDGE_MODEL ?? DEFAULT_EVAL_JUDGE_MODEL;
 const samples = Math.min(10, Math.max(1, Number(flag("samples", "1")) || 1));
 const subjectTrials = positiveIntegerFlag("trials", 1, MAX_SUBJECT_TRIALS);
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "120000"));

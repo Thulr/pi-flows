@@ -3,7 +3,7 @@
 //   1. an objective `score(result, ctx)` — deterministic behaviour checks (a known
 //      answer, the chosen route, the gate passing). This is the plumbing gate.
 //   2. a `criterion` plus optional named `criteria` dimensions — literal rubrics
-//      the cross-model thulr judge grades the answer against.
+//      the independent thulr judge grades the answer against.
 // A case passes only when BOTH agree, so plumbing correctness and answer quality
 // are checked separately (decomposed evaluators, not one god-metric).
 //

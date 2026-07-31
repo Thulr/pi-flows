@@ -79,6 +79,7 @@ export function armBudgetSignal(parentSignal, timeoutMs) {
 // (not a fuzzy pattern like "codex") so pi can't silently resolve it elsewhere.
 // Override per-run with --model=<provider/id> or PI_FLOWS_EVAL_MODEL.
 export const DEFAULT_EVAL_MODEL = process.env.PI_FLOWS_EVAL_MODEL ?? "openai-codex/gpt-5.4-mini";
+export const DEFAULT_EVAL_JUDGE_MODEL = "openai-codex/gpt-5.5";
 
 export function timeoutPlanForCase(testCase, { defaultTimeoutMs, armTimeoutMs = null } = {}) {
 	const caseTimeoutMs = testCase?.params?.timeoutMs ?? defaultTimeoutMs;

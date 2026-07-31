@@ -8,8 +8,19 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.5.0 - 2026-07-31
+
 ### Changed
 
+- Model-in-the-loop evals now standardize on Codex for both axes:
+  `openai-codex/gpt-5.4-mini` as the subject and
+  `openai-codex/gpt-5.5` as the independent judge. Release evals no longer
+  depend on Anthropic OAuth.
+- Release evidence now uses an explicit behavior/regression suite. Hard
+  multi-part cases remain internal score tracks, matching the harness policy
+  instead of requiring stochastic perfect scores in the strict manifest.
 - Domain glossary alignment: the durable session entry is now the **Flow card**
   (it summarizes a flow, not a single run), monitoring language names runs
   rather than agents, and `CONTEXT.md` defines **Fleet**, **Settled**,
@@ -28,6 +39,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- Live evaluation cases now carry an eval-owned delegation justification, so
+  the release gate reaches its subject model instead of being refused by the
+  required `why` spawning boundary.
+- The evidence-heavy regional-writes debate case now budgets enough time for
+  both advocate rounds and adjudication instead of aborting the adjudicator at
+  the former 600-second whole-case ceiling.
 - Generated Flow and delegation-contract cost/token ceilings are now disclosed
   before work starts and retained in the collapsed live row, fleet panel, and
   durable Flow card. Each line names `flow` or `contract` as its authority;
