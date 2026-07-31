@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { FleetPanel, budgetLine, createFleetPanelController, fleetRunLines } from "../extensions/pi-flows/fleet-panel.ts";
-import { FlowRunRegistry } from "../extensions/pi-flows/inspector.ts";
+import { FleetPanel, budgetLine, createFleetPanelController, fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
+import { FlowRegistry } from "../extensions/pi-flows/inspector.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
@@ -20,17 +20,17 @@ const keybindings = {
 	getKeys: (binding: string) => (binding === "tui.select.cancel" ? ["x"] : []),
 } as any;
 
-test("registry exposes active runs, budget references, and the last settled run", () => {
-	const registry = new FlowRunRegistry();
+test("registry exposes live flows, budget references, and the last settled flow", () => {
+	const registry = new FlowRegistry();
 	const budget = { maxCostUsd: 2, spentCost: 0.5, spentTokens: 0, spentGeneratedTokens: 0 };
 	registry.start("flow-1", "parallel", details([result()]), true, budget);
-	assert.equal(registry.activeRuns().length, 1);
-	assert.equal(registry.activeRuns()[0]?.budget, budget, "budget must be the live reference, not a copy");
+	assert.equal(registry.activeFlows().length, 1);
+	assert.equal(registry.activeFlows()[0]?.budget, budget, "budget must be the live reference, not a copy");
 
 	const final = details([result({ exitCode: 0 })]);
-	registry.finish("flow-1", final);
-	assert.equal(registry.activeRuns().length, 0);
-	assert.equal(registry.lastFinishedRun()?.details, final, "the panel needs the final state after the last child exits");
+	registry.settle("flow-1", final);
+	assert.equal(registry.activeFlows().length, 0);
+	assert.equal(registry.lastSettledFlow()?.details, final, "the panel needs the final state after the last child exits");
 });
 
 test("budgetLine renders burn-down only when a cost ceiling exists", () => {
@@ -41,7 +41,7 @@ test("budgetLine renders burn-down only when a cost ceiling exists", () => {
 	assert.match(line, /\$0\.5000 \/ \$2\.00 budget/);
 });
 
-test("fleetRunLines shows every agent with state, activity, and failures", () => {
+test("fleetFlowLines shows every agent with state, activity, and failures", () => {
 	const run = {
 		mode: "parallel" as const,
 		redactSecrets: true,
@@ -55,7 +55,7 @@ test("fleetRunLines shows every agent with state, activity, and failures", () =>
 			result({ agent: "redteam", exitCode: 1, error: { code: "CHILD_EXIT" } }),
 		]),
 	};
-	const lines = fleetRunLines(run as any, theme, 0);
+	const lines = fleetFlowLines(run as any, theme, 0);
 	const text = lines.join("\n");
 	assert.match(lines[0]!, /flow parallel 2\/3/);
 	assert.match(text, /\$2\.00 budget/);
@@ -67,7 +67,7 @@ test("fleetRunLines shows every agent with state, activity, and failures", () =>
 });
 
 test("FleetPanel renders a bounded bordered box and closes on the cancel key", () => {
-	const registry = new FlowRunRegistry();
+	const registry = new FlowRegistry();
 	registry.start("flow-1", "parallel", details([result()]));
 	let renders = 0;
 	let closed = false;
@@ -86,28 +86,28 @@ test("FleetPanel renders a bounded bordered box and closes on the cancel key", (
 	panel.dispose();
 });
 
-test("fleetRunLines drops the settled/total counter for single-child runs", () => {
+test("fleetFlowLines drops the settled/total counter for single-child flows", () => {
 	const run = { mode: "single" as const, redactSecrets: true, details: details([result()]) };
-	const lines = fleetRunLines(run as any, theme, 0);
+	const lines = fleetFlowLines(run as any, theme, 0);
 	assert.doesNotMatch(lines[0]!, /0\/1/);
 	assert.match(lines[0]!, /flow single/);
 });
 
-test("FleetPanel falls back to the last settled run when nothing is active", () => {
-	const registry = new FlowRunRegistry();
+test("FleetPanel falls back to the last settled flow when no flow is live", () => {
+	const registry = new FlowRegistry();
 	registry.start("flow-1", "single", details([result()]));
-	registry.finish("flow-1", details([result({ exitCode: 0 })]));
+	registry.settle("flow-1", details([result({ exitCode: 0 })]));
 	const panel = new FleetPanel({ requestRender: () => {} } as any, theme, keybindings, registry, () => {});
-	assert.match(panel.render(60).join("\n"), /no active flow runs · last run:/);
+	assert.match(panel.render(60).join("\n"), /no live flows · last flow:/);
 	panel.dispose();
 
-	const empty = new FleetPanel({ requestRender: () => {} } as any, theme, keybindings, new FlowRunRegistry(), () => {});
-	assert.match(empty.render(60).join("\n"), /no active flow runs/);
+	const empty = new FleetPanel({ requestRender: () => {} } as any, theme, keybindings, new FlowRegistry(), () => {});
+	assert.match(empty.render(60).join("\n"), /no live flows/);
 	empty.dispose();
 });
 
 test("controller toggles open/closed and declines headless or empty sessions quietly", async () => {
-	const registry = new FlowRunRegistry();
+	const registry = new FlowRegistry();
 	const controller = createFleetPanelController(registry);
 
 	await controller.toggle({ hasUI: false, ui: {} } as any);
@@ -116,7 +116,7 @@ test("controller toggles open/closed and declines headless or empty sessions qui
 	const emptyNotices: string[] = [];
 	await controller.toggle({ hasUI: true, mode: "tui", ui: { notify: (message: string) => emptyNotices.push(message) } } as any, true);
 	assert.equal(controller.isOpen(), false, "an empty session gets a notice, not an empty panel");
-	assert.match(emptyNotices.join("\n"), /No flow runs yet/);
+	assert.match(emptyNotices.join("\n"), /No flows yet/);
 
 	registry.start("flow-1", "parallel", details([result()]));
 

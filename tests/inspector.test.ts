@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
-import { FlowRunRegistry, flowAgentActivity, sanitizeInspectorText } from "../extensions/pi-flows/inspector.ts";
+import { FlowRegistry, flowAgentActivity, sanitizeInspectorText } from "../extensions/pi-flows/inspector.ts";
 
 const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
@@ -61,13 +61,13 @@ test("inspector activity summarizes text, tool calls, and results safely", () =>
 });
 
 test("registry exposes queued and running children", () => {
-	const registry = new FlowRunRegistry();
+	const registry = new FlowRegistry();
 	registry.start("flow-1", "parallel", details([
 		result(),
 		result({ agent: "analyst", agentSource: "unknown", task: "queued work" }),
 	]));
 	assert.equal(registry.inspectableAgents().length, 2);
-	registry.finish("flow-1", details([]));
+	registry.settle("flow-1", details([]));
 	assert.equal(registry.inspectableAgents().length, 0);
 });
 

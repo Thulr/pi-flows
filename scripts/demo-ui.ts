@@ -11,7 +11,7 @@
  */
 import { Theme } from "@earendil-works/pi-coding-agent";
 import { FleetPanel } from "../extensions/pi-flows/fleet-panel.ts";
-import { FlowRunRegistry } from "../extensions/pi-flows/inspector.ts";
+import { FlowRegistry } from "../extensions/pi-flows/inspector.ts";
 import { renderFlowResultRow, type RowTickerState } from "../extensions/pi-flows/ui-live-row.ts";
 import { flowCardLines, type FlowRunEntryData } from "../extensions/pi-flows/ui-flow-card.ts";
 
@@ -127,7 +127,7 @@ async function liveDemo(): Promise<void> {
 }
 
 async function fleetDemo(): Promise<void> {
-	const registry = new FlowRunRegistry();
+	const registry = new FlowRegistry();
 	const budget = { maxCostUsd: 1.0, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
 	registry.start("demo-flow", "parallel", timeline(0), true, budget);
 	const panel = new FleetPanel({ requestRender: () => {} } as any, theme, { matches: () => false, getKeys: () => ["esc"] } as any, registry, () => {});
