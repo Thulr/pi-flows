@@ -129,6 +129,13 @@ that starts its own flow bounds that flow with a budget of its own, and the oute
 ceiling never sees its spend. Runaway nesting is bounded by the delegation depth cap
 (`FLOW_DEPTH_EXCEEDED`), not by the budget.
 
+Trace configuration crosses only when it came from the environment. A child inherits
+the parent's environment, so `PI_FLOWS_TRACE_FILE` / `PI_FLOWS_TRACE_STRICT` reach a
+nested flow, which appends to the same file under a root span of its own. `traceFile`
+and `traceStrict` passed as call parameters are consumed locally and are never copied
+into the child environment, so in that case a nested flow exports nothing unless it
+configures tracing itself.
+
 The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
 voters, subtasks, worktree writers, debate participants, and dossier sections --
 not a per-call input. It is enforced by the runtime and surfaced read-only in
