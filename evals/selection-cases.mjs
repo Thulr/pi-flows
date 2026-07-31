@@ -141,11 +141,13 @@ export const SELECTION_CASES = defineCases([
 		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
 		expectFlow: false,
 		answerPattern: "nothing|unreleased|0\\.5\\.0",
-		mock: { flowCalls: 0, answer: "- Nothing is unreleased yet — version 0.5.0 contains the latest domain terminology, progress, budget-disclosure, and retry-safety changes." },
+		mock: { flowCalls: 0, answer: "- Unreleased corrects the flow-budget scope wording: the ceiling bounds one flow call, not the whole flow tree.\n- It also renames the live registry to key flows rather than runs, and adds the glossary terms the code had already resolved." },
 		sourceExpectation: {
 			format: "text",
+			// Anchored on section structure, not on transient Unreleased content, so
+			// an ordinary changelog entry does not invalidate the case.
 			path: "CHANGELOG.md",
-			patterns: ["## Unreleased[\\s\\S]*Nothing yet[\\s\\S]*## 0\\.5\\.0[\\s\\S]*flow card[\\s\\S]*## 0\\.4\\.2"],
+			patterns: ["## Unreleased[\\s\\S]*## 0\\.5\\.0[\\s\\S]*flow card[\\s\\S]*## 0\\.4\\.2"],
 		},
 	},
 	{

@@ -7,8 +7,12 @@ pi-flows lets a parent pi session delegate bounded work to disposable children a
 ### Delegation model
 
 **Flow**:
-One bounded delegation — a single call of the `flow` tool, covering every child it spawns.
+One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it owns a mode, a budget, a root span, and a settled outcome of its own, and a flow refused before it spawns anything is still a flow.
 _Avoid_: job, session
+
+**Flow tree**:
+A flow plus any flows its children start, bounded by a delegation depth cap. Each flow in the tree carries its own budget and its own trace — nothing crosses the process boundary except the depth counter.
+_Avoid_: flow graph, nested run
 
 **Mode**:
 The coordination pattern a flow uses (single, parallel, evaluate, debate, …).
@@ -38,15 +42,23 @@ _Avoid_: prompt, job
 A task produced by orchestrate's decomposition rather than authored upstream. A subtask is a kind of task.
 
 **Run**:
-One child executing one task. A flow contains one or more runs.
+One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing.
 _Avoid_: execution, invocation
+
+**Live**:
+A flow whose handler has not settled and may still spawn runs. Not the same question as whether any run is outstanding: a multi-stage mode settles every run of one stage before opening the next, so a live flow can hold at `N/N settled`.
+_Avoid_: active, in-flight, running
 
 **Settled**:
 A run (or a whole flow) that has reached a terminal state, whether it completed or failed. The opposite of live.
 _Avoid_: done, finished (both read as "succeeded")
 
+**Replay**:
+The parent re-issuing a flow after it failed. Distinct from a retry, which happens inside a flow against one run. A bounded refusal — budget exhausted, gate failed — is not a signal to replay unchanged.
+_Avoid_: retry, rerun
+
 **Fleet**:
-Every run currently queued or executing, across all live flows.
+Every live flow at once, each with the runs under it. Keyed by flow, because liveness is a property of the flow's handler, not of any one run.
 _Avoid_: dashboard, active agents (runs execute; agents are profiles)
 
 ### Contracts and handoffs
@@ -70,6 +82,14 @@ _Avoid_: child output, inter-agent prompt
 **Handoff envelope**:
 The provenance-bearing form in which a handoff is carried. It preserves a return envelope's delegation-contract identity or explicitly identifies a legacy prose result.
 _Avoid_: return envelope (that is the child's result before it crosses a role boundary)
+
+**Handoff policy**:
+What happens when a handoff's injection scan flags content — `warn`, `quarantine`, or `fail`. Resolved once per flow from the call's setting and any per-mode floor; the stronger of the two wins.
+_Avoid_: injection policy, scan mode
+
+**Compositional injection**:
+Injection-shaped instructions that emerge only when handoffs are read together, with no single handoff flagged on its own. Named separately because a per-handoff scan cannot see it.
+_Avoid_: multi-hop attack, chained injection
 
 ### Coordination evidence
 
@@ -134,6 +154,18 @@ _Avoid_: quota, allowance
 **Contract budget**:
 A machine-enforced time, cost, or token ceiling scoped to the runs fulfilling one delegation contract, independent of the flow budget.
 _Avoid_: quota, allowance
+
+**Budget ceiling**:
+One configured cost or token limit, disclosed before work starts rather than discovered when it binds.
+_Avoid_: cap, limit
+
+**Budget authority**:
+Which budget a ceiling belongs to — flow or contract. Carried wherever a ceiling is shown or a refusal is reported, so a refusal is never attributed to a budget the run never had.
+_Avoid_: budget owner, budget scope
+
+**Capture policy**:
+The pair of switches that decide what child content may appear in returned content, details, and spans. It governs disclosure, not execution: a redacted span is still a recorded span.
+_Avoid_: redaction settings, privacy mode
 
 **Tier**:
 A portable capability level (fast, capable, deep) that resolves to a concrete model per install.
