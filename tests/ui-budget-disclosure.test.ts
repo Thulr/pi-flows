@@ -72,6 +72,40 @@ test("budget disclosure finds flow and nested contract ceilings without inventin
 	assert.deepEqual(collectBudgetCeilings({ tasks: [{ agent: "analyst", task: "uncapped", contract: contract({ timeoutMs: 1000 }) }] }), []);
 });
 
+test("budget disclosure omits shadowed fallback contracts and inactive contract-shaped fields", () => {
+	const fallback = contract({ maxTokens: 9000 });
+	const taskContract = contract({ maxGeneratedTokens: 2000 });
+
+	assert.deepEqual(collectBudgetCeilings({
+		contract: fallback,
+		tasks: [
+			{ agent: "analyst", task: "one", contract: taskContract },
+			{ agent: "recon", task: "two", contract: taskContract },
+		],
+	}), [
+		{ authority: "contract", maxGeneratedTokens: 2000 },
+	]);
+
+	assert.deepEqual(collectBudgetCeilings({
+		contract: fallback,
+		route: { controller: { agent: "controller", contract: contract({ maxCostUsd: 1 }) } },
+	}), []);
+	assert.deepEqual(collectBudgetCeilings({
+		vote: { agent: "analyst", count: 2, debrief: { agent: "debrief" } },
+	}), []);
+
+	assert.deepEqual(collectBudgetCeilings({
+		contract: fallback,
+		tasks: [
+			{ agent: "analyst", task: "one", contract: taskContract },
+			{ agent: "recon", task: "two" },
+		],
+	}), [
+		{ authority: "contract", maxGeneratedTokens: 2000 },
+		{ authority: "contract", maxTokens: 9000 },
+	]);
+});
+
 test("the call and live compact views disclose generated ceilings before usage exists", () => {
 	const params = {
 		tasks: [
