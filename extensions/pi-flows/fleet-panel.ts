@@ -1,5 +1,6 @@
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
+import { budgetDisclosureLines, exhaustedBudgetText } from "./budget-disclosure.ts";
 import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRunRegistry, type InspectorContext, type LiveFlowRun } from "./inspector.ts";
 import { formatUsage } from "./trace.ts";
 import { spinnerFrame } from "./ui-live-row.ts";
@@ -39,6 +40,7 @@ export function fleetRunLines(run: LiveFlowRun, theme: Theme, tick: number, opti
 	const total = run.details.results.length;
 	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(run.details, options))}` : "";
 	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${run.mode}`))}${progress}`];
+	lines.push(...budgetDisclosureLines(run.details.budgetCeilings).map((line) => theme.fg("muted", line)));
 	const budget = budgetLine(run.budget, theme);
 	if (budget) lines.push(budget);
 
@@ -53,7 +55,10 @@ export function fleetRunLines(run: LiveFlowRun, theme: Theme, tick: number, opti
 			const last = items[items.length - 1];
 			if (last) lines.push(`  ${theme.fg("muted", `└ ${last.kind === "tool" ? "→ " : last.kind === "result" ? "← " : ""}${oneLine(last.text, 64, run.redactSecrets)}`)}`);
 		}
-		if (state === "failed") lines.push(`  ${theme.fg("error", `└ ${result.error?.code ?? result.stopReason ?? "failed"}`)}`);
+		if (state === "failed") {
+			const bindingBudget = exhaustedBudgetText(result.error);
+			lines.push(`  ${theme.fg("error", `└ ${result.error?.code ?? result.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}`)}`);
+		}
 	});
 	if (run.details.error) lines.push(theme.fg("error", `error: ${run.details.error.code}`));
 	return lines;

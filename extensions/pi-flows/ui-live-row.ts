@@ -1,5 +1,6 @@
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { budgetDisclosureLines, collectBudgetCeilings, exhaustedBudgetText } from "./budget-disclosure.ts";
 import { flowAgentActivity, flowAgentState } from "./inspector.ts";
 import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
@@ -109,6 +110,15 @@ export interface LiveBoardOptions {
 	live?: boolean;
 }
 
+/** Pre-run tool-call lines, including any generated budget ceilings. */
+export function flowCallLines(args: unknown, theme: Theme, label: string, scope: string): string[] {
+	const lines = [
+		theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", label) + theme.fg("muted", ` [${scope}]`),
+	];
+	lines.push(...budgetDisclosureLines(collectBudgetCeilings(args)).map((line) => theme.fg("muted", line)));
+	return lines;
+}
+
 /** Collapsed-view lines for a run in progress or settled. First line is the header. */
 export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: LiveBoardOptions): string[] {
 	const settled = details.results.filter((item) => item.exitCode !== -1).length;
@@ -131,7 +141,10 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		const totals = totalsText(details);
 		if (totals) header += ` ${theme.fg("muted", totals)}`;
 	}
-	const lines = [header];
+	const lines = [
+		header,
+		...budgetDisclosureLines(details.budgetCeilings).map((line) => theme.fg("muted", line)),
+	];
 
 	const nameWidth = Math.min(16, Math.max(4, ...details.results.map((item) => item.agent.length)));
 	details.results.slice(0, COLLAPSED_AGENT_ROWS).forEach((item, index) => {
@@ -141,7 +154,11 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		const state = flowAgentState(item);
 		if (state === "running") line += `  ${theme.fg("muted", currentActivityText(item, options.redactSecrets))}`;
 		else if (state === "queued") line += `  ${theme.fg("muted", "queued")}`;
-		else if (state === "failed") line += `  ${theme.fg("error", item.error?.code ?? item.stopReason ?? "failed")}`;
+		else if (state === "failed") {
+			const bindingBudget = exhaustedBudgetText(item.error);
+			const failure = `${item.error?.code ?? item.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}`;
+			line += `  ${theme.fg("error", failure)}`;
+		}
 		lines.push(line);
 	});
 	if (total > COLLAPSED_AGENT_ROWS) lines.push(theme.fg("muted", `... +${total - COLLAPSED_AGENT_ROWS} more`));

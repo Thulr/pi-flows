@@ -32,6 +32,8 @@ in-memory flow updates:
 - **The tool row is live.** While children run, the `flow` tool row shows a
   progress bar, per-run state with a spinner, each running child's current
   tool call or latest message, and a token/cost rollup — updating in place.
+  Before the first child starts, the tool call and row also disclose every
+  configured cost/token ceiling as a `flow ceiling` or `contract ceiling`.
   `ctrl+o` expands the settled row into full per-run output.
 - **`F8` toggles the fleet panel**, a non-modal overlay listing every live run
   at once: per-run state and activity, failures, and budget burn-down when
@@ -155,6 +157,15 @@ uses `warn < quarantine < fail`, so
 call or mode policy requires fresh approval.
 
 `maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero. A delegation contract may independently impose a **contract budget**, including a tighter timeout.
+
+The generated tool call, collapsed live row, fleet panel, and durable Flow card
+all disclose configured cost/token ceilings with their authority. Identical
+contract ceilings are collapsed into one compact line; distinct ceilings remain
+separate. The durable entry persists these static ceiling definitions, so a
+`BUDGET_EXCEEDED` result still names the binding configuration after a session
+reload. Timeout-only contracts are not presented as cost/token ceilings, and
+omitting all ceiling fields means uncapped execution rather than a hidden
+default.
 
 ### Trace export (observability)
 

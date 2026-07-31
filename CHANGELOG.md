@@ -28,6 +28,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- Generated Flow and delegation-contract cost/token ceilings are now disclosed
+  before work starts and retained in the collapsed live row, fleet panel, and
+  durable Flow card. Each line names `flow` or `contract` as its authority;
+  identical contract ceilings are collapsed, timeout-only contracts do not
+  masquerade as cost/token caps, and omitted ceilings remain uncapped.
 - Non-retryable failures now expose `Retryable unchanged: no` in the
   model-visible error text instead of keeping that fact only in structured
   details. `BUDGET_EXCEEDED` explicitly forbids automatic replay of the same

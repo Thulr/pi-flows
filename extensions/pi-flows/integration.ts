@@ -1,8 +1,5 @@
-import {
-	createDelegationBudget,
-	renderDelegationTask,
-	validateDelegationContract,
-} from "./delegation.ts";
+import { resolveDelegationContract } from "./contract-resolution.ts";
+import { createDelegationBudget, renderDelegationTask, validateDelegationContract } from "./delegation.ts";
 import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner.ts";
 import type {
 	ChildSpanScope,
@@ -46,7 +43,7 @@ export function integrationRunPlan(
 		scope?: ChildSpanScope;
 	} = {},
 ): { plan?: IntegrationRunPlan; error?: FlowError } {
-	const contract = ref.contract ?? options.fallbackContract;
+	const contract = resolveDelegationContract(ref, options.fallbackContract);
 	const error = contract ? validateDelegationContract(contract, deps.policy) : null;
 	if (error) return { error };
 	const renderedTask = contract

@@ -1,8 +1,9 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { budgetDisclosureLines, formatBudgetCeiling } from "./budget-disclosure.ts";
 import { safePath } from "./sanitize.ts";
 import { formatTokens } from "./trace.ts";
-import type { FlowMode, UsageStats } from "./types.ts";
+import type { BudgetCeiling, FlowMode, UsageStats } from "./types.ts";
 
 /**
  * The durable flow card: the `pi-flows.run` session entry (the entry type
@@ -19,6 +20,7 @@ export interface FlowRunEntryResult {
 	exitCode: number;
 	stopReason?: string;
 	errorCode?: string;
+	budgetCeiling?: BudgetCeiling;
 	model?: string;
 	durationMs?: number;
 	usage?: Partial<UsageStats>;
@@ -32,6 +34,8 @@ export interface FlowRunEntryData {
 	results: FlowRunEntryResult[];
 	/** Trace evidence pointer, when the run exported one. */
 	trace?: { traceFile: string; health: string };
+	/** Configured ceilings persisted so session reloads retain their authority. */
+	budgetCeilings?: BudgetCeiling[];
 }
 
 function entryResultFailed(result: FlowRunEntryResult): boolean {
@@ -77,6 +81,7 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	if (maxDuration) headerParts.push(formatDuration(maxDuration));
 	const lines = [
 		`${statusIcon} ${theme.fg("toolTitle", theme.bold(`flow ${data.mode}`))} ${theme.fg(statusColor, statusText)}${headerParts.length ? theme.fg("muted", ` · ${headerParts.join(" · ")}`) : ""}`,
+		...budgetDisclosureLines(data.budgetCeilings).map((line) => theme.fg("muted", line)),
 	];
 
 	const nameWidth = Math.min(16, Math.max(4, ...data.results.map((result) => result.agent.length)));
@@ -91,10 +96,14 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		if (result.usage?.cost) meta.push(`$${result.usage.cost.toFixed(4)}`);
 		if (result.model) meta.push(result.model);
 		if (meta.length) line += ` ${theme.fg("muted", meta.join(" · "))}`;
-		if (failed && !expanded) line += ` ${theme.fg("error", result.errorCode ?? result.stopReason ?? "failed")}`;
+		if (failed && !expanded) {
+			const failure = `${result.errorCode ?? result.stopReason ?? "failed"}${result.budgetCeiling ? ` · ${formatBudgetCeiling(result.budgetCeiling)}` : ""}`;
+			line += ` ${theme.fg("error", failure)}`;
+		}
 		lines.push(line);
 		if (expanded && failed) {
-			lines.push(`  ${theme.fg("error", `${result.errorCode ?? "failed"}${result.stopReason ? ` · stop: ${result.stopReason}` : ""} · exit ${result.exitCode}`)}`);
+			const bindingBudget = result.budgetCeiling ? ` · ${formatBudgetCeiling(result.budgetCeiling)}` : "";
+			lines.push(`  ${theme.fg("error", `${result.errorCode ?? "failed"}${bindingBudget}${result.stopReason ? ` · stop: ${result.stopReason}` : ""} · exit ${result.exitCode}`)}`);
 		}
 	}
 
