@@ -132,7 +132,10 @@ budget.
 
 Trace configuration crosses only when it came from the environment. A child inherits
 the parent's environment, so `PI_FLOWS_TRACE_FILE` / `PI_FLOWS_TRACE_STRICT` reach a
-nested flow, which appends to the same file under a root span of its own. `traceFile`
+nested flow, which appends to the same file under a root span of its own — but only
+when the path is absolute. A relative `PI_FLOWS_TRACE_FILE` is resolved against each
+flow's own `cwd`, so a child running in a different directory writes a separate sink;
+use an absolute path when one combined trace is the intent. `traceFile`
 and `traceStrict` passed as call parameters are consumed locally and are never copied
 into the child environment, so in that case a nested flow exports nothing unless it
 configures tracing itself.
