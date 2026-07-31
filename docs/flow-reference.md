@@ -124,10 +124,11 @@ if no justification can be stated, the task belongs in the parent context.
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
 | `cwd` | parent cwd | Child process working directory. |
 
-A flow budget bounds one flow call. It does not cross the process boundary: a child
-that starts its own flow bounds that flow with a budget of its own, and the outer
-ceiling never sees its spend. Runaway nesting is bounded by the delegation depth cap
-(`FLOW_DEPTH_EXCEEDED`), not by the budget.
+A flow budget bounds one flow call. It does not cross the process boundary: the outer
+ceiling never sees a nested flow's spend, and that nested flow is bounded only by the
+ceilings its own call sets — uncapped if it sets none, which is the default. Runaway
+nesting is bounded by the delegation depth cap (`FLOW_DEPTH_EXCEEDED`), not by the
+budget.
 
 Trace configuration crosses only when it came from the environment. A child inherits
 the parent's environment, so `PI_FLOWS_TRACE_FILE` / `PI_FLOWS_TRACE_STRICT` reach a

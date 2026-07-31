@@ -1,10 +1,10 @@
 # Nested delegation is bounded by a depth cap, not a tree-wide budget
 
-A flow budget bounds one flow call. When a child starts its own flow, that nested flow
-builds a fresh budget from its own parameters and the outer ceiling never sees its
-spend. Runaway nesting is contained by refusing a `flow` call at or beyond
-`MAX_FLOW_DEPTH` (`FLOW_DEPTH_EXCEEDED`) rather than by threading remaining budget down
-the tree.
+A flow budget bounds one flow call. When a child starts its own flow, the outer ceiling
+never sees its spend, and that nested flow is bounded only by the ceilings its own call
+sets — by default, none. Runaway nesting is contained by refusing a `flow` call at or
+beyond `MAX_FLOW_DEPTH` (`FLOW_DEPTH_EXCEEDED`) rather than by threading remaining
+budget down the tree.
 
 ## The depth cap is harness discipline, not a security boundary
 
