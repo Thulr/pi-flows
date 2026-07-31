@@ -8,15 +8,22 @@ nesting is contained by refusing a `flow` call at or beyond `MAX_FLOW_DEPTH`
 
 ## Considered Options
 
-**Propagate remaining budget to nested flows.** Rejected because the transport is not
-trustworthy in the direction that matters. A child is an untrusted adapter: the model
-inside it composes its own `flow` call, and an agent with a shell can read and rewrite
-its own environment. An inherited ceiling would therefore have to be a floor the child
-*cannot raise*, which means either a tamper-evident channel or accepting that the guard
-is advisory. `currentFlowDepth()` sidesteps this entirely — it clamps to a non-negative
-integer, so a hostile or garbage `PI_FLOWS_DEPTH` can only ever make the guard stricter,
-never disable it. A budget has no equivalent fail-safe direction: garbage input to a
-spend ceiling is as likely to loosen it as tighten it.
+**Propagate remaining budget to nested flows.** Rejected on blast radius, not on
+tamper-resistance — neither mechanism is tamper-proof, and it is worth being precise
+about that. A child is an untrusted adapter: the model inside it composes its own
+`flow` call, and an agent with a shell can rewrite its own environment. `PI_FLOWS_DEPTH`
+is no exception. `currentFlowDepth()` resolves a corrupted, negative, or non-numeric
+value to `0`, which is *less* restrictive than the depth the child actually inherited,
+so tampering buys additional nesting rather than being rejected.
+
+What differs is what that tampering costs. The depth cap still applies from whatever
+value is read, so corrupting it yields at most `MAX_FLOW_DEPTH` further levels from the
+tampering point, each one a separate visible process. Corrupting a propagated budget
+resets cumulative spend, and the ceiling stops meaning anything at all — the failure is
+unbounded in the dimension the ceiling exists to bound. A propagated ceiling would also
+have to be enforced as a floor the child *cannot raise*, since the child's model chooses
+its own budget parameters; that is a materially larger mechanism than passing a number
+down, and it would still rest on the same untrusted transport.
 
 **Forbid nested flows outright.** Rejected as too blunt — one level of nesting is
 legitimately useful (a worker that needs its own fan-out), and the cap already makes

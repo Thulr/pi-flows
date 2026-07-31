@@ -113,7 +113,13 @@ export function clampLoopIterations(value: number | undefined): number {
 	return Math.max(1, Math.min(MAX_LOOP_ITERATIONS, Math.floor(value)));
 }
 
-/** Current flow nesting depth from PI_FLOWS_DEPTH, clamped to a non-negative integer so hostile or garbage env values cannot disable the depth guard. */
+/**
+ * Current flow nesting depth from PI_FLOWS_DEPTH, clamped to a non-negative integer
+ * so hostile or garbage env values cannot disable the depth guard. Note the clamp
+ * resets the counter rather than tightening it — a corrupted value reads as depth 0
+ * and buys further nesting, bounded by MAX_FLOW_DEPTH from that point. See
+ * docs/adr/0001-depth-cap-not-tree-wide-budget.md.
+ */
 export function currentFlowDepth(): number {
 	const raw = Number(process.env.PI_FLOWS_DEPTH);
 	return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;

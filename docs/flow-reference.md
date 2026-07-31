@@ -106,11 +106,6 @@ if no justification can be stated, the task belongs in the parent context.
 | `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in this flow. Once reached at a completed model-response boundary, the active child stops and no further child spawns. |
 | `maxTokens` | (none) | Cumulative input+output token ceiling across every child in this flow. Once reached, no further child spawns. |
 | `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across every child in this flow. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
-
-A flow budget bounds one flow call. It does not cross the process boundary: a child
-that starts its own flow bounds that flow with a budget of its own, and the outer
-ceiling never sees its spend. Runaway nesting is bounded by the delegation depth cap
-(`FLOW_DEPTH_EXCEEDED`), not by the budget.
 | `traceFile` | (none) | Append OpenInference-shaped JSON spans to this JSONL file — one per child run, one per stage (wave/round/phase), one per coordination event, plus a root span. Trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group execution success, verified outcome success, TPSO, cost, and warning counts by journey/release gate. |
 | `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. Redacted, bounded identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
@@ -128,6 +123,11 @@ ceiling never sees its spend. Runaway nesting is bounded by the delegation depth
 | `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Portable model selection: resolves through `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` when the user mapped them, else the default pi model. Resolution order: call `model` > call `tier` > agent `model` pin > agent `tier` > pi default; a call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent, while an unmapped call-level `fast`/`deep` falls through. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
 | `cwd` | parent cwd | Child process working directory. |
+
+A flow budget bounds one flow call. It does not cross the process boundary: a child
+that starts its own flow bounds that flow with a budget of its own, and the outer
+ceiling never sees its spend. Runaway nesting is bounded by the delegation depth cap
+(`FLOW_DEPTH_EXCEEDED`), not by the budget.
 
 The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
 voters, subtasks, worktree writers, debate participants, and dossier sections --

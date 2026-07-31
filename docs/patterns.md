@@ -65,7 +65,7 @@ The wiki names seven anti-patterns; three are structural and pi-flows guards aga
 
 - **The God Prompt** — one prompt doing everything. Decompose with `chain` or `orchestrate`.
 - **Over-agentification** — using agents where deterministic code or `single` would do. The decision ladder above pushes back on this.
-- **Uncontrolled recursion** — loops or fan-out without bounds. Every running mode is capped on **count** (`maxIterations`, `maxParallelTasks`, `concurrency`, `maxSubtasks`), **time** (`timeoutMs` per child), **depth** (`MAX_FLOW_DEPTH`), and now **cost** (`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` across the whole tree) — the wiki names cost as a dimension iteration/time caps miss.
+- **Uncontrolled recursion** — loops or fan-out without bounds. Every running mode is capped on **count** (`maxIterations`, `maxParallelTasks`, `concurrency`, `maxSubtasks`), **time** (`timeoutMs` per child), **depth** (`MAX_FLOW_DEPTH`), and now **cost** (`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` across every child in the flow) — the wiki names cost as a dimension iteration/time caps miss.
 - **Output-only guardrails** — checking only the final output, not intermediate steps. pi-flows scans every inter-agent **handoff** (chain `{previous}`, evaluate artifact, vote ballots, orchestrate findings) for injected instructions, not just the boundary in and out.
 
 ## Harness guarantees
@@ -73,7 +73,7 @@ The wiki names seven anti-patterns; three are structural and pi-flows guards aga
 What the harness enforces regardless of what an agent does — the bounded-execution and guardrail primitives the wiki calls table stakes:
 
 - **Bounded execution.** Every running mode has hard caps on count, time, and depth (above). Nothing loops or fans out without a ceiling.
-- **Cost ceiling.** `maxCostUsd` / `maxTokens` / `maxGeneratedTokens` accumulate across every child in the tree. Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling preserves that response. All three refuse subsequent child spawns once hit (`BUDGET_EXCEEDED`). Bounds the cost dimension that count/time caps do not. (`agentic-design-patterns` "Uncontrolled Recursion")
+- **Cost ceiling.** `maxCostUsd` / `maxTokens` / `maxGeneratedTokens` accumulate across every child in one flow — not across a nested flow a child starts, which carries its own budget; depth is what bounds nesting. Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling preserves that response. All three refuse subsequent child spawns once hit (`BUDGET_EXCEEDED`). Bounds the cost dimension that count/time caps do not. (`agentic-design-patterns` "Uncontrolled Recursion")
 - **Nested-delegation depth cap.** Children are spawned with an incremented `PI_FLOWS_DEPTH`; a flow call at or beyond `MAX_FLOW_DEPTH` is refused (`FLOW_DEPTH_EXCEEDED`). This bounds flow-within-flow recursion that the per-mode caps alone don't cover.
 - **Per-child timeout.** `timeoutMs` kills a stalled child (SIGTERM, then SIGKILL).
 - **Fail-closed project agents.** Repo-controlled `.pi/flow-agents` prompts are refused in headless runs unless explicitly trusted.

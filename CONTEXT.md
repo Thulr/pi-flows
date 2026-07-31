@@ -7,7 +7,7 @@ pi-flows lets a parent pi session delegate bounded work to disposable children a
 ### Delegation model
 
 **Flow**:
-One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it owns a mode, a budget, a root span, and a settled outcome of its own, and a flow refused before it spawns anything is still a flow.
+One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it has a mode and a settled outcome of its own, and it is the thing a budget, a root span, and a checkpoint attach to when the call configures them. A flow refused before it spawns anything is still a flow.
 _Avoid_: job, session
 
 **Flow tree**:
