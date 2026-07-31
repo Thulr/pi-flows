@@ -196,7 +196,7 @@ interface BudgetState {
  * change.
  *
  * @param prefix which ceiling this is. A contracted child is bounded by two
- *   independent budgets — the flow tree's and the contract's — and the contract's
+ *   independent budgets — the flow's and the contract's — and the contract's
  *   is usually the tighter one, so recording only the flow budget would name a
  *   limit that did not stop the child and omit the one that did.
  */

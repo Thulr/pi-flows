@@ -103,9 +103,14 @@ if no justification can be stated, the task belongs in the parent context.
 | `timeoutMs` | `36000000` | Per child process timeout (10 hours). Independently of it, a child that reports a terminal provider error and then stalls is terminated after a short grace (`PI_FLOWS_ERROR_GRACE_MS`, default 30000ms) with `CHILD_PROVIDER_ERROR`. |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
-| `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in the flow tree. Once reached at a completed model-response boundary, the active child stops and no further child spawns. |
-| `maxTokens` | (none) | Cumulative input+output token ceiling across the flow tree. Once reached, no further child spawns. |
-| `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across the flow tree. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
+| `maxCostUsd` | (none) | Cumulative USD cost ceiling across every child in this flow. Once reached at a completed model-response boundary, the active child stops and no further child spawns. |
+| `maxTokens` | (none) | Cumulative input+output token ceiling across every child in this flow. Once reached, no further child spawns. |
+| `maxGeneratedTokens` | (none) | Cumulative generated/output token ceiling across every child in this flow. Once reached, the active child stops at the completed model-response boundary and no further child spawns. Omit to run uncapped. |
+
+A flow budget bounds one flow call. It does not cross the process boundary: a child
+that starts its own flow bounds that flow with a budget of its own, and the outer
+ceiling never sees its spend. Runaway nesting is bounded by the delegation depth cap
+(`FLOW_DEPTH_EXCEEDED`), not by the budget.
 | `traceFile` | (none) | Append OpenInference-shaped JSON spans to this JSONL file — one per child run, one per stage (wave/round/phase), one per coordination event, plus a root span. Trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group execution success, verified outcome success, TPSO, cost, and warning counts by journey/release gate. |
 | `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. Redacted, bounded identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
