@@ -256,7 +256,7 @@ export default function (pi: ExtensionAPI) {
 				);
 				return {
 					content: [{ type: "text", text: formatFlowError(error) }],
-					details: catalog.errorDetails(mode, error),
+					details: makeDetails(mode)([], error),
 				};
 			}
 
@@ -266,7 +266,7 @@ export default function (pi: ExtensionAPI) {
 			if (concurrencyError) {
 				return {
 					content: [{ type: "text", text: formatFlowError(concurrencyError) }],
-					details: catalog.errorDetails(mode, concurrencyError),
+					details: makeDetails(mode)([], concurrencyError),
 				};
 			}
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
@@ -285,7 +285,7 @@ export default function (pi: ExtensionAPI) {
 				);
 				return {
 					content: [{ type: "text", text: formatFlowError(error) }],
-					details: catalog.errorDetails(mode, error),
+					details: makeDetails(mode)([], error),
 				};
 			}
 

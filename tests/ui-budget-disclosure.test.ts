@@ -5,7 +5,7 @@ import { fleetRunLines } from "../extensions/pi-flows/fleet-panel.ts";
 import { appendFlowSessionEntry } from "../extensions/pi-flows/ui.ts";
 import { flowCardLines } from "../extensions/pi-flows/ui-flow-card.ts";
 import { flowCallLines, flowLiveBoardLines } from "../extensions/pi-flows/ui-live-row.ts";
-import { budgetExceededError } from "../extensions/pi-flows/types.ts";
+import { MAX_FLOW_DEPTH, budgetExceededError } from "../extensions/pi-flows/types.ts";
 import { integrationContract, integrationEnvelope, runFlow } from "./stub-harness.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
@@ -135,6 +135,32 @@ test("execution details and the session entry carry generated ceilings end to en
 	const expected = [{ authority: "contract", maxGeneratedTokens: 2000 }];
 	assert.deepEqual(result.details.budgetCeilings, expected);
 	assert.deepEqual(entries[0]?.data.budgetCeilings, expected);
+});
+
+test("pre-dispatch refusals preserve the ceilings shown before work", async () => {
+	const params = { agent: "recon", contract: integrationContract, maxTokens: 9000 };
+	const expected = [
+		{ authority: "flow", maxTokens: 9000 },
+		{ authority: "contract", maxGeneratedTokens: 2000 },
+	];
+	const invalidConcurrency = await runFlow({ ...params, concurrency: 1.5 }, {});
+	assert.equal(invalidConcurrency.result.details.error?.code, "INVALID_CONCURRENCY");
+	assert.deepEqual(invalidConcurrency.result.details.budgetCeilings, expected);
+
+	const strictTrace = await runFlow({ ...params, traceStrict: true }, {});
+	assert.equal(strictTrace.result.details.error?.code, "TRACE_INCOMPLETE");
+	assert.deepEqual(strictTrace.result.details.budgetCeilings, expected);
+
+	const previousDepth = process.env.PI_FLOWS_DEPTH;
+	process.env.PI_FLOWS_DEPTH = String(MAX_FLOW_DEPTH);
+	try {
+		const depthExceeded = await runFlow(params, {});
+		assert.equal(depthExceeded.result.details.error?.code, "FLOW_DEPTH_EXCEEDED");
+		assert.deepEqual(depthExceeded.result.details.budgetCeilings, expected);
+	} finally {
+		if (previousDepth === undefined) delete process.env.PI_FLOWS_DEPTH;
+		else process.env.PI_FLOWS_DEPTH = previousDepth;
+	}
 });
 
 test("exhausted live, fleet, and durable views retain the binding authority and ceiling", () => {
