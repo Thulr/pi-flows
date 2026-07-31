@@ -11,7 +11,7 @@ One bounded delegation — a single call of the `flow` tool, covering every chil
 _Avoid_: job, session
 
 **Flow tree**:
-A flow plus any flows its children start, up to the delegation depth cap. Budget accounting is per flow: every flow in the tree charges only its own budget, so no ceiling spans the tree.
+A flow plus any flows its children start. Budget accounting is per flow: every flow in the tree charges only its own budget, so no ceiling spans the tree.
 _Avoid_: flow graph, nested run
 
 **Mode**:

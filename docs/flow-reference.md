@@ -35,9 +35,11 @@ in-memory flow updates:
   Before the first child starts, the tool call and row also disclose every
   configured cost/token ceiling as a `flow ceiling` or `contract ceiling`.
   `ctrl+o` expands the settled row into full per-run output.
-- **`F8` toggles the fleet panel**, a non-modal overlay listing every live run
-  at once: per-run state and activity, failures, and budget burn-down when
-  `maxCostUsd` is set. The panel never takes keyboard focus — keep typing while
+- **`F8` toggles the fleet panel**, a non-modal overlay listing every live flow
+  at once with the runs beneath each one: per-run state and activity, failures,
+  and budget burn-down when `maxCostUsd` is set. A flow stays listed until its
+  handler settles, so it remains visible between stages even when every run it
+  has started so far is settled. The panel never takes keyboard focus — keep typing while
   it is open. Press `F8` again (or Escape when focused) to close it; closing
   never interrupts children. It hides automatically on terminals narrower than
   80 columns.
