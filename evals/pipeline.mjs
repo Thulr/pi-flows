@@ -23,7 +23,7 @@ import * as thulr from "./thulr.mjs";
 import { caseSplit, splitVersions, COVERAGE_REQUIREMENT } from "./calibration-coverage.mjs";
 import { buildCalibrationReport, calibrationGateIssues, calibrationRecords, formatCalibrationReport, DEFAULT_CRITICAL_MISS_RATE_CAP } from "./calibration.mjs";
 import { calibrationKey, groundTruthDigest, rubricDigest, thresholdFingerprint, traceAttributeDigest, EVAL_TRACE_SCHEMA_VERSION } from "./calibration-key.mjs";
-import { buildReviewReport, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
+import { buildReviewReport, normalizeReviewSet, reviewGroundTruth, reviewSetPath } from "./review-agreement.mjs";
 import { buildReliabilityReport, formatReliabilitySummary } from "./reliability.mjs";
 
 /** Absolute path for a repo-relative path. */
@@ -39,10 +39,14 @@ export const DEFAULT_FAILURE_MODE = "final_answer.deterministic_fail";
 
 /**
  * The cases a run measures. Controls (threshold negatives) are excluded unless
- * asked for, and `--filter` is a substring match on the case name.
+ * asked for, `--filter` is a substring match on the case name, and the release
+ * suite keeps hard headroom cases in the internal score track rather than
+ * misrepresenting an expected partial score as a failed release outcome.
  */
-export const selectMeasurementCases = (cases, { filter = "", includeControls = false } = {}) =>
-	cases.filter((c) => (includeControls || !c.control) && (!filter || c.name.includes(filter)));
+export const selectMeasurementCases = (cases, { filter = "", includeControls = false, releaseSuite = false } = {}) =>
+	cases.filter((c) => (includeControls || !c.control)
+		&& (!releaseSuite || !c.hard)
+		&& (!filter || c.name.includes(filter)));
 
 // --- Phase: case -> thulr span projection ----------------------------------
 
@@ -244,6 +248,21 @@ const readJsonOrNull = (path) => {
 	}
 };
 
+/**
+ * Resolve the human-review set for this run. Explicit files remain authoritative
+ * (and may fail loudly); auto-discovered files are ignored when they only contain
+ * cases from an older or differently filtered trace.
+ */
+export function selectCalibrationReviewSet({ trace, preferredPath = null, explicit = false, caseIds = [] }) {
+	if (explicit) return preferredPath;
+	const relevant = new Set(caseIds.filter((caseId) => typeof caseId === "string" && caseId.length > 0));
+	for (const candidate of [...new Set([reviewSetPath(trace), preferredPath].filter(Boolean))]) {
+		const { reviews } = normalizeReviewSet(readJsonOrNull(candidate));
+		if (reviews.some((review) => relevant.has(review.caseId))) return candidate;
+	}
+	return null;
+}
+
 /** The trace's span shapes, so a changed case -> span projection invalidates calibration on its own. */
 function traceSpans(trace) {
 	if (!existsSync(trace)) return [];
@@ -317,8 +336,12 @@ export function assessCalibration({
 	// blinding, and adjudication thulr's schema has no room for. Falling back to
 	// thulr's own set costs only those fields: it normalizes as unblinded criterion
 	// verdicts, which is exactly what it is.
-	const extended = reviewSetPath(trace);
-	const chosen = reviews.explicit ? reviews.path : existsSync(extended) ? extended : reviews.path ?? null;
+	const chosen = selectCalibrationReviewSet({
+		trace,
+		preferredPath: reviews.path,
+		explicit: reviews.explicit,
+		caseIds: cases.flatMap(({ caseId, verdictKey }) => [caseId, verdictKey]),
+	});
 	const reviewSet = readJsonOrNull(chosen);
 	const humanTruth = reviewGroundTruth(buildReviewReport(reviewSet ?? { reviews: [] }));
 	const records = calibrationRecords({ cases, verdicts, humanTruth, abstentionBand });

@@ -145,12 +145,18 @@ register([
 	"implicit-trigger-react-uses-monitor",
 ], "capability", "delegation-selection", monitor);
 
-/** Attach the declared portfolio and task-structure contract to case objects. */
+/** Attach portfolio metadata and the spawning justification owned by the eval harness. */
 export function defineCases(cases) {
 	return cases.map((testCase) => ({
 		...testCase,
 		id: testCase.name,
 		...(metadata.get(testCase.name) ?? {}),
+		...(testCase.params ? {
+			params: {
+				why: `controlled evaluation case ${testCase.name} requires bounded child execution`,
+				...testCase.params,
+			},
+		} : {}),
 	}));
 }
 

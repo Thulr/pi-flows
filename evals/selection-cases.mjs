@@ -25,8 +25,8 @@ export const SELECTION_CASES = defineCases([
 		name: "package-version-no-flow",
 		task: "In package.json, what is the current package version? Answer with only the version string.",
 		expectFlow: false,
-		answerPattern: "\\b0\\.4\\.2\\b",
-		mock: { flowCalls: 0, answer: "0.4.2" },
+		answerPattern: "\\b0\\.5\\.0\\b",
+		mock: { flowCalls: 0, answer: "0.5.0" },
 		sourceExpectation: {
 			path: "package.json",
 			jsonPath: ["version"],
@@ -140,12 +140,12 @@ export const SELECTION_CASES = defineCases([
 		name: "plausible-release-summary-no-flow",
 		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
 		expectFlow: false,
-		answerPattern: "flow card|glossary|per-run|fleet",
-		mock: { flowCalls: 0, answer: "- The durable session entry is now the flow card, docs say per-run where runs are listed, and the domain glossary gains Fleet, Flow card, Settled, and Budget." },
+		answerPattern: "nothing|unreleased|0\\.5\\.0",
+		mock: { flowCalls: 0, answer: "- Nothing is unreleased yet — version 0.5.0 contains the latest domain terminology, progress, budget-disclosure, and retry-safety changes." },
 		sourceExpectation: {
 			format: "text",
 			path: "CHANGELOG.md",
-			patterns: ["## Unreleased[\\s\\S]*flow card[\\s\\S]*## 0\\.4\\.2[\\s\\S]*## 0\\.4\\.1"],
+			patterns: ["## Unreleased[\\s\\S]*Nothing yet[\\s\\S]*## 0\\.5\\.0[\\s\\S]*flow card[\\s\\S]*## 0\\.4\\.2"],
 		},
 	},
 	{

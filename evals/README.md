@@ -14,9 +14,10 @@ Every case is scored on **two independent axes**:
    `criterion` plus named `thulr.criteria.<dimension>` rubrics and **gates quality
    regressions** against a baseline.
 
-The judge runs on a *different* vendor than the subject under test (default
-`anthropic/claude-haiku-4-5`), so no model grades its own family. A case passes
-only when both axes agree, and the run is gated only when thulr finds a regression.
+The standardized subject and judge both use the required Codex provider. The
+default judge (`openai-codex/gpt-5.5`) is distinct from and stronger than the
+default subject (`openai-codex/gpt-5.4-mini`). A case passes only when both axes
+agree, and the run is gated only when thulr finds a regression.
 The trace also includes fixed **calibration canaries**: known-wrong and partial
 answers that are not live flow delegations. They give thulr true-negative and
 mid-score examples so TNR is meaningful instead of every row collapsing into
@@ -37,7 +38,7 @@ npm run eval -- --filter=route     # only matching cases
 npm run eval -- --filter=pattern-  # new-mode workflow/worktree/debate/dossier/monitor cases
 npm run eval -- --include-controls # include simple threshold/control cases in the default set
 npm run eval -- --model=openai-codex/gpt-5.5   # explicit subject provider/model
-npm run eval -- --judge-model=anthropic/claude-opus-4-8   # thulr judge model (default: anthropic/claude-haiku-4-5)
+npm run eval -- --judge-model=openai-codex/gpt-5.5   # explicit thulr judge model (also the default)
 npm run eval -- --judge-bin=/path/to/judge-wrapper   # override thulr's judge command
 npm run eval -- --samples=3        # judge each case 3×: majority verdict, mean score, flake warnings (3× judge spend)
 npm run eval -- --trials=5         # run the stochastic subject case 5× in isolated workspaces
@@ -55,6 +56,7 @@ npm run eval -- --write-baseline   # promote this run to evals/thulr-baseline.js
 npm run eval -- --compare-baseline=evals/thulr-baseline.json   # gate against a specific baseline
 npm run eval -- --junit=.thulr/runs/gate.junit.xml   # also write the gate verdict as JUnit XML (CI test ingestion)
 npm run eval -- --strict-trace     # block the run when its runtime trace evidence is incomplete (off by default)
+npm run eval -- --release-suite --trials=5 --strict-trace # release evidence: pass-gated behaviour + imported regressions
 npm run eval -- --trace-only --trace-out=/tmp/t.jsonl   # run flows + emit the trace, no judge/gate (see Experiments)
 npm run eval -- --run-id=release-123 --runtime-trace=/tmp/runtime.jsonl # stable eval/runtime linkage
 npm run eval -- --failure-ledger=/secure/failures.jsonl # include imported capability/regression cases
@@ -81,6 +83,11 @@ thulr's criterion) **and** thulr's gate reports no regression; `1` otherwise.
 is expected and does not fail the run; only a regression in it (caught by the
 score-guardrail below) does. Each case is bounded by the flow tool's own
 `maxCostUsd`, so a runaway delegation is capped.
+
+`--release-suite` selects the pass-gated behaviour cases plus every imported
+production regression. Hard headroom cases stay in the regular internal eval
+score track; they are not relabeled as failed verified outcomes in the strict
+release manifest merely because an expected multi-part answer scored partially.
 
 ## How the thulr gate works
 
@@ -193,12 +200,10 @@ override with `--model=<provider/id>` or `PI_FLOWS_EVAL_MODEL`)
 — so the baseline is reproducible and the flows-vs-plain A/B compares like-for-like.
 Auth is pi's own (thulr also judges via `pi`):
 
-- **Subscription / OAuth** — `pi`, then `/login` (stored in `~/.pi/agent/auth.json`). Nothing else to do.
-- **API key** — drop it in a gitignored `.env` (see `.env.example`); `npm run eval` loads it:
-
-  ```bash
-  cp .env.example .env      # then add e.g. ANTHROPIC_API_KEY=sk-ant-…
-  ```
+- **Codex subscription / OAuth** — `pi`, then `/login` and choose
+  `openai-codex` (stored in `~/.pi/agent/auth.json`). Nothing else to do.
+- A gitignored `.env` is loaded for optional local overrides, but the standardized
+  subject and judge use the Codex OAuth session.
 
 Override the subject with `--model=<provider/id>` (OAuth providers like `openai-codex`
 need the provider prefix). The single-arm harness also accepts `--model=agent`;
@@ -244,13 +249,13 @@ contains `VERDICT:`.
 | `pattern-dossier-*` | source-specific extractors reconcile documented, deployed, incident, and telemetry evidence without smoothing conflicts or inventing provenance |
 | `pattern-monitor-*` | a bounded probe captures the first transient trigger and a reactor connects that exact event to logs, safe runbook actions, and verification gates |
 
-Plus: **every** case above is independently graded by thulr's cross-model judge
-(default `anthropic/claude-haiku-4-5`, override with `--judge-model` /
+Plus: **every** case above is independently graded by thulr's Codex judge
+(default `openai-codex/gpt-5.5`, override with `--judge-model` /
 `PI_FLOWS_JUDGE_MODEL`) against a primary `criterion` and named dimensions such as
 `exactness`, `completeness`, `contract_adherence`, and `evidence_quality`. The
 table's objective checks gate *behaviour* and label the run; thulr's judge gates
-*answer quality*; a case passes only when both agree. Pointing the judge at a
-different vendor than `--model` is what keeps it from grading its own model family.
+*answer quality*; a case passes only when both agree. The standardized judge is a
+distinct, stronger Codex model than the default subject.
 
 The suite also appends three fixed calibration canaries to every thulr trace:
 
@@ -274,7 +279,7 @@ comparison, research question, or status check should activate a flow.
 
 Does orchestration improve the same model's result? `npm run eval:compare` runs
 every case through two arms, writes one thulr trace per arm, judges both with the
-same calibrated cross-model judge, and runs `thulr compare` with the direct arm as
+same calibrated Codex judge, and runs `thulr compare` with the direct arm as
 the baseline and Pi Flows as the candidate:
 
 - **flows** -- the case's flow parameters, agent profiles, and orchestration.
@@ -664,13 +669,13 @@ EOF
 thulr run-experiment .thulr/experiments/subject-model-bakeoff.json \
   --candidates /tmp/candidates.json \
   --template "node --import tsx evals/run.mjs --trace-only --trace-out={out} --model={param.model}" \
-  --model anthropic/claude-haiku-4-5
+  --model openai-codex/gpt-5.5
 
 # Or hands-off — grid axes, judged every round, held-out-validated, bounded budget:
 thulr optimize .thulr/experiments/subject-model-bakeoff.json \
   --template "node --import tsx evals/run.mjs --trace-only --trace-out={out} --model={param.model}" \
   --grid "model=openai-codex/gpt-5.4-mini,openai-codex/gpt-5.5" \
-  --max-rounds 3 --model anthropic/claude-haiku-4-5
+  --max-rounds 3 --model openai-codex/gpt-5.5
 ```
 
 Selection is overfit-guarded: a challenger must beat the champion on the **train**

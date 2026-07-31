@@ -6,7 +6,7 @@
 //
 // It speaks the same `--mode json` protocol the flow tool's children use, and
 // returns a result shaped like a flow result ({ content, details.results[] }) so the
-// existing objective scorers and the cross-model judge consume it unchanged.
+// existing objective scorers and the independent judge consume it unchanged.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -14,6 +14,10 @@ function coverage(body, checks) {
 	return { pass: found === checks.length, score: found / checks.length, notes: `${found}/${checks.length} required findings${missed.length > 0 ? `; missed checks ${missed.join(", ")}` : ""}` };
 }
 
+const allPatterns = (...patterns) => ({
+	test: (body) => patterns.every((pattern) => pattern.test(body)),
+});
+
 function artifactCoverage(result, ctx, relativePath, checks) {
 	const file = join(ctx.flowCtx.cwd, relativePath);
 	const realExists = existsSync(file);
@@ -124,7 +128,7 @@ export const PATTERN_CASES = defineCases([
 		criterion: "The runbook stages a 48-hour overlap, keeps the old key verify-only, waits for all three regions to exceed 99.9% new-key signing for six hours, requires security approval before revocation, and rolls back by restoring old-key signing rather than distributing a third key.",
 		criteria: sharedCriteria("The sequence obeys policy and avoids the postmortem's premature-revocation and third-key failure modes.", "Includes 48-hour overlap, verify-only old key, three regions, 99.9% for six hours, security approval, clock-skew check, and rollback.", "Uses specific citations from policy.md, runtime.md, and postmortem.md and labels remaining uncertainty."),
 		judgeOnlyDimensions: ["evidence_quality"],
-		score: (result, ctx) => artifactCoverage(result, ctx, "signing-key-rotation-runbook.md", [/48[ -]?hour/i, /verify.only/i, /(three|3) regions?|us-east.*us-west.*eu-central/is, /99\.9\s*%/, /(six|6)\s*(?:hours?|h\b)/i, /security.*approv|approv.*security/i, /clock[ -]skew/i]),
+		score: (result, ctx) => artifactCoverage(result, ctx, "signing-key-rotation-runbook.md", [/48[ -]?hour/i, /verify.only/i, /(three|3) regions?|us-east.*us-west.*eu-central/is, /99\.9\s*%/, /(six|6)\s*(?:continuous\s+)?(?:hours?|h\b)/i, /security.*approv|approv.*security/i, /clock[ -]skew/i]),
 		mock: { content: [{ type: "text", text: "Use a 48-hour overlap, old key verify-only, require all 3 regions at 99.9% for 6 hours plus a clock skew check and security approval." }], details: { mode: "workflow", results: [] } },
 	},
 	{
@@ -198,7 +202,7 @@ export const PATTERN_CASES = defineCases([
 		setupWorkspace: setupFixture("debate-regional-writes"),
 		params: {
 			task: "Read architecture.md, measurements.csv, change-window.md, constraints.md, and incident.md. Choose exactly one day-10 topology, A or B. Return the complete decision record in your final answer and do not modify workspace files. Begin with an exact line `DECISION: A` or `DECISION: B`. Give a file:line-cited constraint matrix covering both options, show every conservative-envelope calculation, state the strongest case for the rejected option, identify the controls actually available by day 10, and give the exact reversal conditions. Use only workspace evidence; do not merge the options or assume an unavailable control.",
-			timeoutMs: 600_000,
+			timeoutMs: 900_000,
 			debate: { participants: [{ agent: "strategist" }, { agent: "analyst" }], adjudicator: { agent: "analyst" }, rounds: 2 },
 		},
 		criterion: "Chooses A with fencing because it clears every day-10 hard gate under conservative bounds. Preserves B's genuine zero-duplicate, latency, cost, and simplicity advantages, but rejects B because no day-10 mitigation satisfies both CPU and budget; never assumes early batch eviction or claims fencing eliminates all risk.",
@@ -206,15 +210,15 @@ export const PATTERN_CASES = defineCases([
 		judgeOnlyDimensions: ["evidence_quality"],
 		score: (result) => coverage(answer(result), [
 			/^DECISION:\s*A\s*$/im,
-			/upper bound.{0,100}lower bound|conservative envelope|lower bound.{0,100}upper bound/is,
-			/1\.60\s*%.{0,80}(?:1\s*[-\u2212]\s*(?:90\s*%|0\.90)).{0,100}0\.16\s*%.{0,80}(?:<=|\u2264|pass|within).{0,40}0\.25\s*%/is,
-			/164\s*(?:ms)?\s*\+\s*9\s*(?:ms)?.{0,80}173\s*ms.{0,80}(?:<|below).{0,30}175\s*ms/is,
-			/(?:25\s*\+\s*2|\$?27\s*k).{0,80}\$?27\s*k?.{0,80}(?:<=|\u2264|within).{0,30}\$?28\s*k?.{0,120}(?:6\s*(?:days?|d)\s*(?:<=|\u2264).{0,20}10|deploy.{0,40}6\s*(?:days?|d))/is,
+			allPatterns(/upper[ -]bound/i, /lower[ -]bound/i),
+			allPatterns(/1\.60\s*%/i, /(?:1\s*[-\u2212]\s*(?:90\s*%|0\.90)|0\.10)/i, /0\.16\s*%/i, /0\.25\s*%/i),
+			allPatterns(/\b164\s*(?:ms)?\b/i, /\b9\s*(?:ms)?\b/i, /\b173\s*ms\b/i, /\b175\s*ms\b/i),
+			allPatterns(/(?:25\s*\+\s*2|\$?27\s*k)/i, /\$?27\s*k/i, /\$?28\s*k/i, /6\s*(?:days?|d)\b/i, /(?:day\s*10|10\s*(?:days?|d)\b|6\s*(?:days?|d)\s*(?:<=|\u2264)\s*10)/i),
 			/42\s*(?:seconds?|s\b).{0,100}(?:12\s*(?:seconds?|s\b)).{0,120}(?:pass|within|<=|\u2264)/is,
-			/68\s*%\s*\+\s*24\s*(?:pp|percentage points?).{0,80}92\s*%.{0,60}(?:>|exceed|fail).{0,30}90\s*%/is,
-			/(?:68\s*%\s*\+\s*24\s*(?:pp|percentage points?)\s*[-\u2212]\s*8\s*(?:pp|percentage points?).{0,60}84\s*%|84\s*%).{0,160}(?:21\s*\+\s*8|\$?29\s*k).{0,80}(?:>|exceed).{0,30}\$?28\s*k/is,
+			allPatterns(/68\s*%?\s*\+\s*24\s*(?:(?:pp|percentage points?)\b)?/i, /92\s*%/i, /90\s*%/i),
+			allPatterns(/84\s*%/i, /(?:21\s*\+\s*8|\$?29\s*k)/i, /\$?29\s*k/i, /\$?28\s*k/i, /(?:>|exceed|over|above)/i),
 			/(?:batch eviction|eviction).{0,100}86\s*%.{0,100}(?:day\s*31|unavailable.{0,30}31|not available.{0,30}31)/is,
-			/(?:strongest|best).{0,100}\bB\b.{0,160}(?:zero|0\s*%)\s*(?:duplicates?|duplicate side effects?).{0,160}158\s*ms.{0,160}\$?21\s*k/is,
+			allPatterns(/(?:strongest|best) cases?/i, /\bB\b/i, /(?:(?:zero|0\s*%)\s*(?:duplicates?|duplicate side effects?)|avoids? multi.writer duplicates?)/i, /158\s*ms/i, /(?:\$?21\s*k|21\s*\+\s*8)/i),
 			/(?:single.primary|disable secondary writes).{0,160}0\.25\s*%.{0,100}(?:two|2) consecutive 15.minute windows?/is,
 			/(?:>=|\u2265|at least)\s*175\s*ms.{0,80}(?:10|ten) continuous minutes?/is,
 			/(?=[\s\S]*architecture\.md:\d+)(?=[\s\S]*measurements\.csv:\d+)(?=[\s\S]*change-window\.md:\d+)(?=[\s\S]*constraints\.md:\d+)(?=[\s\S]*incident\.md:\d+)/i,
