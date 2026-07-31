@@ -11,7 +11,7 @@ One bounded delegation — a single call of the `flow` tool, covering every chil
 _Avoid_: job, session
 
 **Flow tree**:
-A flow plus any flows its children start, bounded by a delegation depth cap. Each flow in the tree carries its own budget and its own trace — nothing crosses the process boundary except the depth counter.
+A flow plus any flows its children start, bounded by a delegation depth cap. Budget accounting does not cross the process boundary: each flow in the tree charges its own budget only. Trace configuration does cross — a child inherits the environment, so a nested flow appends to the same trace file under a root span of its own.
 _Avoid_: flow graph, nested run
 
 **Mode**:
