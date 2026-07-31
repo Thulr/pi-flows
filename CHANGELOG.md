@@ -11,14 +11,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 ### Fixed
 
 - Flow budget scope is now stated correctly. The `maxCostUsd` / `maxTokens` /
-  `maxGeneratedTokens` tool descriptions, README, and the flow reference said the
-  ceiling covered "the whole flow tree"; it bounds one flow call. A child that
-  starts its own flow bounds that flow with its own budget — no budget state crosses
-  the process boundary, and runaway nesting is contained by the delegation depth cap
-  (`FLOW_DEPTH_EXCEEDED`). No enforcement behavior changed. The flow reference now
-  also states which trace settings a nested flow inherits (environment yes, call
-  parameters no). Recorded as
-  [ADR-0001](./docs/adr/0001-depth-cap-not-tree-wide-budget.md).
+  `maxGeneratedTokens` tool descriptions, README, the flow reference, and the
+  patterns guide said the ceiling covered "the whole flow tree"; it bounds one flow
+  call. No budget state crosses the process boundary, so a nested flow a child
+  starts is bounded only by the ceilings that call sets — and is uncapped when it
+  sets none, which is the default. No enforcement behavior changed.
 
 ### Changed
 

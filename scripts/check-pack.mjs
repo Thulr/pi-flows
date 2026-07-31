@@ -58,9 +58,5 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Raised to 745_000 for CONTEXT.md: README and flow-reference now point at the
 // glossary's term definitions instead of restating them, so the glossary has to
 // ship or those links dangle in the tarball.
-// Raised to 760_000 for docs/adr: the shipped changelog links to ADR-0001, so the
-// same argument applies as for CONTEXT.md — the decision record has to ship or the
-// link dangles in the tarball. Headroom is deliberate; 745_000 left under 3kB and
-// a single release note would have tripped it.
-assert.ok(pack.unpackedSize < 760_000, `package unpacked size too large: ${pack.unpackedSize}`);
+assert.ok(pack.unpackedSize < 745_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

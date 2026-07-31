@@ -28,7 +28,6 @@
     "extensions/pi-flows/**/*.ts",
     "extensions/pi-flows/**/*.mjs",
     "docs/*.md",
-    "docs/adr/*.md",
     "examples/**",
     "README.md",
     "LICENSE",

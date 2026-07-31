@@ -126,19 +126,7 @@ if no justification can be stated, the task belongs in the parent context.
 
 A flow budget bounds one flow call. It does not cross the process boundary: the outer
 ceiling never sees a nested flow's spend, and that nested flow is bounded only by the
-ceilings its own call sets — uncapped if it sets none, which is the default. Runaway
-nesting is bounded by the delegation depth cap (`FLOW_DEPTH_EXCEEDED`), not by the
-budget.
-
-Trace configuration crosses only when it came from the environment. A child inherits
-the parent's environment, so `PI_FLOWS_TRACE_FILE` / `PI_FLOWS_TRACE_STRICT` reach a
-nested flow, which appends to the same file under a root span of its own — but only
-when the path is absolute. A relative `PI_FLOWS_TRACE_FILE` is resolved against each
-flow's own `cwd`, so a child running in a different directory writes a separate sink;
-use an absolute path when one combined trace is the intent. `traceFile`
-and `traceStrict` passed as call parameters are consumed locally and are never copied
-into the child environment, so in that case a nested flow exports nothing unless it
-configures tracing itself.
+ceilings its own call sets — uncapped if it sets none, which is the default.
 
 The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
 voters, subtasks, worktree writers, debate participants, and dossier sections --
