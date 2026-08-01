@@ -17,7 +17,9 @@ import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
  */
 
 export function budgetLine(budget: BudgetSnapshot | undefined, theme: Theme): string | undefined {
-	if (!budget?.maxCostUsd) return undefined;
+	// Absent, not falsy: a ceiling of exactly $0 is a valid configuration that
+	// refuses everything, and it is the one a viewer most needs to see rendered.
+	if (budget?.maxCostUsd === undefined) return undefined;
 	const spent = budget.spentCost;
 	const max = budget.maxCostUsd;
 	const ratio = Math.min(1, max > 0 ? spent / max : 1);

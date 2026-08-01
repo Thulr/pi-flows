@@ -34,6 +34,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   the one that caused it and be named as the cause. The stop is now a single
   value carrying the error, frozen at the moment it was decided. Which ceilings
   bind is unchanged.
+- The F8 fleet panel now renders a `$0` cost ceiling instead of hiding it. A
+  falsy check read a zero ceiling as "no ceiling configured", so the one budget
+  that refuses every run was also the one that showed no burn-down bar.
 - Flow budget scope is now stated correctly. The `maxCostUsd` / `maxTokens` /
   `maxGeneratedTokens` tool descriptions, README, the flow reference, and the
   patterns guide said the ceiling covered "the whole flow tree"; it bounds one flow

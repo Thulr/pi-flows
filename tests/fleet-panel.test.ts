@@ -49,6 +49,12 @@ test("budgetLine renders burn-down only when a cost ceiling exists", () => {
 	const line = budgetLine(quarterSpent.snapshot(), theme)!;
 	assert.match(line, /▰{3}▱{9}/, "a quarter spent fills a quarter of the bar");
 	assert.match(line, /\$0\.5000 \/ \$2\.00 budget/);
+
+	// A $0 ceiling refuses every run, so it is the one a viewer most needs shown.
+	// A falsy check would hide exactly that case.
+	const zero = budgetLine(Budget.forFlow({ maxCostUsd: 0 })!.snapshot(), theme)!;
+	assert.match(zero, /▰{12}/, "a zero ceiling reads as fully spent, not as absent");
+	assert.match(zero, /\$0\.0000 \/ \$0\.00 budget/);
 });
 
 test("fleetFlowLines shows every agent with state, activity, and failures", () => {
