@@ -70,5 +70,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // user's own model registry, so the ranking has to be in the package, not in a
 // build artifact. Verified against the packed file list rather than the delta
 // alone: 81 files, none of them from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 815_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 840_000 for the review rounds on that change: a fourth runtime
+// module (roster-config, splitting config I/O out of the ranking policy once
+// model-roster crossed its line cap) and the changelog entries describing the
+// approval-receipt binding. The previous ceiling left ~1_300 bytes, which one
+// more changelog paragraph would have tripped. Same verification: 82 files, none
+// from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 840_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
