@@ -38,6 +38,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `flow showConfig:true` reports the same roster with its rationale.
   `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` continue to work, outranked by
   the config file.
+- A workflow approval is refused when the work it gates names no model, no tier,
+  and runs an agent declaring neither. Such a step executes pi's configured
+  default, which an extension cannot read and which can change before a resume —
+  so the receipt would verify while authorizing work on a model the approver
+  never saw. `WORKFLOW_INVALID` names the steps and the fix, in the same spirit
+  as `BUDGET_UNOBSERVABLE`.
 - A gated workflow phase's approval receipt now binds what that phase will
   actually *run as* — the concrete model and thinking level, resolved through the
   same path dispatch uses — for the gated phases and for a gated debrief.

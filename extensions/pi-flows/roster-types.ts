@@ -24,6 +24,9 @@ export const ROSTER_CONFIG_FILE = "pi-flows.json";
  */
 export const USE_DEFAULT_MODEL = null;
 
+/** Which configuration layer supplied a value. */
+export type RosterLayer = "derived" | "env" | "user-config" | "project-config";
+
 /** A tier override as written in config or env: a model spec, a level, or both. */
 export interface RosterOverride {
 	model?: string | null;
@@ -85,11 +88,13 @@ export interface RosterAssignment {
 	/** Plain-English reason, shown by `flow showConfig:true` and `/flows models` so a surprising choice is inspectable. */
 	why: string;
 	/**
-	 * Which layer settled this rung. Not decoration: `/flows models` writes to the
-	 * user's file, so a rung already claimed by a trusted project's config would
-	 * keep winning after an edit the command reported as taking effect.
+	 * Which layer settled each field. Tracked per field, not per rung, because the
+	 * layers merge per field: a project stating only `thinking` leaves `model` to
+	 * the user. Marking the whole rung project-owned would make `/flows models`
+	 * warn that a model change cannot apply when it can — and stay silent about
+	 * the level, which the project really does replace.
 	 */
-	origin?: "derived" | "env" | "user-config" | "project-config";
+	origin?: { model?: RosterLayer; thinking?: RosterLayer };
 }
 
 /**

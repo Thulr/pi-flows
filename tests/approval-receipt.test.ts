@@ -21,7 +21,7 @@ import {
 	verifyApprovalReceipt,
 	type ApprovalBinding,
 } from "../extensions/pi-flows/approval.ts";
-import { normalizeGatedPhase } from "../extensions/pi-flows/modes/workflow-approval.ts";
+import { normalizeGatedPhase, unbindableGatedRefs } from "../extensions/pi-flows/modes/workflow-approval.ts";
 import { freshDir, runFlow, type Call } from "./stub-harness.ts";
 
 const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => ({
@@ -696,4 +696,41 @@ test("receipts never carry the approved task text into details or the trace", as
 	assert.equal(resumed.result.details.approvals?.length, 1);
 	assert.doesNotMatch(JSON.stringify(resumed.result.details.approvals), new RegExp(secret));
 	assert.doesNotMatch(JSON.stringify((await readState(cwd)).receipts), new RegExp(secret), "the state file stores the digest, not the parameters");
+});
+
+test("an approval is refused when the work it gates names no model to bind", () => {
+	// A receipt claims to bind the conditions it authorizes. A gated ref that
+	// names no model, no tier, on an agent declaring neither runs pi's configured
+	// default — unknowable here, and free to change before a resume under consent
+	// that still verifies. This codebase refuses in the analogous case rather than
+	// pretend: BUDGET_UNOBSERVABLE stops a run when the cost telemetry a ceiling
+	// depends on is missing.
+	const roster = {
+		fast: { model: "p/cheap", thinking: "low", why: "t" },
+		capable: { model: "p/session", thinking: "medium", why: "t" },
+		deep: { model: "p/strong", thinking: "max", why: "t" },
+		available: [],
+		sessionModel: "p/session",
+		source: "derived" as const,
+		issues: [],
+	};
+	const phases = [
+		{ id: "approve", approval: { message: "Approve" } },
+		{ id: "ship", agent: "operator", task: "Ship it" },
+	];
+	const deps = (agents: any[], params: any = {}) => ({ discovery: { agents }, roster, params } as any);
+
+	// The agent declares no tier, and neither does the phase.
+	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator" }])), ["ship"]);
+
+	// Any of the three ways of naming one closes it.
+	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator", tier: "capable" }])), []);
+	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator" }], { tier: "fast" })), []);
+	const pinned = [phases[0], { ...phases[1], model: "p/explicit" }];
+	assert.deepEqual(unbindableGatedRefs(pinned, 0, deps([{ name: "operator" }])), []);
+
+	// With no registry every tier is unresolvable, and refusing there would block
+	// workflows for a reason the user cannot act on.
+	const blind = { discovery: { agents: [{ name: "operator" }] }, params: {}, roster: { ...roster, source: "unavailable" as const } } as any;
+	assert.deepEqual(unbindableGatedRefs(phases, 0, blind), []);
 });

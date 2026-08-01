@@ -80,23 +80,51 @@ export const gatedRunStarted = (phases: any[], index: number, completedPhaseIds:
  * Resolved through `resolveChildModel` rather than re-derived here so the
  * receipt and the dispatch can never disagree about what a tier means.
  */
-function resolvedDispatch(ref: any, params: any, deps: ModeDeps): { model: string | null; thinking: string | null } {
+function resolvedDispatch(ref: any, params: any, deps: ModeDeps): { model: string | null; thinking: string | null; unbound: boolean } {
 	const agent = deps.discovery.agents.find((candidate) => candidate.name === ref.agent);
 	const choice = resolveChildModel(
 		{ model: agent?.model, tier: agent?.tier, thinking: agent?.thinking },
-		{ model: ref.model ?? params.model, tier: ref.tier ?? params.tier, thinking: ref.thinking ?? params.thinking },
+		// Mirrors childRunOptions exactly, including keeping the role's own level
+		// apart from the flow-wide fallback — a binding that resolved differently
+		// from the dispatch would be worse than no binding.
+		{ model: ref.model ?? params.model, tier: ref.tier ?? params.tier, thinking: ref.thinking, flowThinking: params.thinking },
 		deps.roster,
 	);
 	// `null` here means "this phase names no model, so the child loads pi's
-	// configured default" — and that is genuinely unknowable to an extension, so
-	// the receipt cannot bind it.
-	//
-	// It is a much smaller gap than it looks. Every tier resolves to a concrete
-	// reference, including `capable`, which names the session's model; so a phase
-	// reaches this only by naming no model, no tier, and using an agent whose
-	// frontmatter declares no tier either. Substituting the session model would
-	// close the gap on paper while recording a model the child does not run.
-	return { model: choice.model ?? null, thinking: choice.thinking ?? null };
+	// configured default" — genuinely unknowable to an extension, and therefore
+	// unbindable. `unbound` carries that fact up so the approval can refuse rather
+	// than issue a receipt that silently under-binds; substituting the session
+	// model would close the gap on paper while recording a model the child does
+	// not run.
+	return { model: choice.model ?? null, thinking: choice.thinking ?? null, unbound: choice.model === undefined };
+}
+
+/**
+ * Gated refs whose model cannot be bound, by phase id.
+ *
+ * A receipt claims to bind the exact conditions it authorizes. When a ref names
+ * no model, no tier, and runs an agent that declares neither, what it executes
+ * is pi's configured default — which can change before a persisted workflow
+ * resumes, under consent that still verifies. This codebase already refuses in
+ * the analogous case rather than pretend: `BUDGET_UNOBSERVABLE` stops a run when
+ * the cost telemetry a ceiling depends on is missing.
+ *
+ * Only reported when the roster resolved. With no registry every tier is
+ * unresolvable, and refusing there would block workflows for a reason the user
+ * cannot act on.
+ */
+export function unbindableGatedRefs(phases: any[], index: number, deps: ModeDeps): string[] {
+	if (!deps.roster || deps.roster.source === "unavailable") return [];
+	const gatedIds = new Set(gatedPhaseIds(phases, index));
+	const unbindable = phases
+		.filter((phase: any) => gatedIds.has(phase.id) && phase.agent)
+		.filter((phase: any) => resolvedDispatch(phase, deps.params, deps).unbound)
+		.map((phase: any) => phase.id);
+	const debrief = deps.params.workflow?.debrief;
+	if (debrief?.agent && index + gatedIds.size + 1 >= phases.length && resolvedDispatch(debrief, deps.params, deps).unbound) {
+		unbindable.push("debrief");
+	}
+	return unbindable;
 }
 
 /**

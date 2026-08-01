@@ -31,7 +31,7 @@
  * Everything here is a pure function over plain values. A live pi runtime is not
  * required to derive, describe, or test a roster.
  */
-import { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, type AvailableModel, type ModelRoster, type RosterAssignment, type RosterConfig, type RosterOverride, type ThinkingLevel } from "./types.ts";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, type AvailableModel, type ModelRoster, type RosterAssignment, type RosterConfig, type RosterLayer, type RosterOverride, type ThinkingLevel } from "./types.ts";
 
 /**
  * Thinking level each tier asks for before clamping.
@@ -201,7 +201,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		why: inputs.parent.thinking
 			? `the model this session is running, at its current thinking level (${inputs.parent.thinking})`
 			: "the model this session is running, at pi's own thinking level",
-		origin: "derived",
+		origin: { model: "derived", thinking: "derived" },
 	};
 
 	if (pool.length === 0) {
@@ -237,7 +237,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		model: cheapModel.reference,
 		thinking: clampThinking(TIER_THINKING.fast, cheapModel),
 		why: `cheapest model this install can run${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
-		origin: "derived",
+		origin: { model: "derived", thinking: "derived" },
 	}, `your pi default is already the cheapest model available, so fast reruns it at ${TIER_THINKING.fast} thinking`);
 
 	const deep: RosterAssignment = sameOrDefault(strongModel, parentModel, {
@@ -246,7 +246,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		why: supportsExtendedThinking(strongModel)
 			? "most capable model this install can run that supports extended thinking"
 			: "most capable model this install can run (none offer extended thinking)",
-		origin: "derived",
+		origin: { model: "derived", thinking: "derived" },
 	}, supportsExtendedThinking(strongModel)
 		? `your pi default is already the most capable model available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`
 		: "your pi default is already the most capable model available, and none offer extended thinking, so deep matches it");
@@ -271,7 +271,7 @@ function sameOrDefault(chosen: AvailableModel, parentModel: string | undefined, 
 	return { ...assignment, why: sameWhy };
 }
 
-function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], tierDefault: ThinkingLevel | undefined, origin: RosterAssignment["origin"]): RosterAssignment {
+function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], tierDefault: ThinkingLevel | undefined, origin: RosterLayer): RosterAssignment {
 	if (!override) return base;
 	// An absent `model` keeps whatever the base resolved; a stated one — including
 	// the null that means "the pi default" — replaces it.
@@ -289,8 +289,29 @@ function applyOverride(base: RosterAssignment, override: RosterOverride | undefi
 		model,
 		thinking: clampThinking(requested, known),
 		why: said && override.thinking ? `${label} override` : said ? `${label} model override` : `${label} thinking override`,
-		origin,
+		// Only the fields this layer actually stated change hands; the rest keep
+		// whichever layer supplied them, so precedence stays readable per field.
+		origin: {
+			model: said ? origin : base.origin?.model,
+			thinking: override.thinking !== undefined ? origin : base.origin?.thinking,
+		},
 	};
+}
+
+/**
+ * The fields a merged override owes to the *user* layer: everything the project
+ * did not state.
+ *
+ * The merged config already decided which value wins; this only splits it back
+ * apart so each field can record the layer that supplied it. Without the split a
+ * project stating one field would be credited with both.
+ */
+function userOnly(config: RosterOverride | undefined, project: RosterOverride | undefined): RosterOverride | undefined {
+	if (!config) return undefined;
+	const model = project?.model !== undefined ? undefined : config.model;
+	const thinking = project?.thinking !== undefined ? undefined : config.thinking;
+	if (model === undefined && thinking === undefined) return undefined;
+	return { ...(model !== undefined ? { model } : {}), ...(thinking ? { thinking } : {}) };
 }
 
 export interface ResolveRosterInputs extends RosterInputs {
@@ -320,13 +341,16 @@ export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
 		// Clamping reads the full registry, not the assignable pool: a pin may name a
 		// model that ranking excluded, and it still has real limits.
 		const project = inputs.project?.[tier];
+		// Project and user overrides are applied in one pass each so a field states
+		// its own layer. The merged `config` already resolved which value wins; this
+		// only records who supplied it.
 		const tierDefault = tier === "capable" ? inputs.parent.thinking : TIER_THINKING[tier];
 		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", inputs.available, tierDefault, "env");
 		// The project layer is a subset of `config`, so a rung it claimed is
 		// labelled as its own — that is what tells /flows models its user-file edit
 		// would be shadowed.
-		const origin = project ? "project-config" : "user-config";
-		return [tier, applyOverride(withEnv, config, ROSTER_CONFIG_FILE, inputs.available, tierDefault, origin)] as const;
+		const withUser = applyOverride(withEnv, userOnly(config, project), ROSTER_CONFIG_FILE, inputs.available, tierDefault, "user-config");
+		return [tier, applyOverride(withUser, project, ROSTER_CONFIG_FILE, inputs.available, tierDefault, "project-config")] as const;
 	});
 	const roster = Object.fromEntries(rungs) as Pick<ModelRoster, "fast" | "capable" | "deep">;
 	return {

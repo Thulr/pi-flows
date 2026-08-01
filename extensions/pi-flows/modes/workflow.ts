@@ -8,7 +8,7 @@ import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan } from "../integration.ts";
 import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
-import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
+import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 
 interface WorkflowState {
 	version: typeof WORKFLOW_STATE_VERSION;
@@ -292,6 +292,20 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		recordPhaseState(deps, phase.id, "phase.started", state, { "flow.workflow.phase_kind": phase.approval?.message ? "approval" : "work" });
 
 		if (phase.approval?.message) {
+			// Refused before the human is asked, not after: consent given to an
+			// action whose model cannot be recorded would be consent this receipt
+			// cannot honour on resume, and asking for it first would waste it.
+			const unbindable = unbindableGatedRefs(phases, phaseIndex, deps);
+			if (unbindable.length > 0) {
+				const error = flowError(
+					"WORKFLOW_INVALID",
+					`Approval phase "${phase.id}" gates work whose model cannot be recorded.`,
+					`These gated steps name no model and no tier, and their agents declare neither, so each runs whatever model pi is configured to default to: ${unbindable.join(", ")}. That model can change before this workflow resumes, and the approval receipt would still verify — authorizing work on a model, and possibly a provider, the approver never saw.`,
+					"Give each of those steps a tier (or a model), or set a flow-level tier, so the approval records what it authorizes.",
+				);
+				recordPhaseState(deps, phase.id, "approval.blocked", state, { "flow.error_code": error.code });
+				return stateError(deps, results, error, state);
+			}
 			const prompt = reapprovalCause ? `${phase.approval.message}\n\nRe-approval needed: ${reapprovalCause}` : phase.approval.message;
 			const decision = await deps.requestApproval?.("Approve workflow phase?", prompt) ?? "required";
 			if (decision !== "approved") {

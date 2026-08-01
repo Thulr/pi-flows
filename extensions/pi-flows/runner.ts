@@ -49,8 +49,18 @@ function childExtensionsDisabled(): boolean {
 export interface ChildModelChoice {
 	/** undefined = omit --model, so the child uses the user's default. */
 	model?: string;
-	/** undefined = omit --thinking, so the child uses pi's configured level. */
+	/** The level passed on `--thinking`. undefined = omit it, so pi's configured level applies. */
 	thinking?: ThinkingLevel;
+	/**
+	 * Whether that level was checked against the model it will run on.
+	 *
+	 * False when the child names no model: it then loads pi's *configured*
+	 * default, which an extension cannot read, so pi may lower the level
+	 * internally and this value is a request rather than an outcome. Reporting it
+	 * as the effective level would corrupt any experiment that reads the field as
+	 * what actually ran.
+	 */
+	thinkingVerified: boolean;
 }
 
 /**
@@ -75,7 +85,7 @@ export interface ChildModelChoice {
  */
 export function resolveChildModel(
 	agent: { model?: string; tier?: string; thinking?: ThinkingLevel },
-	options: { model?: string; tier?: string; thinking?: ThinkingLevel },
+	options: { model?: string; tier?: string; thinking?: ThinkingLevel; flowThinking?: ThinkingLevel },
 	roster: ModelRoster | undefined,
 ): ChildModelChoice {
 	const optionsTier = rosterAssignment(roster, options.tier);
@@ -97,13 +107,19 @@ export function resolveChildModel(
 	const requested = [
 		options.thinking,
 		optionsPin?.thinking,
+		options.flowThinking,
 		optionsTier?.thinking,
 		agent.thinking,
 		agentPin?.thinking,
 		agentTier?.thinking,
 	].find((level) => level !== undefined);
 
-	return { model, thinking: clampThinking(requested, knownModel(roster, model)) };
+	const resolved = knownModel(roster, model);
+	return {
+		model,
+		thinking: clampThinking(requested, resolved),
+		thinkingVerified: requested === undefined || resolved !== undefined,
+	};
 }
 
 export async function writePromptToTempFile(agentName: string, prompt: string, label = "system"): Promise<{ dir: string; filePath: string }> {
@@ -130,6 +146,10 @@ function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefi
 		// an experiment that varies only effort have identical span identities, and
 		// a recorded result cannot say whether it ran at low or max.
 		"flow.thinking_level": choice.thinking,
+		// Whether that level is an outcome or only a request. A child that names no
+		// model runs pi's configured default, which cannot be read here, so the
+		// level may be lowered inside pi without this ever seeing it.
+		"flow.thinking_level_verified": choice.thinking === undefined ? undefined : choice.thinkingVerified,
 		...delegationIdentityAttributes({
 			systemPrompt: agent?.systemPrompt ?? "",
 			allowedTools,
@@ -190,7 +210,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const timeoutMs = normalizeTimeout(options.timeoutMs);
 	// Resolved once: the same choice fills the result, the span, and the argv, so
 	// a run can never report a model or level it did not actually spawn with.
-	const choice = resolveChildModel(agent, { model: options.model, tier: options.tier, thinking: options.thinking }, options.roster);
+	const choice = resolveChildModel(agent, { model: options.model, tier: options.tier, thinking: options.thinking, flowThinking: options.flowThinking }, options.roster);
 	const result: FlowRunResult = {
 		agent: agent.name,
 		agentSource: agent.source,

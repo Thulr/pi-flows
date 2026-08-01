@@ -141,3 +141,21 @@ test("tier: an unmapped tier falls back to the default model (no --model flag)",
 		if (prevFast !== undefined) process.env.PI_FLOWS_FAST_MODEL = prevFast;
 	}
 });
+
+test("thinking: a role's model suffix outranks the flow-wide fallback", async () => {
+	// Top-level `thinking` is documented as a fallback overridable per role. The
+	// role's `model:"id:high"` shorthand is a role-level statement, so collapsing
+	// the two before resolution let the flow fallback silently win.
+	const { calls } = await runFlow(
+		{
+			thinking: "low",
+			tasks: [
+				{ agent: "recon", task: "scout the api", model: "test-provider/some-model:high" },
+				{ agent: "analyst", task: "read the docs" },
+			],
+		},
+		{ recon: "a", analyst: "b" },
+	);
+	const levelOf = (call: { args: string[] }) => call.args[call.args.indexOf("--thinking") + 1];
+	assert.deepEqual(calls.map(levelOf).sort(), ["high", "low"], "the role's suffix applies to it; the other still takes the flow fallback");
+});

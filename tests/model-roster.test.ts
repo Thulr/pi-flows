@@ -245,9 +245,25 @@ test("a rung names the layer that settled it, so an edit cannot be silently shad
 	// Without the origin it would report an edit to `deep` as taking effect while
 	// the project's value kept winning.
 	const roster = resolveModelRoster({ available: INSTALL, parent: { model: "acme/standard" }, config: loaded.config, project: loaded.project });
-	assert.equal(roster.deep.origin, "project-config");
-	assert.equal(roster.fast.origin, "user-config");
-	assert.equal(roster.capable.origin, "derived", "a rung nobody configured says so");
+	assert.equal(roster.deep.origin?.model, "project-config");
+	assert.equal(roster.fast.origin?.model, "user-config");
+	assert.equal(roster.capable.origin?.model, "derived", "a rung nobody configured says so");
+});
+
+test("precedence is tracked per field, so a project that sets only one does not claim both", () => {
+	// The layers merge per field, so a project stating `thinking` still lets a
+	// user's `model` take effect. Marking the whole rung project-owned made
+	// /flows models warn that a model edit was inert when it was not — and stay
+	// silent about the level, which the project really does replace.
+	const roster = resolveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		config: { fast: { model: "acme/flagship", thinking: "low" } },
+		project: { fast: { thinking: "low" } },
+	});
+	assert.equal(roster.fast.origin?.model, "user-config", "the model is still the user's to change");
+	assert.equal(roster.fast.origin?.thinking, "project-config", "the level is the project's");
+	assert.equal(roster.fast.model, "acme/flagship", "and the user's model is what actually runs");
 });
 
 test("a project override narrows the user's tier field by field, not wholesale", () => {

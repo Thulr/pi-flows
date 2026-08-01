@@ -25,7 +25,7 @@ export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./han
 // dependency-free module and the policy that produces a roster lives in
 // model-roster.ts, which the kernel may not import.
 export { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL } from "./roster-types.ts";
-export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterOverride, ThinkingLevel } from "./roster-types.ts";
+export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterLayer, RosterOverride, ThinkingLevel } from "./roster-types.ts";
 
 export const PI_FLOWS_VERSION = "0.5.0";
 
@@ -206,7 +206,14 @@ export interface FlowRunResult {
 	stderr: string;
 	usage: UsageStats;
 	model?: string;
-	/** The level this child actually ran at, after clamping to its model. Undefined when pi's own default applied. */
+	/**
+	 * The level passed to the child on `--thinking`, lowered to its model's limits
+	 * when that model is known. Undefined when no level was named anywhere.
+	 *
+	 * Not always the level it *ran* at: a child naming no model loads pi's
+	 * configured default, which this extension cannot read, so pi may lower this
+	 * further. `flow.thinking_level_verified` on the span says which case applies.
+	 */
 	thinking?: ThinkingLevel;
 	stopReason?: string;
 	errorMessage?: string;
@@ -412,6 +419,8 @@ export interface RunChildOptions {
 	model?: string;
 	tier?: string;
 	thinking?: ThinkingLevel;
+	/** The flow-wide `thinking` fallback, kept apart from the role's own so specificity survives to resolution. */
+	flowThinking?: ThinkingLevel;
 	/** The resolved per-install roster a tier is read against. Omitted only where no pi runtime supplied one. */
 	roster?: ModelRoster;
 	tools?: string;

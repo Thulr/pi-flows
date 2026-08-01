@@ -219,10 +219,14 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 	// outranks. Saving anyway would report an edit as taking effect while the
 	// project's value kept winning on the next call — so say so, and let the
 	// operator decide rather than silently doing nothing useful.
-	if (roster[tier].origin === "project-config") {
+	// Per field, because the layers merge per field: a project stating only
+	// `thinking` still lets a user's model change take effect. Warning about the
+	// whole rung would claim a model edit is inert when it is not.
+	const shadowed = (["model", "thinking"] as const).filter((field) => roster[tier].origin?.[field] === "project-config");
+	if (shadowed.length > 0) {
 		const proceed = await ctx.ui.confirm(
-			`Tier "${tier}" is set by this project`,
-			`This project's ${ROSTER_CONFIG_FILE} sets "${tier}", and project config outranks your user config.\n\nSaving here will not change what runs until that project entry is removed or changed.\n\nSave to your user config anyway?`,
+			`This project sets ${shadowed.join(" and ")} for tier "${tier}"`,
+			`This project's ${ROSTER_CONFIG_FILE} sets ${shadowed.join(" and ")} for "${tier}", and project config outranks your user config.\n\nAnything you choose for ${shadowed.join(" or ")} will not change what runs until that project entry is removed or changed${shadowed.length === 1 ? `; your ${shadowed[0] === "model" ? "thinking level" : "model"} choice will still apply` : ""}.\n\nSave to your user config anyway?`,
 		);
 		if (!proceed) return;
 	}
