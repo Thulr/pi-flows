@@ -28,6 +28,7 @@ For smaller loops:
 ```bash
 npm run typecheck
 npm test
+npm run score:domain
 npm run validate:agents
 npm run pack:dry-run
 ```
@@ -69,3 +70,5 @@ Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `read
 ### Domain docs
 
 Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+`CONTEXT.md` opens with the subdomain split (Core / Supporting / Generic / shared kernel / composition root) and every module is classified there. `npm run score:domain` enforces the structural half of the domain-model score — module classification, subdomain import direction, naming, and foreign-import containment — and is part of `npm run check`; CI posts the full score on every PR. The rows no check can settle (aggregate design, behavior-rich objects, language consistency) are carried from `docs/domain-review.json` and go stale when a Core module changes without the review being re-recorded. Adding a module means classifying it; changing a Core module means either re-running `/domain-driven-design` and updating that file, or accepting a stale score on the PR.

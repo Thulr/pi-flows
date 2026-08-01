@@ -532,6 +532,7 @@ Useful individual checks:
 ```bash
 npm run typecheck
 npm test
+npm run score:domain
 npm run validate:agents
 npm run pack:dry-run
 ```

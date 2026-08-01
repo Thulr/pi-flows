@@ -16,3 +16,43 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
+
+  # Reporting only. `npm run check` above is the gate that fails on a structural
+  # regression; this job exists so the score — including the rows no check can
+  # settle — is visible on the PR itself rather than buried in a log.
+  domain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The judgment rows are carried from the commit they were reviewed at,
+          # so the score needs history deep enough to reach it.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Score the domain model
+        run: node scripts/domain-score.mjs --summary | tee /tmp/domain-score.md >> "$GITHUB_STEP_SUMMARY"
+      # Fork PRs get a read-only token, so they keep the step summary and skip the
+      # comment rather than failing the job on a permission they were never given.
+      - name: Post the score on the PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- domain-model-score -->"
+        run: |
+          printf '%s\n' "$MARKER" | cat - /tmp/domain-score.md > /tmp/domain-comment.md
+          # --jq runs per page under --paginate, so take the first match across pages.
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty" | head -n 1)"
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F body=@/tmp/domain-comment.md
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@/tmp/domain-comment.md
+          fi

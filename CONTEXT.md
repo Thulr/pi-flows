@@ -2,6 +2,33 @@
 
 pi-flows lets a parent pi session delegate bounded work to disposable children and get compact findings back, instead of doing everything in one long-running context.
 
+The value is not the spawning — anything can spawn a subprocess. It is that what comes back is **checkable**: a finding arrives bound to the contract it was produced under, carrying its own evidence, provenance, and cost, so the parent can act on it without re-reading the transcript that produced it.
+
+## Where the modeling goes
+
+Not every part of this repo earns the same depth. This split says where to spend design effort and review attention, and where deliberately not to. Revisit it when the differentiator moves.
+
+`scripts/domain-score.mjs` enforces this split — every module below is checked for placement and for which subdomains it may import from — so the classification cannot quietly go stale as modules are added.
+
+**Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
+_Modules_: `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
+
+**Supporting — coordination patterns and the views onto them.** The modes and their topologies, agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
+_Modules_: `modes/*`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
+
+**Generic — plumbing and adapters.** Child-process transport, the anti-corruption layer over a child pi run, fan-out plumbing, param schema and arithmetic, command execution, text parsing. Keep thin, keep replaceable, do not model. `runner.ts` and `jsonl-child.mjs` are where a foreign protocol is allowed to be spoken; everything above them should see domain types only.
+_Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`.
+
+**Shared kernel.** `types.ts` — the vocabulary every subdomain imports, re-exported from the concept modules that own each term. A change here ripples everywhere and nothing above owns it, so keep it declarative: a rule that belongs to one concept belongs in that concept's module (see `budget.ts`), not here.
+_Modules_: `types.ts`.
+
+**Composition root.** `index.ts` — registers the tool and command and wires every subdomain together, so it alone may import from all of them. That privilege is also why flow-level invariants keep accumulating in its `execute()` body rather than in a Flow root; treat new ordering rules there as a smell.
+_Modules_: `index.ts`.
+
+The enforced direction is narrow on purpose: **Core may not import Supporting**, and the shared kernel may import only Core. Core reaching down into Generic plumbing is fine — commodity is there to be used. Core reaching sideways into the modes or the views is not: it would make the differentiator depend on the recombinations of it.
+
+Three placements are worth stating outright, because a first pass tends to put them elsewhere. **Tracing is Core, not reporting**: coordination evidence is what makes a returned finding checkable, which is the whole value proposition above — a flow that cannot show what it did has lost the thing being sold. **Redaction is Core, not plumbing**: `sanitize.ts` implements Capture policy, and what may leave a child is a guardrail, not a formatting concern. **The views are Supporting, not Generic**: they render domain concepts and must speak the glossary's terms, so they are not interchangeable commodity — but they hold no invariants, so they are not Core either.
+
 ## Language
 
 ### Delegation model

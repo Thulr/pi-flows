@@ -8,6 +8,19 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- `npm run score:domain` scores the domain model, and CI posts it on every PR.
+  The structural half — module classification, subdomain import direction, naming, and
+  foreign-package containment — is re-derived from the tree on every run and is
+  part of `npm run check`, so a regression fails the build. The half no check can
+  settle (aggregate design, behavior-rich objects, language consistency) is
+  carried from `docs/domain-review.json` and reported with the date it was
+  taken; touching a Core module without re-recording the review marks those
+  rows stale and drops them from the verified score rather than repeating them as
+  fact. The subdomain table is parsed out of `CONTEXT.md` itself, so the classification
+  a reader sees and the rule the build enforces cannot drift apart.
+
 ### Fixed
 
 - A budget stop now reports the ceiling that actually caused it. The decision to

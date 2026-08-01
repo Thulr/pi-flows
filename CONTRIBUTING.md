@@ -16,6 +16,7 @@ npm run check
 ```bash
 npm run typecheck
 npm run lint:length
+npm run score:domain
 npm run scan:privacy
 npm test
 npm run validate:agents

@@ -22,6 +22,12 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 └── extensions/
 ```
 
+## Keep the subdomain split current
+
+`CONTEXT.md` opens with the subdomain classification (Core / Supporting / Generic / shared kernel / composition root) and every module under `extensions/pi-flows/` is placed in exactly one. `npm run score:domain` enforces that placement, the import direction between subdomains, naming, and foreign-package containment; it runs inside `npm run check` and CI posts the full score on each PR.
+
+Adding a module means classifying it in `CONTEXT.md`. Changing a Core module means either re-running `/domain-driven-design` and updating `docs/domain-review.json` — the rows no check can settle are carried from there — or accepting that those rows report as stale on the PR.
+
 ## Use the glossary's vocabulary
 
 When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
