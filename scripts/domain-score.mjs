@@ -102,12 +102,12 @@ function declaredSubdomains() {
 
 const globToRe = (pattern) => new RegExp(`^${pattern.replace(/[.]/g, "\\.").replace(/\*/g, "[^/]*")}$`);
 
-// One import matcher for every row that reads imports. Both quote styles are
-// valid TypeScript, so accepting only double quotes would let a single-quoted
-// Core-to-Supporting import, or a single-quoted foreign package, walk past the
-// gate that exists to catch exactly those.
-const RELATIVE_IMPORT = /(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g;
-const FOREIGN_IMPORT = /(?:from|import)\s*\(?\s*["'](@earendil-works\/[^"'/]+)["']/g;
+// One import matcher for every row that reads imports. Single quotes, double
+// quotes and backticks are all valid specifiers, so accepting a subset would let
+// a Core-to-Supporting import — or a foreign package — walk past the gate that
+// exists to catch exactly those, just by changing how it is quoted.
+const RELATIVE_IMPORT = /(?:from|import)\s*\(?\s*["'`](\.[^"'`]+)["'`]/g;
+const FOREIGN_IMPORT = /(?:from|import)\s*\(?\s*["'`](@earendil-works\/[^"'`/]+)["'`]/g;
 
 /**
  * The debt ledger the change started from.
@@ -160,6 +160,17 @@ const placement = new Map(
 for (const [file, source] of sources) {
   for (const [, name] of source.matchAll(/^export (?:default |abstract |async )*(?:class|interface|type|enum|function\*?|const|let) ([A-Za-z_$][\w$]*)/gm)) {
     if (JARGON.test(name)) flag("names", `${MODULE_ROOT}/${file}: exported \`${name}\` names a technical role, not a domain concept`);
+  }
+}
+
+// Row: the classification names something real. A declared module that no longer
+// exists is the same rot from the other side — and if it was Core, its deletion
+// would otherwise never register as a Core change at all.
+for (const [subdomain, patterns] of subdomains) {
+  for (const pattern of patterns) {
+    if (![...sources.keys()].some((file) => globToRe(pattern).test(file))) {
+      flag("core-domain", `${CONTEXT_FILE} classifies \`${pattern}\` under ${subdomain}, but no such module exists — a deleted or renamed module has to leave the table too`);
+    }
   }
 }
 
@@ -325,7 +336,10 @@ function reviewDrift(coreFiles) {
   }
 }
 
-const coreFiles = [...placement].filter(([, hits]) => hits[0] === "Core").map(([file]) => `${MODULE_ROOT}/${file}`);
+// Declared paths, not present ones: a Core module deleted in this change is
+// exactly the Core change the judgment rows must not be reported as surviving.
+// git resolves these as pathspecs, so a glob and a deleted file both work.
+const coreFiles = subdomains.get("Core").map((pattern) => `${MODULE_ROOT}/${pattern}`);
 const drift = reviewDrift(coreFiles);
 const stale = drift.stale;
 const judgment = Object.entries(review.judgment).map(([row, entry]) => ({
