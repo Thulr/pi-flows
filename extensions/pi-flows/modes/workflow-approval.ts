@@ -87,7 +87,11 @@ function resolvedDispatch(ref: any, params: any, deps: ModeDeps): { model: strin
 		{ model: ref.model ?? params.model, tier: ref.tier ?? params.tier, thinking: ref.thinking ?? params.thinking },
 		deps.roster,
 	);
-	return { model: choice.model ?? null, thinking: choice.thinking ?? null };
+	// A rung that resolves to "the pi default" still runs a CONCRETE model, and
+	// which one can change between approval and resume. Collapsing every default
+	// to the same null marker would make those changes invisible to the digest —
+	// the same drift the tier name had, one layer down.
+	return { model: choice.model ?? deps.roster?.defaultModel ?? null, thinking: choice.thinking ?? null };
 }
 
 /**

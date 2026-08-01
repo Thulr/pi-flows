@@ -18,7 +18,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ROSTER_CONFIG_FILE, USE_DEFAULT_MODEL, type RosterConfig, type RosterOverride, type ThinkingLevel } from "./types.ts";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, type RosterConfig, type RosterOverride, type ThinkingLevel } from "./types.ts";
 import { isThinkingLevel, parseModelSpec } from "./model-roster.ts";
 
 export { ROSTER_CONFIG_FILE };
@@ -26,12 +26,18 @@ export type { RosterConfig, RosterOverride };
 
 /**
  * Read one override, accepting either the shorthand a user would type into a
- * `--model` flag or the explicit object form.
+ * `--model` flag or the explicit object form, and collecting anything it had to
+ * reject into `invalid`.
  *
  *   "fast": "anthropic/claude-haiku-4-5:low"
  *   "fast": { "model": "anthropic/claude-haiku-4-5", "thinking": "low" }
+ *
+ * A stated-but-unusable field is a mistake, not an omission. Dropping
+ * `{"model": 42}` to undefined leaves the tier derived — so a user who pinned a
+ * model watches work go somewhere else with nothing to explain it. Rejections
+ * are reported for the same reason a parse failure is.
  */
-function readOverride(raw: unknown): RosterOverride | undefined {
+function readOverride(raw: unknown, invalid: string[] = []): RosterOverride | undefined {
 	const pair = (model: string | null | undefined, thinking: ThinkingLevel | undefined): RosterOverride | undefined => {
 		// Only the keys actually set: an override carrying `thinking: undefined`
 		// reads as "no level" everywhere it is merged, which is true, but it also
@@ -50,34 +56,45 @@ function readOverride(raw: unknown): RosterOverride | undefined {
 		const { model, thinking } = parseModelSpec(trimmed);
 		return pair(model || undefined, thinking);
 	}
-	if (!raw || typeof raw !== "object") return undefined;
+	if (!raw || typeof raw !== "object") {
+		invalid.push("must be a model string, a thinking level, or an object");
+		return undefined;
+	}
 	const record = raw as Record<string, unknown>;
 	const rawModel = record.model;
-	const model = rawModel === null
-		? USE_DEFAULT_MODEL
-		: typeof rawModel === "string" && rawModel.trim()
-			? rawModel.trim()
-			: undefined;
-	return pair(model, isThinkingLevel(record.thinking) ? record.thinking : undefined);
+	let model: string | null | undefined;
+	if (rawModel === null) model = USE_DEFAULT_MODEL;
+	else if (typeof rawModel === "string" && rawModel.trim()) model = rawModel.trim();
+	else if (rawModel !== undefined) invalid.push(`"model" must be a model reference or null, not ${JSON.stringify(rawModel)}`);
+
+	let thinking: ThinkingLevel | undefined;
+	if (isThinkingLevel(record.thinking)) thinking = record.thinking;
+	else if (record.thinking !== undefined) invalid.push(`"thinking" must be one of ${THINKING_LEVELS.join(", ")}, not ${JSON.stringify(record.thinking)}`);
+
+	return pair(model, thinking);
 }
 
 /** Parse a `pi-flows.json`. Malformed input yields no overrides rather than an exception: config is an opt-in, not a gate. */
-export function parseRosterConfig(text: string): { config: RosterConfig; error?: string } {
+export function parseRosterConfig(text: string): { config: RosterConfig; error?: string; invalid: string[] } {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
 	} catch (error) {
-		return { config: {}, error: error instanceof Error ? error.message : String(error) };
+		return { config: {}, error: error instanceof Error ? error.message : String(error), invalid: [] };
 	}
 	const models = (parsed as Record<string, unknown> | null)?.models;
-	if (!models || typeof models !== "object") return { config: {} };
+	if (!models || typeof models !== "object") return { config: {}, invalid: [] };
 	const record = models as Record<string, unknown>;
 	const config: RosterConfig = {};
+	const invalid: string[] = [];
 	for (const tier of ["fast", "capable", "deep"] as const) {
-		const override = readOverride(record[tier]);
+		if (record[tier] === undefined) continue;
+		const rejected: string[] = [];
+		const override = readOverride(record[tier], rejected);
 		if (override) config[tier] = override;
+		invalid.push(...rejected.map((reason) => `models.${tier} ${reason}`));
 	}
-	return { config };
+	return { config, invalid };
 }
 
 export interface RosterConfigSource {
@@ -122,7 +139,11 @@ export function loadRosterConfig(source: RosterConfigSource): { config: RosterCo
 			}
 			continue;
 		}
-		const { config, error } = parseRosterConfig(text);
+		const { config, error, invalid } = parseRosterConfig(text);
+		// Field-level rejections are reported even when the rest of the file
+		// applied: a pin that was silently dropped looks exactly like one that
+		// was never written.
+		issues.push(...invalid.map((reason) => `${ROSTER_CONFIG_FILE}: ${reason}; that setting was ignored.`));
 		if (error) {
 			issues.push(`${ROSTER_CONFIG_FILE} could not be parsed (${error}); its overrides were ignored.`);
 			continue;
@@ -154,12 +175,29 @@ export function loadRosterConfig(source: RosterConfigSource): { config: RosterCo
 export function saveRosterOverride(userDir: string, tier: "fast" | "capable" | "deep", override: RosterOverride | undefined): string {
 	const file = path.join(userDir, ROSTER_CONFIG_FILE);
 	let existing: Record<string, unknown> = {};
+	let raw: string | undefined;
 	try {
-		const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+		raw = fs.readFileSync(file, "utf8");
+	} catch (error) {
+		// Only "no file yet" is a clean slate. Anything else means a file exists
+		// that this function could not read, and writing over it would be the
+		// destruction the read-modify-write exists to prevent.
+		if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+			throw new Error(`Could not read ${ROSTER_CONFIG_FILE} (${(error as NodeJS.ErrnoException)?.code ?? "unknown error"}); no changes were written.`);
+		}
+	}
+	if (raw !== undefined) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch (error) {
+			// A missing comma is a temporary, recoverable mistake. Starting from
+			// `{}` and writing would turn it into permanent data loss — every
+			// unrelated setting and every other tier's override, gone, to record one
+			// menu selection. Refusing keeps the file the user can still fix.
+			throw new Error(`${ROSTER_CONFIG_FILE} is not valid JSON (${error instanceof Error ? error.message : String(error)}); no changes were written, so the existing file can still be repaired by hand.`);
+		}
 		if (parsed && typeof parsed === "object") existing = parsed as Record<string, unknown>;
-	} catch {
-		// No file yet, or one this build cannot parse. Either way the write below
-		// establishes a valid one rather than failing the command.
 	}
 	const models = existing.models && typeof existing.models === "object" ? { ...(existing.models as Record<string, unknown>) } : {};
 	// `model` is written whenever the override states one, including the explicit

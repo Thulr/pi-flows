@@ -351,6 +351,46 @@ test("choosing the pi default is persisted as a decision, not as an absent model
 	assert.deepEqual(parseRosterConfig(JSON.stringify({ models: { deep: "default" } })).config.deep, { model: null }, "the shorthand form says it with a word");
 });
 
+test("a stated-but-unusable override field is reported, not silently dropped", () => {
+	// Dropping `{"model": 42}` to undefined leaves the tier derived, so a user who
+	// pinned a model watches work go elsewhere with nothing to explain it. A
+	// rejected field is a mistake, not an omission.
+	const bad = parseRosterConfig(JSON.stringify({ models: { fast: { model: 42 }, deep: { thinking: "mx" }, capable: 7 } }));
+	assert.equal(bad.error, undefined, "the file itself parsed; only the values are wrong");
+	assert.equal(bad.invalid.length, 3);
+	assert.match(bad.invalid.join("\n"), /models\.fast "model" must be/);
+	assert.match(bad.invalid.join("\n"), /models\.deep "thinking" must be/);
+	assert.match(bad.invalid.join("\n"), /models\.capable must be/);
+
+	// A partially wrong override still applies the field that was usable, and the
+	// rejection is still reported.
+	const partial = parseRosterConfig(JSON.stringify({ models: { fast: { model: "acme/mini", thinking: "nope" } } }));
+	assert.deepEqual(partial.config.fast, { model: "acme/mini" });
+	assert.equal(partial.invalid.length, 1);
+
+	const clean = parseRosterConfig(JSON.stringify({ models: { fast: "acme/mini:low" } }));
+	assert.deepEqual(clean.invalid, []);
+});
+
+test("saving refuses to overwrite a config file it could not parse", () => {
+	// A missing comma is recoverable; starting from `{}` and writing would turn it
+	// into permanent loss of every unrelated setting, to record one menu choice.
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	const file = path.join(dir, "pi-flows.json");
+	const original = '{ "somethingElse": 42, "models": { "deep": "acme/flagship" } '; // missing brace
+	fs.writeFileSync(file, original);
+
+	assert.throws(() => saveRosterOverride(dir, "fast", { model: "acme/mini" }), /not valid JSON/);
+	assert.equal(fs.readFileSync(file, "utf8"), original, "the file the user can still repair is left exactly as it was");
+
+	// A file that simply does not exist is still a clean slate.
+	const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	assert.ok(saveRosterOverride(fresh, "fast", { model: "acme/mini" }));
+
+	fs.rmSync(dir, { recursive: true, force: true });
+	fs.rmSync(fresh, { recursive: true, force: true });
+});
+
 test("an explicit pi-default choice survives a round trip through the config file", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
 	saveRosterOverride(dir, "fast", { model: null, thinking: "low" });

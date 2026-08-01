@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { PI_FLOWS_VERSION, ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
 import { describeModelRoster, usableModels } from "./model-roster.ts";
-import { saveRosterOverride } from "./roster-config.ts";
+import { saveRosterOverride, type RosterOverride } from "./roster-config.ts";
 import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
 
 /**
@@ -155,6 +155,23 @@ export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" 
 	return { kind: "error", message: `Unknown /flows argument "${first}". Use: /flows [user|project|all], /flows models, /flows inspect, /flows help, /flows version, or /flows status [scope].` };
 }
 
+/**
+ * Persist one tier, reporting a refusal rather than letting it throw.
+ *
+ * The save refuses when the existing file cannot be read or parsed, because
+ * overwriting it would destroy settings a user can still repair by hand. That
+ * refusal is a normal outcome of an interactive command, not a crash, so it is
+ * shown as an error message with the reason.
+ */
+function saveTierOverride(ctx: ExtensionCommandContext, userDir: string, tier: "fast" | "capable" | "deep", override: RosterOverride | undefined): string | null {
+	try {
+		return saveRosterOverride(userDir, tier, override);
+	} catch (error) {
+		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+		return null;
+	}
+}
+
 const KEEP_DERIVED = "Reset to derived (let pi-flows choose)";
 const PI_DEFAULT_MODEL = "(your pi default model)";
 const INHERIT_THINKING = "(inherit — tier default)";
@@ -198,8 +215,8 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [KEEP_DERIVED, PI_DEFAULT_MODEL, ...usableModels(roster.available).map((model) => model.reference)]);
 	if (!modelChoice) return;
 	if (modelChoice === KEEP_DERIVED) {
-		const file = saveRosterOverride(userDir, tier, undefined);
-		ctx.ui.notify(`Tier "${tier}" reset to derived in ${safePath(file)}.`, "info");
+		const file = saveTierOverride(ctx, userDir, tier, undefined);
+		if (file) ctx.ui.notify(`Tier "${tier}" reset to derived in ${safePath(file)}.`, "info");
 		return;
 	}
 
@@ -214,7 +231,8 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 	if (!thinkingChoice) return;
 	const thinking = thinkingChoice === INHERIT_THINKING ? undefined : (thinkingChoice as ThinkingLevel);
 
-	const file = saveRosterOverride(userDir, tier, { model, thinking });
+	const file = saveTierOverride(ctx, userDir, tier, { model, thinking });
+	if (!file) return;
 	ctx.ui.notify(
 		`Tier "${tier}" now runs ${model === USE_DEFAULT_MODEL ? PI_DEFAULT_MODEL : model}${thinking ? ` at ${thinking} thinking` : ""}.\nSaved to ${safePath(file)}. It applies to the next flow call.`,
 		"info",

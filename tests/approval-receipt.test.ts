@@ -21,6 +21,7 @@ import {
 	verifyApprovalReceipt,
 	type ApprovalBinding,
 } from "../extensions/pi-flows/approval.ts";
+import { normalizeGatedPhase } from "../extensions/pi-flows/modes/workflow-approval.ts";
 import { freshDir, runFlow, type Call } from "./stub-harness.ts";
 
 const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => ({
@@ -520,6 +521,32 @@ test("roster drift under a bound tier invalidates the receipt", async () => {
 		if (prevDeep === undefined) delete process.env.PI_FLOWS_DEEP_MODEL;
 		else process.env.PI_FLOWS_DEEP_MODEL = prevDeep;
 	}
+});
+
+test("a phase that resolves to the default binds which model that actually is", () => {
+	// Tested on the binding directly rather than through a resume: stating a model
+	// on the resume would make the binding differ for that reason alone, which
+	// passes whether or not the default is captured. What has to change here is
+	// ONLY the session's default, under a phase that names nothing.
+	const roster = (defaultModel: string) => ({
+		fast: { model: "p/cheap", thinking: "low", why: "t" },
+		capable: { model: defaultModel, thinking: "medium", why: "t" },
+		deep: { model: "p/strong", thinking: "max", why: "t" },
+		available: [],
+		defaultModel,
+		source: "derived" as const,
+		issues: [],
+	});
+	const deps = (defaultModel: string) => ({ discovery: { agents: [] }, roster: roster(defaultModel) } as any);
+	const phase = { id: "ship", agent: "operator", task: "Ship it" };
+
+	const before = normalizeGatedPhase(phase, {}, deps("p/original"));
+	const after = normalizeGatedPhase(phase, {}, deps("p/replacement"));
+	assert.notDeepEqual(before, after, "the same unstated phase binds differently once the default moves");
+	assert.equal(before.model, "p/original", "and it records which model that default actually was");
+
+	// An unresolvable roster still binds null rather than inventing a model.
+	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] } } as any).model, null);
 });
 
 test("a trailing approval binds the debrief's model and thinking, not just its contract", async () => {
