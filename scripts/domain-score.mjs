@@ -107,7 +107,7 @@ const globToRe = (pattern) => new RegExp(`^${pattern.replace(/[.]/g, "\\.").repl
 // Core-to-Supporting import, or a single-quoted foreign package, walk past the
 // gate that exists to catch exactly those.
 const RELATIVE_IMPORT = /(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g;
-const FOREIGN_IMPORT = /(?:from|import)\s*\(?\s*["']@earendil-works\//;
+const FOREIGN_IMPORT = /(?:from|import)\s*\(?\s*["'](@earendil-works\/[^"'/]+)["']/g;
 
 /**
  * The debt ledger the change started from.
@@ -138,7 +138,8 @@ function debtBaseline() {
     return { known: false, why: `the ledger did not exist at ${base.slice(0, 8)}, so this change introduces it` };
   }
   try {
-    return { known: true, base, modules: new Set(JSON.parse(recorded).foreignImports.debt.map((entry) => entry.module)) };
+    const entries = JSON.parse(recorded).foreignImports.debt;
+    return { known: true, base, modules: new Map(entries.map((entry) => [entry.module, new Set(entry.imports ?? [])])) };
   } catch {
     return { known: false, why: `the ledger at ${base.slice(0, 8)} could not be parsed` };
   }
@@ -188,13 +189,28 @@ for (const [file, hits] of placement) {
 // places that still leak one, and an entry that no longer leaks must be deleted.
 const adapters = new Set(review.foreignImports.adapters);
 const debt = new Map(review.foreignImports.debt.map((entry) => [entry.module, entry]));
+const foreignImportsOf = (source) => new Set([...source.matchAll(FOREIGN_IMPORT)].map((match) => match[1]));
 for (const [file, source] of sources) {
-  const foreign = FOREIGN_IMPORT.test(source);
-  if (foreign && !adapters.has(file) && !debt.has(file)) {
+  const actual = foreignImportsOf(source);
+  if (actual.size && !adapters.has(file) && !debt.has(file)) {
     flag("acl", `${MODULE_ROOT}/${file} imports a foreign package type but is neither a declared adapter nor recorded debt in ${REVIEW_FILE}`);
   }
-  if (!foreign && debt.has(file)) {
+  const entry = debt.get(file);
+  if (!entry) continue;
+  if (!actual.size) {
     flag("acl", `${REVIEW_FILE} still records ${file} as foreign-import debt, but it no longer imports one — delete the entry and take the point`);
+    continue;
+  }
+  // The declared set must be exactly what the module imports. Listing a module
+  // is not a blanket exemption: without this, an entry already on the ledger
+  // absorbs any further foreign package silently, and the ledger grows while
+  // reporting the same two names.
+  const declared = new Set(entry.imports ?? []);
+  for (const specifier of actual) {
+    if (!declared.has(specifier)) flag("acl", `${MODULE_ROOT}/${file} imports ${specifier}, which its ${REVIEW_FILE} debt entry does not declare — an existing entry does not exempt a module from new foreign imports`);
+  }
+  for (const specifier of declared) {
+    if (!actual.has(specifier)) flag("acl", `${REVIEW_FILE} declares ${specifier} for ${file}, which no longer imports it — narrow the entry and take the ground back`);
   }
 }
 
@@ -202,9 +218,14 @@ for (const [file, source] of sources) {
 // that did not have one, and recording it is not the remedy.
 const baseline = debtBaseline();
 if (baseline.known) {
-  for (const module of debt.keys()) {
-    if (!baseline.modules.has(module)) {
+  for (const [module, entry] of debt) {
+    const before = baseline.modules.get(module);
+    if (!before) {
       flag("acl", `${REVIEW_FILE} adds \`${module}\` to the foreign-import debt ledger — the ledger is shrink-only, so a new leak has to be fixed rather than recorded`);
+      continue;
+    }
+    for (const specifier of entry.imports ?? []) {
+      if (!before.has(specifier)) flag("acl", `${REVIEW_FILE} widens \`${module}\` debt to include ${specifier} — an entry may narrow, never grow`);
     }
   }
 }
@@ -353,7 +374,7 @@ if (args.has("--json")) {
   if (open.length || debt.size) {
     lines.push("### Open rows", "");
     if (debt.size) {
-      lines.push(`- **Anti-corruption layer** — ${debt.size} accepted foreign-import debt: ${[...debt.values()].map((entry) => `\`${entry.module}\` (${entry.foreign})`).join(", ")}.`);
+      lines.push(`- **Anti-corruption layer** — ${debt.size} accepted foreign-import debt: ${[...debt.values()].map((entry) => `\`${entry.module}\` (${(entry.imports ?? []).join(", ")})`).join(", ")}.`);
     }
     lines.push(...open.map((entry) => `- **${entry.label}** — ${entry.note}`), "");
   }

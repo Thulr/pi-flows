@@ -35,7 +35,7 @@
     }
   },
   "foreignImports": {
-    "_comment": "adapters: modules where a foreign package type may legitimately be spoken - the anti-corruption layer, the extension registration surface, and the terminal views. debt: modules that still leak a foreign type into the domain and should not. The ledger is shrink-only, and scripts/domain-score.mjs enforces that against the base revision: an entry that no longer leaks must be deleted, and an entry that is not present at the base is rejected outright, so a new leak has to be fixed rather than recorded. The score's ACL row stays failed until the list is empty.",
+    "_comment": "adapters: modules where a foreign package type may legitimately be spoken - the anti-corruption layer, the extension registration surface, and the terminal views. debt: modules that still leak a foreign type into the domain and should not, each declaring in `imports` exactly which foreign packages it may name. scripts/domain-score.mjs enforces the ledger against the base revision AND against the tree: a module's actual foreign imports must equal its declared set, a declared package that is no longer imported must be deleted, and neither a new module nor a widened `imports` set may be added. So a new leak has to be fixed rather than recorded, and an existing entry cannot absorb one. The score's ACL row stays failed until the list is empty.",
     "adapters": [
       "index.ts",
       "runner.ts",
@@ -53,12 +53,16 @@
     "debt": [
       {
         "module": "types.ts",
-        "foreign": "@earendil-works/pi-ai Message",
+        "imports": [
+          "@earendil-works/pi-ai"
+        ],
         "note": "FlowRunResult.messages holds pi-ai's Message, so the foreign shape travels through FlowDetails into the trace sink, the views, and the published API surface. Replace with a pi-flows-owned ChildMessage translated in runner.ts/sanitize.ts."
       },
       {
         "module": "sanitize.ts",
-        "foreign": "@earendil-works/pi-ai Message",
+        "imports": [
+          "@earendil-works/pi-ai"
+        ],
         "note": "storeMessage/getFinalAssistantText/captureRawFinalAssistantText key off pi-ai's Message shape. They are the natural translation point; today they pass it through instead."
       }
     ]
