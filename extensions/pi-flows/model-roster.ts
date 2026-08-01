@@ -31,12 +31,7 @@
  * Everything here is a pure function over plain values. A live pi runtime is not
  * required to derive, describe, or test a roster.
  */
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { THINKING_LEVELS, type AvailableModel, type ModelRoster, type RosterAssignment, type ThinkingLevel } from "./types.ts";
-
-/** Config file name, looked for under the user agent dir and the project config dir. */
-export const ROSTER_CONFIG_FILE = "pi-flows.json";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, type AvailableModel, type ModelRoster, type RosterAssignment, type RosterConfig, type RosterOverride, type ThinkingLevel } from "./types.ts";
 
 /**
  * Thinking level each tier asks for before clamping.
@@ -183,7 +178,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	const parent = parentModel ? byReference.get(parentModel) : undefined;
 
 	const capable: RosterAssignment = {
-		model: undefined,
+		model: USE_DEFAULT_MODEL,
 		thinking: inputs.parent.thinking,
 		why: inputs.parent.thinking
 			? `your pi default model, at the session's current thinking level (${inputs.parent.thinking})`
@@ -205,8 +200,14 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	// offers, not on its `reasoning` flag — a provider that maps xhigh/max to null
 	// leaves a model that reasons but cannot be pushed, and picking it would make
 	// `deep` resolve to a rung it cannot deliver.
+	//
+	// Three tiers of preference, not two. Dropping straight to the whole pool when
+	// nothing offers extended levels would let a pricier *non-reasoning* model beat
+	// a reasoning one capped at medium — and then deep's `max` clamps to `off`,
+	// which is the least deep answer available.
 	const extendedPool = pool.filter(supportsExtendedThinking);
-	const strongModel = strongest(extendedPool.length ? extendedPool : pool);
+	const reasoningPool = pool.filter((model) => model.reasoning);
+	const strongModel = strongest(extendedPool.length ? extendedPool : reasoningPool.length ? reasoningPool : pool);
 
 	const fast: RosterAssignment = sameOrDefault(cheapModel, parentModel, {
 		model: cheapModel.reference,
@@ -237,170 +238,18 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
  */
 function sameOrDefault(chosen: AvailableModel, parentModel: string | undefined, assignment: RosterAssignment, sameWhy: string): RosterAssignment {
 	if (chosen.reference !== parentModel) return assignment;
-	return { model: undefined, thinking: assignment.thinking, why: sameWhy };
-}
-
-/**
- * A tier override as written in config or env: a model spec, a level, or both.
- *
- * `model: null` is "run my pi default", which is a different statement from an
- * absent `model` ("keep whatever the roster derived"). Collapsing the two would
- * make choosing the default indistinguishable from choosing nothing, so a user
- * who pinned `fast` to their own model would silently keep getting the derived
- * cheap one — possibly from another provider.
- */
-export const USE_DEFAULT_MODEL = null;
-
-export interface RosterOverride {
-	model?: string | null;
-	thinking?: ThinkingLevel;
-}
-
-export interface RosterConfig {
-	fast?: RosterOverride;
-	capable?: RosterOverride;
-	deep?: RosterOverride;
-}
-
-/**
- * Read one override, accepting either the shorthand a user would type into a
- * `--model` flag or the explicit object form.
- *
- *   "fast": "anthropic/claude-haiku-4-5:low"
- *   "fast": { "model": "anthropic/claude-haiku-4-5", "thinking": "low" }
- */
-function readOverride(raw: unknown): RosterOverride | undefined {
-	const pair = (model: string | null | undefined, thinking: ThinkingLevel | undefined): RosterOverride | undefined => {
-		// Only the keys actually set: an override carrying `thinking: undefined`
-		// reads as "no level" everywhere it is merged, which is true, but it also
-		// makes an override that set nothing indistinguishable from one that did.
-		// `model: null` is a statement, so it survives the check `undefined` fails.
-		if (model === undefined && !thinking) return undefined;
-		return { ...(model !== undefined ? { model } : {}), ...(thinking ? { thinking } : {}) };
-	};
-	if (typeof raw === "string") {
-		const trimmed = raw.trim();
-		if (!trimmed) return undefined;
-		if (isThinkingLevel(trimmed)) return { thinking: trimmed };
-		// The word a user would reach for to say "my own model" in the shorthand
-		// form, with the same meaning as `"model": null` in the object form.
-		if (trimmed.toLowerCase() === "default") return { model: USE_DEFAULT_MODEL };
-		const { model, thinking } = parseModelSpec(trimmed);
-		return pair(model || undefined, thinking);
-	}
-	if (!raw || typeof raw !== "object") return undefined;
-	const record = raw as Record<string, unknown>;
-	const rawModel = record.model;
-	const model = rawModel === null
-		? USE_DEFAULT_MODEL
-		: typeof rawModel === "string" && rawModel.trim()
-			? rawModel.trim()
-			: undefined;
-	return pair(model, isThinkingLevel(record.thinking) ? record.thinking : undefined);
-}
-
-/** Parse a `pi-flows.json`. Malformed input yields no overrides rather than an exception: config is an opt-in, not a gate. */
-export function parseRosterConfig(text: string): { config: RosterConfig; error?: string } {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch (error) {
-		return { config: {}, error: error instanceof Error ? error.message : String(error) };
-	}
-	const models = (parsed as Record<string, unknown> | null)?.models;
-	if (!models || typeof models !== "object") return { config: {} };
-	const record = models as Record<string, unknown>;
-	const config: RosterConfig = {};
-	for (const tier of ["fast", "capable", "deep"] as const) {
-		const override = readOverride(record[tier]);
-		if (override) config[tier] = override;
-	}
-	return { config };
-}
-
-export interface RosterConfigSource {
-	/** Where the user's own pi-flows.json lives (the pi agent dir). */
-	userDir: string;
-	/** Project config dir, or null when there is none. */
-	projectDir: string | null;
-	/** Project config is repo-controlled, so it is read only for a trusted project. */
-	projectTrusted: boolean;
-}
-
-/**
- * Load overrides from disk. Project config wins over user config, but only when
- * pi says the project is trusted — a repo-controlled file choosing which model
- * runs (and therefore which vendor sees the task) is exactly the kind of thing
- * project trust exists to gate.
- */
-export function loadRosterConfig(source: RosterConfigSource): { config: RosterConfig; issues: string[] } {
-	const issues: string[] = [];
-	const merged: RosterConfig = {};
-	const dirs = [source.userDir, source.projectTrusted ? source.projectDir : null];
-	for (const dir of dirs) {
-		if (!dir) continue;
-		const file = path.join(dir, ROSTER_CONFIG_FILE);
-		let text: string;
-		try {
-			text = fs.readFileSync(file, "utf8");
-		} catch {
-			continue;
-		}
-		const { config, error } = parseRosterConfig(text);
-		if (error) {
-			issues.push(`${ROSTER_CONFIG_FILE} could not be parsed (${error}); its overrides were ignored.`);
-			continue;
-		}
-		Object.assign(merged, config);
-	}
-	return { config: merged, issues };
-}
-
-/**
- * Persist one tier override to the user's `pi-flows.json`.
- *
- * Read-modify-write of the parsed file rather than a blind overwrite: the file
- * is the user's, may hold settings this build does not know about, and losing
- * them because a tier was changed would be the kind of quiet damage a config
- * surface must never do. Passing `undefined` clears the override and returns the
- * tier to derivation.
- */
-export function saveRosterOverride(userDir: string, tier: "fast" | "capable" | "deep", override: RosterOverride | undefined): string {
-	const file = path.join(userDir, ROSTER_CONFIG_FILE);
-	let existing: Record<string, unknown> = {};
-	try {
-		const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-		if (parsed && typeof parsed === "object") existing = parsed as Record<string, unknown>;
-	} catch {
-		// No file yet, or one this build cannot parse. Either way the write below
-		// establishes a valid one rather than failing the command.
-	}
-	const models = existing.models && typeof existing.models === "object" ? { ...(existing.models as Record<string, unknown>) } : {};
-	// `model` is written whenever the override states one, including the explicit
-	// null that means "my pi default" — dropping it there would save the choice as
-	// a bare thinking override and let the derived model quietly stay in force.
-	if (override) models[tier] = { ...(override.model !== undefined ? { model: override.model } : {}), ...(override.thinking ? { thinking: override.thinking } : {}) };
-	else delete models[tier];
-	fs.mkdirSync(userDir, { recursive: true });
-	fs.writeFileSync(file, `${JSON.stringify({ ...existing, models }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-	return file;
-}
-
-/** The legacy env mapping. Still honored, now as one override source among several rather than the only one. */
-export function envRosterConfig(): RosterConfig {
-	const config: RosterConfig = {};
-	const fast = readOverride(process.env.PI_FLOWS_FAST_MODEL ?? "");
-	const deep = readOverride(process.env.PI_FLOWS_DEEP_MODEL ?? "");
-	if (fast) config.fast = fast;
-	if (deep) config.deep = deep;
-	return config;
+	// `null`, not `undefined`: this rung *did* resolve, and what it resolved to is
+	// the default model. Spelling it `undefined` would make it indistinguishable
+	// from a tier that resolved to nothing, and a caller asking for this tier
+	// would fall through to whatever the agent pinned.
+	return { model: USE_DEFAULT_MODEL, thinking: assignment.thinking, why: sameWhy };
 }
 
 function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], defaultModel: string | undefined): RosterAssignment {
 	if (!override) return base;
-	// `null` means the pi default explicitly, so it clears the derived model
-	// rather than being ignored the way an absent `model` is.
-	const model = override.model === USE_DEFAULT_MODEL ? undefined : override.model ?? base.model;
+	// An absent `model` keeps whatever the base resolved; a stated one — including
+	// the null that means "the pi default" — replaces it.
+	const model = override.model !== undefined ? override.model : base.model;
 	const known = available.find((candidate) => candidate.reference === (model ?? defaultModel));
 	const said = override.model !== undefined;
 	return {
@@ -454,7 +303,7 @@ export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
  * reported thinking level honest for every child that runs without `--model`,
  * which is the majority of them.
  */
-export function knownModel(roster: ModelRoster | undefined, reference: string | undefined): AvailableModel | undefined {
+export function knownModel(roster: ModelRoster | undefined, reference: string | null | undefined): AvailableModel | undefined {
 	if (!roster) return undefined;
 	const wanted = reference ?? roster.defaultModel;
 	if (!wanted) return undefined;

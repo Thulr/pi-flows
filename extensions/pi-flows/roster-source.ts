@@ -9,7 +9,8 @@
 import * as path from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { THINKING_LEVELS, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
-import { OUTPUT_TOKEN_SHARE, envRosterConfig, isThinkingLevel, loadRosterConfig, resolveModelRoster } from "./model-roster.ts";
+import { OUTPUT_TOKEN_SHARE, isThinkingLevel, resolveModelRoster } from "./model-roster.ts";
+import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
 
 /** How the pi registry is read. Structural so the resolver stays testable without a live runtime. */
 interface ModelRegistryLike {

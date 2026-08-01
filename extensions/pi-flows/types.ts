@@ -24,8 +24,8 @@ export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./han
 // Model-selection vocabulary, same arrangement: the terms live in a
 // dependency-free module and the policy that produces a roster lives in
 // model-roster.ts, which the kernel may not import.
-export { THINKING_LEVELS } from "./roster-types.ts";
-export type { AvailableModel, ModelRoster, RosterAssignment, ThinkingLevel } from "./roster-types.ts";
+export { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL } from "./roster-types.ts";
+export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterOverride, ThinkingLevel } from "./roster-types.ts";
 
 export const PI_FLOWS_VERSION = "0.5.0";
 

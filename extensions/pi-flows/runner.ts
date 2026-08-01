@@ -58,10 +58,15 @@ export interface ChildModelChoice {
  *
  * Model: flow model override > flow tier > agent pin > agent tier > pi default.
  * A call-site tier beats an agent's pinned model because the parent is
- * expressing per-task intent — including tier "capable", which always resolves
- * and forces the default model even on a fast/deep agent. A fast/deep tier that
- * the roster could not map (no registry) still falls through to the agent pin,
- * so flows keep working when the roster is unavailable.
+ * expressing per-task intent. A tier the roster could not resolve at all (no
+ * registry) still falls through to the agent pin, so flows keep working when the
+ * roster is unavailable.
+ *
+ * The fall-through tests whether the rung *answered*, not whether it named a
+ * model, because "run the pi default" is an answer. Treating it as silence would
+ * mean a `deep` call landing on an install whose default is already the
+ * strongest model would fall through to a fast agent's pin and run the cheap
+ * one — the exact inversion of what was asked for.
  *
  * Thinking follows the same shape one rung at a time, so a call that names only
  * a tier still gets that tier's level, and a call that names only a level keeps
@@ -78,8 +83,13 @@ export function resolveChildModel(
 	const optionsPin = options.model ? parseModelSpec(options.model) : undefined;
 	const agentPin = agent.model ? parseModelSpec(agent.model) : undefined;
 
+	// `null` from any rung means "the pi default", and is normalized to undefined
+	// only here, at the point the answer becomes argv.
+	const answered = (assignment: { model?: string | null } | undefined) => assignment?.model !== undefined;
 	const model = optionsPin?.model
-		?? (options.tier === "capable" ? optionsTier?.model : optionsTier?.model ?? agentPin?.model ?? agentTier?.model);
+		?? (answered(optionsTier)
+			? optionsTier?.model ?? undefined
+			: agentPin?.model ?? (answered(agentTier) ? agentTier?.model ?? undefined : undefined));
 
 	// One ordered list rather than nested conditionals: every source of a level,
 	// narrowest first. The tier rungs sit below the explicit statements so naming

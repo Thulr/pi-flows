@@ -12,19 +12,17 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import { availableModelsFromRegistry } from "../extensions/pi-flows/roster-source.ts";
+import { resolveChildModel } from "../extensions/pi-flows/runner.ts";
 import {
 	clampThinking,
 	deriveModelRoster,
 	describeModelRoster,
-	envRosterConfig,
 	knownModel,
-	loadRosterConfig,
 	parseModelSpec,
-	parseRosterConfig,
 	resolveModelRoster,
-	saveRosterOverride,
 	usableModels,
 } from "../extensions/pi-flows/model-roster.ts";
+import { envRosterConfig, loadRosterConfig, parseRosterConfig, saveRosterOverride } from "../extensions/pi-flows/roster-config.ts";
 
 const ALL_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -53,7 +51,7 @@ test("a tier resolves to a different model with no configuration at all", () => 
 	assert.equal(roster.source, "derived");
 	assert.equal(roster.fast.model, "acme/mini", "fast takes the cheapest model this install can run");
 	assert.equal(roster.deep.model, "acme/flagship", "deep takes the most capable");
-	assert.equal(roster.capable.model, undefined, "capable is the user's own default, so no --model is passed");
+	assert.equal(roster.capable.model, null, "capable resolved to the user's own default — null, not undefined, because it is an answer");
 	// The whole point: three tiers, three different behaviors, zero env vars.
 	assert.notEqual(roster.fast.model, roster.deep.model);
 });
@@ -85,7 +83,7 @@ test("when the default model is already the best available, deep differs by thin
 	// Pinning --model to the model pi would have loaded anyway reads as
 	// right-sizing that is not happening, so the rung says so instead.
 	const roster = deriveModelRoster({ available: INSTALL, parent: { model: "acme/flagship", thinking: "medium" } });
-	assert.equal(roster.deep.model, undefined, "no redundant pin to the model already loaded");
+	assert.equal(roster.deep.model, null, "no redundant pin to the model already loaded, but the rung still answered");
 	assert.equal(roster.deep.thinking, "max", "the rung still means something: it thinks harder");
 	assert.match(roster.deep.why, /thinking level/, "and the disclosure says exactly that");
 });
@@ -104,7 +102,7 @@ test("fast prefers the parent's own provider so a scout does not silently change
 test("deep prefers a reasoning model over a merely expensive one", () => {
 	const available = [model("mini", { costPerToken: 0.5 }), model("pricey", { costPerToken: 99, reasoning: false })];
 	const roster = deriveModelRoster({ available, parent: { model: "acme/mini" } });
-	assert.equal(roster.deep.model, undefined, "the only reasoning model is the parent's own, so deep differs by level");
+	assert.equal(roster.deep.model, null, "the only reasoning model is the parent's own, so deep differs by level");
 	assert.match(roster.deep.why, /thinking level/);
 });
 
@@ -164,10 +162,45 @@ test("models that cannot run a delegated task are not offered a tier", () => {
 test("an install with no readable registry falls back to the default model on every tier", () => {
 	const roster = deriveModelRoster({ available: [], parent: { model: "acme/standard", thinking: "high" } });
 	assert.equal(roster.source, "unavailable");
-	for (const tier of ["fast", "capable", "deep"]) {
-		assert.equal(roster[tier].model, undefined, `${tier} must not invent a model it cannot verify`);
-	}
+	// fast and deep genuinely did not resolve — undefined, so a call naming one
+	// still falls through to whatever the agent pinned. capable did resolve: "the
+	// pi default" is knowable without a registry.
+	assert.equal(roster.fast.model, undefined, "fast must not invent a model it cannot verify");
+	assert.equal(roster.deep.model, undefined, "deep must not invent a model it cannot verify");
+	assert.equal(roster.capable.model, null, "capable still means the pi default, which needs no registry to know");
 	assert.match(describeModelRoster(roster).join("\n"), /no model registry/, "and says so rather than reporting a roster it does not have");
+});
+
+test("deep falls back to a reasoning model before a pricier one that cannot reason at all", () => {
+	// Nothing offers high/xhigh/max, so the extended pool is empty. Dropping
+	// straight to the whole pool would let the pricier non-reasoning model win —
+	// and then deep's `max` clamps to `off`, the least deep answer available.
+	const cheapCapped = model("mini", { costPerToken: 0.5, thinkingLevels: ["off", "low"] });
+	const reasoningCapped = model("capped", { costPerToken: 10, thinkingLevels: ["off", "low", "medium"] });
+	const pricierPlain = model("plain", { costPerToken: 50, reasoning: false });
+	const roster = deriveModelRoster({ available: [cheapCapped, reasoningCapped, pricierPlain], parent: {} });
+	assert.equal(roster.deep.model, "acme/capped", "a model that can still think beats one that cannot");
+	assert.equal(roster.deep.thinking, "medium", "clamped to what it offers, rather than collapsed to off");
+});
+
+test("a project override narrows the user's tier field by field, not wholesale", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	const userDir = path.join(dir, "user");
+	const projectDir = path.join(dir, "project");
+	fs.mkdirSync(userDir);
+	fs.mkdirSync(projectDir);
+	fs.writeFileSync(path.join(userDir, "pi-flows.json"), JSON.stringify({ models: { fast: { model: "acme/flagship" } } }));
+	fs.writeFileSync(path.join(projectDir, "pi-flows.json"), JSON.stringify({ models: { fast: { thinking: "low" } } }));
+
+	// A shallow tier-level assign would drop the user's model pin entirely and
+	// silently return that tier to the derived model — possibly another vendor's.
+	const loaded = loadRosterConfig({ userDir, projectDir, projectTrusted: true });
+	assert.deepEqual(loaded.config.fast, { model: "acme/flagship", thinking: "low" });
+
+	const roster = resolveModelRoster({ available: INSTALL, parent: { model: "acme/standard" }, config: loaded.config });
+	assert.equal(roster.fast.model, "acme/flagship", "the user's pin survives a project override that never mentioned a model");
+	assert.equal(roster.fast.thinking, "low");
+	fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("config overrides the derived roster, and env is honored but outranked", () => {
@@ -207,7 +240,7 @@ test("a level is clamped against the pi default model when no --model is passed"
 		parent: { model: "acme/standard" },
 		config: { capable: { thinking: "max" } },
 	});
-	assert.equal(override.capable.model, undefined, "capable still runs the pi default");
+	assert.equal(override.capable.model, null, "capable still runs the pi default");
 	assert.equal(override.capable.thinking, "medium", "and its level is lowered to what that concrete model supports");
 });
 
@@ -223,7 +256,7 @@ test("choosing the pi default is persisted as a decision, not as an absent model
 		parent: { model: "acme/standard" },
 		config: explicit.config,
 	});
-	assert.equal(roster.fast.model, undefined, "an explicit null clears the derived model rather than being ignored");
+	assert.equal(roster.fast.model, null, "an explicit null clears the derived model rather than being ignored");
 	assert.equal(roster.fast.thinking, "low");
 
 	// A level-only override must still leave the derived model in force — that is
@@ -363,4 +396,82 @@ test("envRosterConfig reads the legacy variables, including their :level suffix"
 		if (prevDeep === undefined) delete process.env.PI_FLOWS_DEEP_MODEL;
 		else process.env.PI_FLOWS_DEEP_MODEL = prevDeep;
 	}
+});
+
+// ---------------------------------------------------------------------------
+// Per-call resolution: how one child's model and level are picked from the
+// roster, the agent's frontmatter, and the call itself. Lives here rather than
+// in pi-flows.test.ts because it is the same subject as the roster above — and
+// that file is at its line cap.
+// ---------------------------------------------------------------------------
+
+/** A roster shaped like a two-model install, without needing a pi runtime. */
+function testRoster(overrides = {}) {
+  return {
+    fast: { model: "p/cheap", thinking: "low", why: "test" },
+    // null, not undefined: this rung resolved, and what it resolved to is the pi
+    // default. undefined would mean the tier had no answer at all.
+    capable: { model: null, thinking: "medium", why: "test" },
+    deep: { model: "p/strong", thinking: "max", why: "test" },
+    defaultModel: "p/strong",
+    available: [
+      { reference: "p/cheap", provider: "p", id: "cheap", reasoning: true, thinkingLevels: ["off", "low", "medium"], contextWindow: 200_000, costPerToken: 1 },
+      { reference: "p/strong", provider: "p", id: "strong", reasoning: true, thinkingLevels: ["off", "low", "medium", "high", "xhigh", "max"], contextWindow: 200_000, costPerToken: 9 },
+    ],
+    source: "derived",
+    ...overrides,
+  };
+}
+
+test("resolveChildModel: flow model > flow tier > agent pin > agent tier > pi default", () => {
+  const roster = testRoster();
+  // No default parameter here: the unresolvable-roster cases pass `undefined`
+  // deliberately, and a default would silently substitute the roster back in.
+  const model = (agent, options, ...rest) => resolveChildModel(agent, options, rest.length ? rest[0] : roster).model;
+  assert.equal(model({ tier: "fast" }, { model: "override" }), "override", "a flow-call model override wins");
+  assert.equal(model({ model: "pinned" }, { tier: "deep" }), "p/strong", "a flow-call tier expresses per-task intent and beats the agent pin");
+  assert.equal(model({ model: "pinned", tier: "fast" }, {}), "pinned", "an explicit agent.model pin wins over its own tier");
+  assert.equal(model({ tier: "fast" }, {}), "p/cheap", "fast resolves to the roster's fast rung");
+  assert.equal(model({ tier: "deep" }, {}), "p/strong", "deep resolves to the roster's deep rung");
+  assert.equal(model({ model: "pinned", tier: "deep" }, { tier: "capable" }), undefined, "a flow-call capable tier forces the default model even against an agent pin");
+  assert.equal(model({ tier: "capable" }, {}), undefined, "capable defers to the user's pi default");
+  assert.equal(model({}, {}), undefined, "no tier/model defers to the pi default");
+  // The roster is unavailable (no registry): tiers stop resolving, but an agent
+  // pin must still be honored rather than the flow silently losing its model.
+  assert.equal(model({ model: "pinned" }, { tier: "deep" }, undefined), "pinned", "an unresolvable flow-call tier falls through to the agent pin");
+  assert.equal(model({ tier: "fast" }, {}, undefined), undefined, "an unresolvable tier defers to the pi default");
+
+  // A rung that resolved to the pi default is an ANSWER, not silence. Reading it
+  // as silence would fall through to the agent pin — so asking for `deep` on an
+  // install whose default is already the strongest model would run the *cheap*
+  // model a fast agent pinned, the exact inversion of the request.
+  const defaultIsStrongest = testRoster({ deep: { model: null, thinking: "max", why: "default is already strongest" } });
+  assert.equal(model({ model: "p/cheap", tier: "fast" }, { tier: "deep" }, defaultIsStrongest), undefined, "a deep rung resolving to the default beats a fast agent's pin");
+  assert.equal(
+    resolveChildModel({ model: "p/cheap", tier: "fast" }, { tier: "deep" }, defaultIsStrongest).thinking,
+    "max",
+    "and the level comes from the tier that was actually asked for",
+  );
+});
+
+test("resolveChildModel: a named thinking level outranks the tier's, and is clamped to the model", () => {
+  const roster = testRoster();
+  const pick = (agent, options) => resolveChildModel(agent, options, roster);
+  assert.equal(pick({ tier: "fast" }, {}).thinking, "low", "a tier carries its own level");
+  assert.equal(pick({ tier: "capable" }, {}).thinking, "medium", "capable inherits the parent session's level");
+  assert.equal(pick({ tier: "fast" }, { thinking: "high" }).thinking, "medium", "a call-site level beats the tier's, clamped to what the fast model supports");
+  assert.equal(pick({ tier: "deep" }, { thinking: "high" }).thinking, "high", "the deep model supports the named level unchanged");
+  assert.equal(pick({ thinking: "xhigh" }, {}).thinking, "xhigh", "an agent's own level applies when nothing narrower is set");
+  assert.equal(pick({ tier: "deep", thinking: "low" }, {}).thinking, "low", "an agent's explicit level outranks the level its tier would use");
+  assert.equal(pick({}, {}).thinking, undefined, "no tier and no level leaves pi's own default alone");
+});
+
+test("resolveChildModel: a model pin may carry pi's :level shorthand", () => {
+  const roster = testRoster();
+  const pinned = resolveChildModel({}, { model: "p/strong:high" }, roster);
+  assert.equal(pinned.model, "p/strong", "the level is parsed off rather than passed through as part of the model id");
+  assert.equal(pinned.thinking, "high");
+  // Model ids may legitimately contain a colon, so only a real level is a level.
+  assert.equal(resolveChildModel({}, { model: "p/model:exacto" }, roster).model, "p/model:exacto");
+  assert.equal(resolveChildModel({}, { model: "p/strong:high", thinking: "low" }, roster).thinking, "low", "an explicit thinking param outranks the shorthand");
 });

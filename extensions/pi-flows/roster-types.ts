@@ -9,6 +9,33 @@
  * concept that owns them; the policy that produces a roster lives there.
  */
 
+/** Config file name, looked for under the user agent dir and the project config dir. */
+export const ROSTER_CONFIG_FILE = "pi-flows.json";
+
+/**
+ * "Run my pi default model", as a decision rather than an absence.
+ *
+ * Both a roster rung and a config override carry a tri-state model: a concrete
+ * reference, this null, or `undefined` for "nothing was stated / nothing
+ * resolved". Collapsing the last two is what makes a deliberate default
+ * indistinguishable from silence — and then a `deep` call on a `fast` agent
+ * falls through to the cheap pin, and a user who pinned a tier to their own
+ * model keeps silently getting the derived one.
+ */
+export const USE_DEFAULT_MODEL = null;
+
+/** A tier override as written in config or env: a model spec, a level, or both. */
+export interface RosterOverride {
+	model?: string | null;
+	thinking?: ThinkingLevel;
+}
+
+export interface RosterConfig {
+	fast?: RosterOverride;
+	capable?: RosterOverride;
+	deep?: RosterOverride;
+}
+
 /**
  * Reasoning effort a child runs at. pi's own vocabulary, kept verbatim so a
  * level written in an agent file or a flow call means the same thing it means
@@ -37,10 +64,23 @@ export interface AvailableModel {
 	costPerToken?: number;
 }
 
-/** What one tier resolves to on this install, and how that was decided. */
+/**
+ * What one tier resolves to on this install, and how that was decided.
+ *
+ * `model` is deliberately tri-state, matching the vocabulary a config override
+ * uses:
+ *
+ *   "provider/id"  this concrete model
+ *   null           the user's pi default, chosen on purpose (no `--model` passed)
+ *   undefined      this tier could not be resolved at all
+ *
+ * The middle and last case look identical if both are spelled `undefined`, and
+ * conflating them is a live bug rather than a nicety: a resolved rung that means
+ * "run the default" would read as "no answer" and fall through to whatever the
+ * agent pinned — so asking for `deep` on a fast agent could run the cheap model.
+ */
 export interface RosterAssignment {
-	/** Concrete model, or undefined to run the user's pi default (no `--model` passed). */
-	model?: string;
+	model?: string | null;
 	thinking?: ThinkingLevel;
 	/** Plain-English reason, shown by `flow showConfig:true` and `/flows models` so a surprising choice is inspectable. */
 	why: string;

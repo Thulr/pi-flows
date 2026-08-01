@@ -728,62 +728,6 @@ test("project-local default evaluate roles fail closed in headless runs", async 
   assert(!JSON.stringify(result).includes("do-not-leak"), "task secret must not leak in the refusal");
 });
 
-/** A roster shaped like a two-model install, without needing a pi runtime. */
-function testRoster(overrides = {}) {
-  return {
-    fast: { model: "p/cheap", thinking: "low", why: "test" },
-    capable: { model: undefined, thinking: "medium", why: "test" },
-    deep: { model: "p/strong", thinking: "max", why: "test" },
-    available: [
-      { reference: "p/cheap", provider: "p", id: "cheap", reasoning: true, thinkingLevels: ["off", "low", "medium"], contextWindow: 200_000, costPerToken: 1 },
-      { reference: "p/strong", provider: "p", id: "strong", reasoning: true, thinkingLevels: ["off", "low", "medium", "high", "xhigh", "max"], contextWindow: 200_000, costPerToken: 9 },
-    ],
-    source: "derived",
-    ...overrides,
-  };
-}
-
-test("resolveChildModel: flow model > flow tier > agent pin > agent tier > pi default", () => {
-  const roster = testRoster();
-  // No default parameter here: the unresolvable-roster cases pass `undefined`
-  // deliberately, and a default would silently substitute the roster back in.
-  const model = (agent, options, ...rest) => __test.resolveChildModel(agent, options, rest.length ? rest[0] : roster).model;
-  assert.equal(model({ tier: "fast" }, { model: "override" }), "override", "a flow-call model override wins");
-  assert.equal(model({ model: "pinned" }, { tier: "deep" }), "p/strong", "a flow-call tier expresses per-task intent and beats the agent pin");
-  assert.equal(model({ model: "pinned", tier: "fast" }, {}), "pinned", "an explicit agent.model pin wins over its own tier");
-  assert.equal(model({ tier: "fast" }, {}), "p/cheap", "fast resolves to the roster's fast rung");
-  assert.equal(model({ tier: "deep" }, {}), "p/strong", "deep resolves to the roster's deep rung");
-  assert.equal(model({ model: "pinned", tier: "deep" }, { tier: "capable" }), undefined, "a flow-call capable tier forces the default model even against an agent pin");
-  assert.equal(model({ tier: "capable" }, {}), undefined, "capable defers to the user's pi default");
-  assert.equal(model({}, {}), undefined, "no tier/model defers to the pi default");
-  // The roster is unavailable (no registry): tiers stop resolving, but an agent
-  // pin must still be honored rather than the flow silently losing its model.
-  assert.equal(model({ model: "pinned" }, { tier: "deep" }, undefined), "pinned", "an unresolvable flow-call tier falls through to the agent pin");
-  assert.equal(model({ tier: "fast" }, {}, undefined), undefined, "an unresolvable tier defers to the pi default");
-});
-
-test("resolveChildModel: a named thinking level outranks the tier's, and is clamped to the model", () => {
-  const roster = testRoster();
-  const pick = (agent, options) => __test.resolveChildModel(agent, options, roster);
-  assert.equal(pick({ tier: "fast" }, {}).thinking, "low", "a tier carries its own level");
-  assert.equal(pick({ tier: "capable" }, {}).thinking, "medium", "capable inherits the parent session's level");
-  assert.equal(pick({ tier: "fast" }, { thinking: "high" }).thinking, "medium", "a call-site level beats the tier's, clamped to what the fast model supports");
-  assert.equal(pick({ tier: "deep" }, { thinking: "high" }).thinking, "high", "the deep model supports the named level unchanged");
-  assert.equal(pick({ thinking: "xhigh" }, {}).thinking, "xhigh", "an agent's own level applies when nothing narrower is set");
-  assert.equal(pick({ tier: "deep", thinking: "low" }, {}).thinking, "low", "an agent's explicit level outranks the level its tier would use");
-  assert.equal(pick({}, {}).thinking, undefined, "no tier and no level leaves pi's own default alone");
-});
-
-test("resolveChildModel: a model pin may carry pi's :level shorthand", () => {
-  const roster = testRoster();
-  const pinned = __test.resolveChildModel({}, { model: "p/strong:high" }, roster);
-  assert.equal(pinned.model, "p/strong", "the level is parsed off rather than passed through as part of the model id");
-  assert.equal(pinned.thinking, "high");
-  // Model ids may legitimately contain a colon, so only a real level is a level.
-  assert.equal(__test.resolveChildModel({}, { model: "p/model:exacto" }, roster).model, "p/model:exacto");
-  assert.equal(__test.resolveChildModel({}, { model: "p/strong:high", thinking: "low" }, roster).thinking, "low", "an explicit thinking param outranks the shorthand");
-});
-
 test("bundled agents declare portable tiers, not hard-coded vendor models", async () => {
   const repo = await makeTempRepo();
   const agents = __test.discoverFlowAgents(repo, "user").agents;

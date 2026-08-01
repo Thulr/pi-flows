@@ -1,6 +1,8 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { PI_FLOWS_VERSION, THINKING_LEVELS, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
-import { USE_DEFAULT_MODEL, describeModelRoster, saveRosterOverride } from "./model-roster.ts";
+import { describeModelRoster } from "./model-roster.ts";
+import { USE_DEFAULT_MODEL } from "./types.ts";
+import { saveRosterOverride } from "./roster-config.ts";
 import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
 
 /**
