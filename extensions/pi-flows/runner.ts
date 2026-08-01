@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type FlowError, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
@@ -196,7 +196,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	 * turn arriving between `terminate()` and the child actually exiting used to
 	 * be able to clear the budget while the flag stayed latched.
 	 */
-	let budgetStop: { budget: Budget; reason: "exhausted" | "unobservable" } | undefined;
+	let budgetStop: { budget: Budget; reason: "exhausted" | "unobservable"; error: FlowError } | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -241,7 +241,16 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 							// the budget decides, this loop only asks. See Budget.stopsLiveRun.
 							const stopped = unenforceable ?? budgets.find((budget) => budget.stopsLiveRun());
 							if (stopped) {
-								budgetStop = { budget: stopped, reason: unenforceable ? "unobservable" : "exhausted" };
+								// The error is built HERE, not at the end. A budget keeps charging
+								// for turns that arrive between terminate() and the child actually
+								// exiting, so a ceiling crossed only afterwards could otherwise
+								// out-rank the one that caused the stop and be reported as the
+								// cause. This freezes the reason at the moment it became true.
+								budgetStop = {
+									budget: stopped,
+									reason: unenforceable ? "unobservable" : "exhausted",
+									error: unenforceable ? stopped.unobservableError() : stopped.exhaustedError(),
+								};
 								controls.terminate();
 							}
 						}
@@ -294,9 +303,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 
 		result.exitCode = budgetStop ? 1 : run.exitCode;
 		if (budgetStop) {
-			const unobservable = budgetStop.reason === "unobservable";
-			result.stopReason = unobservable ? "budget_unobservable" : "budget_exceeded";
-			result.error = unobservable ? budgetStop.budget.unobservableError() : budgetStop.budget.exhaustedError();
+			result.stopReason = budgetStop.reason === "unobservable" ? "budget_unobservable" : "budget_exceeded";
+			result.error = budgetStop.error;
 			result.errorMessage = result.error.message;
 		} else if (timedOut) {
 			result.stopReason = "timeout";

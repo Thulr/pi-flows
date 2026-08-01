@@ -23,12 +23,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
-- A budget stop now reports the ceiling that actually caused it. The decision to
+- A budget stop now reports the ceiling that actually caused it. Two problems,
+  both in how the refusal was attributed after the fact. The decision to
   terminate was held as two flags plus a separate budget reference, and a model
   turn arriving between `terminate()` and the child exiting could rebind that
   reference while the flags stayed latched — so the refusal could be attributed
-  to the wrong budget, or to none. The three are now one latched value, set once.
-  Which ceilings bind is unchanged.
+  to the wrong budget, or to none. Separately, the error was built only once the
+  process had exited, from spend that kept accumulating in the meantime, so on a
+  budget with several ceilings a limit crossed *after* the stop could out-rank
+  the one that caused it and be named as the cause. The stop is now a single
+  value carrying the error, frozen at the moment it was decided. Which ceilings
+  bind is unchanged.
 - Flow budget scope is now stated correctly. The `maxCostUsd` / `maxTokens` /
   `maxGeneratedTokens` tool descriptions, README, the flow reference, and the
   patterns guide said the ceiling covered "the whole flow tree"; it bounds one flow

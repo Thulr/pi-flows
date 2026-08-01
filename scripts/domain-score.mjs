@@ -100,6 +100,13 @@ function declaredSubdomains() {
 
 const globToRe = (pattern) => new RegExp(`^${pattern.replace(/[.]/g, "\\.").replace(/\*/g, "[^/]*")}$`);
 
+// One import matcher for every row that reads imports. Both quote styles are
+// valid TypeScript, so accepting only double quotes would let a single-quoted
+// Core-to-Supporting import, or a single-quoted foreign package, walk past the
+// gate that exists to catch exactly those.
+const RELATIVE_IMPORT = /(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g;
+const FOREIGN_IMPORT = /(?:from|import)\s*\(?\s*["']@earendil-works\//;
+
 const findings = [];
 const flag = (row, message) => findings.push({ row, message });
 const clean = (row) => !findings.some((finding) => finding.row === row);
@@ -131,7 +138,7 @@ for (const [file, hits] of placement) {
   const from = hits.length === 1 ? hits[0] : undefined;
   const allowed = from ? IMPORT_RULES[from] : undefined;
   if (!allowed) continue;
-  for (const [, specifier] of sources.get(file).matchAll(/from "(\.[^"]+)"/g)) {
+  for (const [, specifier] of sources.get(file).matchAll(RELATIVE_IMPORT)) {
     const target = path.normalize(path.join(path.dirname(file), specifier));
     const to = placement.get(target);
     if (!to || to.length !== 1 || allowed.includes(to[0])) continue;
@@ -145,7 +152,7 @@ for (const [file, hits] of placement) {
 const adapters = new Set(review.foreignImports.adapters);
 const debt = new Map(review.foreignImports.debt.map((entry) => [entry.module, entry]));
 for (const [file, source] of sources) {
-  const foreign = /from "@earendil-works\//.test(source);
+  const foreign = FOREIGN_IMPORT.test(source);
   if (foreign && !adapters.has(file) && !debt.has(file)) {
     flag("acl", `${MODULE_ROOT}/${file} imports a foreign package type but is neither a declared adapter nor recorded debt in ${REVIEW_FILE}`);
   }
@@ -195,13 +202,26 @@ function gitDirtyPaths() {
  * also maintains itself — nobody has to bump a sha by hand, and a change that
  * edits Core and the review together is fresh by construction.
  */
+/** True when `ancestor` is reachable from `descendant`. Exit 1 means "no", which is an answer, not a failure. */
+function isAncestor(ancestor, descendant) {
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], { cwd: root, stdio: "ignore" });
+    return true;
+  } catch (error) {
+    if (error?.status === 1) return false;
+    throw error;
+  }
+}
+
 function reviewDrift(coreFiles) {
   try {
     // A shallow clone grafts every path's history onto the same commit, so the
     // review file and the Core modules would report an identical "last touched"
     // and drift would read as fresh — silently vouching for rows nobody checked.
     // Unknown is the honest answer. CI checks out with fetch-depth: 0 for this.
-    if (git("rev-parse", "--is-shallow-repository") === "true") return { known: false, stale: true, modules: [] };
+    if (git("rev-parse", "--is-shallow-repository") === "true") {
+      return { known: false, stale: true, modules: [], why: "this is a shallow clone, so every path reports the same grafted commit and nothing can be ordered" };
+    }
     const dirty = new Set(gitDirtyPaths());
     const dirtyCore = coreFiles.filter((file) => dirty.has(file));
     // Re-reviewed in the same uncommitted change: fresh by construction.
@@ -211,20 +231,30 @@ function reviewDrift(coreFiles) {
     const reviewSha = git("log", "-1", "--format=%H", "--", REVIEW_FILE);
     const coreSha = git("log", "-1", "--format=%H", "--", ...coreFiles);
     if (!reviewSha || !coreSha || reviewSha === coreSha) return { known: true, stale: false, modules: [] };
-    // Strictly older review = the core moved after it was taken.
-    execFileSync("git", ["merge-base", "--is-ancestor", reviewSha, coreSha], { cwd: root, stdio: "ignore" });
+    // Three cases, and only one of them is fresh. Testing "is the review an
+    // ancestor?" alone conflates the other two: a NOT-an-ancestor answer is
+    // returned both when the review is newer (fresh) and when the two sit on
+    // divergent branches of a merge, where neither is newer and the merged tree
+    // can hold a Core change the review never saw. Order them explicitly.
+    if (isAncestor(reviewSha, coreSha)) {
+      return {
+        known: true,
+        stale: true,
+        modules: git("diff", "--name-only", `${reviewSha}..HEAD`, "--", ...coreFiles).split("\n").filter(Boolean),
+        where: `after ${reviewSha.slice(0, 8)}`,
+      };
+    }
+    if (isAncestor(coreSha, reviewSha)) return { known: true, stale: false, modules: [] };
     return {
-      known: true,
+      known: false,
       stale: true,
-      modules: git("diff", "--name-only", `${reviewSha}..HEAD`, "--", ...coreFiles).split("\n").filter(Boolean),
-      where: `after ${reviewSha.slice(0, 8)}`,
+      modules: [],
+      why: `the review (${reviewSha.slice(0, 8)}) and the latest Core change (${coreSha.slice(0, 8)}) sit on divergent histories, so neither is newer and the merged tree may hold a Core change the review never saw`,
     };
-  } catch (error) {
-    // `merge-base --is-ancestor` exits 1 when the review is NOT older, which is
-    // the fresh case; anything else (no git, unreadable history) is genuinely
-    // unknown, and unknown is not "fresh" — say so rather than vouch for the rows.
-    if (error?.status === 1) return { known: true, stale: false, modules: [] };
-    return { known: false, stale: true, modules: [] };
+  } catch {
+    // No git, or history this checkout cannot read. Unknown is not "fresh" — say
+    // so rather than vouch for rows nobody verified.
+    return { known: false, stale: true, modules: [], why: "this checkout cannot be compared against the review (no git, or unreadable history)" };
   }
 }
 
@@ -247,9 +277,9 @@ const total = structural.length + judgment.length;
 // was taken against is the review file's own git history, which is also what
 // drift is measured from — so there is no second copy to keep in step.
 const reviewedOn = review.reviewedAt;
-const staleReason = !drift.known
-  ? "this checkout cannot be compared against the review (shallow clone, or no git)"
-  : `${drift.modules.length} Core module(s) changed ${drift.where} without the review being re-recorded: ${drift.modules.join(", ")}`;
+const staleReason = drift.known
+  ? `${drift.modules.length} Core module(s) changed ${drift.where} without the review being re-recorded: ${drift.modules.join(", ")}`
+  : drift.why;
 
 // ---------------------------------------------------------------- output
 const mark = (entry) => (entry.stale ? "◌" : entry.pass ? "✓" : "✗");
