@@ -1,7 +1,7 @@
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
 import { budgetDisclosureLines, exhaustedBudgetText } from "./budget-disclosure.ts";
-import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRunRegistry, type InspectorContext, type LiveFlowRun } from "./inspector.ts";
+import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRegistry, type InspectorContext, type LiveFlow } from "./inspector.ts";
 import { formatUsage } from "./trace.ts";
 import { spinnerFrame } from "./ui-live-row.ts";
 import type { FlowBudget, FlowRunResult } from "./types.ts";
@@ -9,7 +9,7 @@ import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
 
 /**
  * The mission-control fleet panel: a persistent, *non-capturing* overlay that
- * shows every live flow run at once — per-run state, each running child's
+ * shows every live flow at once — per-run state, each running child's
  * current activity, and budget burn-down. Because the overlay never captures
  * focus, the editor keeps input the whole time: the panel is ambient
  * monitoring, not a modal. F8 toggles it; `/flows inspect` remains the focused
@@ -31,36 +31,36 @@ function agentStateColor(state: ReturnType<typeof flowAgentState>): "error" | "s
 	return state === "failed" ? "error" : state === "completed" ? "success" : state === "queued" ? "muted" : "warning";
 }
 
-/** Panel body lines for one run (no borders). Exported for offline tests. */
-export function fleetRunLines(run: LiveFlowRun, theme: Theme, tick: number, options: FlowProgressOptions = {}): string[] {
+/** Panel body lines for one flow (no borders). Exported for offline tests. */
+export function fleetFlowLines(flow: LiveFlow, theme: Theme, tick: number, options: FlowProgressOptions = {}): string[] {
 	// Same rule as the live tool row: state text only earns its place on a fan-out;
 	// for one child it reads as "0/1 = stuck". This header carries no status icon,
 	// so that text is its only state signal — all the more reason it comes from the
 	// shared helper rather than a locally formatted ratio.
-	const total = run.details.results.length;
-	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(run.details, options))}` : "";
-	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${run.mode}`))}${progress}`];
-	lines.push(...budgetDisclosureLines(run.details.budgetCeilings).map((line) => theme.fg("muted", line)));
-	const budget = budgetLine(run.budget, theme);
+	const total = flow.details.results.length;
+	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(flow.details, options))}` : "";
+	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${flow.mode}`))}${progress}`];
+	lines.push(...budgetDisclosureLines(flow.details.budgetCeilings).map((line) => theme.fg("muted", line)));
+	const budget = budgetLine(flow.budget, theme);
 	if (budget) lines.push(budget);
 
-	const nameWidth = Math.min(16, Math.max(4, ...run.details.results.map((result: FlowRunResult) => result.agent.length)));
-	run.details.results.forEach((result, index) => {
+	const nameWidth = Math.min(16, Math.max(4, ...flow.details.results.map((result: FlowRunResult) => result.agent.length)));
+	flow.details.results.forEach((result, index) => {
 		const state = flowAgentState(result);
 		const icon = state === "running" ? theme.fg("warning", spinnerFrame(tick, index * 2)) : state === "queued" ? theme.fg("muted", "◌") : state === "failed" ? theme.fg("error", "✗") : theme.fg("success", "✓");
-		const usage = oneLine(formatUsage(result.usage, undefined, result.durationMs), 40, run.redactSecrets);
-		lines.push(`${icon} ${theme.fg("accent", oneLine(result.agent, nameWidth, run.redactSecrets).padEnd(nameWidth))} ${theme.fg(agentStateColor(state), state.padEnd(9))}${usage ? ` ${theme.fg("dim", usage)}` : ""}`);
+		const usage = oneLine(formatUsage(result.usage, undefined, result.durationMs), 40, flow.redactSecrets);
+		lines.push(`${icon} ${theme.fg("accent", oneLine(result.agent, nameWidth, flow.redactSecrets).padEnd(nameWidth))} ${theme.fg(agentStateColor(state), state.padEnd(9))}${usage ? ` ${theme.fg("dim", usage)}` : ""}`);
 		if (state === "running") {
-			const items = flowAgentActivity(result, run.redactSecrets);
+			const items = flowAgentActivity(result, flow.redactSecrets);
 			const last = items[items.length - 1];
-			if (last) lines.push(`  ${theme.fg("muted", `└ ${last.kind === "tool" ? "→ " : last.kind === "result" ? "← " : ""}${oneLine(last.text, 64, run.redactSecrets)}`)}`);
+			if (last) lines.push(`  ${theme.fg("muted", `└ ${last.kind === "tool" ? "→ " : last.kind === "result" ? "← " : ""}${oneLine(last.text, 64, flow.redactSecrets)}`)}`);
 		}
 		if (state === "failed") {
 			const bindingBudget = exhaustedBudgetText(result.error);
 			lines.push(`  ${theme.fg("error", `└ ${result.error?.code ?? result.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}`)}`);
 		}
 	});
-	if (run.details.error) lines.push(theme.fg("error", `error: ${run.details.error.code}`));
+	if (flow.details.error) lines.push(theme.fg("error", `error: ${flow.details.error.code}`));
 	return lines;
 }
 
@@ -73,13 +73,13 @@ export class FleetPanel {
 		private readonly tui: TUI,
 		private readonly theme: Theme,
 		private readonly keybindings: KeybindingsManager,
-		private readonly registry: FlowRunRegistry,
+		private readonly registry: FlowRegistry,
 		private readonly done: () => void,
 	) {
 		this.unsubscribe = registry.subscribe(() => this.tui.requestRender());
 		this.timer = setInterval(() => {
 			this.tick = (this.tick + 1) % 100000;
-			if (this.registry.activeRuns().some((run) => run.details.results.some((result) => result.exitCode === -1))) this.tui.requestRender();
+			if (this.registry.activeFlows().some((flow) => flow.details.results.some((result) => result.exitCode === -1))) this.tui.requestRender();
 		}, 120);
 		this.timer.unref?.();
 	}
@@ -108,21 +108,21 @@ export class FleetPanel {
 		const separator = () => `${border("├")}${border("─".repeat(innerWidth))}${border("┤")}`;
 		const lines = [border(`╭${"─".repeat(innerWidth)}╮`)];
 
-		const active = this.registry.activeRuns();
+		const active = this.registry.activeFlows();
 		if (active.length === 0) {
-			const last = this.registry.lastFinishedRun();
+			const last = this.registry.lastSettledFlow();
 			if (last) {
-				lines.push(row(this.theme.fg("muted", "no active flow runs · last run:")));
-				// The registry is the liveness authority here: a run it still holds has a
-				// handler that may spawn another stage, and the one it finished cannot.
-				for (const line of fleetRunLines(last, this.theme, this.tick, { live: false })) lines.push(row(line));
+				lines.push(row(this.theme.fg("muted", "no live flows · last flow:")));
+				// The registry is the liveness authority here: a flow it still holds has a
+				// handler that may spawn another stage, and the one it settled cannot.
+				for (const line of fleetFlowLines(last, this.theme, this.tick, { live: false })) lines.push(row(line));
 			} else {
-				lines.push(row(this.theme.fg("muted", "no active flow runs")));
+				lines.push(row(this.theme.fg("muted", "no live flows")));
 			}
 		} else {
-			active.forEach((run, index) => {
+			active.forEach((flow, index) => {
 				if (index > 0) lines.push(separator());
-				for (const line of fleetRunLines(run, this.theme, this.tick, { live: true })) lines.push(row(line));
+				for (const line of fleetFlowLines(flow, this.theme, this.tick, { live: true })) lines.push(row(line));
 			});
 		}
 
@@ -146,7 +146,7 @@ export interface FleetPanelController {
 	toggle(ctx: InspectorContext, knownTui?: boolean): Promise<void>;
 }
 
-export function createFleetPanelController(registry: FlowRunRegistry): FleetPanelController {
+export function createFleetPanelController(registry: FlowRegistry): FleetPanelController {
 	let close: (() => void) | undefined;
 	return {
 		isOpen: () => close !== undefined,
@@ -160,8 +160,8 @@ export function createFleetPanelController(registry: FlowRunRegistry): FleetPane
 				ctx.ui.notify("The flow fleet panel is only available in the Pi TUI.", "info");
 				return;
 			}
-			if (registry.activeRuns().length === 0 && !registry.lastFinishedRun()) {
-				ctx.ui.notify("No flow runs yet in this session — the fleet panel opens once a flow is running.", "info");
+			if (registry.activeFlows().length === 0 && !registry.lastSettledFlow()) {
+				ctx.ui.notify("No flows yet in this session — the fleet panel opens once a flow is running.", "info");
 				return;
 			}
 			try {

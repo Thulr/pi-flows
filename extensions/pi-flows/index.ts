@@ -35,7 +35,7 @@ import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictT
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { collectBudgetCeilings } from "./budget-disclosure.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs } from "./ui.ts";
-import { FlowRunRegistry, showFlowInspector } from "./inspector.ts";
+import { FlowRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
 import { flowCallLines, renderFlowResultRow } from "./ui-live-row.ts";
 import { renderFlowCard } from "./ui-flow-card.ts";
@@ -108,8 +108,8 @@ export const __test = {
 };
 
 export default function (pi: ExtensionAPI) {
-	const liveRuns = new FlowRunRegistry();
-	const fleetPanel = createFleetPanelController(liveRuns);
+	const liveFlows = new FlowRegistry();
+	const fleetPanel = createFleetPanelController(liveFlows);
 
 	pi.registerShortcut("f8", {
 		description: "Toggle the flow fleet panel",
@@ -137,7 +137,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			if (parsed.kind === "inspect") {
-				await showFlowInspector(ctx, liveRuns);
+				await showFlowInspector(ctx, liveFlows);
 				return;
 			}
 			if (parsed.kind === "report") {
@@ -358,11 +358,11 @@ export default function (pi: ExtensionAPI) {
 			// PI_FLOWS_APPROVAL_ACTOR names, else the channel that answered the prompt.
 			const approvalActor = process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR;
 			let liveDetails = makeDetails(mode)([]);
-			liveRuns.start(toolCallId, mode, liveDetails, policy.redactSecrets, budget);
+			liveFlows.start(toolCallId, mode, liveDetails, policy.redactSecrets, budget);
 			clearFlowUi(ctx);
 			const liveUpdate: Update = (partial) => {
 				liveDetails = partial.details;
-				liveRuns.update(toolCallId, liveDetails);
+				liveFlows.update(toolCallId, liveDetails);
 				onUpdate?.(partial);
 			};
 
@@ -418,7 +418,7 @@ export default function (pi: ExtensionAPI) {
 					output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];
 				}
 				liveDetails = output.details;
-				liveRuns.update(toolCallId, liveDetails);
+				liveFlows.update(toolCallId, liveDetails);
 				if (traceSink) {
 					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
 					output.details.trace = await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
@@ -431,14 +431,14 @@ export default function (pi: ExtensionAPI) {
 					output.details.error = traceError;
 					output.content = [{ type: "text", text: `${formatFlowError(traceError)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
 					liveDetails = output.details;
-					liveRuns.update(toolCallId, liveDetails);
+					liveFlows.update(toolCallId, liveDetails);
 				}
 				// Persisted last, so the durable history cannot record a run as `ok`
 				// that the caller was told failed — and so it carries the trace link.
 				appendFlowSessionEntry(pi, liveDetails);
 				return output;
 			} finally {
-				liveRuns.finish(toolCallId, liveDetails);
+				liveFlows.settle(toolCallId, liveDetails);
 			}
 		},
 		renderCall(args, theme) {

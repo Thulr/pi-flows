@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { collectBudgetCeilings, formatBudgetCeiling } from "../extensions/pi-flows/budget-disclosure.ts";
-import { fleetRunLines } from "../extensions/pi-flows/fleet-panel.ts";
+import { fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
 import { appendFlowSessionEntry } from "../extensions/pi-flows/ui.ts";
 import { flowCardLines } from "../extensions/pi-flows/ui-flow-card.ts";
 import { flowCallLines, flowLiveBoardLines } from "../extensions/pi-flows/ui-live-row.ts";
@@ -190,7 +190,7 @@ test("exhausted live, fleet, and durable views retain the binding authority and 
 	assert.match(live, /flow ceiling: \$0\.5/);
 	assert.match(live, /BUDGET_EXCEEDED · contract ceiling: 2\.0k generated tok/);
 
-	const fleet = fleetRunLines({ mode: "parallel", redactSecrets: true, details: exhausted } as any, theme, 0).join("\n");
+	const fleet = fleetFlowLines({ mode: "parallel", redactSecrets: true, details: exhausted } as any, theme, 0).join("\n");
 	assert.match(fleet, /flow ceiling: \$0\.5/);
 	assert.match(fleet, /BUDGET_EXCEEDED · contract ceiling: 2\.0k generated tok/);
 

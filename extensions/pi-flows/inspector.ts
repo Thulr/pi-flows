@@ -5,7 +5,7 @@ import { isFailed, redactText } from "./sanitize.ts";
 import { formatUsage } from "./trace.ts";
 import type { FlowBudget, FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
 
-export interface LiveFlowRun {
+export interface LiveFlow {
 	mode: FlowMode;
 	details: FlowDetails;
 	redactSecrets: boolean;
@@ -14,7 +14,7 @@ export interface LiveFlowRun {
 }
 
 export interface FlowAgentTarget {
-	run: LiveFlowRun;
+	flow: LiveFlow;
 	resultIndex: number;
 }
 
@@ -23,46 +23,52 @@ export interface FlowActivityItem {
 	text: string;
 }
 
-export class FlowRunRegistry {
-	private readonly runs = new Map<string, LiveFlowRun>();
+/**
+ * The live-flow registry. Its unit is a **flow** — one `flow` tool call and
+ * every run under it — not a run: a flow the registry still holds has a handler
+ * that may open another stage, which is exactly the liveness question the fleet
+ * panel and the progress header ask. See CONTEXT.md.
+ */
+export class FlowRegistry {
+	private readonly flows = new Map<string, LiveFlow>();
 	private readonly listeners = new Set<() => void>();
-	private lastFinished: LiveFlowRun | undefined;
+	private lastSettled: LiveFlow | undefined;
 
 	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true, budget?: FlowBudget): void {
-		this.runs.set(id, { mode, details, redactSecrets, budget });
+		this.flows.set(id, { mode, details, redactSecrets, budget });
 		this.notify();
 	}
 
 	update(id: string, details: FlowDetails): void {
-		const run = this.runs.get(id);
-		if (!run) return;
-		run.details = details;
+		const flow = this.flows.get(id);
+		if (!flow) return;
+		flow.details = details;
 		this.notify();
 	}
 
-	finish(id: string, details: FlowDetails): void {
-		const run = this.runs.get(id);
-		if (!run) return;
-		run.details = details;
-		this.lastFinished = run;
-		this.runs.delete(id);
+	settle(id: string, details: FlowDetails): void {
+		const flow = this.flows.get(id);
+		if (!flow) return;
+		flow.details = details;
+		this.lastSettled = flow;
+		this.flows.delete(id);
 		this.notify();
 	}
 
-	activeRuns(): LiveFlowRun[] {
-		return [...this.runs.values()];
+	activeFlows(): LiveFlow[] {
+		return [...this.flows.values()];
 	}
 
-	/** The most recently settled run, kept so the fleet panel can show a final state after the last child exits. */
-	lastFinishedRun(): LiveFlowRun | undefined {
-		return this.lastFinished;
+	/** The most recently settled flow, kept so the fleet panel can show a final state after the last child exits. */
+	lastSettledFlow(): LiveFlow | undefined {
+		return this.lastSettled;
 	}
 
 	inspectableAgents(): FlowAgentTarget[] {
 		const targets: FlowAgentTarget[] = [];
-		for (const run of this.runs.values()) {
-			for (let resultIndex = 0; resultIndex < run.details.results.length; resultIndex++) {
-				if (run.details.results[resultIndex]?.exitCode === -1) targets.push({ run, resultIndex });
+		for (const flow of this.flows.values()) {
+			for (let resultIndex = 0; resultIndex < flow.details.results.length; resultIndex++) {
+				if (flow.details.results[resultIndex]?.exitCode === -1) targets.push({ flow, resultIndex });
 			}
 		}
 		return targets;
@@ -143,9 +149,9 @@ export function flowAgentState(result: FlowRunResult): "queued" | "running" | "c
 }
 
 function targetLabel(target: FlowAgentTarget, index: number): string {
-	const result = target.run.details.results[target.resultIndex];
+	const result = target.flow.details.results[target.resultIndex];
 	if (!result) return `${index + 1}. unavailable child`;
-	return `${index + 1}. ${oneLine(result.agent, 48, target.run.redactSecrets)} · ${flowAgentState(result)} · ${oneLine(result.task, 72, target.run.redactSecrets)}`;
+	return `${index + 1}. ${oneLine(result.agent, 48, target.flow.redactSecrets)} · ${flowAgentState(result)} · ${oneLine(result.task, 72, target.flow.redactSecrets)}`;
 }
 
 class FlowAgentViewer {
@@ -157,7 +163,7 @@ class FlowAgentViewer {
 		private readonly theme: Theme,
 		private readonly keybindings: KeybindingsManager,
 		private readonly target: FlowAgentTarget,
-		registry: FlowRunRegistry,
+		registry: FlowRegistry,
 		private readonly done: () => void,
 	) {
 		this.unsubscribe = registry.subscribe(() => this.tui.requestRender());
@@ -195,11 +201,11 @@ class FlowAgentViewer {
 
 		const state = flowAgentState(result);
 		const stateColor = state === "failed" ? "error" : state === "completed" ? "success" : state === "queued" ? "muted" : "warning";
-		const usage = oneLine(formatUsage(result.usage, result.model, result.durationMs), 120, this.target.run.redactSecrets);
-		lines.push(row(` ${this.theme.fg("accent", this.theme.bold(oneLine(result.agent, 70, this.target.run.redactSecrets)))} ${this.theme.fg(stateColor, state)}`));
-		lines.push(row(` ${this.theme.fg("dim", `${this.target.run.mode}${usage ? ` · ${usage}` : ""}`)}`));
+		const usage = oneLine(formatUsage(result.usage, result.model, result.durationMs), 120, this.target.flow.redactSecrets);
+		lines.push(row(` ${this.theme.fg("accent", this.theme.bold(oneLine(result.agent, 70, this.target.flow.redactSecrets)))} ${this.theme.fg(stateColor, state)}`));
+		lines.push(row(` ${this.theme.fg("dim", `${this.target.flow.mode}${usage ? ` · ${usage}` : ""}`)}`));
 		lines.push(separator());
-		lines.push(row(` ${this.theme.fg("muted", "Task ·")} ${this.theme.fg("dim", oneLine(result.task || "(no task)", 200, this.target.run.redactSecrets))}`));
+		lines.push(row(` ${this.theme.fg("muted", "Task ·")} ${this.theme.fg("dim", oneLine(result.task || "(no task)", 200, this.target.flow.redactSecrets))}`));
 		lines.push(separator());
 		lines.push(row(` ${this.theme.fg("muted", "Recent activity")}`));
 
@@ -228,12 +234,12 @@ class FlowAgentViewer {
 	dispose(): void { this.unsubscribe(); }
 
 	private currentResult(): FlowRunResult | undefined {
-		return this.target.run.details.results[this.target.resultIndex];
+		return this.target.flow.details.results[this.target.resultIndex];
 	}
 
 	private activity(): FlowActivityItem[] {
 		const result = this.currentResult();
-		return result ? flowAgentActivity(result, this.target.run.redactSecrets) : [];
+		return result ? flowAgentActivity(result, this.target.flow.redactSecrets) : [];
 	}
 
 	private matches(data: string, binding: "tui.select.cancel" | "tui.select.up" | "tui.select.down" | "tui.select.pageUp" | "tui.select.pageDown", fallback: KeyId): boolean {
@@ -253,7 +259,7 @@ export function supportsTui(ctx: InspectorContext, knownTui: boolean): boolean {
 	try { return ctx.ui.getAllThemes().length > 0; } catch { return false; }
 }
 
-export async function showFlowInspector(ctx: InspectorContext, registry: FlowRunRegistry, knownTui = false): Promise<void> {
+export async function showFlowInspector(ctx: InspectorContext, registry: FlowRegistry, knownTui = false): Promise<void> {
 	if (!ctx.hasUI) return;
 	if (!supportsTui(ctx, knownTui)) {
 		ctx.ui.notify("The live flow inspector is only available in the Pi TUI.", "info");

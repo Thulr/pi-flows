@@ -8,7 +8,29 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Fixed
+
+- Flow budget scope is now stated correctly. The `maxCostUsd` / `maxTokens` /
+  `maxGeneratedTokens` tool descriptions, README, the flow reference, and the
+  patterns guide said the ceiling covered "the whole flow tree"; it bounds one flow
+  call. No budget state crosses the process boundary, so a nested flow a child
+  starts is bounded only by the ceilings that call sets — and is uncapped when it
+  sets none, which is the default. No enforcement behavior changed.
+
+### Changed
+
+- Domain glossary alignment, continued: the live-flow registry keyed *flows* while
+  naming them runs. `FlowRunRegistry`/`LiveFlowRun`/`activeRuns()`/
+  `lastFinishedRun()`/`finish()` are now `FlowRegistry`/`LiveFlow`/`activeFlows()`/
+  `lastSettledFlow()`/`settle()`, and the F8 fleet panel says "no live flows ·
+  last flow:" and "No flows yet in this session". These names were not part of the
+  package's public export surface; the persisted `pi-flows.run` entry name remains
+  compatible.
+- `CONTEXT.md` defines **Flow tree**, **Live**, **Replay**, **Budget ceiling**,
+  **Budget authority**, **Capture policy**, **Handoff policy**, and **Compositional
+  injection**. **Flow** now says what a flow owns beyond its runs, **Run** says a
+  flow contains zero or more runs (a flow refused before spawning has none), and
+  **Fleet** is keyed by flow rather than by executing run.
 
 ## 0.5.0 - 2026-07-31
 

@@ -141,11 +141,18 @@ export const SELECTION_CASES = defineCases([
 		task: "Summarize what changed in the Unreleased section of CHANGELOG.md in two bullets or fewer.",
 		expectFlow: false,
 		answerPattern: "nothing|unreleased|0\\.5\\.0",
-		mock: { flowCalls: 0, answer: "- Nothing is unreleased yet — version 0.5.0 contains the latest domain terminology, progress, budget-disclosure, and retry-safety changes." },
+		// The mock stands in for a model answer on the dry-run path, so it is written
+		// to the shape a correct summary takes rather than to whatever Unreleased
+		// currently says — otherwise it goes stale the next time anyone edits it.
+		mock: { flowCalls: 0, answer: "- The Unreleased section lists the changes staged for the next version, grouped under Keep a Changelog headings.\n- Reading CHANGELOG.md answers this directly, so no delegation is warranted." },
 		sourceExpectation: {
 			format: "text",
+			// Anchored on section structure, not on Unreleased content. Pinning the
+			// content made every changelog entry fail preflight, and the only remedy
+			// was rewriting a frozen mock — churn that produced no signal about
+			// whether this case still discriminates flow from no-flow.
 			path: "CHANGELOG.md",
-			patterns: ["## Unreleased[\\s\\S]*Nothing yet[\\s\\S]*## 0\\.5\\.0[\\s\\S]*flow card[\\s\\S]*## 0\\.4\\.2"],
+			patterns: ["## Unreleased[\\s\\S]*## 0\\.5\\.0[\\s\\S]*flow card[\\s\\S]*## 0\\.4\\.2"],
 		},
 	},
 	{
