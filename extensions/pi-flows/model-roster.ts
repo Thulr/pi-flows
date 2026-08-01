@@ -83,12 +83,19 @@ export function clampThinking(level: ThinkingLevel | undefined, model: Available
 	if (!model.reasoning) return "off";
 	const supported = model.thinkingLevels.length ? model.thinkingLevels : [...THINKING_LEVELS];
 	if (supported.includes(level)) return level;
-	const wanted = THINKING_RANK.get(level) ?? 0;
-	// Nearest supported level at or below the request, else the smallest offered:
-	// stepping *down* keeps a clamp from silently costing more than was asked for.
-	const below = supported.filter((candidate) => (THINKING_RANK.get(candidate) ?? 0) <= wanted);
-	const pool = below.length ? below : supported;
-	return pool.reduce((best, candidate) => ((THINKING_RANK.get(candidate) ?? 0) > (THINKING_RANK.get(best) ?? 0) ? candidate : best));
+	const rank = (candidate: ThinkingLevel) => THINKING_RANK.get(candidate) ?? 0;
+	const wanted = rank(level);
+
+	// Nearest supported level at or below the request.
+	const below = supported.filter((candidate) => rank(candidate) <= wanted);
+	if (below.length) return below.reduce((best, candidate) => (rank(candidate) > rank(best) ? candidate : best));
+
+	// Nothing that low exists — a reasoning-only model may offer no `off`, no
+	// `minimal`, no `low`. Take the *smallest* it does offer, not the largest: a
+	// clamp exists to stop a level exceeding what a model can do, and one that
+	// answered `low` with `max` would silently cost more than was asked for,
+	// which is the exact inversion of what the fast rung is for.
+	return supported.reduce((best, candidate) => (rank(candidate) < rank(best) ? candidate : best));
 }
 
 /**

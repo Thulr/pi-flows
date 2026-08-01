@@ -76,6 +76,16 @@ test("tiers carry a thinking level, clamped to what their model supports", () =>
 	assert.equal(clampThinking("max", INSTALL[0]), "medium", "an unsupported level steps down to the nearest supported one");
 	assert.equal(clampThinking("max", model("plain", { reasoning: false })), "off", "a non-reasoning model always runs off");
 	assert.equal(clampThinking(undefined, INSTALL[0]), undefined, "no request stays no request");
+
+	// A reasoning-only model may offer nothing at or below the request — no off,
+	// no minimal, no low. Clamping exists to stop a level exceeding what a model
+	// can do, so it must never answer a small request with a large one: `low`
+	// against ["medium","high"] is `medium`, and answering `high` would cost more
+	// than was asked for, inverting the fast rung's whole purpose.
+	const reasoningOnly = model("floor", { thinkingLevels: ["medium", "high"] });
+	assert.equal(clampThinking("low", reasoningOnly), "medium");
+	assert.equal(clampThinking("off", reasoningOnly), "medium");
+	assert.equal(clampThinking("high", reasoningOnly), "high", "a level it does offer is untouched");
 });
 
 test("when the default model is already the best available, deep differs by thinking level, not by model", () => {
