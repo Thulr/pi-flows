@@ -499,14 +499,44 @@ name: my-agent
 description: What this agent does
 tools: read,grep,find,ls
 tier: capable
+thinking: low
 ---
 
 System prompt for the delegated agent.
 ```
 
-`tier` keeps agents portable — no vendor model is hard-coded. `capable` runs on your pi default model; `fast` runs on `PI_FLOWS_FAST_MODEL` if you set one (e.g. a cheaper model for your provider, like `openai-codex/gpt-5.4-mini`), otherwise your default too; `deep` runs on `PI_FLOWS_DEEP_MODEL` for the hardest reasoning and critique work (bundled `redteam` and `strategist` declare it). So flows use whatever model you have pi set up with, and the extension never needs updating as providers ship new models.
+`tier` picks capability and `thinking` picks effort. They are independent: a child can run a cheaper model at ordinary effort, or your best model thinking as hard as it can, or any mix. `tools: none` disables built-in tools; omitting `tools` uses pi defaults. Invalid agent files, and an unrecognized `thinking` level, are reported in `/flows status` and `flow showConfig:true`.
 
-A flow call can also pass `tier` per task, phase, or role — the parent picks capability by task nature ("fast" scout, "deep" adjudicator) without knowing which models you have. Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier` > your pi default; an unmapped tier just falls back to the default, so everything works with zero configuration. `flow showConfig:true` shows the effective tier mappings. `tools: none` disables built-in tools. Omitting `tools` uses pi defaults. Invalid agent files are reported in `/flows status` and `flow showConfig:true`.
+### The model roster
+
+Tiers stay portable — no vendor model is hard-coded anywhere in pi-flows. Instead, each tier resolves against a **roster** derived from the models your install can actually run, read from pi's own model registry:
+
+- `fast` — the cheapest model you have that can still hold a delegated task, at `low` thinking. Prefers your own provider, so a scout doesn't silently move work to a second vendor.
+- `capable` — your pi default model, at the thinking level your session is currently on. A plain delegated child behaves like the session that delegated it.
+- `deep` — the most capable model you have, preferring one that supports extended thinking, at `max`.
+
+This works with no configuration. If your default model is already the best one available, `deep` says so and differs by thinking level rather than pinning a redundant `--model`. Run `/flows models` or `flow showConfig:true` to see what each tier resolves to right now, and why:
+
+```
+modelTier.fast: anthropic/claude-haiku-4-5, thinking low — cheapest model this install can run on anthropic
+modelTier.capable: (your pi default model), thinking high — your pi default model, at the session's current thinking level (high)
+modelTier.deep: (your pi default model), thinking max — your pi default is already the most capable model available, so deep differs by thinking level (max), not by model
+```
+
+To pin a tier yourself, run `/flows models` and pick one, or edit `~/.pi/agent/pi-flows.json` directly:
+
+```json
+{
+  "models": {
+    "fast": "anthropic/claude-haiku-4-5:low",
+    "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" }
+  }
+}
+```
+
+A trusted project may override this in `.pi/pi-flows.json`; an untrusted one is ignored, because a repo-controlled file choosing the model also chooses which vendor sees the task. The older `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` environment variables still work and are still honored, but the config file wins over them.
+
+Full resolution order, narrowest first: flow-call `model` > flow-call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project `pi-flows.json` (when trusted) > user `pi-flows.json` > `PI_FLOWS_*_MODEL` > derived roster > your pi default. A thinking level above what the resolved model supports is lowered automatically, and what gets reported is the level the child actually ran at.
 
 ## Documentation ladder
 

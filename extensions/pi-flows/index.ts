@@ -1,6 +1,6 @@
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
 	Budget,
@@ -16,6 +16,7 @@ import {
 	type FlowDetails,
 	type FlowError,
 	type FlowMode,
+	type ModelRoster,
 	type RunMode,
 	type Update,
 } from "./types.ts";
@@ -28,11 +29,13 @@ import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruc
 import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
-import { configuredTierModels, resolveAgentModel, runFlowAgent } from "./runner.ts";
+import { resolveChildModel, runFlowAgent } from "./runner.ts";
+import { availableModelsFromRegistry, currentModelRoster } from "./roster-source.ts";
+import { clampThinking, describeModelRoster, envRosterConfig, loadRosterConfig, parseModelSpec, resolveModelRoster } from "./model-roster.ts";
 import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { collectBudgetCeilings } from "./budget-disclosure.ts";
-import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs } from "./ui.ts";
+import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs, showModelRoster } from "./ui.ts";
 import { FlowRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
 import { flowCallLines, renderFlowResultRow } from "./ui-live-row.ts";
@@ -91,8 +94,14 @@ export const __test = {
 	flowsHelpText,
 	stripControlChars,
 	scanForInjection,
-	resolveAgentModel,
-	configuredTierModels,
+	resolveChildModel,
+	resolveModelRoster,
+	loadRosterConfig,
+	envRosterConfig,
+	parseModelSpec,
+	clampThinking,
+	describeModelRoster,
+	availableModelsFromRegistry,
 	appendReturnContract,
 	appendReturnRequirements,
 	canMutateWorkspace,
@@ -134,6 +143,10 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (parsed.kind === "inspect") {
 				await showFlowInspector(ctx, liveFlows);
+				return;
+			}
+			if (parsed.kind === "models") {
+				await showModelRoster(ctx, currentModelRoster(ctx), getAgentDir());
 				return;
 			}
 			if (parsed.kind === "report") {
@@ -180,11 +193,12 @@ export default function (pi: ExtensionAPI) {
 			"When calling a named agent, copy the complete work request into task; do not send vague one-word tasks like \"Inspect\".",
 			"If the user names a bundled agent such as recon, analyst, strategist, operator, redteam, or debrief, call that agent directly; do not call list/showConfig first unless the user asks to inspect available agents.",
 			"Map plain English to flow modes: read-only repo scouting -> single recon/analyst; independent areas in parallel -> parallel; implementation plus separate review or command gate -> evaluate; broad codebase mapping -> orchestrate; explicit gated phases or resumable approvals -> workflow; concurrent writers needing isolation and integration -> worktree; explicitly requested opposing advocates/rebuttal/adjudication -> debate; multi-source evidence reconciliation -> dossier; bounded poll-until-event response -> monitor; uncertain agent choice -> route.",
-			"Match child model capability to the task with tier, not hard-coded model ids: tier 'fast' for mechanical scouting, extraction, or classification; omit it (capable) for ordinary work; 'deep' for the hardest reasoning or final adjudication. Tiers resolve to models the user configured (PI_FLOWS_FAST_MODEL / PI_FLOWS_DEEP_MODEL) and fall back to their default model, so they stay portable across providers. Pass an explicit model only when the user named one.",
+			"Right-size every child on two independent dials, and set them deliberately rather than by omission. `tier` picks capability: 'fast' for mechanical scouting, extraction, or classification; 'capable' for ordinary work; 'deep' for the hardest reasoning or final adjudication. `thinking` picks effort: 'off'/'minimal'/'low' for mechanical work, 'medium'/'high' for ordinary reasoning, 'xhigh'/'max' for the hardest adjudication. Omitting tier means the child runs your own model, which is the most expensive option available and is usually wrong for scouting, extraction, formatting, or classification — name the tier the task actually needs.",
+			"Tiers are portable: each resolves to a concrete model and level derived from the models this install can run, so never hard-code a model id. Pass an explicit `model` only when the user named one. Set `thinking` when effort is what should change while the model stays the same — most often lowering it for bulk mechanical fan-out, or raising it for a single critic or adjudicator. A level above what the resolved model supports is lowered automatically, so asking for more than exists is safe.",
 			"Use debate only when the user explicitly requests opposing advocates, rebuttal, or adjudication; direct execution has matched its quality with lower cost. Use worktree only for multiple write-capable agents needing a verified integration branch; use ordinary parallel for read-only fan-out. Use monitor only for bounded polling inside one flow call, never as durable scheduling.",
 			"Use checkpoint for human approval before spawning children or before finalizing a result; it fails closed in headless contexts.",
 			"When a flow returns retryable:false, treat the unchanged call as terminal. For BUDGET_EXCEEDED, do not automatically replay the same work. Preserve the configured budget unless the user explicitly approves changing it; ask for direction or make a material, visible change that stays within the ceiling by narrowing the task or reducing fan-out before starting another Flow.",
-			"Use flow list:true before delegation if you do not know which flow agents are available, and showConfig:true to inspect effective dirs, tier mappings, defaults, and discovery issues.",
+			"Use flow list:true before delegation if you do not know which flow agents are available, and showConfig:true to inspect effective dirs, what each tier currently resolves to, defaults, and discovery issues.",
 			"Use flow agentScope:'all' only for trusted repositories because project-local flow agents are repo-controlled prompts.",
 		],
 		parameters: FlowParams,
@@ -192,6 +206,10 @@ export default function (pi: ExtensionAPI) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const discovery = discoverFlowAgents(ctx.cwd, agentScope);
 			const catalog = createAgentCatalog(discovery, agentScope);
+			// Resolved once per call rather than per child: the registry read is
+			// synchronous and cheap, but a roster that changed mid-flow would let two
+			// children of the same wave disagree about what "deep" meant.
+			const roster = currentModelRoster(ctx);
 			const policy: CapturePolicy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
 			const budgetCeilings = collectBudgetCeilings(params);
 			const makeDetails: typeof catalog.makeDetails = (detailsMode, agents) => {
@@ -212,7 +230,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (params.showConfig) {
 				return {
-					content: [{ type: "text", text: catalog.configSummary() }],
+					content: [{ type: "text", text: catalog.configSummary(roster) }],
 					details: makeDetails("config")([]),
 				};
 			}
@@ -377,6 +395,7 @@ export default function (pi: ExtensionAPI) {
 					handoffs,
 					agentScope,
 					defaultCwd: ctx.cwd,
+					roster,
 					signal,
 					onUpdate: liveUpdate,
 					budget,

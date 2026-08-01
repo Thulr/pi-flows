@@ -10,6 +10,36 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Tiers now resolve to real models with no configuration. `fast`, `capable`, and
+  `deep` are matched against a **model roster** derived from pi's own model
+  registry — the models this install has configured auth for, ranked by the
+  provider's advertised pricing, context, and reasoning support. `fast` takes the
+  cheapest usable model (preferring the parent's provider), `capable` the pi
+  default, `deep` the most capable. Previously an unset `PI_FLOWS_FAST_MODEL` /
+  `PI_FLOWS_DEEP_MODEL` meant every tier silently collapsed onto the parent's own
+  model, so a correctly right-sized flow call did nothing. No vendor model id is
+  hard-coded; the ranking comes from the registry, not from a list this repo
+  maintains.
+- `thinking` is a first-class dial on every surface that takes `tier` — flow
+  calls, tasks, phases, graph nodes, worktree workers, agent refs, and agent
+  frontmatter — passed to the child as `--thinking`. It is independent of `tier`,
+  so effort can change while the model stays the same, and it is lowered
+  automatically to what the resolved model supports (what gets reported is the
+  level the child ran at). A `capable` child with no level named inherits the
+  parent session's current level, which previously never reached children at all.
+  A model pin may also carry pi's `provider/id:level` shorthand.
+- `/flows models` shows what each tier currently resolves to and why, and pins a
+  tier interactively. Overrides persist to `~/.pi/agent/pi-flows.json`, or
+  `.pi/pi-flows.json` for a trusted project — an untrusted project's file is
+  ignored, since choosing the model also chooses which vendor sees the task.
+  `flow showConfig:true` reports the same roster with its rationale.
+  `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` continue to work, outranked by
+  the config file.
+- Bundled agents declare thinking levels where their effort profile is fixed:
+  `recon` and `controller` at `low`, `strategist` at `high`, `redteam` at `max`.
+  `analyst`, `operator`, `overwatch`, `commander`, and `debrief` inherit the
+  parent session's level instead of pinning one.
+
 - `npm run score:domain` scores the domain model, and CI posts it on every PR.
   The structural half — module classification, subdomain import direction, naming, and
   foreign-package containment — is re-derived from the tree on every run and is

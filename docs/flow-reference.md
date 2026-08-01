@@ -122,9 +122,22 @@ if no justification can be stated, the task belongs in the parent context.
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
 | `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. Prefer `tier` unless the user named a concrete model. |
-| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Portable model selection: resolves through `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` when the user mapped them, else the default pi model. Resolution order: call `model` > call `tier` > agent `model` pin > agent `tier` > pi default; a call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent, while an unmapped call-level `fast`/`deep` falls through. |
+| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent; a `fast`/`deep` tier the roster could not resolve falls through to the agent's own pin. |
+| `thinking` | agent/tier | Flow-wide thinking-level fallback (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), overridable per task/phase/role. Independent of `tier`: sets effort without changing which model runs. Lowered automatically to what the resolved model supports, and a child with no level named anywhere leaves pi's own default alone. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
 | `cwd` | parent cwd | Child process working directory. |
+
+### The model roster
+
+`tier` and `thinking` resolve against a roster derived from pi's model registry — the models this install has configured auth for — rather than from a list pi-flows maintains. `fast` takes the cheapest usable model (preferring the parent's own provider) at `low`; `capable` takes the pi default model at the session's current thinking level; `deep` takes the most capable model, preferring one that supports extended thinking, at `max`. When the default model is already the best available, `deep` differs by thinking level instead of pinning a redundant `--model`.
+
+Inspect it with `/flows models` or `flow showConfig:true` — every rung states the model, the level, and the reason it was chosen. Override a tier from `/flows models`, or in `~/.pi/agent/pi-flows.json`:
+
+```json
+{ "models": { "fast": "anthropic/claude-haiku-4-5:low", "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" } } }
+```
+
+A trusted project may override in `.pi/pi-flows.json`; an untrusted project's file is ignored, since choosing the model also chooses which vendor sees the task. `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` still work but are outranked by the config file. Full order, narrowest first: call `model` > call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project config (trusted) > user config > env > derived roster > pi default.
 
 A flow budget bounds one flow call. It does not cross the process boundary: the outer
 ceiling never sees a nested flow's spend, and that nested flow is bounded only by the

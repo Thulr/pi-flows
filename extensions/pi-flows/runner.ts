@@ -4,7 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type FlowError, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type FlowError, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type ModelRoster, type RunChildOptions, type SpanStage, type ThinkingLevel } from "./types.ts";
+import { clampThinking, knownModel, parseModelSpec, rosterAssignment } from "./model-roster.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
@@ -25,56 +26,74 @@ export function getPiInvocation(args: string[]): { command: string; args: string
 
 // Portable model tiers: agents (and flow calls) declare a capability tier instead
 // of a vendor model, so flows run on whatever model the user has pi set up with.
-// No model ids are hard-coded here — pi gives an extension no stable way to enumerate
-// a provider's models with cost (its registry is not a public export and
-// `pi --list-models` carries no pricing), and a hard-coded map would just go stale
-// as providers ship models. So:
+// No model ids are hard-coded here, and none ever will be — a map this repo
+// maintained would go stale as providers ship models. What each tier resolves to
+// on a given install is derived instead, by ranking the models that install can
+// actually run (see model-roster.ts, sourced from pi in roster-source.ts). This
+// module owns only the per-call precedence.
 //
-//   tier: capable  -> omit --model; the child pi uses the user's default model
-//   tier: fast     -> PI_FLOWS_FAST_MODEL if the user set one, else the default
-//   tier: deep     -> PI_FLOWS_DEEP_MODEL if the user set one, else the default
+//   tier: capable  -> the user's default model, at the parent's thinking level
+//   tier: fast     -> the roster's cheapest usable model, thinking lowered
+//   tier: deep     -> the roster's most capable model, thinking raised
 //   model: <id>    -> explicit pin; always wins (as does a flow `model` override)
 //
-// The mappings are opt-ins the user owns for their own provider (e.g.
-// PI_FLOWS_FAST_MODEL=openai-codex/gpt-5.4-mini) rather than a list we maintain.
-export interface TierModels {
-	fast?: string;
-	deep?: string;
-}
-
-export function configuredTierModels(): TierModels {
-	return {
-		fast: process.env.PI_FLOWS_FAST_MODEL?.trim() || undefined,
-		deep: process.env.PI_FLOWS_DEEP_MODEL?.trim() || undefined,
-	};
-}
-
-function tierModel(tier: string | undefined, tiers: TierModels): string | undefined {
-	if (tier === "fast") return tiers.fast;
-	if (tier === "deep") return tiers.deep;
-	return undefined;
-}
+// A pin may carry pi's `:<level>` shorthand (`provider/id:high`), which is
+// parsed out rather than passed through, so the level lands on --thinking and
+// the recorded model stays a plain reference.
 
 function childExtensionsDisabled(): boolean {
 	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_CHILD_NO_EXTENSIONS?.trim() ?? "");
 }
 
+/** What one child will actually run as. */
+export interface ChildModelChoice {
+	/** undefined = omit --model, so the child uses the user's default. */
+	model?: string;
+	/** undefined = omit --thinking, so the child uses pi's configured level. */
+	thinking?: ThinkingLevel;
+}
+
 /**
- * Concrete model for a child run: flow model override > flow tier override >
- * agent pin > agent tier > pi default (undefined = omit --model, child uses the
- * user's default). A call-site tier beats an agent's pinned model because the
- * parent is expressing per-task intent — including tier "capable", which always
- * resolves and forces the default model even on a fast/deep agent. Only an
- * *unmapped* fast/deep call-site tier falls through, so flows still run with
- * zero tier configuration.
+ * Model and thinking level for a child run.
+ *
+ * Model: flow model override > flow tier > agent pin > agent tier > pi default.
+ * A call-site tier beats an agent's pinned model because the parent is
+ * expressing per-task intent — including tier "capable", which always resolves
+ * and forces the default model even on a fast/deep agent. A fast/deep tier that
+ * the roster could not map (no registry) still falls through to the agent pin,
+ * so flows keep working when the roster is unavailable.
+ *
+ * Thinking follows the same shape one rung at a time, so a call that names only
+ * a tier still gets that tier's level, and a call that names only a level keeps
+ * whatever model the tier chose. The result is clamped to the resolved model:
+ * what is reported is what the child ran at, not what was wished for.
  */
-export function resolveAgentModel(agent: { model?: string; tier?: string }, options: { model?: string; tier?: string }, tiers: TierModels): string | undefined {
-	if (options.model) return options.model;
-	if (options.tier === "capable") return undefined;
-	const optionsTierModel = tierModel(options.tier, tiers);
-	if (optionsTierModel) return optionsTierModel;
-	if (agent.model) return agent.model;
-	return tierModel(agent.tier, tiers);
+export function resolveChildModel(
+	agent: { model?: string; tier?: string; thinking?: ThinkingLevel },
+	options: { model?: string; tier?: string; thinking?: ThinkingLevel },
+	roster: ModelRoster | undefined,
+): ChildModelChoice {
+	const optionsTier = rosterAssignment(roster, options.tier);
+	const agentTier = rosterAssignment(roster, agent.tier);
+	const optionsPin = options.model ? parseModelSpec(options.model) : undefined;
+	const agentPin = agent.model ? parseModelSpec(agent.model) : undefined;
+
+	const model = optionsPin?.model
+		?? (options.tier === "capable" ? optionsTier?.model : optionsTier?.model ?? agentPin?.model ?? agentTier?.model);
+
+	// One ordered list rather than nested conditionals: every source of a level,
+	// narrowest first. The tier rungs sit below the explicit statements so naming
+	// a level never gets overruled by the rung that supplied the model.
+	const requested = [
+		options.thinking,
+		optionsPin?.thinking,
+		optionsTier?.thinking,
+		agent.thinking,
+		agentPin?.thinking,
+		agentTier?.thinking,
+	].find((level) => level !== undefined);
+
+	return { model, thinking: clampThinking(requested, knownModel(roster, model)) };
 }
 
 export async function writePromptToTempFile(agentName: string, prompt: string, label = "system"): Promise<{ dir: string; filePath: string }> {
@@ -153,6 +172,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 
 	const started = Date.now();
 	const timeoutMs = normalizeTimeout(options.timeoutMs);
+	// Resolved once: the same choice fills the result, the span, and the argv, so
+	// a run can never report a model or level it did not actually spawn with.
+	const choice = resolveChildModel(agent, { model: options.model, tier: options.tier, thinking: options.thinking }, options.roster);
 	const result: FlowRunResult = {
 		agent: agent.name,
 		agentSource: agent.source,
@@ -161,7 +183,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		messages: [],
 		stderr: "",
 		usage: emptyUsage(),
-		model: resolveAgentModel(agent, { model: options.model, tier: options.tier }, configuredTierModels()),
+		model: choice.model,
+		thinking: choice.thinking,
 		step: options.step,
 		stdoutParseErrors: 0,
 		stdoutSample: "",
@@ -177,8 +200,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 
 	const args = ["--mode", "json", "-p", "--no-session"];
 	if (childExtensionsDisabled()) args.push("--no-extensions");
-	const model = resolveAgentModel(agent, { model: options.model, tier: options.tier }, configuredTierModels());
-	if (model) args.push("--model", model);
+	if (choice.model) args.push("--model", choice.model);
+	// Passed as its own flag rather than as a `model:level` suffix, so a level
+	// still reaches a child that is running the user's default model.
+	if (choice.thinking) args.push("--thinking", choice.thinking);
 
 	const tools = parseToolsOverride(options.tools, agent.tools);
 	if (tools !== undefined) {

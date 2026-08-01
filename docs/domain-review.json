@@ -39,6 +39,7 @@
     "adapters": [
       "index.ts",
       "runner.ts",
+      "roster-source.ts",
       "jsonl-child.mjs",
       "schema.ts",
       "agents.ts",

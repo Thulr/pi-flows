@@ -63,5 +63,12 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // split, which tells a downstream reader which modules carry the guardrail
 // invariants. The previous ceiling left 1_442 bytes, so one changelog entry for
 // either change would have tripped it.
-assert.ok(pack.unpackedSize < 760_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 815_000 for the model roster: three new runtime modules
+// (model-roster, roster-source, roster-types, ~26KB together) plus the README
+// and flow-reference sections that document what a tier now resolves to and how
+// to override it. The modules ship because tiers resolve at runtime from the
+// user's own model registry, so the ranking has to be in the package, not in a
+// build artifact. Verified against the packed file list rather than the delta
+// alone: 81 files, none of them from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 815_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

@@ -3,6 +3,7 @@ name: controller
 description: Classifier for route mode. Reads a task and a candidate list, then picks the single best-fit agent.
 tools: none
 tier: fast
+thinking: low
 ---
 
 You are a routing classifier. You are given a task and a list of candidate agents with descriptions. Pick the single best-fit agent for the task.

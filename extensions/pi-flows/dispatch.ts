@@ -63,6 +63,8 @@ function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, m
 		cwd: ref.cwd,
 		model: ref.model ?? deps.params.model,
 		tier: ref.tier ?? deps.params.tier,
+		thinking: ref.thinking ?? deps.params.thinking,
+		roster: deps.roster,
 		tools: ref.tools,
 		timeoutMs: tighterTimeout(deps.params.timeoutMs, limits.timeoutMs),
 		recordContent: deps.params.recordContent,

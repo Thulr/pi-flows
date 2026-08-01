@@ -43,6 +43,35 @@ test("tier: a flow-call tier resolves through the user's tier mapping onto child
 	}
 });
 
+test("thinking: a named level reaches child argv as its own flag", async () => {
+	const { calls } = await runFlow(
+		{ agent: "recon", task: "scan the repo for the failing check", thinking: "low" },
+		{ recon: "found it" },
+	);
+	assert.equal(calls.length, 1);
+	const thinkingFlag = calls[0].args.indexOf("--thinking");
+	assert.notEqual(thinkingFlag, -1, "child argv should carry --thinking");
+	assert.equal(calls[0].args[thinkingFlag + 1], "low");
+	// Its own flag rather than a `model:level` suffix, so the level still applies
+	// to a child that is running the user's default model.
+	assert.equal(calls[0].args.indexOf("--model"), -1, "naming a level must not force a model pin");
+});
+
+test("thinking: a model pin's :level shorthand is split rather than passed through", async () => {
+	const { calls } = await runFlow(
+		{ agent: "recon", task: "scan the repo", model: "test-provider/some-model:high" },
+		{ recon: "done" },
+	);
+	const modelFlag = calls[0].args.indexOf("--model");
+	assert.equal(calls[0].args[modelFlag + 1], "test-provider/some-model", "the level must not travel inside the model id");
+	assert.equal(calls[0].args[calls[0].args.indexOf("--thinking") + 1], "high");
+});
+
+test("thinking: a child with no level named leaves pi's own default alone", async () => {
+	const { calls } = await runFlow({ agent: "operator", task: "implement the fix" }, { operator: "done" });
+	assert.equal(calls[0].args.indexOf("--thinking"), -1, "pi-flows must not invent a level it was never told");
+});
+
 test("tier: an unmapped tier falls back to the default model (no --model flag)", async () => {
 	const prevFast = process.env.PI_FLOWS_FAST_MODEL;
 	delete process.env.PI_FLOWS_FAST_MODEL;

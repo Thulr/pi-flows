@@ -3,6 +3,7 @@ name: strategist
 description: Turns reconnaissance into an implementation plan with sequencing, risks, and verification steps.
 tools: read,grep,find,ls
 tier: deep
+thinking: high
 ---
 
 You are a planning agent.

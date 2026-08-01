@@ -1,6 +1,7 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PI_FLOWS_VERSION, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type RecordEvent } from "./types.ts";
-import { isFailed, sanitizeText } from "./sanitize.ts";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { PI_FLOWS_VERSION, THINKING_LEVELS, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
+import { describeModelRoster, saveRosterOverride } from "./model-roster.ts";
+import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
 
 /**
  * What a caller knows about the flow beyond its results. `live` means the flow
@@ -117,16 +118,20 @@ export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, 
 	return null;
 }
 
-export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" | "version" | "status" | "inspect"; scope: AgentScope } | { kind: "report"; traceFile?: string } | { kind: "error"; message: string } {
+export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" | "version" | "status" | "inspect" | "models"; scope: AgentScope } | { kind: "report"; traceFile?: string } | { kind: "error"; message: string } {
 	const parts = rawArgs.trim().split(/\s+/).filter(Boolean);
 	if (parts.length === 0) return { kind: "list", scope: "user" };
 	const [first, second] = parts;
 	const validScopes = new Set(["user", "project", "all"]);
-	const validKinds = new Set(["help", "version", "status", "inspect", "list", "report"]);
+	const validKinds = new Set(["help", "version", "status", "inspect", "list", "report", "models"]);
 
 	if (validKinds.has(first)) {
 		if (first === "help") return { kind: "help", scope: "user" };
 		if (first === "version") return { kind: "version", scope: "user" };
+		if (first === "models") {
+			if (second) return { kind: "error", message: "Use: /flows models" };
+			return { kind: "models", scope: "user" };
+		}
 		if (first === "inspect") {
 			if (second) return { kind: "error", message: "Use: /flows inspect" };
 			return { kind: "inspect", scope: "user" };
@@ -146,7 +151,59 @@ export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" 
 	}
 
 	if (validScopes.has(first)) return { kind: "list", scope: first as AgentScope };
-	return { kind: "error", message: `Unknown /flows argument "${first}". Use: /flows [user|project|all], /flows inspect, /flows help, /flows version, or /flows status [scope].` };
+	return { kind: "error", message: `Unknown /flows argument "${first}". Use: /flows [user|project|all], /flows models, /flows inspect, /flows help, /flows version, or /flows status [scope].` };
+}
+
+const KEEP_DERIVED = "Reset to derived (let pi-flows choose)";
+const USE_DEFAULT_MODEL = "(your pi default model)";
+const INHERIT_THINKING = "(inherit — tier default)";
+
+/**
+ * Show what each tier currently resolves to, then let the user pin one.
+ *
+ * Reading comes first and always: the common reason to open this is "why did
+ * that child run on that model?", which the rationale line answers without
+ * changing anything. Editing is the follow-on, and it writes to the user's
+ * `pi-flows.json` — inside pi, where the setting is visible and revisable, not
+ * to a shell variable exported once and forgotten.
+ */
+export async function showModelRoster(ctx: ExtensionCommandContext, roster: ModelRoster, userDir: string): Promise<void> {
+	const summary = [`pi-flows model roster (${roster.source})`, "", ...describeModelRoster(roster)];
+	if (!ctx.hasUI) {
+		ctx.ui.notify(summary.join("\n"), "info");
+		return;
+	}
+
+	const tier = await ctx.ui.select(`${summary.join("\n")}\n\nOverride which tier?`, ["fast", "capable", "deep"]);
+	if (tier !== "fast" && tier !== "capable" && tier !== "deep") return;
+
+	// Only models this install can actually run are offered. A free-text field
+	// here would let a typo become a tier that fails every child that uses it.
+	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [KEEP_DERIVED, USE_DEFAULT_MODEL, ...roster.available.map((model) => model.reference)]);
+	if (!modelChoice) return;
+	if (modelChoice === KEEP_DERIVED) {
+		const file = saveRosterOverride(userDir, tier, undefined);
+		ctx.ui.notify(`Tier "${tier}" reset to derived in ${safePath(file)}.`, "info");
+		return;
+	}
+
+	const model = modelChoice === USE_DEFAULT_MODEL ? undefined : modelChoice;
+	const supported = roster.available.find((candidate) => candidate.reference === model)?.thinkingLevels;
+	const levels = model && supported?.length ? supported : [...THINKING_LEVELS];
+	const thinkingChoice = await ctx.ui.select(`Thinking level for tier "${tier}"`, [INHERIT_THINKING, ...levels]);
+	if (!thinkingChoice) return;
+	const thinking = thinkingChoice === INHERIT_THINKING ? undefined : (thinkingChoice as ThinkingLevel);
+	if (!model && !thinking) {
+		const file = saveRosterOverride(userDir, tier, undefined);
+		ctx.ui.notify(`Tier "${tier}" reset to derived in ${safePath(file)}.`, "info");
+		return;
+	}
+
+	const file = saveRosterOverride(userDir, tier, { model, thinking });
+	ctx.ui.notify(
+		`Tier "${tier}" now runs ${model ?? USE_DEFAULT_MODEL}${thinking ? ` at ${thinking} thinking` : ""}.\nSaved to ${safePath(file)}. It applies to the next flow call.`,
+		"info",
+	);
 }
 
 export function flowsHelpText(): string {
@@ -158,6 +215,7 @@ export function flowsHelpText(): string {
 		"  /flows project                 List bundled + project-local .pi/flow-agents",
 		"  /flows all                     List package + user + project agents",
 		"  /flows status [user|project|all] Show dirs, defaults, and discovery issues",
+		"  /flows models                   Show what each tier resolves to, and override a tier",
 		"  /flows inspect                  Drill into one running child",
 		"  F8                              Toggle the live fleet panel overlay",
 		"  /flows report [trace-file]       Summarize a flow trace JSONL file",
