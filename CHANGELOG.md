@@ -14,8 +14,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `deep` are matched against a **model roster** derived from pi's own model
   registry — the models this install has configured auth for, ranked by the
   provider's advertised pricing, context, and reasoning support. `fast` takes the
-  cheapest usable model (preferring the parent's provider), `capable` the pi
-  default, `deep` the most capable. Previously an unset `PI_FLOWS_FAST_MODEL` /
+  cheapest usable model (preferring the parent's provider), `capable` the model
+  this session is running — named explicitly, since a fresh child would otherwise
+  load pi's *configured* default — and `deep` the most capable. Previously an unset `PI_FLOWS_FAST_MODEL` /
   `PI_FLOWS_DEEP_MODEL` meant every tier silently collapsed onto the parent's own
   model, so a correctly right-sized flow call did nothing. No vendor model id is
   hard-coded; the ranking comes from the registry, not from a list this repo
@@ -24,13 +25,15 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   calls, tasks, phases, graph nodes, worktree workers, agent refs, and agent
   frontmatter — passed to the child as `--thinking`. It is independent of `tier`,
   so effort can change while the model stays the same, and it is lowered
-  automatically to what the resolved model supports (what gets reported is the
-  level the child ran at). A `capable` child with no level named inherits the
+  automatically to what the resolved model supports whenever that model is
+  known. A `capable` child with no level named inherits the
   parent session's current level, which previously never reached children at all.
   A model pin may also carry pi's `provider/id:level` shorthand.
-- Child spans carry `flow.thinking_level`, the level the child actually ran at
-  after clamping, so two runs of an experiment that varies only effort no longer
-  have indistinguishable span identities.
+- Child spans carry `flow.thinking_level` — the level passed to the child, after
+  clamping — so two runs of an experiment that varies only effort no longer have
+  indistinguishable span identities. `flow.thinking_level_verified` says whether
+  that level was checked against the model it runs on, which is impossible for a
+  child naming no model, since pi's configured default is not readable here.
 - `/flows models` shows what each tier currently resolves to and why, and pins a
   tier interactively. Overrides persist to `~/.pi/agent/pi-flows.json`, or
   `.pi/pi-flows.json` for a trusted project — an untrusted project's file is
