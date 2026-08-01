@@ -181,15 +181,26 @@ export interface RosterInputs {
 export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	const pool = usableModels(inputs.available);
 	const parentModel = inputs.parent.model;
-	const byReference = new Map(pool.map((model) => [model.reference, model]));
-	const parent = parentModel ? byReference.get(parentModel) : undefined;
+	// Identified from the FULL registry, not the assignable pool. A parent model
+	// too small to be assigned a tier is still the parent, and losing it here
+	// would empty `sameProvider` and send the fast rung to whatever is globally
+	// cheapest — the vendor move the provider preference exists to prevent.
+	const parent = parentModel ? inputs.available.find((model) => model.reference === parentModel) : undefined;
 
+	// Pinned to the parent's CONCRETE model, not left as "the default".
+	//
+	// Those are not the same thing. A child spawns with `--no-session` and no
+	// inherited state, so omitting `--model` loads whatever pi's *configured*
+	// default is — but the parent may be running something else entirely, having
+	// been started with `--model` or switched interactively. `capable` promises
+	// the model the session is on, so it has to name it. `null` is reserved for a
+	// config that explicitly asks for the configured default.
 	const capable: RosterAssignment = {
-		model: USE_DEFAULT_MODEL,
+		model: parentModel ?? USE_DEFAULT_MODEL,
 		thinking: inputs.parent.thinking,
 		why: inputs.parent.thinking
-			? `your pi default model, at the session's current thinking level (${inputs.parent.thinking})`
-			: "your pi default model, at pi's own thinking level",
+			? `the model this session is running, at its current thinking level (${inputs.parent.thinking})`
+			: "the model this session is running, at pi's own thinking level",
 		origin: "derived",
 	};
 
@@ -253,11 +264,11 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
  */
 function sameOrDefault(chosen: AvailableModel, parentModel: string | undefined, assignment: RosterAssignment, sameWhy: string): RosterAssignment {
 	if (chosen.reference !== parentModel) return assignment;
-	// `null`, not `undefined`: this rung *did* resolve, and what it resolved to is
-	// the default model. Spelling it `undefined` would make it indistinguishable
-	// from a tier that resolved to nothing, and a caller asking for this tier
-	// would fall through to whatever the agent pinned.
-	return { model: USE_DEFAULT_MODEL, thinking: assignment.thinking, why: sameWhy };
+	// The model is still pinned, only the rationale changes. Dropping the pin
+	// would not be "no change" — a child with no `--model` loads pi's configured
+	// default, which is not necessarily what this session is running. What differs
+	// on this rung is the thinking level, and the `why` says so.
+	return { ...assignment, why: sameWhy };
 }
 
 function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], defaultModel: string | undefined, origin: RosterAssignment["origin"]): RosterAssignment {

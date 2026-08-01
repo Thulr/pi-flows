@@ -111,7 +111,15 @@ export function loadRosterConfig(source: RosterConfigSource): { config: RosterCo
 		let text: string;
 		try {
 			text = fs.readFileSync(file, "utf8");
-		} catch {
+		} catch (error) {
+			// Only "no such file" is silence — having no config is the normal case
+			// and not worth reporting. Any other failure (permissions, EISDIR, a
+			// bad symlink) means a file the user wrote is being ignored, which is
+			// indistinguishable from their pins not working unless it is said out
+			// loud.
+			if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+				issues.push(`${ROSTER_CONFIG_FILE} could not be read (${(error as NodeJS.ErrnoException)?.code ?? "unknown error"}); its overrides were ignored.`);
+			}
 			continue;
 		}
 		const { config, error } = parseRosterConfig(text);

@@ -51,9 +51,38 @@ test("a tier resolves to a different model with no configuration at all", () => 
 	assert.equal(roster.source, "derived");
 	assert.equal(roster.fast.model, "acme/mini", "fast takes the cheapest model this install can run");
 	assert.equal(roster.deep.model, "acme/flagship", "deep takes the most capable");
-	assert.equal(roster.capable.model, null, "capable resolved to the user's own default — null, not undefined, because it is an answer");
+	// Pinned to the concrete model this session runs, not left as "the default":
+	// a child spawns with no inherited state, so an omitted --model would load
+	// pi's *configured* default, which need not be what the parent is on.
+	assert.equal(roster.capable.model, "acme/standard");
 	// The whole point: three tiers, three different behaviors, zero env vars.
 	assert.notEqual(roster.fast.model, roster.deep.model);
+});
+
+test("capable names the session's model, because a child does not inherit it", () => {
+	// A child spawns with `--no-session` and no inherited state, so omitting
+	// `--model` loads pi's *configured* default. A parent started with `--model`
+	// or switched interactively is running something else, and `capable` promises
+	// the session's model — so it has to name it, or the child quietly runs
+	// somewhere else, possibly on another provider.
+	const roster = deriveModelRoster({ available: INSTALL, parent: { model: "acme/mini" } });
+	assert.equal(roster.capable.model, "acme/mini", "not null — null would mean pi's configured default, which may differ");
+	assert.match(roster.capable.why, /this session is running/);
+
+	// Only an unknown parent leaves it as the configured default, because then
+	// there is no concrete model to name.
+	assert.equal(deriveModelRoster({ available: INSTALL, parent: {} }).capable.model, null);
+});
+
+test("the parent's provider is found even when its model is too small to be assigned a tier", () => {
+	// The provider preference reads the parent out of the registry, not out of the
+	// assignable pool. Losing it to the context-window filter would empty the
+	// same-provider set and send `fast` to whatever is globally cheapest — the
+	// vendor move the preference exists to prevent.
+	const tinyDefault = model("local-8k", { contextWindow: 8_000, costPerToken: 0.01 });
+	const available = [tinyDefault, model("standard", { costPerToken: 3 }), model("budget", { reference: "other/budget", provider: "other", costPerToken: 0.1 })];
+	const roster = deriveModelRoster({ available, parent: { model: "acme/local-8k" } });
+	assert.equal(roster.fast.model, "acme/standard", "stays on the parent's provider despite a cheaper foreign model");
 });
 
 test("capable inherits the parent session's thinking level rather than pinning one", () => {
@@ -93,7 +122,7 @@ test("when the default model is already the best available, deep differs by thin
 	// Pinning --model to the model pi would have loaded anyway reads as
 	// right-sizing that is not happening, so the rung says so instead.
 	const roster = deriveModelRoster({ available: INSTALL, parent: { model: "acme/flagship", thinking: "medium" } });
-	assert.equal(roster.deep.model, null, "no redundant pin to the model already loaded, but the rung still answered");
+	assert.equal(roster.deep.model, "acme/flagship", "still pinned — dropping it would load pi's configured default, not this session's model");
 	assert.equal(roster.deep.thinking, "max", "the rung still means something: it thinks harder");
 	assert.match(roster.deep.why, /thinking level/, "and the disclosure says exactly that");
 });
@@ -109,7 +138,7 @@ test("fast prefers the parent's own provider so a scout does not silently change
 	// guarantee is about where the work goes; cost is the tiebreak within it.
 	const lonely = [model("only"), model("budget", { reference: "other/budget", provider: "other", costPerToken: 0.1 })];
 	const loyal = deriveModelRoster({ available: lonely, parent: { model: "acme/only" } });
-	assert.equal(loyal.fast.model, null, "the parent's own model at low thinking, not another vendor's cheaper one");
+	assert.equal(loyal.fast.model, "acme/only", "the parent's own model at low thinking, not another vendor's cheaper one");
 	assert.equal(loyal.fast.thinking, "low");
 
 	// With no parent model there is nothing to stay loyal to, so price decides.
@@ -119,7 +148,7 @@ test("fast prefers the parent's own provider so a scout does not silently change
 test("deep prefers a reasoning model over a merely expensive one", () => {
 	const available = [model("mini", { costPerToken: 0.5 }), model("pricey", { costPerToken: 99, reasoning: false })];
 	const roster = deriveModelRoster({ available, parent: { model: "acme/mini" } });
-	assert.equal(roster.deep.model, null, "the only reasoning model is the parent's own, so deep differs by level");
+	assert.equal(roster.deep.model, "acme/mini", "the only reasoning model is the parent's own, so deep differs by level");
 	assert.match(roster.deep.why, /thinking level/);
 });
 
@@ -184,7 +213,7 @@ test("an install with no readable registry falls back to the default model on ev
 	// pi default" is knowable without a registry.
 	assert.equal(roster.fast.model, undefined, "fast must not invent a model it cannot verify");
 	assert.equal(roster.deep.model, undefined, "deep must not invent a model it cannot verify");
-	assert.equal(roster.capable.model, null, "capable still means the pi default, which needs no registry to know");
+	assert.equal(roster.capable.model, "acme/standard", "capable still names the session's model, which needs no registry to know");
 	assert.match(describeModelRoster(roster).join("\n"), /no model registry/, "and says so rather than reporting a roster it does not have");
 });
 
@@ -278,7 +307,7 @@ test("a level is clamped against the pi default model when no --model is passed"
 		parent: { model: "acme/standard" },
 		config: { capable: { thinking: "max" } },
 	});
-	assert.equal(override.capable.model, null, "capable still runs the pi default");
+	assert.equal(override.capable.model, "acme/standard", "capable still runs the session's model");
 	assert.equal(override.capable.thinking, "medium", "and its level is lowered to what that concrete model supports");
 });
 
@@ -331,6 +360,27 @@ test("an explicit pi-default choice survives a round trip through the config fil
 	const reloaded = loadRosterConfig({ userDir: dir, projectDir: null, projectTrusted: false });
 	assert.deepEqual(reloaded.config.fast, { model: null, thinking: "low" });
 	fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a config file that exists but cannot be read is reported, not treated as absent", () => {
+	// A missing file is the normal case and stays silent. Any other read failure
+	// means a file the user wrote is being ignored — indistinguishable from their
+	// pins simply not working unless it is said out loud. `EISDIR` stands in for
+	// the class here because it is reproducible without depending on running as a
+	// non-root user, which would make a chmod-based test vacuous under CI.
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	fs.mkdirSync(path.join(dir, "pi-flows.json"));
+
+	const unreadable = loadRosterConfig({ userDir: dir, projectDir: null, projectTrusted: false });
+	assert.equal(unreadable.issues.length, 1);
+	assert.match(unreadable.issues[0], /could not be read/);
+
+	// A directory with no config at all still reports nothing.
+	const empty = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	assert.deepEqual(loadRosterConfig({ userDir: empty, projectDir: null, projectTrusted: false }).issues, []);
+
+	fs.rmSync(dir, { recursive: true, force: true });
+	fs.rmSync(empty, { recursive: true, force: true });
 });
 
 test("config that could not be read is reported next to the roster it failed to change", () => {

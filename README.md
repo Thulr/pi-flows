@@ -512,7 +512,7 @@ System prompt for the delegated agent.
 Tiers stay portable — no vendor model is hard-coded anywhere in pi-flows. Instead, each tier resolves against a **roster** derived from the models your install can actually run, read from pi's own model registry:
 
 - `fast` — the cheapest model you have that can still hold a delegated task, at `low` thinking. Prefers your own provider, so a scout doesn't silently move work to a second vendor.
-- `capable` — your pi default model, at the thinking level your session is currently on. A plain delegated child behaves like the session that delegated it.
+- `capable` — the model your session is actually running, at the thinking level it is currently on. A plain delegated child behaves like the session that delegated it. (Named explicitly, not inherited: a child starts fresh, so an unnamed model would load pi's *configured* default, which differs once you start with `--model` or switch models mid-session.)
 - `deep` — the most capable model you have, preferring one that supports extended thinking, at `max`.
 
 This works with no configuration. If your default model is already the best one available, `deep` says so and differs by thinking level rather than pinning a redundant `--model`. Run `/flows models` or `flow showConfig:true` to see what each tier resolves to right now, and why:
