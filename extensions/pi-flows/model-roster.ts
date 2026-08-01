@@ -190,9 +190,14 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: inputs.available, defaultModel: parentModel, source: "unavailable", issues: [] };
 	}
 
+	// Any same-provider model at all keeps the rung there, not just a *cheaper*
+	// one. When the parent's provider offers only the parent's own model, the fast
+	// rung is still meaningful — that model at `low` thinking — and that is a
+	// better answer than silently sending a scout's task to a second vendor. The
+	// documented guarantee is about where the work goes, and cost is the tiebreak
+	// within it rather than a reason to leave.
 	const sameProvider = parent ? pool.filter((model) => model.provider === parent.provider) : [];
-	const fastPool = sameProvider.length > 1 ? sameProvider : pool;
-	const cheapModel = cheapest(fastPool);
+	const cheapModel = cheapest(sameProvider.length ? sameProvider : pool);
 
 	// Extended thinking outranks price for the deep rung: an expensive model that
 	// cannot think longer is not the right adjudicator, and the whole point of the
@@ -212,7 +217,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	const fast: RosterAssignment = sameOrDefault(cheapModel, parentModel, {
 		model: cheapModel.reference,
 		thinking: clampThinking(TIER_THINKING.fast, cheapModel),
-		why: `cheapest model this install can run${sameProvider.length > 1 ? ` on ${cheapModel.provider}` : ""}`,
+		why: `cheapest model this install can run${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
 	}, `your pi default is already the cheapest model available, so fast reruns it at ${TIER_THINKING.fast} thinking`);
 
 	const deep: RosterAssignment = sameOrDefault(strongModel, parentModel, {

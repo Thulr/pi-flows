@@ -28,6 +28,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   level the child ran at). A `capable` child with no level named inherits the
   parent session's current level, which previously never reached children at all.
   A model pin may also carry pi's `provider/id:level` shorthand.
+- Child spans carry `flow.thinking_level`, the level the child actually ran at
+  after clamping, so two runs of an experiment that varies only effort no longer
+  have indistinguishable span identities.
 - `/flows models` shows what each tier currently resolves to and why, and pins a
   tier interactively. Overrides persist to `~/.pi/agent/pi-flows.json`, or
   `.pi/pi-flows.json` for a trusted project — an untrusted project's file is

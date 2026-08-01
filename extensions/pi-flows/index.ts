@@ -164,7 +164,11 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverFlowAgents(ctx.cwd, parsed.scope);
 			const catalog = createAgentCatalog(discovery, parsed.scope);
 			if (parsed.kind === "status") {
-				ctx.ui.notify(catalog.configSummary(), discovery.issues.some((issue) => issue.severity === "error") ? "error" : "info");
+				// The command context has a live registry just like the tool path, so
+				// the roster is resolved here too. Omitting it would print
+				// "modelRoster: unresolved" and drop config parse issues from the one
+				// command whose whole job is reporting configuration.
+				ctx.ui.notify(catalog.configSummary(currentModelRoster(ctx)), discovery.issues.some((issue) => issue.severity === "error") ? "error" : "info");
 				return;
 			}
 			ctx.ui.notify(`Flow agents (${parsed.scope}):\n${catalog.summary()}`, "info");

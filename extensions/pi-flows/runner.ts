@@ -122,8 +122,14 @@ export async function writePromptToTempFile(agentName: string, prompt: string, l
  * where the budget stood afterwards. Built here because this is the only place
  * that knows the *resolved* agent and tool allowlist rather than the request.
  */
-function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefined, allowedTools: string[] | undefined, policy: CapturePolicy): Record<string, unknown> {
+function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefined, allowedTools: string[] | undefined, policy: CapturePolicy, choice: ChildModelChoice): Record<string, unknown> {
 	return {
+		// Sibling of the span's `llm.model_name`, and recorded here for the same
+		// reason as the rest of this block: it is the *resolved* level, after tier
+		// and clamping, not the one the call asked for. Without it two children of
+		// an experiment that varies only effort have identical span identities, and
+		// a recorded result cannot say whether it ran at low or max.
+		"flow.thinking_level": choice.thinking,
 		...delegationIdentityAttributes({
 			systemPrompt: agent?.systemPrompt ?? "",
 			allowedTools,
@@ -420,7 +426,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		return result;
 	} finally {
 		result.durationMs = Date.now() - started;
-		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy) });
+		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice) });
 		if (budgetStop) {
 			// Its own unit, depending on the child. Reusing the child's key would
 			// leave the event unable to rebind it — the span already owns it — so the

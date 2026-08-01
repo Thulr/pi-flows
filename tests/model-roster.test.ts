@@ -93,10 +93,17 @@ test("fast prefers the parent's own provider so a scout does not silently change
 	const roster = deriveModelRoster({ available: mixed, parent: { model: "acme/standard" } });
 	assert.equal(roster.fast.model, "acme/mini", "the cheaper foreign model is not chosen over the parent's provider");
 
-	// Unless the parent's provider has nothing else to offer, in which case a
-	// second vendor beats no fast tier at all.
+	// Including when the parent's provider offers nothing cheaper than the model
+	// already loaded. The rung is still meaningful — that model at `low` thinking
+	// — and that beats silently sending a scout's task to a second vendor. The
+	// guarantee is about where the work goes; cost is the tiebreak within it.
 	const lonely = [model("only"), model("budget", { reference: "other/budget", provider: "other", costPerToken: 0.1 })];
-	assert.equal(deriveModelRoster({ available: lonely, parent: { model: "acme/only" } }).fast.model, "other/budget");
+	const loyal = deriveModelRoster({ available: lonely, parent: { model: "acme/only" } });
+	assert.equal(loyal.fast.model, null, "the parent's own model at low thinking, not another vendor's cheaper one");
+	assert.equal(loyal.fast.thinking, "low");
+
+	// With no parent model there is nothing to stay loyal to, so price decides.
+	assert.equal(deriveModelRoster({ available: lonely, parent: {} }).fast.model, "other/budget");
 });
 
 test("deep prefers a reasoning model over a merely expensive one", () => {
