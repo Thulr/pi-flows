@@ -3,14 +3,14 @@ import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-work
 import { Key, matchesKey, truncateToWidth, visibleWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
 import { isFailed, redactText } from "./sanitize.ts";
 import { formatUsage } from "./trace.ts";
-import type { FlowBudget, FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
+import type { Budget, FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
 
 export interface LiveFlow {
 	mode: FlowMode;
 	details: FlowDetails;
 	redactSecrets: boolean;
-	/** Live budget reference — mutated by chargeBudget as children settle, so observers see burn-down without another update channel. */
-	budget?: FlowBudget;
+	/** Live budget reference — the flow charges it as children settle, so observers see burn-down without another update channel. Read it through `snapshot()`; a view never moves a ceiling. */
+	budget?: Budget;
 }
 
 export interface FlowAgentTarget {
@@ -34,7 +34,7 @@ export class FlowRegistry {
 	private readonly listeners = new Set<() => void>();
 	private lastSettled: LiveFlow | undefined;
 
-	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true, budget?: FlowBudget): void {
+	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true, budget?: Budget): void {
 		this.flows.set(id, { mode, details, redactSecrets, budget });
 		this.notify();
 	}

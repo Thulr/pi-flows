@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accumulatePiUsage, runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
-import { budgetExceededError, budgetUnobservableError } from "../extensions/pi-flows/types.ts";
+import { Budget } from "../extensions/pi-flows/types.ts";
 
 function finalAssistantText(messages) {
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -94,8 +94,13 @@ export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal,
 	else if (run.aborted) stopReason = "aborted";
 	if (run.spawnErrorMessage) stderr += `spawn error: ${run.spawnErrorMessage}`;
 	const exitCode = budgetTerminated || budgetUnobservable ? 1 : run.exitCode;
-	const budgetError = budgetUnobservable ? budgetUnobservableError() : budgetTerminated
-		? budgetExceededError({ maxCostUsd, maxGeneratedTokens, spentCost: usage.cost, spentTokens: usage.input + usage.output, spentGeneratedTokens: usage.output }) : undefined;
+	// The control arm enforces inline (it runs plain pi, with no extension), but it
+	// reports through the same Budget so both arms' refusals read identically. It
+	// meters cumulatively rather than per turn, so the run total is charged in one
+	// go — the same accumulation the per-turn path arrives at.
+	const budget = Budget.forFlow({ maxCostUsd, maxGeneratedTokens });
+	if (budgetUnobservable || budgetTerminated) budget?.charge(usage);
+	const budgetError = budgetUnobservable ? budget?.unobservableError() : budgetTerminated ? budget?.exhaustedError() : undefined;
 	if (budgetError) errorMessage = budgetError.message;
 
 	const protocolError = !run.sawJsonEvent && parseErrors > 0;

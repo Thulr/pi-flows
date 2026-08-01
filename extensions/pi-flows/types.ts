@@ -1,4 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
+import type { Budget, BudgetAuthority } from "./budget.ts";
 import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
 import type { HandoffGuard } from "./handoff-types.ts";
 import type { HandoffConsumer } from "./handoff-consumption.ts";
@@ -209,9 +210,13 @@ export interface FlowRunResult {
 	handoff?: DelegationHandoffEnvelope;
 }
 
-/** A configured cost/token ceiling disclosed in compact UI surfaces. */
+/**
+ * One configured cost/token ceiling, paired with the authority that owns it, for
+ * disclosure in compact UI surfaces. Not `BudgetCeilings` (budget.ts), which is
+ * the unlabelled *set* of ceilings a budget is constructed with and enforces.
+ */
 export interface BudgetCeiling {
-	authority: "flow" | "contract";
+	authority: BudgetAuthority;
 	maxCostUsd?: number;
 	maxTokens?: number;
 	maxGeneratedTokens?: number;
@@ -350,20 +355,13 @@ export interface CapturePolicy {
 	redactSecrets: boolean;
 }
 
-export interface BudgetUsageState {
-	maxCostUsd?: number;
-	maxTokens?: number;
-	maxGeneratedTokens?: number;
-	spentCost: number;
-	spentTokens: number;
-	spentGeneratedTokens: number;
-}
-
-/** Cumulative cost/token ceiling shared across one flow. */
-export interface FlowBudget extends BudgetUsageState {}
-
-/** Cost/token portion of the budget scoped to one delegation contract. */
-export interface ContractBudget extends BudgetUsageState {}
+/**
+ * Budgets are objects, not records: a ceiling is fixed at construction, spend
+ * moves only through `charge`, and each budget knows its own authority. Build
+ * one with `Budget.forFlow` or `Budget.forContract` — see budget.ts.
+ */
+export { Budget } from "./budget.ts";
+export type { BudgetAuthority, BudgetCeilings, BudgetSnapshot } from "./budget.ts";
 
 /** Everything the sink needs beyond the run itself to place and describe a child span. */
 export interface ChildSpanContext {
@@ -373,14 +371,6 @@ export interface ChildSpanContext {
 
 /** Records one completed child run as a trace span. See makeTraceSink. */
 export type RecordSpan = (result: FlowRunResult, span?: ChildSpanContext) => void;
-
-export {
-	activeBudgetExceeded,
-	budgetExceeded,
-	budgetExceededError,
-	budgetUnobservableError,
-	chargeBudget,
-} from "./budget.ts";
 
 export function flowError(code: FlowErrorCode, message: string, cause: string, fix: string, retryable = false): FlowError {
 	return { code, message, cause, fix, retryable };
@@ -415,7 +405,7 @@ export interface RunChildOptions {
 	recordContent?: boolean;
 	redactSecrets?: boolean;
 	captureRawOutput?: boolean;
-	contractBudget?: ContractBudget;
+	contractBudget?: Budget;
 	/** The delegation contract this child was dispatched under, for trace identity attributes. */
 	contract?: DelegationContract;
 	/** The call's `why` — the delegation reason recorded alongside the child span. */
@@ -425,7 +415,7 @@ export interface RunChildOptions {
 	step?: number;
 	signal?: AbortSignal;
 	onUpdate?: Update;
-	budget?: FlowBudget;
+	budget?: Budget;
 	recordSpan?: RecordSpan;
 	recordEvent?: RecordEvent;
 	makeDetails: (results: FlowRunResult[]) => FlowDetails;
@@ -443,7 +433,7 @@ export interface ModeDeps {
 	defaultCwd: string;
 	signal?: AbortSignal;
 	onUpdate?: Update;
-	budget?: FlowBudget;
+	budget?: Budget;
 	recordSpan?: RecordSpan;
 	/** Attribute a coordination boundary (artifact, state, retry, approval, budget, validation, handoff) to the trace. */
 	recordEvent?: RecordEvent;

@@ -8,8 +8,35 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- `npm run score:domain` scores the domain model, and CI posts it on every PR.
+  The structural half — module classification, subdomain import direction, naming, and
+  foreign-package containment — is re-derived from the tree on every run and is
+  part of `npm run check`, so a regression fails the build. The half no check can
+  settle (aggregate design, behavior-rich objects, language consistency) is
+  carried from `docs/domain-review.json` and reported with the date it was
+  taken; touching a Core module without re-recording the review marks those
+  rows stale and drops them from the verified score rather than repeating them as
+  fact. The subdomain table is parsed out of `CONTEXT.md` itself, so the classification
+  a reader sees and the rule the build enforces cannot drift apart.
+
 ### Fixed
 
+- A budget stop now reports the ceiling that actually caused it. Two problems,
+  both in how the refusal was attributed after the fact. The decision to
+  terminate was held as two flags plus a separate budget reference, and a model
+  turn arriving between `terminate()` and the child exiting could rebind that
+  reference while the flags stayed latched — so the refusal could be attributed
+  to the wrong budget, or to none. Separately, the error was built only once the
+  process had exited, from spend that kept accumulating in the meantime, so on a
+  budget with several ceilings a limit crossed *after* the stop could out-rank
+  the one that caused it and be named as the cause. The stop is now a single
+  value carrying the error, frozen at the moment it was decided. Which ceilings
+  bind is unchanged.
+- The F8 fleet panel now renders a `$0` cost ceiling instead of hiding it. A
+  falsy check read a zero ceiling as "no ceiling configured", so the one budget
+  that refuses every run was also the one that showed no burn-down bar.
 - Flow budget scope is now stated correctly. The `maxCostUsd` / `maxTokens` /
   `maxGeneratedTokens` tool descriptions, README, the flow reference, and the
   patterns guide said the ceiling covered "the whole flow tree"; it bounds one flow
@@ -19,6 +46,27 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- **Breaking (type surface).** A budget is now an object that owns its own rule.
+  The removed names below were importable from `extensions/pi-flows/types.ts`,
+  which ships in the package, so a downstream import of any of them must be
+  updated; the commit carries `!`. `Budget.forFlow()` /
+  `Budget.forContract()` replace the mutable `FlowBudget` / `ContractBudget` /
+  `BudgetUsageState` records and the free functions over them (`chargeBudget`,
+  `budgetExceeded`, `activeBudgetExceeded`, `budgetExceededError`,
+  `budgetUnobservableError`, all removed from the `types.ts` re-export surface and
+  from `__test`). Ceilings are fixed at construction, spend moves only through
+  `charge()`, and views read `snapshot()` instead of the live record. **Budget
+  authority** is carried by the budget rather than re-derived at six call sites by
+  comparing object identity against the contract budget, so a contract-bound
+  refusal cannot be reported as a flow-budget one; `budgetAttributes()` now takes
+  its span prefix from the snapshot's authority instead of a caller-passed string.
+  Which ceilings stop a live run (`stopsLiveRun()`) versus gate the next
+  spawn (`refusesSpawn()`) is stated once, on the budget. No enforcement behavior
+  changed: a flow's total-token ceiling remains a between-run spawn gate and a
+  contract's still stops the live run.
+- `CONTEXT.md` opens with a domain vision statement and a Core / Supporting /
+  Generic split, so the modules that carry the guardrail invariants are named
+  as the ones that earn deep modeling — and the plumbing is named as plumbing.
 - Domain glossary alignment, continued: the live-flow registry keyed *flows* while
   naming them runs. `FlowRunRegistry`/`LiveFlowRun`/`activeRuns()`/
   `lastFinishedRun()`/`finish()` are now `FlowRegistry`/`LiveFlow`/`activeFlows()`/

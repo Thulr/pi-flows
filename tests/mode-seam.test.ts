@@ -105,7 +105,8 @@ test("typed single dispatch enforces every contract budget field", async () => {
 	const output = await handleSingle(deps);
 	assert.equal(output.details.error, undefined);
 	assert.equal(calls[0].timeoutMs, 1_200);
-	assert.deepEqual(calls[0].contractBudget, {
+	assert.deepEqual(calls[0].contractBudget.snapshot(), {
+		authority: "contract",
 		maxCostUsd: 0.25,
 		maxTokens: 300,
 		maxGeneratedTokens: 100,

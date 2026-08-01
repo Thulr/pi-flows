@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { Compile } from "typebox/compile";
 import { extractLastJsonBlock } from "./protocol.ts";
 import { capModelVisibleText, isFailed, redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
-import { flowError, type CapturePolicy, type ContractBudget, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
+import { Budget, flowError, type CapturePolicy, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 import { appendReturnRequirements } from "./validate.ts";
 
 const ENVELOPE_VERSION = "pi-flows.return-envelope.v1";
@@ -125,10 +125,9 @@ export function renderDelegationTask(
 	].join("\n");
 }
 
-export function createDelegationBudget(contract: DelegationContract): ContractBudget | undefined {
-	const { maxCostUsd, maxTokens, maxGeneratedTokens } = contract.budget;
-	if (maxCostUsd === undefined && maxTokens === undefined && maxGeneratedTokens === undefined) return undefined;
-	return { maxCostUsd, maxTokens, maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
+/** The contract budget for one delegation contract. `contract.budget.timeoutMs` is a wall-clock bound, not spend, and is applied at dispatch instead. */
+export function createDelegationBudget(contract: DelegationContract): Budget | undefined {
+	return Budget.forContract(contract.budget);
 }
 
 function envelopeError(reason: string): FlowError {

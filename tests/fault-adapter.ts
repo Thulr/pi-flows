@@ -24,7 +24,7 @@ import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { budgetAttributes } from "../extensions/pi-flows/trace-attributes.ts";
-import { budgetExceeded, budgetExceededError, chargeBudget, emptyUsage, flowError, type BudgetUsageState, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
+import { emptyUsage, flowError, type Budget, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
 export type FaultKind = "delay" | "loss" | "duplicate" | "reorder" | "failure" | "stale";
 
@@ -171,10 +171,9 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 		// The seam's own pre-spawn policy, modelled faithfully: the real adapter
 		// refuses to spawn once a ceiling is spent, and a fake that ignored budgets
 		// would let a budget-exhaustion scenario "pass" without a budget ever biting.
-		const budgets = [childOptions.budget, childOptions.contractBudget].filter((budget): budget is BudgetUsageState => Boolean(budget));
-		const exhausted = budgets.find((budget) => budgetExceeded(budget));
+		const budgets = [childOptions.budget, childOptions.contractBudget].filter((budget): budget is Budget => Boolean(budget));
+		const exhausted = budgets.find((budget) => budget.refusesSpawn());
 			if (exhausted) {
-				const authority = exhausted === childOptions.contractBudget ? "contract" : "flow";
 				// The same event the real adapter emits, so a scenario can observe the
 				// refusal that leaves no child span behind.
 				childOptions.recordEvent?.({
@@ -184,13 +183,13 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 				scope: childOptions.scope,
 					attributes: {
 						"flow.budget.refused_agent": agent,
-						"flow.budget.authority": authority,
-						...budgetAttributes(exhausted, authority === "contract" ? "flow.contract_budget" : "flow.budget"),
+						"flow.budget.authority": exhausted.authority,
+						...budgetAttributes(exhausted.snapshot()),
 					},
 				});
 				const refused = baseResult(childOptions, "", { input: 0, output: 0, cost: 0 });
 				refused.exitCode = 1;
-				refused.error = budgetExceededError(exhausted, authority);
+				refused.error = exhausted.exhaustedError();
 			refused.errorMessage = refused.error.message;
 			refused.stopReason = "budget_exceeded";
 			refused.durationMs = 0;
@@ -287,7 +286,7 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 			? failedResult(childOptions, failure.code, failure.message, failure.cause, failure.retryable)
 			: baseResult(childOptions, body, options.usage);
 		result.durationMs = durationMs;
-		for (const budget of budgets) chargeBudget(budget, result.usage);
+		for (const budget of budgets) budget.charge(result.usage);
 		if (!failure) servedByAgent.set(agent, [...(servedByAgent.get(agent) ?? []), body]);
 
 		ledger.dispatches.push({

@@ -58,5 +58,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Raised to 745_000 for CONTEXT.md: README and flow-reference now point at the
 // glossary's term definitions instead of restating them, so the glossary has to
 // ship or those links dangle in the tarball.
-assert.ok(pack.unpackedSize < 745_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 760_000 for the Budget object (a documented public type replacing the
+// exported budget records and their free functions) and CONTEXT.md's subdomain
+// split, which tells a downstream reader which modules carry the guardrail
+// invariants. The previous ceiling left 1_442 bytes, so one changelog entry for
+// either change would have tripped it.
+assert.ok(pack.unpackedSize < 760_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

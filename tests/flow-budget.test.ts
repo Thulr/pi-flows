@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { infraError } from "../evals/lib.mjs";
-import { __test } from "../extensions/pi-flows/index.ts";
-import { budgetExceededError } from "../extensions/pi-flows/types.ts";
+import { Budget } from "../extensions/pi-flows/types.ts";
 import { parseTraceJsonl } from "../extensions/pi-flows/trace.ts";
 import { runFlow } from "./stub-harness.ts";
 
@@ -21,44 +20,52 @@ const contractWithBudget = (budget: Record<string, number>) => ({
 	owner: "parent",
 });
 
-test("budget helpers accumulate spend and trip each supported ceiling", () => {
-	const usage = (cost: number, input: number, output: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, cost, contextTokens: 0, turns: 1 });
-	assert.equal(__test.budgetExceeded(undefined), false, "no budget never trips");
+const turn = (cost: number, input: number, output: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, cost, contextTokens: 0, turns: 1 });
 
-	const cost = { maxCostUsd: 0.01, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
-	assert.equal(__test.budgetExceeded(cost), false);
-	__test.chargeBudget(cost, usage(0.02, 100, 50));
-	assert.equal(__test.budgetExceeded(cost), true, "cost ceiling trips after charge");
+test("a budget accumulates spend and trips each supported ceiling", () => {
+	assert.equal(Budget.forFlow(undefined), undefined, "no configured ceiling means there is no budget to enforce");
+	assert.equal(Budget.forFlow({}), undefined);
 
-	const tokens = { maxTokens: 100, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
-	__test.chargeBudget(tokens, usage(0, 60, 50));
-	assert.equal(tokens.spentTokens, 110);
-	assert.equal(__test.budgetExceeded(tokens), true, "token ceiling counts input+output");
+	const cost = Budget.forFlow({ maxCostUsd: 0.01 })!;
+	assert.equal(cost.refusesSpawn(), false);
+	cost.charge(turn(0.02, 100, 50));
+	assert.equal(cost.refusesSpawn(), true, "cost ceiling trips after charge");
 
-	const generated = { maxGeneratedTokens: 40, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
-	__test.chargeBudget(generated, usage(0, 60, 50));
-	assert.equal(generated.spentGeneratedTokens, 50);
-	assert.equal(__test.budgetExceeded(generated), true, "generated-token ceiling counts output only");
+	const tokens = Budget.forFlow({ maxTokens: 100 })!;
+	tokens.charge(turn(0, 60, 50));
+	assert.equal(tokens.snapshot().spentTokens, 110, "token ceiling counts input+output");
+	assert.equal(tokens.refusesSpawn(), true);
+
+	const generated = Budget.forFlow({ maxGeneratedTokens: 40 })!;
+	generated.charge(turn(0, 60, 50));
+	assert.equal(generated.snapshot().spentGeneratedTokens, 50, "generated-token ceiling counts output only");
+	assert.equal(generated.refusesSpawn(), true);
 });
 
-test("budget errors name the ceiling that actually crossed", () => {
-	const generated = {
-		maxCostUsd: 10,
-		maxGeneratedTokens: 4,
-		spentCost: 0.001,
-		spentTokens: 20,
-		spentGeneratedTokens: 8,
-	};
-	const total = {
-		maxCostUsd: 10,
-		maxTokens: 10,
-		spentCost: 0.001,
-		spentTokens: 20,
-		spentGeneratedTokens: 8,
-	};
-	assert.match(budgetExceededError(generated).message, /8 of 4 generated tokens/);
-	assert.match(budgetExceededError(total).message, /20 of 10 total tokens/);
-	assert.match(budgetExceededError(generated, "contract").message, /^Contract budget exhausted/);
+test("only a contract budget stops a live run on its total-token ceiling", () => {
+	// A flow's total-token ceiling counts input the parent never chose to spend
+	// turn by turn, so it stays a between-run spawn gate. A contract budget bounds
+	// the runs fulfilling one contract, so it must stop the run overspending it.
+	const flow = Budget.forFlow({ maxTokens: 100 })!;
+	const contract = Budget.forContract({ maxTokens: 100 })!;
+	for (const budget of [flow, contract]) budget.charge(turn(0, 60, 50));
+
+	assert.equal(flow.refusesSpawn(), true);
+	assert.equal(flow.stopsLiveRun(), false, "a flow total-token ceiling never kills the run it is already paying for");
+	assert.equal(contract.stopsLiveRun(), true, "a contract total-token ceiling does");
+});
+
+test("budget errors name the ceiling that actually crossed, and the authority that owns it", () => {
+	const generated = Budget.forFlow({ maxCostUsd: 10, maxGeneratedTokens: 4 })!;
+	const total = Budget.forFlow({ maxCostUsd: 10, maxTokens: 10 })!;
+	const contracted = Budget.forContract({ maxCostUsd: 10, maxGeneratedTokens: 4 })!;
+	for (const budget of [generated, total, contracted]) budget.charge(turn(0.001, 12, 8));
+
+	assert.match(generated.exhaustedError().message, /8 of 4 generated tokens/);
+	assert.match(total.exhaustedError().message, /20 of 10 total tokens/);
+	assert.match(contracted.exhaustedError().message, /^Contract budget exhausted/);
+	assert.deepEqual(generated.exhaustedError().budgetCeiling, { authority: "flow", maxGeneratedTokens: 4 }, "the crossed ceiling, not every configured one");
+	assert.match(contracted.unobservableError().message, /^Contract cost budget cannot be enforced/);
 });
 
 test("eval treats a binding budget stop as an invalid outcome, not infrastructure", () => {
