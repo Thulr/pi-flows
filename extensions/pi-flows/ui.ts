@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { PI_FLOWS_VERSION, THINKING_LEVELS, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
-import { describeModelRoster, saveRosterOverride } from "./model-roster.ts";
+import { USE_DEFAULT_MODEL, describeModelRoster, saveRosterOverride } from "./model-roster.ts";
 import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
 
 /**
@@ -155,7 +155,7 @@ export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" 
 }
 
 const KEEP_DERIVED = "Reset to derived (let pi-flows choose)";
-const USE_DEFAULT_MODEL = "(your pi default model)";
+const PI_DEFAULT_MODEL = "(your pi default model)";
 const INHERIT_THINKING = "(inherit — tier default)";
 
 /**
@@ -179,7 +179,7 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 
 	// Only models this install can actually run are offered. A free-text field
 	// here would let a typo become a tier that fails every child that uses it.
-	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [KEEP_DERIVED, USE_DEFAULT_MODEL, ...roster.available.map((model) => model.reference)]);
+	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [KEEP_DERIVED, PI_DEFAULT_MODEL, ...roster.available.map((model) => model.reference)]);
 	if (!modelChoice) return;
 	if (modelChoice === KEEP_DERIVED) {
 		const file = saveRosterOverride(userDir, tier, undefined);
@@ -187,21 +187,20 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 		return;
 	}
 
-	const model = modelChoice === USE_DEFAULT_MODEL ? undefined : modelChoice;
-	const supported = roster.available.find((candidate) => candidate.reference === model)?.thinkingLevels;
-	const levels = model && supported?.length ? supported : [...THINKING_LEVELS];
+	// Choosing the pi default is a decision, so it is persisted as one (`null`)
+	// rather than as an absent model. Saving `undefined` here would read back as
+	// "no model stated" and leave the derived model — possibly another provider's
+	// — quietly in force while this command reported the default.
+	const model = modelChoice === PI_DEFAULT_MODEL ? USE_DEFAULT_MODEL : modelChoice;
+	const supported = roster.available.find((candidate) => candidate.reference === (model ?? roster.defaultModel))?.thinkingLevels;
+	const levels = supported?.length ? supported : [...THINKING_LEVELS];
 	const thinkingChoice = await ctx.ui.select(`Thinking level for tier "${tier}"`, [INHERIT_THINKING, ...levels]);
 	if (!thinkingChoice) return;
 	const thinking = thinkingChoice === INHERIT_THINKING ? undefined : (thinkingChoice as ThinkingLevel);
-	if (!model && !thinking) {
-		const file = saveRosterOverride(userDir, tier, undefined);
-		ctx.ui.notify(`Tier "${tier}" reset to derived in ${safePath(file)}.`, "info");
-		return;
-	}
 
 	const file = saveRosterOverride(userDir, tier, { model, thinking });
 	ctx.ui.notify(
-		`Tier "${tier}" now runs ${model ?? USE_DEFAULT_MODEL}${thinking ? ` at ${thinking} thinking` : ""}.\nSaved to ${safePath(file)}. It applies to the next flow call.`,
+		`Tier "${tier}" now runs ${model === USE_DEFAULT_MODEL ? PI_DEFAULT_MODEL : model}${thinking ? ` at ${thinking} thinking` : ""}.\nSaved to ${safePath(file)}. It applies to the next flow call.`,
 		"info",
 	);
 }

@@ -79,6 +79,10 @@ export function normalizeGatedPhase(phase: any, params: any): Record<string, unk
 		cwd: phase.cwd ?? null,
 		model: phase.model ?? null,
 		tier: phase.tier ?? null,
+		// Bound for the same reason as model and tier: it changes what actually
+		// runs under the approval, and raising a phase from low to max after the
+		// fact is a material change in cost the operator never saw.
+		thinking: phase.thinking ?? null,
 		tools: phase.tools ?? null,
 		checkCommand: phase.checkCommand ?? null,
 		contract: phase.contract ?? null,

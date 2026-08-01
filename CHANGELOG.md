@@ -35,6 +35,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `flow showConfig:true` reports the same roster with its rationale.
   `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` continue to work, outranked by
   the config file.
+- A gated workflow phase's `thinking` is bound into its approval receipt digest
+  alongside `model` and `tier`, so raising a phase from `low` to `max` after
+  approval invalidates the receipt rather than running under it.
 - Bundled agents declare thinking levels where their effort profile is fixed:
   `recon` and `controller` at `low`, `strategist` at `high`, `redteam` at `max`.
   `analyst`, `operator`, `overwatch`, `commander`, and `debrief` inherit the

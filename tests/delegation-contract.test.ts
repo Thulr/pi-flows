@@ -72,6 +72,61 @@ test("thinking: a child with no level named leaves pi's own default alone", asyn
 	assert.equal(calls[0].args.indexOf("--thinking"), -1, "pi-flows must not invent a level it was never told");
 });
 
+// Every surface the schema exposes `thinking` on must actually reach the child.
+// Modes that rebuild a ref field-by-field are where a new per-unit field gets
+// silently dropped, so each of those is exercised through the real dispatch
+// path rather than trusted to the schema alone.
+const levelOf = (call: { args: string[] }) => {
+	const flag = call.args.indexOf("--thinking");
+	return flag === -1 ? undefined : call.args[flag + 1];
+};
+
+test("thinking: a per-step chain level reaches that step's child", async () => {
+	const { calls } = await runFlow(
+		{
+			task: "ship the fix",
+			chain: [
+				{ agent: "recon", task: "scout {task}", thinking: "low" },
+				{ agent: "operator", task: "apply {previous}", thinking: "high" },
+			],
+		},
+		{ recon: "scouted", operator: "applied" },
+	);
+	assert.equal(calls.length, 2);
+	assert.deepEqual(calls.map(levelOf), ["low", "high"], "each step keeps its own level");
+});
+
+test("thinking: a per-phase workflow level reaches that phase's child", async () => {
+	const { calls } = await runFlow(
+		{
+			task: "ship the fix",
+			workflow: {
+				phases: [
+					{ id: "scout", agent: "recon", task: "scout it", thinking: "low" },
+					{ id: "build", agent: "operator", task: "build it", thinking: "xhigh" },
+				],
+			},
+		},
+		{ recon: "scouted", operator: "built" },
+	);
+	assert.deepEqual(calls.map(levelOf), ["low", "xhigh"]);
+});
+
+test("thinking: a per-task level survives fan-out and the flow-level fallback", async () => {
+	const { calls } = await runFlow(
+		{
+			thinking: "medium",
+			tasks: [
+				{ agent: "recon", task: "scout the api", thinking: "low" },
+				{ agent: "analyst", task: "read the docs" },
+			],
+		},
+		{ recon: "a", analyst: "b" },
+	);
+	assert.equal(calls.length, 2);
+	assert.deepEqual(calls.map(levelOf).sort(), ["low", "medium"], "a task states its own level; the other falls back to the flow's");
+});
+
 test("tier: an unmapped tier falls back to the default model (no --model flag)", async () => {
 	const prevFast = process.env.PI_FLOWS_FAST_MODEL;
 	delete process.env.PI_FLOWS_FAST_MODEL;

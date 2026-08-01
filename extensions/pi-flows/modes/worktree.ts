@@ -147,7 +147,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		const workerItems: IntegrationRunPlan[] = [];
 		for (const worker of workers) {
-			const ref = { agent: worker.task.agent, model: worker.task.model, tier: worker.task.tier, tools: worker.task.tools, cwd: worker.cwd, contract: worker.task.contract };
+			const ref = { agent: worker.task.agent, model: worker.task.model, tier: worker.task.tier, thinking: worker.task.thinking, tools: worker.task.tools, cwd: worker.cwd, contract: worker.task.contract };
 			const task = ["## Overall integration goal", params.task ?? "Complete the assigned implementation tasks and integrate them.", `\n## Your isolated worktree assignment (${worker.id})`, worker.task.task, "\n## Harness contract", "Work only in this worktree. Make the requested edits and run focused verification. Do not commit or merge; the harness owns git integration. Report changed files, verification, and remaining risks."].join("\n");
 			const planned = integrationRunPlan(deps, ref, task, {
 				returnContract: worker.task.returnContract ?? params.returnContract,

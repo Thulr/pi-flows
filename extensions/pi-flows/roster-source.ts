@@ -96,6 +96,14 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 	} catch {
 		projectTrusted = false;
 	}
+	// Both halves of the load are carried forward: a pi-flows.json that failed to
+	// parse has silently *not* applied the user's pins, and dropping the issue
+	// here would leave the resulting model choice with no explanation anywhere.
+	const loaded = loadRosterConfig({
+		userDir: getAgentDir(),
+		projectDir: ctx.cwd ? path.join(ctx.cwd, CONFIG_DIR_NAME) : null,
+		projectTrusted,
+	});
 	return resolveModelRoster({
 		available: availableModelsFromRegistry(ctx.modelRegistry),
 		parent: {
@@ -103,10 +111,7 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 			thinking: isThinkingLevel(ctx.thinkingLevel) ? ctx.thinkingLevel : undefined,
 		},
 		env: envRosterConfig(),
-		config: loadRosterConfig({
-			userDir: getAgentDir(),
-			projectDir: ctx.cwd ? path.join(ctx.cwd, CONFIG_DIR_NAME) : null,
-			projectTrusted,
-		}).config,
+		config: loaded.config,
+		issues: loaded.issues,
 	});
 }

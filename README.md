@@ -529,10 +529,13 @@ To pin a tier yourself, run `/flows models` and pick one, or edit `~/.pi/agent/p
 {
   "models": {
     "fast": "anthropic/claude-haiku-4-5:low",
-    "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" }
+    "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" },
+    "capable": { "model": null, "thinking": "high" }
   }
 }
 ```
+
+`"model": null` (or the shorthand `"default"`) means *your pi default model* — a different statement from omitting `model`, which keeps whatever the roster derived. A tier you never mention stays derived.
 
 A trusted project may override this in `.pi/pi-flows.json`; an untrusted one is ignored, because a repo-controlled file choosing the model also chooses which vendor sees the task. The older `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` environment variables still work and are still honored, but the config file wins over them.
 

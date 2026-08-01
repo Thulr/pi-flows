@@ -17,6 +17,7 @@ import {
 	deriveModelRoster,
 	describeModelRoster,
 	envRosterConfig,
+	knownModel,
 	loadRosterConfig,
 	parseModelSpec,
 	parseRosterConfig,
@@ -107,6 +108,33 @@ test("deep prefers a reasoning model over a merely expensive one", () => {
 	assert.match(roster.deep.why, /thinking level/);
 });
 
+test("deep judges extended thinking by the levels a model offers, not by its reasoning flag", () => {
+	// A provider that maps xhigh/max to null leaves a model that reasons but
+	// cannot be pushed. Picking it would make `deep` resolve to a rung it cannot
+	// deliver, and describe itself as supporting thinking it does not have.
+	const capped = model("capped", { costPerToken: 99, thinkingLevels: ["off", "low", "medium"] });
+	const real = model("real", { costPerToken: 20, thinkingLevels: ["off", "low", "medium", "high", "max"] });
+	const roster = deriveModelRoster({ available: [model("mini", { costPerToken: 0.5 }), capped, real], parent: {} });
+	assert.equal(roster.deep.model, "acme/real", "the pricier model that cannot think longer is not the adjudicator");
+	assert.equal(roster.deep.thinking, "max");
+
+	// When nothing offers extended thinking the rung still resolves, but it must
+	// not claim a capability the install does not have.
+	const none = deriveModelRoster({ available: [model("a", { costPerToken: 1, thinkingLevels: ["off", "low"] }), model("b", { costPerToken: 5, thinkingLevels: ["off", "low"] })], parent: {} });
+	assert.equal(none.deep.model, "acme/b");
+	assert.match(none.deep.why, /none offer extended thinking/);
+	assert.equal(none.deep.thinking, "low", "and the level it reports is one that model can actually run");
+});
+
+test("deep breaks a price tie toward the larger context window", () => {
+	// cheaperFirst puts the larger context first on a tie, so reading its far end
+	// would invert the preference and hand deep the smaller-context model.
+	const small = model("small-ctx", { costPerToken: 10, contextWindow: 200_000 });
+	const large = model("large-ctx", { costPerToken: 10, contextWindow: 1_000_000 });
+	const roster = deriveModelRoster({ available: [model("mini", { costPerToken: 0.5 }), small, large], parent: {} });
+	assert.equal(roster.deep.model, "acme/large-ctx");
+});
+
 test("an unpriced model is treated as unknown, not as the cheapest or the strongest", () => {
 	// Price is only a capability proxy when there is a price. A registry that
 	// reports no cost for a model must not thereby hand it either rung — the cheap
@@ -162,6 +190,72 @@ test("an override may set a level without naming a model, and is clamped to the 
 	});
 	assert.equal(roster.fast.model, "acme/mini", "the derived model survives a level-only override");
 	assert.equal(roster.fast.thinking, "medium", "and the level is clamped to what that model supports");
+});
+
+test("a level is clamped against the pi default model when no --model is passed", () => {
+	// The majority of children run without --model. Keying the clamp only on a
+	// stated reference would skip all of them, and `tier:"capable"` with
+	// `thinking:"max"` on a model that stops at medium would be *reported* as max
+	// — the one thing the recorded level must never do.
+	const capped = model("standard", { thinkingLevels: ["off", "low", "medium"] });
+	const roster = deriveModelRoster({ available: [capped, model("mini", { costPerToken: 0.1 })], parent: { model: "acme/standard" } });
+	assert.equal(roster.defaultModel, "acme/standard", "the roster remembers what running with no --model actually means");
+	assert.equal(clampThinking("max", knownModel(roster, undefined)), "medium");
+
+	const override = resolveModelRoster({
+		available: [capped, model("mini", { costPerToken: 0.1 })],
+		parent: { model: "acme/standard" },
+		config: { capable: { thinking: "max" } },
+	});
+	assert.equal(override.capable.model, undefined, "capable still runs the pi default");
+	assert.equal(override.capable.thinking, "medium", "and its level is lowered to what that concrete model supports");
+});
+
+test("choosing the pi default is persisted as a decision, not as an absent model", () => {
+	// `undefined` already means "keep the derived assignment", so collapsing the
+	// two would leave a user who pinned fast to their own model still running the
+	// derived cheap one — possibly from a different provider.
+	const explicit = parseRosterConfig(JSON.stringify({ models: { fast: { model: null, thinking: "low" } } }));
+	assert.deepEqual(explicit.config.fast, { model: null, thinking: "low" });
+
+	const roster = resolveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		config: explicit.config,
+	});
+	assert.equal(roster.fast.model, undefined, "an explicit null clears the derived model rather than being ignored");
+	assert.equal(roster.fast.thinking, "low");
+
+	// A level-only override must still leave the derived model in force — that is
+	// the distinction the null exists to preserve.
+	const levelOnly = resolveModelRoster({ available: INSTALL, parent: { model: "acme/standard" }, config: { fast: { thinking: "low" } } });
+	assert.equal(levelOnly.fast.model, "acme/mini");
+
+	assert.deepEqual(parseRosterConfig(JSON.stringify({ models: { deep: "default" } })).config.deep, { model: null }, "the shorthand form says it with a word");
+});
+
+test("an explicit pi-default choice survives a round trip through the config file", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	saveRosterOverride(dir, "fast", { model: null, thinking: "low" });
+	const written = JSON.parse(fs.readFileSync(path.join(dir, "pi-flows.json"), "utf8"));
+	assert.equal(written.models.fast.model, null, "the null must be written, not dropped as an absent key");
+
+	const reloaded = loadRosterConfig({ userDir: dir, projectDir: null, projectTrusted: false });
+	assert.deepEqual(reloaded.config.fast, { model: null, thinking: "low" });
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("config that could not be read is reported next to the roster it failed to change", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	fs.writeFileSync(path.join(dir, "pi-flows.json"), "{ not json");
+	const loaded = loadRosterConfig({ userDir: dir, projectDir: null, projectTrusted: false });
+	assert.equal(loaded.issues.length, 1);
+
+	// A pin the user believes is in force but which never parsed is exactly the
+	// state that makes a surprising model choice undiagnosable.
+	const roster = resolveModelRoster({ available: INSTALL, parent: {}, config: loaded.config, issues: loaded.issues });
+	assert.match(describeModelRoster(roster).join("\n"), /modelRoster\.issue: .*could not be parsed/);
+	fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("parseModelSpec splits pi's :level shorthand without eating model ids that contain colons", () => {

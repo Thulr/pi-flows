@@ -137,6 +137,8 @@ Inspect it with `/flows models` or `flow showConfig:true` — every rung states 
 { "models": { "fast": "anthropic/claude-haiku-4-5:low", "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" } } }
 ```
 
+`"model": null` (shorthand `"default"`) pins a tier to your pi default model, which is distinct from omitting `model` — that keeps the derived one. Config that fails to parse is reported as a `modelRoster.issue` line beside the roster, so an override that never took effect is visible rather than silent.
+
 A trusted project may override in `.pi/pi-flows.json`; an untrusted project's file is ignored, since choosing the model also chooses which vendor sees the task. `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` still work but are outranked by the config file. Full order, narrowest first: call `model` > call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project config (trusted) > user config > env > derived roster > pi default.
 
 A flow budget bounds one flow call. It does not cross the process boundary: the outer

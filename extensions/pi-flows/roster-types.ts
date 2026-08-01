@@ -58,6 +58,18 @@ export interface ModelRoster {
 	deep: RosterAssignment;
 	/** The models the rungs were ranked from. Carried so a level named at the call site can still be clamped to the model it will run on. */
 	available: AvailableModel[];
+	/**
+	 * The model a child runs when no `--model` is passed — the parent's own.
+	 *
+	 * Carried separately because "run the pi default" is expressed as an *absent*
+	 * model reference, and a clamp keyed only on the reference would therefore
+	 * skip every default-model child. Without this, `tier:"capable"` with
+	 * `thinking:"max"` on a model that stops at `medium` would be reported as
+	 * `max` — the one thing the reported level is supposed to never do.
+	 */
+	defaultModel?: string;
 	/** How the roster was arrived at, for disclosure. */
 	source: "derived" | "configured" | "unavailable";
+	/** Config that could not be read, surfaced so an ignored override is diagnosable rather than silent. */
+	issues: string[];
 }
