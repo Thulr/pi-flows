@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, activeBudgetExceeded, budgetExceeded, budgetExceededError, budgetUnobservableError, chargeBudget, emptyUsage, flowError, type BudgetUsageState, type CapturePolicy, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type RunChildOptions, type SpanStage } from "./types.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
@@ -102,17 +102,20 @@ function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefi
 			delegationReason: options.delegationReason,
 			policy,
 		}),
-		...budgetAttributes(options.budget),
-		...budgetAttributes(options.contractBudget, "flow.contract_budget"),
+		...budgetAttributes(options.budget?.snapshot()),
+		...budgetAttributes(options.contractBudget?.snapshot()),
 	};
 }
 
 /** Production adapter for the child-run seam (ModeDeps.runChild): one real pi subprocess per call. */
 export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunResult> {
 	const policy: CapturePolicy = { recordContent: options.recordContent ?? true, redactSecrets: options.redactSecrets ?? true };
-	const budgets = [options.budget, options.contractBudget].filter((budget): budget is BudgetUsageState => Boolean(budget));
+	const budgets = [options.budget, options.contractBudget].filter((budget): budget is Budget => Boolean(budget));
 	// Flow or contract ceiling: refuse to spawn once the applicable budget is spent.
-	const exhaustedBudget = budgets.find((budget) => budgetExceeded(budget));
+	// Everything downstream — the event's authority, its attribute prefix, the
+	// error's label and ceiling — comes from the budget that refused, so a
+	// contract-bound refusal can never be reported as a flow-budget one.
+	const exhaustedBudget = budgets.find((budget) => budget.refusesSpawn());
 	if (exhaustedBudget) {
 		// A budget refusal spawns nothing, so it produces no child span. Without an
 		// event the trace would simply be missing a child and look like loss.
@@ -123,21 +126,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			scope: options.scope,
 			attributes: {
 				"flow.budget.refused_agent": options.agentName,
-				// Named against the ceiling that actually refused, so a contract-bound
-				// refusal is not reported as a flow-budget one.
-				"flow.budget.authority": exhaustedBudget === options.contractBudget ? "contract" : "flow",
-				// Prefixed by the ceiling that actually refused: reporting a contract
-				// limit under `flow.budget.*` would attribute it to a budget that in a
-				// contract-only run does not exist.
-				...budgetAttributes(exhaustedBudget, exhaustedBudget === options.contractBudget ? "flow.contract_budget" : "flow.budget"),
+				"flow.budget.authority": exhaustedBudget.authority,
+				...budgetAttributes(exhaustedBudget.snapshot()),
 			},
 		});
-		return makeEmptyRunResult(
-			options.agentName,
-			options.task,
-			policy,
-			budgetExceededError(exhaustedBudget, exhaustedBudget === options.contractBudget ? "contract" : "flow"),
-		);
+		return makeEmptyRunResult(options.agentName, options.task, policy, exhaustedBudget.exhaustedError());
 	}
 	const agent = options.agents.find((candidate) => candidate.name === options.agentName);
 	if (!agent) {
@@ -196,9 +189,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
 	let wasAborted = false;
 	let timedOut = false;
-	let budgetTerminated = false;
-	let budgetUnobservable = false;
-	let terminatingBudget: BudgetUsageState | undefined;
+	/**
+	 * The budget decision that stopped this run: which budget, and whether it was
+	 * exhausted or could not be enforced at all. One value rather than a flag pair
+	 * plus a separate budget reference, because those three could disagree — a
+	 * turn arriving between `terminate()` and the child actually exiting used to
+	 * be able to clear the budget while the flag stayed latched.
+	 */
+	let budgetStop: { budget: Budget; reason: "exhausted" | "unobservable" } | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -232,19 +230,18 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						const turnUsage = emptyUsage();
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
-						for (const budget of budgets) chargeBudget(budget, turnUsage);
-						if (!message.errorMessage && budgets.some((budget) => budget.maxCostUsd !== undefined) && turnUsage.costKnown === false) {
-							budgetUnobservable = true;
-							// Named here rather than left to the fallback: a contract-only cost
-							// ceiling is the one that could not be enforced, and reporting it as
-							// a flow budget would name one the run never had.
-							terminatingBudget = budgets.find((budget) => budget.maxCostUsd !== undefined);
-							controls.terminate();
-						} else if (!message.errorMessage) {
-							terminatingBudget = budgets.find((budget) => activeBudgetExceeded(budget))
-								?? (options.contractBudget && budgetExceeded(options.contractBudget) ? options.contractBudget : undefined);
-							if (terminatingBudget) {
-								budgetTerminated = true;
+						for (const budget of budgets) budget.charge(turnUsage);
+						// Latched on the first decision to stop: a turn that arrives after
+						// terminate() must not overwrite the budget that caused it. Named
+						// against the budget that actually bound, so a contract-only ceiling
+						// is never reported as a flow-budget one.
+						if (!budgetStop && !message.errorMessage) {
+							const unenforceable = turnUsage.costKnown === false ? budgets.find((budget) => budget.enforcesCost) : undefined;
+							// Which ceilings bite mid-stream depends on the budget's authority;
+							// the budget decides, this loop only asks. See Budget.stopsLiveRun.
+							const stopped = unenforceable ?? budgets.find((budget) => budget.stopsLiveRun());
+							if (stopped) {
+								budgetStop = { budget: stopped, reason: unenforceable ? "unobservable" : "exhausted" };
 								controls.terminate();
 							}
 						}
@@ -295,17 +292,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		timedOut = run.timedOut;
 		wasAborted = run.aborted;
 
-		result.exitCode = budgetTerminated || budgetUnobservable ? 1 : run.exitCode;
-		if (budgetUnobservable) {
-			result.stopReason = "budget_unobservable";
-			result.error = budgetUnobservableError(terminatingBudget === options.contractBudget ? "contract" : "flow");
-			result.errorMessage = result.error.message;
-		} else if (budgetTerminated) {
-			result.stopReason = "budget_exceeded";
-			result.error = budgetExceededError(
-				terminatingBudget as BudgetUsageState,
-				terminatingBudget === options.contractBudget ? "contract" : "flow",
-			);
+		result.exitCode = budgetStop ? 1 : run.exitCode;
+		if (budgetStop) {
+			const unobservable = budgetStop.reason === "unobservable";
+			result.stopReason = unobservable ? "budget_unobservable" : "budget_exceeded";
+			result.error = unobservable ? budgetStop.budget.unobservableError() : budgetStop.budget.exhaustedError();
 			result.errorMessage = result.error.message;
 		} else if (timedOut) {
 			result.stopReason = "timeout";
@@ -387,7 +378,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	} finally {
 		result.durationMs = Date.now() - started;
 		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy) });
-		if (budgetTerminated || budgetUnobservable) {
+		if (budgetStop) {
 			// Its own unit, depending on the child. Reusing the child's key would
 			// leave the event unable to rebind it — the span already owns it — so the
 			// termination would carry the same name with no link to what caused it.
@@ -396,16 +387,13 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				: options.scope;
 			options.recordEvent?.({
 				kind: "budget",
-				name: budgetUnobservable ? "child.unobservable" : "child.exhausted",
+				name: budgetStop.reason === "unobservable" ? "child.unobservable" : "child.exhausted",
 				ok: false,
 				scope: terminationScope,
 				attributes: {
 					"flow.budget.terminated_agent": agent.name,
-					"flow.budget.authority": (terminatingBudget ?? options.budget) === options.contractBudget ? "contract" : "flow",
-					...budgetAttributes(
-						terminatingBudget ?? options.budget,
-						(terminatingBudget ?? options.budget) === options.contractBudget ? "flow.contract_budget" : "flow.budget",
-					),
+					"flow.budget.authority": budgetStop.budget.authority,
+					...budgetAttributes(budgetStop.budget.snapshot()),
 				},
 			});
 		}

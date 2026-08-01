@@ -24,7 +24,7 @@ import { handleEvaluate } from "../extensions/pi-flows/modes/evaluate.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
 import { makeTraceSink, strictTraceError, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
-import type { DelegationContract, FlowErrorCode, FlowTraceLink, ModeOutput } from "../extensions/pi-flows/types.ts";
+import { Budget, type DelegationContract, type FlowErrorCode, type FlowTraceLink, type ModeOutput } from "../extensions/pi-flows/types.ts";
 import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule, type ReplyScript } from "./fault-adapter.ts";
 import { handoffPolicyScenarios } from "./fault-handoff-scenarios.ts";
 
@@ -404,7 +404,7 @@ function exhaustedBudgetScenario(): FaultScenario {
 				adapter,
 				cwd,
 				// Concurrency 1 makes the ceiling bite between children rather than racing them.
-				{ concurrency: 1, budget: { maxCostUsd: 0.3, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 } },
+				{ concurrency: 1, budget: Budget.forFlow({ maxCostUsd: 0.3 }) },
 			);
 			const output = await handleParallel(deps);
 			// The refusal spawns nothing, so the ledger's event record is the only

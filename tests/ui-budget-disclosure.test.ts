@@ -5,7 +5,7 @@ import { fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
 import { appendFlowSessionEntry } from "../extensions/pi-flows/ui.ts";
 import { flowCardLines } from "../extensions/pi-flows/ui-flow-card.ts";
 import { flowCallLines, flowLiveBoardLines } from "../extensions/pi-flows/ui-live-row.ts";
-import { MAX_FLOW_DEPTH, budgetExceededError } from "../extensions/pi-flows/types.ts";
+import { Budget, MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { integrationContract, integrationEnvelope, runFlow } from "./stub-harness.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
@@ -168,16 +168,13 @@ test("exhausted live, fleet, and durable views retain the binding authority and 
 		maxCostUsd: 0.5,
 		tasks: [{ agent: "analyst", task: "one", contract: contract({ maxGeneratedTokens: 2000 }) }],
 	});
+	const contractBudget = Budget.forContract({ maxGeneratedTokens: 2000 })!;
+	contractBudget.charge({ ...usage, input: 1000, output: 2200, cost: 0.1 });
 	const exhausted = details([
 		result({
 			exitCode: 1,
 			stopReason: "budget_exceeded",
-			error: budgetExceededError({
-				maxGeneratedTokens: 2000,
-				spentCost: 0.1,
-				spentTokens: 3200,
-				spentGeneratedTokens: 2200,
-			}, "contract"),
+			error: contractBudget.exhaustedError(),
 			usage: { ...usage, input: 1000, output: 2200, cost: 0.1 },
 		}),
 	], budgetCeilings);

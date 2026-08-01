@@ -11,7 +11,7 @@
  */
 import { canonicalSha256, delegationContractId } from "./delegation.ts";
 import { sanitizeText } from "./sanitize.ts";
-import type { CapturePolicy, DelegationContract, DelegationHandoffEnvelope, FlowError, HandoffPolicy, PreparedHandoff } from "./types.ts";
+import type { BudgetSnapshot, CapturePolicy, DelegationContract, DelegationHandoffEnvelope, FlowError, HandoffPolicy, PreparedHandoff } from "./types.ts";
 
 const LABEL_CAP = 512;
 const LIST_CAP = 1024;
@@ -182,26 +182,18 @@ export function artifactAttributes(source: ArtifactSource, artifactPath: string,
 	};
 }
 
-interface BudgetState {
-	maxCostUsd?: number;
-	maxTokens?: number;
-	maxGeneratedTokens?: number;
-	spentCost: number;
-	spentTokens: number;
-	spentGeneratedTokens: number;
-}
-
 /**
  * Budget state after a child charged it, recorded on the span that caused the
  * change.
  *
- * @param prefix which ceiling this is. A contracted child is bounded by two
- *   independent budgets — the flow's and the contract's — and the contract's
- *   is usually the tighter one, so recording only the flow budget would name a
- *   limit that did not stop the child and omit the one that did.
+ * The prefix follows the snapshot's own authority. A contracted child is bounded
+ * by two independent budgets — the flow's and the contract's — and the
+ * contract's is usually the tighter one, so recording both under one prefix
+ * would name a ceiling that did not stop the child and omit the one that did.
  */
-export function budgetAttributes(budget: BudgetState | undefined, prefix = "flow.budget"): Record<string, unknown> {
+export function budgetAttributes(budget: BudgetSnapshot | undefined): Record<string, unknown> {
 	if (!budget) return {};
+	const prefix = budget.authority === "contract" ? "flow.contract_budget" : "flow.budget";
 	const attributes: Record<string, unknown> = {
 		[`${prefix}.spent_cost_usd`]: budget.spentCost,
 		[`${prefix}.spent_tokens`]: budget.spentTokens,

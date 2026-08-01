@@ -3,18 +3,16 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
+	Budget,
 	DEFAULT_CONCURRENCY,
 	MAX_FLOW_DEPTH,
 	PI_FLOWS_VERSION,
 	RUN_MODE_NAMES,
-	budgetExceeded,
-	chargeBudget,
 	flowError,
 	formatFlowError,
 	type AgentScope,
 	type CapturePolicy,
 	type FlowAgent,
-	type FlowBudget,
 	type FlowDetails,
 	type FlowError,
 	type FlowMode,
@@ -93,8 +91,6 @@ export const __test = {
 	flowsHelpText,
 	stripControlChars,
 	scanForInjection,
-	budgetExceeded,
-	chargeBudget,
 	resolveAgentModel,
 	configuredTierModels,
 	appendReturnContract,
@@ -349,10 +345,8 @@ export default function (pi: ExtensionAPI) {
 
 			// Cost ceiling (bounds the one "uncontrolled recursion" dimension iteration/time
 			// caps miss) and optional trace export (OpenInference JSONL) for the flow tree.
-			const budget: FlowBudget | undefined =
-				params.maxCostUsd !== undefined || params.maxTokens !== undefined || params.maxGeneratedTokens !== undefined
-					? { maxCostUsd: params.maxCostUsd, maxTokens: params.maxTokens, maxGeneratedTokens: params.maxGeneratedTokens, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 }
-					: undefined;
+			// Undefined when the call configured no ceiling: this flow runs uncapped.
+			const budget = Budget.forFlow(params);
 			// Who to credit on an approval receipt. pi does not hand the extension an
 			// authenticated operator identity, so this is an audit label: whatever
 			// PI_FLOWS_APPROVAL_ACTOR names, else the channel that answered the prompt.

@@ -4,7 +4,7 @@ import { budgetDisclosureLines, exhaustedBudgetText } from "./budget-disclosure.
 import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRegistry, type InspectorContext, type LiveFlow } from "./inspector.ts";
 import { formatUsage } from "./trace.ts";
 import { spinnerFrame } from "./ui-live-row.ts";
-import type { FlowBudget, FlowRunResult } from "./types.ts";
+import type { BudgetSnapshot, FlowRunResult } from "./types.ts";
 import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
 
 /**
@@ -16,7 +16,7 @@ import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
  * single-agent drill-down.
  */
 
-export function budgetLine(budget: FlowBudget | undefined, theme: Theme): string | undefined {
+export function budgetLine(budget: BudgetSnapshot | undefined, theme: Theme): string | undefined {
 	if (!budget?.maxCostUsd) return undefined;
 	const spent = budget.spentCost;
 	const max = budget.maxCostUsd;
@@ -41,7 +41,7 @@ export function fleetFlowLines(flow: LiveFlow, theme: Theme, tick: number, optio
 	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(flow.details, options))}` : "";
 	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${flow.mode}`))}${progress}`];
 	lines.push(...budgetDisclosureLines(flow.details.budgetCeilings).map((line) => theme.fg("muted", line)));
-	const budget = budgetLine(flow.budget, theme);
+	const budget = budgetLine(flow.budget?.snapshot(), theme);
 	if (budget) lines.push(budget);
 
 	const nameWidth = Math.min(16, Math.max(4, ...flow.details.results.map((result: FlowRunResult) => result.agent.length)));

@@ -3,9 +3,17 @@ import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { FleetPanel, budgetLine, createFleetPanelController, fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
 import { FlowRegistry } from "../extensions/pi-flows/inspector.ts";
+import { Budget } from "../extensions/pi-flows/types.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
+
+/** A flow budget already burned down to `spentCost`, for views that render a partly spent ceiling. */
+function spentBudget(ceilings: { maxCostUsd?: number; maxTokens?: number }, spentCost: number) {
+	const budget = Budget.forFlow(ceilings)!;
+	budget.charge({ ...usage, cost: spentCost, turns: 1 });
+	return budget;
+}
 
 function result(overrides: Record<string, unknown> = {}): any {
 	return { agent: "recon", agentSource: "package", task: "inspect auth", exitCode: -1, messages: [], stderr: "", usage, ...overrides };
@@ -22,7 +30,7 @@ const keybindings = {
 
 test("registry exposes live flows, budget references, and the last settled flow", () => {
 	const registry = new FlowRegistry();
-	const budget = { maxCostUsd: 2, spentCost: 0.5, spentTokens: 0, spentGeneratedTokens: 0 };
+	const budget = Budget.forFlow({ maxCostUsd: 2 })!;
 	registry.start("flow-1", "parallel", details([result()]), true, budget);
 	assert.equal(registry.activeFlows().length, 1);
 	assert.equal(registry.activeFlows()[0]?.budget, budget, "budget must be the live reference, not a copy");
@@ -35,8 +43,10 @@ test("registry exposes live flows, budget references, and the last settled flow"
 
 test("budgetLine renders burn-down only when a cost ceiling exists", () => {
 	assert.equal(budgetLine(undefined, theme), undefined);
-	assert.equal(budgetLine({ spentCost: 1, spentTokens: 0, spentGeneratedTokens: 0 }, theme), undefined, "no ceiling, no line");
-	const line = budgetLine({ maxCostUsd: 2, spentCost: 0.5, spentTokens: 0, spentGeneratedTokens: 0 }, theme)!;
+	assert.equal(budgetLine(Budget.forFlow({ maxTokens: 100 })!.snapshot(), theme), undefined, "a token-only ceiling has no cost bar to draw");
+	const quarterSpent = Budget.forFlow({ maxCostUsd: 2 })!;
+	quarterSpent.charge({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.5, contextTokens: 0, turns: 1 });
+	const line = budgetLine(quarterSpent.snapshot(), theme)!;
 	assert.match(line, /▰{3}▱{9}/, "a quarter spent fills a quarter of the bar");
 	assert.match(line, /\$0\.5000 \/ \$2\.00 budget/);
 });
@@ -45,7 +55,7 @@ test("fleetFlowLines shows every agent with state, activity, and failures", () =
 	const run = {
 		mode: "parallel" as const,
 		redactSecrets: true,
-		budget: { maxCostUsd: 2, spentCost: 0.2, spentTokens: 0, spentGeneratedTokens: 0 },
+		budget: spentBudget({ maxCostUsd: 2 }, 0.2),
 		details: details([
 			result({ exitCode: 0, durationMs: 4000, usage: { ...usage, cost: 0.02 } }),
 			result({
