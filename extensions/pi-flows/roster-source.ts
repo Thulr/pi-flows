@@ -6,6 +6,7 @@
  * here turns a pi runtime into the plain values `model-roster.ts` ranks — which
  * is what lets the roster policy, and every test of it, run with no pi present.
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { THINKING_LEVELS, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
@@ -65,6 +66,30 @@ export function availableModelsFromRegistry(registry: ModelRegistryLike | undefi
 	});
 }
 
+/**
+ * Nearest ancestor holding a pi config dir, or null.
+ *
+ * Walked rather than joined onto cwd because project-agent discovery already
+ * walks (`findNearestProjectAgentsDir`), and the two have to agree: starting pi
+ * from `src/` would otherwise load the repo's project agents while silently
+ * ignoring the model pins sitting beside them, which reads as the config file
+ * not working rather than as a directory-depth rule nobody documented.
+ */
+function nearestProjectConfigDir(cwd: string): string | null {
+	let current = path.resolve(cwd);
+	while (true) {
+		const candidate = path.join(current, CONFIG_DIR_NAME);
+		try {
+			if (fs.statSync(candidate).isDirectory()) return candidate;
+		} catch {
+			// Not here; keep walking.
+		}
+		const parent = path.dirname(current);
+		if (parent === current) return null;
+		current = parent;
+	}
+}
+
 /** What resolving a roster needs from a live pi context. Structural, so the shape stays visible here rather than imported wholesale. */
 interface RosterContext {
 	cwd?: string;
@@ -102,7 +127,7 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 	// here would leave the resulting model choice with no explanation anywhere.
 	const loaded = loadRosterConfig({
 		userDir: getAgentDir(),
-		projectDir: ctx.cwd ? path.join(ctx.cwd, CONFIG_DIR_NAME) : null,
+		projectDir: ctx.cwd ? nearestProjectConfigDir(ctx.cwd) : null,
 		projectTrusted,
 	});
 	return resolveModelRoster({

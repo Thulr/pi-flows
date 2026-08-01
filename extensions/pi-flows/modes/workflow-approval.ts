@@ -77,12 +77,15 @@ export function normalizeGatedPhase(phase: any, params: any): Record<string, unk
 		agent: phase.agent ?? null,
 		task: phase.task ?? null,
 		cwd: phase.cwd ?? null,
-		model: phase.model ?? null,
-		tier: phase.tier ?? null,
-		// Bound for the same reason as model and tier: it changes what actually
-		// runs under the approval, and raising a phase from low to max after the
-		// fact is a material change in cost the operator never saw.
-		thinking: phase.thinking ?? null,
+		// Which model runs, and how hard it thinks, both resolve through a
+		// flow-level fallback at dispatch (`ref.model ?? params.model`). Binding
+		// only the phase's own value would leave a receipt that survives changing
+		// the fallback — approve at `thinking:"low"`, resume at `"max"`, or approve
+		// on one vendor's model and resume on another's. The effective value is the
+		// one the operator actually authorized, so it is the one bound.
+		model: phase.model ?? params.model ?? null,
+		tier: phase.tier ?? params.tier ?? null,
+		thinking: phase.thinking ?? params.thinking ?? null,
 		tools: phase.tools ?? null,
 		checkCommand: phase.checkCommand ?? null,
 		contract: phase.contract ?? null,

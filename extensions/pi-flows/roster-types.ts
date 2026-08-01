@@ -96,7 +96,17 @@ export interface ModelRoster {
 	fast: RosterAssignment;
 	capable: RosterAssignment;
 	deep: RosterAssignment;
-	/** The models the rungs were ranked from. Carried so a level named at the call site can still be clamped to the model it will run on. */
+	/**
+	 * Every model the registry reported, not just the ones a tier may be assigned.
+	 *
+	 * Capability lookup and tier assignment are different questions. Ranking uses
+	 * {@link usableModels}, which drops embeddings and context windows too small
+	 * to hold a delegated task — but a model excluded from *assignment* can still
+	 * be the one a child runs, because the pi default is whatever the user set,
+	 * and a config pin may name anything. Storing only the assignable pool means
+	 * a small default model would have no capabilities on record, and a level
+	 * requested against it would go unclamped and be misreported.
+	 */
 	available: AvailableModel[];
 	/**
 	 * The model a child runs when no `--model` is passed — the parent's own.

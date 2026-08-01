@@ -35,9 +35,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `flow showConfig:true` reports the same roster with its rationale.
   `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` continue to work, outranked by
   the config file.
-- A gated workflow phase's `thinking` is bound into its approval receipt digest
-  alongside `model` and `tier`, so raising a phase from `low` to `max` after
-  approval invalidates the receipt rather than running under it.
+- A gated workflow phase's approval receipt now binds the *effective* `model`,
+  `tier`, and `thinking` — the phase's own value or the flow-level fallback it
+  resolves through at dispatch. Previously only the phase's own `model`/`tier`
+  were bound, so a workflow approved under one flow-level model could be resumed
+  under another, and the new `thinking` field would have inherited the same hole.
+  Changing any of them after approval now invalidates the receipt.
 - Bundled agents declare thinking levels where their effort profile is fixed:
   `recon` and `controller` at `low`, `strategist` at `high`, `redteam` at `max`.
   `analyst`, `operator`, `overwatch`, `commander`, and `debrief` inherit the

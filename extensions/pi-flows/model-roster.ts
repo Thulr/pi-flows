@@ -187,7 +187,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 
 	if (pool.length === 0) {
 		const unknown = "no model registry was available, so every tier runs your pi default";
-		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: pool, defaultModel: parentModel, source: "unavailable", issues: [] };
+		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: inputs.available, defaultModel: parentModel, source: "unavailable", issues: [] };
 	}
 
 	const sameProvider = parent ? pool.filter((model) => model.provider === parent.provider) : [];
@@ -225,7 +225,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		? `your pi default is already the most capable model available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`
 		: "your pi default is already the most capable model available, and none offer extended thinking, so deep matches it");
 
-	return { fast, capable, deep, available: pool, defaultModel: parentModel, source: "derived", issues: [] };
+	return { fast, capable, deep, available: inputs.available, defaultModel: parentModel, source: "derived", issues: [] };
 }
 
 /**
@@ -276,19 +276,20 @@ export interface ResolveRosterInputs extends RosterInputs {
  */
 export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
 	const derived = deriveModelRoster(inputs);
-	const pool = usableModels(inputs.available);
 	let configured = false;
 	const rungs = (["fast", "capable", "deep"] as const).map((tier) => {
 		const env = inputs.env?.[tier];
 		const config = inputs.config?.[tier];
 		if (env || config) configured = true;
-		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", pool, derived.defaultModel);
-		return [tier, applyOverride(withEnv, config, ROSTER_CONFIG_FILE, pool, derived.defaultModel)] as const;
+		// Clamping reads the full registry, not the assignable pool: a pin may name a
+		// model that ranking excluded, and it still has real limits.
+		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", inputs.available, derived.defaultModel);
+		return [tier, applyOverride(withEnv, config, ROSTER_CONFIG_FILE, inputs.available, derived.defaultModel)] as const;
 	});
 	const roster = Object.fromEntries(rungs) as Pick<ModelRoster, "fast" | "capable" | "deep">;
 	return {
 		...roster,
-		available: pool,
+		available: inputs.available,
 		defaultModel: derived.defaultModel,
 		source: configured ? "configured" : derived.source,
 		issues: inputs.issues ?? [],

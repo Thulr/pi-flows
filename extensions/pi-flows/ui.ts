@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { PI_FLOWS_VERSION, THINKING_LEVELS, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
-import { describeModelRoster } from "./model-roster.ts";
+import { describeModelRoster, usableModels } from "./model-roster.ts";
 import { USE_DEFAULT_MODEL } from "./types.ts";
 import { saveRosterOverride } from "./roster-config.ts";
 import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
@@ -181,7 +181,10 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 
 	// Only models this install can actually run are offered. A free-text field
 	// here would let a typo become a tier that fails every child that uses it.
-	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [KEEP_DERIVED, PI_DEFAULT_MODEL, ...roster.available.map((model) => model.reference)]);
+	// Only assignable models are offered: the roster carries the full registry for
+	// capability lookup, but embeddings and context windows too small to hold a
+	// delegated task are not tiers anyone should be able to pick by accident.
+	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [KEEP_DERIVED, PI_DEFAULT_MODEL, ...usableModels(roster.available).map((model) => model.reference)]);
 	if (!modelChoice) return;
 	if (modelChoice === KEEP_DERIVED) {
 		const file = saveRosterOverride(userDir, tier, undefined);

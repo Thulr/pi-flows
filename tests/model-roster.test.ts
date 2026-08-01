@@ -244,6 +244,23 @@ test("a level is clamped against the pi default model when no --model is passed"
 	assert.equal(override.capable.thinking, "medium", "and its level is lowered to what that concrete model supports");
 });
 
+test("a default model too small to be assigned a tier still has its limits respected", () => {
+	// Ranking excludes models that cannot hold a delegated task — but the pi
+	// default is whatever the user set, and a local 8k model is a real setup. If
+	// the roster kept only the assignable pool, that default would have no
+	// capabilities on record and a requested `max` would be reported unclamped.
+	const tiny = model("local-8k", { contextWindow: 8_000, thinkingLevels: ["off", "low"] });
+	const roster = deriveModelRoster({ available: [tiny, ...INSTALL], parent: { model: "acme/local-8k" } });
+
+	assert.ok(!usableModels(roster.available).some((entry) => entry.id === "local-8k"), "it is still not assignable to a tier");
+	assert.equal(knownModel(roster, undefined)?.id, "local-8k", "but its capabilities are still on record");
+	assert.equal(clampThinking("max", knownModel(roster, undefined)), "low", "so a level requested against it is lowered honestly");
+
+	// Same for a pin that names a model ranking excluded: the user chose it, and
+	// it still has real limits.
+	assert.equal(clampThinking("max", knownModel(roster, "acme/local-8k")), "low");
+});
+
 test("choosing the pi default is persisted as a decision, not as an absent model", () => {
 	// `undefined` already means "keep the derived assignment", so collapsing the
 	// two would leave a user who pinned fast to their own model still running the

@@ -449,6 +449,41 @@ test("a trailing approval binds the debrief it gates, not just the phases", asyn
 	assert.ok(debriefCalls(unchanged.calls) > debriefCalls(changed.calls), "the re-approved debrief runs");
 });
 
+test("a flow-level model or thinking change invalidates a receipt the phase inherited it under", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Ship the change.",
+		// The phase names neither, so both resolve from the flow-level fallback at
+		// dispatch. Binding only the phase's own values would leave a receipt that
+		// survives changing what the child actually runs as.
+		thinking: "low",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "approve", approval: { message: "Approve the rollout" } },
+				{ id: "ship", agent: "strategist", task: "Ship it" },
+			],
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	const paused = await runFlow(params, {}, { cwd });
+	assert.equal(paused.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	// Approve, then fail the gated phase so the receipt survives unspent.
+	await runFlow(resume(), { strategist: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+	const raised = await runFlow(resume({ thinking: "max" }), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(raised.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "raising effort after approval must not ride the old consent");
+	assert.match(raised.result.details.error?.cause ?? "", /no longer holds/);
+
+	// Same for the model: approving on one vendor's model and resuming on
+	// another's is the same class of change.
+	const revendored = await runFlow(resume({ model: "test-provider/other-model" }), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(revendored.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+
+	const unchanged = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+	assert.equal(unchanged.result.details.error, undefined, "an unchanged resume still spends the receipt it was granted");
+});
+
 test("a reopen is refused once part of the gated run has already executed", async () => {
 	const cwd = await freshDir();
 	const params = {
