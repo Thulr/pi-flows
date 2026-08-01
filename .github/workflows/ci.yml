@@ -8,8 +8,16 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # The foreign-import ledger is shrink-only, which the gate can only verify
+      # against the revision the change started from. Empty on push, where the
+      # script falls back to origin/main.
+      DOMAIN_SCORE_BASE: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so the base revision above is reachable.
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -38,10 +46,14 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Score the domain model
         run: node scripts/domain-score.mjs --summary | tee /tmp/domain-score.md >> "$GITHUB_STEP_SUMMARY"
-      # Fork PRs get a read-only token, so they keep the step summary and skip the
-      # comment rather than failing the job on a permission they were never given.
+      # Fork PRs, and Dependabot-triggered runs, get a read-only token even when
+      # the head repo matches, so they keep the step summary and skip the comment
+      # rather than failing a reporting-only job on a permission they never had.
       - name: Post the score on the PR
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: >-
+          github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}

@@ -66,6 +66,8 @@ for (const arg of args) {
   }
 }
 
+const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+
 const review = JSON.parse(readFileSync(path.join(root, REVIEW_FILE), "utf8"));
 
 function moduleSources() {
@@ -106,6 +108,41 @@ const globToRe = (pattern) => new RegExp(`^${pattern.replace(/[.]/g, "\\.").repl
 // gate that exists to catch exactly those.
 const RELATIVE_IMPORT = /(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g;
 const FOREIGN_IMPORT = /(?:from|import)\s*\(?\s*["']@earendil-works\//;
+
+/**
+ * The debt ledger the change started from.
+ *
+ * "Shrink-only" is not a property of a list; it is a property of a list compared
+ * against its predecessor. Without this, adding a foreign import and adding the
+ * module to `debt` in the same change passes the gate — the leak gets recorded
+ * instead of fixed, which is the one outcome the ledger exists to prevent.
+ *
+ * Returns `known: false` when there is nothing to compare against — no resolvable
+ * base, or a base where the ledger did not exist yet (the change that introduces
+ * it). Unverified is reported, not silently treated as a pass.
+ */
+function debtBaseline() {
+  const baseRef = process.env.DOMAIN_SCORE_BASE?.trim() || "origin/main";
+  let base;
+  try {
+    base = git("merge-base", "HEAD", baseRef);
+  } catch {
+    return { known: false, why: `no base revision to compare against (${baseRef} could not be resolved)` };
+  }
+  let recorded;
+  try {
+    // stderr ignored: "exists on disk, but not in <rev>" is the expected answer
+    // for the change that introduces the ledger, not something to print.
+    recorded = execFileSync("git", ["show", `${base}:${REVIEW_FILE}`], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return { known: false, why: `the ledger did not exist at ${base.slice(0, 8)}, so this change introduces it` };
+  }
+  try {
+    return { known: true, base, modules: new Set(JSON.parse(recorded).foreignImports.debt.map((entry) => entry.module)) };
+  } catch {
+    return { known: false, why: `the ledger at ${base.slice(0, 8)} could not be parsed` };
+  }
+}
 
 const findings = [];
 const flag = (row, message) => findings.push({ row, message });
@@ -161,6 +198,17 @@ for (const [file, source] of sources) {
   }
 }
 
+// The ledger may only shrink. A new entry means a foreign type reached a module
+// that did not have one, and recording it is not the remedy.
+const baseline = debtBaseline();
+if (baseline.known) {
+  for (const module of debt.keys()) {
+    if (!baseline.modules.has(module)) {
+      flag("acl", `${REVIEW_FILE} adds \`${module}\` to the foreign-import debt ledger — the ledger is shrink-only, so a new leak has to be fixed rather than recorded`);
+    }
+  }
+}
+
 const structural = [
   { row: "names", label: "Expert-readable names", pass: clean("names") },
   { row: "boundaries", label: "Explicit context boundaries (enforced import direction)", pass: clean("boundaries") },
@@ -169,8 +217,6 @@ const structural = [
 ];
 
 // ---------------------------------------------------------------- carried judgment rows
-const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-
 /**
  * Paths with uncommitted changes, including untracked files.
  *
@@ -320,6 +366,7 @@ if (args.has("--json")) {
   console.log(`domain model: ${carried}/${total}${stale ? ` (${verified}/${total} verified now)` : ""}`);
   for (const entry of [...structural, ...judgment]) console.log(`  ${mark(entry)} ${entry.label}`);
   if (stale) console.log(`  ◌ judgment rows unverified: ${staleReason}`);
+  if (!baseline.known && debt.size) console.log(`  ◌ shrink-only ledger unverified: ${baseline.why}`);
   for (const finding of findings) console.error(`✗ ${finding.message}`);
   if (findings.length) {
     console.error(`\n✗ domain model: ${findings.length} structural finding(s). These are mechanical rules — fix the code, or change the classification in ${CONTEXT_FILE} deliberately.`);
