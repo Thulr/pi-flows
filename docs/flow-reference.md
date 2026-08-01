@@ -129,7 +129,7 @@ if no justification can be stated, the task belongs in the parent context.
 
 ### The model roster
 
-`tier` and `thinking` resolve against a roster derived from pi's model registry — the models this install has configured auth for — rather than from a list pi-flows maintains. `fast` takes the cheapest usable model (preferring the parent's own provider) at `low`; `capable` takes the pi default model at the session's current thinking level; `deep` takes the most capable model, preferring one that supports extended thinking, at `max`. When the default model is already the best available, `deep` differs by thinking level instead of pinning a redundant `--model`.
+`tier` and `thinking` resolve against a roster derived from pi's model registry — the models this install has configured auth for — rather than from a list pi-flows maintains. `fast` takes the cheapest usable model (preferring the parent's own provider) at `low`; `capable` names the model this session is running (not pi's configured default, which a fresh child would otherwise load) at the session's current thinking level; `deep` takes the most capable model, preferring one that supports extended thinking, at `max`. When the default model is already the best available, `deep` differs by thinking level instead of pinning a redundant `--model`.
 
 Inspect it with `/flows models` or `flow showConfig:true` — every rung states the model, the level, and the reason it was chosen. Override a tier from `/flows models`, or in `~/.pi/agent/pi-flows.json`:
 
@@ -137,7 +137,7 @@ Inspect it with `/flows models` or `flow showConfig:true` — every rung states 
 { "models": { "fast": "anthropic/claude-haiku-4-5:low", "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" } } }
 ```
 
-`"model": null` (shorthand `"default"`) pins a tier to your pi default model, which is distinct from omitting `model` — that keeps the derived one. Config that fails to parse is reported as a `modelRoster.issue` line beside the roster, so an override that never took effect is visible rather than silent.
+`"model": null` (shorthand `"default"`) runs that tier with no `--model`, so the child loads pi's configured default — distinct from omitting `model`, which keeps the derived one, and from `capable`, which names this session's model. A level set alongside it cannot be pre-checked against that model, since pi does not expose its configured default to an extension. Config that fails to parse is reported as a `modelRoster.issue` line beside the roster, so an override that never took effect is visible rather than silent.
 
 A trusted project may override in `.pi/pi-flows.json`; an untrusted project's file is ignored, since choosing the model also chooses which vendor sees the task. `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` still work but are outranked by the config file. Full order, narrowest first: call `model` > call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project config (trusted) > user config > env > derived roster > pi default.
 

@@ -512,15 +512,15 @@ System prompt for the delegated agent.
 Tiers stay portable — no vendor model is hard-coded anywhere in pi-flows. Instead, each tier resolves against a **roster** derived from the models your install can actually run, read from pi's own model registry:
 
 - `fast` — the cheapest model you have that can still hold a delegated task, at `low` thinking. Prefers your own provider, so a scout doesn't silently move work to a second vendor.
-- `capable` — the model your session is actually running, at the thinking level it is currently on. A plain delegated child behaves like the session that delegated it. (Named explicitly, not inherited: a child starts fresh, so an unnamed model would load pi's *configured* default, which differs once you start with `--model` or switch models mid-session.)
+- `capable` — the model your session is actually running, at the thinking level it is currently on. A plain delegated child behaves like the session that delegated it. It is **named explicitly** on the child, not inherited: a child starts fresh, so leaving the model unstated would load pi's *configured* default, which differs the moment you start with `--model` or switch models mid-session.
 - `deep` — the most capable model you have, preferring one that supports extended thinking, at `max`.
 
 This works with no configuration. If your default model is already the best one available, `deep` says so and differs by thinking level rather than pinning a redundant `--model`. Run `/flows models` or `flow showConfig:true` to see what each tier resolves to right now, and why:
 
 ```
 modelTier.fast: anthropic/claude-haiku-4-5, thinking low — cheapest model this install can run on anthropic
-modelTier.capable: (your pi default model), thinking high — your pi default model, at the session's current thinking level (high)
-modelTier.deep: (your pi default model), thinking max — your pi default is already the most capable model available, so deep differs by thinking level (max), not by model
+modelTier.capable: anthropic/claude-opus-5, thinking high — the model this session is running, at its current thinking level (high)
+modelTier.deep: anthropic/claude-opus-5, thinking max — your pi default is already the most capable model available, so deep differs by thinking level (max), not by model
 ```
 
 To pin a tier yourself, run `/flows models` and pick one, or edit `~/.pi/agent/pi-flows.json` directly:
@@ -535,7 +535,7 @@ To pin a tier yourself, run `/flows models` and pick one, or edit `~/.pi/agent/p
 }
 ```
 
-`"model": null` (or the shorthand `"default"`) means *your pi default model* — a different statement from omitting `model`, which keeps whatever the roster derived. A tier you never mention stays derived.
+`"model": null` (or the shorthand `"default"`) means *run with no `--model`*, so the child loads pi's configured default. That is a different statement from omitting `model`, which keeps whatever the roster derived — and different again from `capable`, which names the model this session is actually running. A tier you never mention stays derived. Because pi does not expose its configured default to an extension, a level set alongside `"model": null` cannot be checked against that model in advance; pi lowers it on the way in.
 
 A trusted project may override this in `.pi/pi-flows.json` — found by walking up from the working directory (searching for the file itself, so an unrelated nested `.pi` does not shadow it), like project agents, so it applies when you start pi in a subdirectory. `/flows models` warns before saving a tier the project already claims, since project config outranks your user file. An untrusted project's file is ignored, because a repo-controlled file choosing the model also chooses which vendor sees the task. A project override narrows a tier field by field, so a project that sets only `thinking` keeps your model pin. The older `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` environment variables still work and are still honored, but the config file wins over them.
 

@@ -523,30 +523,34 @@ test("roster drift under a bound tier invalidates the receipt", async () => {
 	}
 });
 
-test("a phase that resolves to the default binds which model that actually is", () => {
+test("a capable-tier phase binds the session model, and moving it invalidates the receipt", () => {
 	// Tested on the binding directly rather than through a resume: stating a model
 	// on the resume would make the binding differ for that reason alone, which
-	// passes whether or not the default is captured. What has to change here is
-	// ONLY the session's default, under a phase that names nothing.
-	const roster = (defaultModel: string) => ({
+	// passes whether or not the model is captured. What changes here is ONLY what
+	// the tier resolves to.
+	const roster = (sessionModel: string) => ({
 		fast: { model: "p/cheap", thinking: "low", why: "t" },
-		capable: { model: defaultModel, thinking: "medium", why: "t" },
+		capable: { model: sessionModel, thinking: "medium", why: "t" },
 		deep: { model: "p/strong", thinking: "max", why: "t" },
 		available: [],
-		defaultModel,
+		sessionModel,
 		source: "derived" as const,
 		issues: [],
 	});
-	const deps = (defaultModel: string) => ({ discovery: { agents: [] }, roster: roster(defaultModel) } as any);
-	const phase = { id: "ship", agent: "operator", task: "Ship it" };
+	const deps = (sessionModel: string) => ({ discovery: { agents: [] }, roster: roster(sessionModel) } as any);
+	const phase = { id: "ship", agent: "operator", task: "Ship it", tier: "capable" };
 
 	const before = normalizeGatedPhase(phase, {}, deps("p/original"));
 	const after = normalizeGatedPhase(phase, {}, deps("p/replacement"));
-	assert.notDeepEqual(before, after, "the same unstated phase binds differently once the default moves");
-	assert.equal(before.model, "p/original", "and it records which model that default actually was");
+	assert.notDeepEqual(before, after, "the same phase binds differently once its tier resolves elsewhere");
+	assert.equal(before.model, "p/original", "and it records the concrete model, not the tier name");
 
-	// An unresolvable roster still binds null rather than inventing a model.
-	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] } } as any).model, null);
+	// A phase naming no model, no tier, and using an agent that declares none
+	// runs pi's configured default — which an extension cannot read, so the
+	// receipt records null rather than a model the child will not run.
+	const unpinned = { id: "ship", agent: "operator", task: "Ship it" };
+	assert.equal(normalizeGatedPhase(unpinned, {}, deps("p/original")).model, null);
+	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] } } as any).model, null, "an unresolvable roster binds null too");
 });
 
 test("a trailing approval binds the debrief's model and thinking, not just its contract", async () => {

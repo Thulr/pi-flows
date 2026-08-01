@@ -292,16 +292,22 @@ test("an override may set a level without naming a model, and is clamped to the 
 	assert.equal(roster.fast.thinking, "medium", "and the level is clamped to what that model supports");
 });
 
-test("a level is clamped against the pi default model when no --model is passed", () => {
+test("an unpinned child's model is unknown, so no clamp is claimed for it", () => {
 	// The majority of children run without --model. Keying the clamp only on a
 	// stated reference would skip all of them, and `tier:"capable"` with
 	// `thinking:"max"` on a model that stops at medium would be *reported* as max
 	// — the one thing the recorded level must never do.
 	const capped = model("standard", { thinkingLevels: ["off", "low", "medium"] });
 	const roster = deriveModelRoster({ available: [capped, model("mini", { costPerToken: 0.1 })], parent: { model: "acme/standard" } });
-	assert.equal(roster.defaultModel, "acme/standard", "the roster remembers what running with no --model actually means");
-	assert.equal(clampThinking("max", knownModel(roster, undefined)), "medium");
+	assert.equal(roster.sessionModel, "acme/standard", "the roster records the session's model");
 
+	// An unpinned child loads pi's *configured* default, which this extension
+	// cannot read — so its capabilities are unknown and no clamp is claimed.
+	// Substituting the session model would report a limit the child never had.
+	assert.equal(knownModel(roster, undefined), undefined);
+
+	// `capable` avoids the problem entirely by naming the model, which is what
+	// makes its level checkable.
 	const override = resolveModelRoster({
 		available: [capped, model("mini", { costPerToken: 0.1 })],
 		parent: { model: "acme/standard" },
@@ -320,12 +326,15 @@ test("a default model too small to be assigned a tier still has its limits respe
 	const roster = deriveModelRoster({ available: [tiny, ...INSTALL], parent: { model: "acme/local-8k" } });
 
 	assert.ok(!usableModels(roster.available).some((entry) => entry.id === "local-8k"), "it is still not assignable to a tier");
-	assert.equal(knownModel(roster, undefined)?.id, "local-8k", "but its capabilities are still on record");
-	assert.equal(clampThinking("max", knownModel(roster, undefined)), "low", "so a level requested against it is lowered honestly");
+	// `capable` names it, and naming it is what makes its limits checkable — the
+	// capabilities have to be on record even though ranking excluded it.
+	assert.equal(roster.capable.model, "acme/local-8k");
+	assert.equal(clampThinking("max", knownModel(roster, roster.capable.model)), "low", "so a level requested against it is lowered honestly");
 
-	// Same for a pin that names a model ranking excluded: the user chose it, and
-	// it still has real limits.
-	assert.equal(clampThinking("max", knownModel(roster, "acme/local-8k")), "low");
+	// Same for a config pin naming a model ranking excluded: the user chose it,
+	// and it still has real limits.
+	const pinned = resolveModelRoster({ available: [tiny, ...INSTALL], parent: { model: "acme/standard" }, config: { deep: { model: "acme/local-8k", thinking: "max" } } });
+	assert.equal(pinned.deep.thinking, "low");
 });
 
 test("choosing the pi default is persisted as a decision, not as an absent model", () => {
@@ -349,6 +358,32 @@ test("choosing the pi default is persisted as a decision, not as an absent model
 	assert.equal(levelOnly.fast.model, "acme/mini");
 
 	assert.deepEqual(parseRosterConfig(JSON.stringify({ models: { deep: "default" } })).config.deep, { model: null }, "the shorthand form says it with a word");
+});
+
+test("pinning a tier to a new model re-asks for that tier's level, not the old model's clamp", () => {
+	// The derived level was clamped against the model derivation chose. Carrying
+	// it onto a different model carries the *old* model's limits: a non-reasoning
+	// fast rung clamps to `off`, so pinning fast to a reasoning model without
+	// naming a level would keep `off` instead of the `low` the rung documents.
+	const plainCheap = model("plain", { costPerToken: 0.1, reasoning: false });
+	const thinker = model("thinker", { costPerToken: 5 });
+	const derived = deriveModelRoster({ available: [plainCheap, thinker], parent: { model: "acme/thinker" } });
+	assert.equal(derived.fast.thinking, "off", "the derived fast model cannot reason, so its level is off");
+
+	const pinned = resolveModelRoster({
+		available: [plainCheap, thinker],
+		parent: { model: "acme/thinker" },
+		config: { fast: { model: "acme/thinker" } },
+	});
+	assert.equal(pinned.fast.thinking, "low", "the tier's own level applies to the model that replaced it");
+
+	// An explicitly stated level still wins over the tier default.
+	const explicit = resolveModelRoster({
+		available: [plainCheap, thinker],
+		parent: { model: "acme/thinker" },
+		config: { fast: { model: "acme/thinker", thinking: "high" } },
+	});
+	assert.equal(explicit.fast.thinking, "high");
 });
 
 test("a stated-but-unusable override field is reported, not silently dropped", () => {

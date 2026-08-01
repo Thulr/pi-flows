@@ -206,7 +206,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 
 	if (pool.length === 0) {
 		const unknown = "no model registry was available, so every tier runs your pi default";
-		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: inputs.available, defaultModel: parentModel, source: "unavailable", issues: [] };
+		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: inputs.available, sessionModel: parentModel, source: "unavailable", issues: [] };
 	}
 
 	// Any same-provider model at all keeps the rung there, not just a *cheaper*
@@ -251,7 +251,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		? `your pi default is already the most capable model available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`
 		: "your pi default is already the most capable model available, and none offer extended thinking, so deep matches it");
 
-	return { fast, capable, deep, available: inputs.available, defaultModel: parentModel, source: "derived", issues: [] };
+	return { fast, capable, deep, available: inputs.available, sessionModel: parentModel, source: "derived", issues: [] };
 }
 
 /**
@@ -271,16 +271,23 @@ function sameOrDefault(chosen: AvailableModel, parentModel: string | undefined, 
 	return { ...assignment, why: sameWhy };
 }
 
-function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], defaultModel: string | undefined, origin: RosterAssignment["origin"]): RosterAssignment {
+function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], tierDefault: ThinkingLevel | undefined, origin: RosterAssignment["origin"]): RosterAssignment {
 	if (!override) return base;
 	// An absent `model` keeps whatever the base resolved; a stated one — including
 	// the null that means "the pi default" — replaces it.
 	const model = override.model !== undefined ? override.model : base.model;
-	const known = available.find((candidate) => candidate.reference === (model ?? defaultModel));
+	const known = model ? available.find((candidate) => candidate.reference === model) : undefined;
 	const said = override.model !== undefined;
+	// A level inherited from the base was already clamped against the model the
+	// base chose. Carrying it onto a *different* model carries the old model's
+	// limits with it: a derived non-reasoning `fast` clamps to `off`, and pinning
+	// that tier to a reasoning model would then keep `off` rather than the `low`
+	// the rung is documented to use. So a model-only override re-asks for the
+	// tier's own level instead of inheriting the previous answer.
+	const requested = override.thinking ?? (said && override.model !== base.model ? tierDefault ?? base.thinking : base.thinking);
 	return {
 		model,
-		thinking: clampThinking(override.thinking ?? base.thinking, known),
+		thinking: clampThinking(requested, known),
 		why: said && override.thinking ? `${label} override` : said ? `${label} model override` : `${label} thinking override`,
 		origin,
 	};
@@ -313,18 +320,19 @@ export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
 		// Clamping reads the full registry, not the assignable pool: a pin may name a
 		// model that ranking excluded, and it still has real limits.
 		const project = inputs.project?.[tier];
-		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", inputs.available, derived.defaultModel, "env");
+		const tierDefault = tier === "capable" ? inputs.parent.thinking : TIER_THINKING[tier];
+		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", inputs.available, tierDefault, "env");
 		// The project layer is a subset of `config`, so a rung it claimed is
 		// labelled as its own — that is what tells /flows models its user-file edit
 		// would be shadowed.
 		const origin = project ? "project-config" : "user-config";
-		return [tier, applyOverride(withEnv, config, ROSTER_CONFIG_FILE, inputs.available, derived.defaultModel, origin)] as const;
+		return [tier, applyOverride(withEnv, config, ROSTER_CONFIG_FILE, inputs.available, tierDefault, origin)] as const;
 	});
 	const roster = Object.fromEntries(rungs) as Pick<ModelRoster, "fast" | "capable" | "deep">;
 	return {
 		...roster,
 		available: inputs.available,
-		defaultModel: derived.defaultModel,
+		sessionModel: derived.sessionModel,
 		source: configured ? "configured" : derived.source,
 		issues: inputs.issues ?? [],
 	};
@@ -339,10 +347,12 @@ export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
  * which is the majority of them.
  */
 export function knownModel(roster: ModelRoster | undefined, reference: string | null | undefined): AvailableModel | undefined {
-	if (!roster) return undefined;
-	const wanted = reference ?? roster.defaultModel;
-	if (!wanted) return undefined;
-	return roster.available.find((candidate) => candidate.reference === wanted);
+	// No reference means no `--model`, and therefore pi's *configured* default —
+	// which this extension cannot read. Substituting the session model here would
+	// clamp against limits the child does not have. Unknown is the honest answer,
+	// and pi clamps the level itself on the way in.
+	if (!roster || !reference) return undefined;
+	return roster.available.find((candidate) => candidate.reference === reference);
 }
 
 /** The assignment a tier name resolves to, or undefined for an unknown tier. */

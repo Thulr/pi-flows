@@ -115,15 +115,21 @@ export interface ModelRoster {
 	 */
 	available: AvailableModel[];
 	/**
-	 * The model a child runs when no `--model` is passed — the parent's own.
+	 * The model this pi session is running, when known.
 	 *
-	 * Carried separately because "run the pi default" is expressed as an *absent*
-	 * model reference, and a clamp keyed only on the reference would therefore
-	 * skip every default-model child. Without this, `tier:"capable"` with
-	 * `thinking:"max"` on a model that stops at `medium` would be reported as
-	 * `max` — the one thing the reported level is supposed to never do.
+	 * Deliberately NOT "the model a child gets when no `--model` is passed". Those
+	 * were the same thing until `capable` started naming the session model
+	 * explicitly, and they are not: an unpinned child loads pi's *configured*
+	 * default, which diverges the moment a session starts with `--model` or
+	 * switches interactively. pi gives an extension no way to read that configured
+	 * default, so the honest position is that an unpinned child's model is
+	 * unknown — and clamping a level against the session model instead would
+	 * report a limit the child never had.
+	 *
+	 * Used to identify the parent's provider and to derive `capable`, never as a
+	 * stand-in for whatever an unpinned child will load.
 	 */
-	defaultModel?: string;
+	sessionModel?: string;
 	/** How the roster was arrived at, for disclosure. */
 	source: "derived" | "configured" | "unavailable";
 	/** Config that could not be read, surfaced so an ignored override is diagnosable rather than silent. */

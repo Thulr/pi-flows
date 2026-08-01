@@ -87,11 +87,16 @@ function resolvedDispatch(ref: any, params: any, deps: ModeDeps): { model: strin
 		{ model: ref.model ?? params.model, tier: ref.tier ?? params.tier, thinking: ref.thinking ?? params.thinking },
 		deps.roster,
 	);
-	// A rung that resolves to "the pi default" still runs a CONCRETE model, and
-	// which one can change between approval and resume. Collapsing every default
-	// to the same null marker would make those changes invisible to the digest —
-	// the same drift the tier name had, one layer down.
-	return { model: choice.model ?? deps.roster?.defaultModel ?? null, thinking: choice.thinking ?? null };
+	// `null` here means "this phase names no model, so the child loads pi's
+	// configured default" — and that is genuinely unknowable to an extension, so
+	// the receipt cannot bind it.
+	//
+	// It is a much smaller gap than it looks. Every tier resolves to a concrete
+	// reference, including `capable`, which names the session's model; so a phase
+	// reaches this only by naming no model, no tier, and using an agent whose
+	// frontmatter declares no tier either. Substituting the session model would
+	// close the gap on paper while recording a model the child does not run.
+	return { model: choice.model ?? null, thinking: choice.thinking ?? null };
 }
 
 /**

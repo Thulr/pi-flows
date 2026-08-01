@@ -156,6 +156,26 @@ export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" 
 }
 
 /**
+ * What clearing a user override actually leaves in force.
+ *
+ * "Reset to derived" was a promise this command cannot keep: it only deletes the
+ * user's entry, and a project override or a `PI_FLOWS_*_MODEL` mapping still
+ * outranks derivation. Saying "reset to derived" while an environment variable
+ * silently takes over is the same class of false report as claiming a save
+ * applied when a project shadows it.
+ */
+function clearedMessage(tier: "fast" | "capable" | "deep", file: string): string {
+	const env = tier === "fast" ? process.env.PI_FLOWS_FAST_MODEL : tier === "deep" ? process.env.PI_FLOWS_DEEP_MODEL : undefined;
+	const lines = [`Cleared your override for tier "${tier}" in ${safePath(file)}.`];
+	if (env?.trim()) {
+		lines.push(`PI_FLOWS_${tier.toUpperCase()}_MODEL is still set, so that mapping now applies rather than the derived model. Unset it to fall back to derivation.`);
+	} else {
+		lines.push("The tier falls back to the derived model unless a trusted project's config sets it.");
+	}
+	return lines.join("\n");
+}
+
+/**
  * Persist one tier, reporting a refusal rather than letting it throw.
  *
  * The save refuses when the existing file cannot be read or parsed, because
@@ -172,7 +192,7 @@ function saveTierOverride(ctx: ExtensionCommandContext, userDir: string, tier: "
 	}
 }
 
-const KEEP_DERIVED = "Reset to derived (let pi-flows choose)";
+const CLEAR_OVERRIDE = "Clear my override for this tier";
 const PI_DEFAULT_MODEL = "(your pi default model)";
 const INHERIT_THINKING = "(inherit — tier default)";
 
@@ -212,11 +232,11 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 	// Only assignable models are offered: the roster carries the full registry for
 	// capability lookup, but embeddings and context windows too small to hold a
 	// delegated task are not tiers anyone should be able to pick by accident.
-	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [KEEP_DERIVED, PI_DEFAULT_MODEL, ...usableModels(roster.available).map((model) => model.reference)]);
+	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [CLEAR_OVERRIDE, PI_DEFAULT_MODEL, ...usableModels(roster.available).map((model) => model.reference)]);
 	if (!modelChoice) return;
-	if (modelChoice === KEEP_DERIVED) {
+	if (modelChoice === CLEAR_OVERRIDE) {
 		const file = saveTierOverride(ctx, userDir, tier, undefined);
-		if (file) ctx.ui.notify(`Tier "${tier}" reset to derived in ${safePath(file)}.`, "info");
+		if (file) ctx.ui.notify(clearedMessage(tier, file), "info");
 		return;
 	}
 
@@ -225,7 +245,7 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 	// "no model stated" and leave the derived model — possibly another provider's
 	// — quietly in force while this command reported the default.
 	const model = modelChoice === PI_DEFAULT_MODEL ? USE_DEFAULT_MODEL : modelChoice;
-	const supported = roster.available.find((candidate) => candidate.reference === (model ?? roster.defaultModel))?.thinkingLevels;
+	const supported = roster.available.find((candidate) => candidate.reference === (model ?? roster.sessionModel))?.thinkingLevels;
 	const levels = supported?.length ? supported : [...THINKING_LEVELS];
 	const thinkingChoice = await ctx.ui.select(`Thinking level for tier "${tier}"`, [INHERIT_THINKING, ...levels]);
 	if (!thinkingChoice) return;
