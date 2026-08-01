@@ -484,6 +484,72 @@ test("a flow-level model or thinking change invalidates a receipt the phase inhe
 	assert.equal(unchanged.result.details.error, undefined, "an unchanged resume still spends the receipt it was granted");
 });
 
+test("roster drift under a bound tier invalidates the receipt", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Ship the change.",
+		// A tier is a question, not an answer: "deep" resolves through the
+		// per-install roster, so the same word can select a different model,
+		// vendor, and effort after a config change. Binding the word alone would
+		// let the receipt verify while the child ran materially different work.
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "approve", approval: { message: "Approve the rollout" } },
+				{ id: "ship", agent: "strategist", task: "Ship it", tier: "deep" },
+			],
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	const prevDeep = process.env.PI_FLOWS_DEEP_MODEL;
+	process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-one";
+	try {
+		await runFlow(params, {}, { cwd });
+		await runFlow(resume(), { strategist: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+		// Same spec, same tier name — only what "deep" resolves to has moved.
+		process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-two";
+		const drifted = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd });
+		assert.equal(drifted.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the tier resolves elsewhere now, so the old consent does not cover it");
+		assert.match(drifted.result.details.error?.cause ?? "", /no longer holds/);
+
+		process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-one";
+		const restored = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+		assert.equal(restored.result.details.error, undefined, "restoring what was approved lets the original receipt stand");
+	} finally {
+		if (prevDeep === undefined) delete process.env.PI_FLOWS_DEEP_MODEL;
+		else process.env.PI_FLOWS_DEEP_MODEL = prevDeep;
+	}
+});
+
+test("a trailing approval binds the debrief's model and thinking, not just its contract", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Analyze, sign off, then synthesize.",
+		thinking: "low",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze" },
+				{ id: "signoff", approval: { message: "Sign off on the analysis" } },
+			],
+			// The debrief ref names no level, so it inherits the top-level one at
+			// dispatch — a fallback the workflow digest never sees.
+			debrief: { agent: "debrief" },
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	await runFlow(params, { recon: "ANALYSIS" }, { cwd });
+	await runFlow(resume(), { debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+	const raised = await runFlow(resume({ thinking: "max" }), { debrief: "SUMMARY" }, { cwd });
+	assert.equal(raised.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the debrief would run at an effort the operator never approved");
+	assert.match(raised.result.details.error?.cause ?? "", /no longer holds/);
+
+	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd, hasUI: true });
+	assert.equal(unchanged.result.details.error, undefined);
+});
+
 test("a reopen is refused once part of the gated run has already executed", async () => {
 	const cwd = await freshDir();
 	const params = {

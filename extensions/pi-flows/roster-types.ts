@@ -84,6 +84,12 @@ export interface RosterAssignment {
 	thinking?: ThinkingLevel;
 	/** Plain-English reason, shown by `flow showConfig:true` and `/flows models` so a surprising choice is inspectable. */
 	why: string;
+	/**
+	 * Which layer settled this rung. Not decoration: `/flows models` writes to the
+	 * user's file, so a rung already claimed by a trusted project's config would
+	 * keep winning after an edit the command reported as taking effect.
+	 */
+	origin?: "derived" | "env" | "user-config" | "project-config";
 }
 
 /**

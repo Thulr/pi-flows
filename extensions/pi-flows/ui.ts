@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { PI_FLOWS_VERSION, THINKING_LEVELS, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
+import { PI_FLOWS_VERSION, ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
 import { describeModelRoster, usableModels } from "./model-roster.ts";
-import { USE_DEFAULT_MODEL } from "./types.ts";
 import { saveRosterOverride } from "./roster-config.ts";
 import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
 
@@ -178,6 +177,18 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 
 	const tier = await ctx.ui.select(`${summary.join("\n")}\n\nOverride which tier?`, ["fast", "capable", "deep"]);
 	if (tier !== "fast" && tier !== "capable" && tier !== "deep") return;
+
+	// This command writes the user's file, which a trusted project's config
+	// outranks. Saving anyway would report an edit as taking effect while the
+	// project's value kept winning on the next call — so say so, and let the
+	// operator decide rather than silently doing nothing useful.
+	if (roster[tier].origin === "project-config") {
+		const proceed = await ctx.ui.confirm(
+			`Tier "${tier}" is set by this project`,
+			`This project's ${ROSTER_CONFIG_FILE} sets "${tier}", and project config outranks your user config.\n\nSaving here will not change what runs until that project entry is removed or changed.\n\nSave to your user config anyway?`,
+		);
+		if (!proceed) return;
+	}
 
 	// Only models this install can actually run are offered. A free-text field
 	// here would let a typo become a tier that fails every child that uses it.

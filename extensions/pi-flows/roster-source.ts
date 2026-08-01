@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { THINKING_LEVELS, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
 import { OUTPUT_TOKEN_SHARE, isThinkingLevel, resolveModelRoster } from "./model-roster.ts";
 import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
 
@@ -67,22 +67,28 @@ export function availableModelsFromRegistry(registry: ModelRegistryLike | undefi
 }
 
 /**
- * Nearest ancestor holding a pi config dir, or null.
+ * Nearest ancestor whose pi config dir actually holds a roster config, or null.
  *
  * Walked rather than joined onto cwd because project-agent discovery already
  * walks (`findNearestProjectAgentsDir`), and the two have to agree: starting pi
  * from `src/` would otherwise load the repo's project agents while silently
  * ignoring the model pins sitting beside them, which reads as the config file
  * not working rather than as a directory-depth rule nobody documented.
+ *
+ * The search is for the FILE, not for a `.pi` directory. Stopping at the first
+ * `.pi` would let an unrelated nested one — a sub-package with its own config
+ * dir but no roster pins — shadow the repository's, producing the same silent
+ * miss one level down. `findNearestProjectAgentsDir` looks for `.pi/flow-agents`
+ * for exactly this reason.
  */
 function nearestProjectConfigDir(cwd: string): string | null {
 	let current = path.resolve(cwd);
 	while (true) {
 		const candidate = path.join(current, CONFIG_DIR_NAME);
 		try {
-			if (fs.statSync(candidate).isDirectory()) return candidate;
+			if (fs.statSync(path.join(candidate, ROSTER_CONFIG_FILE)).isFile()) return candidate;
 		} catch {
-			// Not here; keep walking.
+			// No roster config at this level; keep walking.
 		}
 		const parent = path.dirname(current);
 		if (parent === current) return null;
@@ -138,6 +144,7 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 		},
 		env: envRosterConfig(),
 		config: loaded.config,
+		project: loaded.project,
 		issues: loaded.issues,
 	});
 }

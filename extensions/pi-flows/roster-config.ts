@@ -95,10 +95,16 @@ export interface RosterConfigSource {
  * runs (and therefore which vendor sees the task) is exactly the kind of thing
  * project trust exists to gate.
  */
-export function loadRosterConfig(source: RosterConfigSource): { config: RosterConfig; issues: string[] } {
+export function loadRosterConfig(source: RosterConfigSource): { config: RosterConfig; issues: string[]; project: RosterConfig } {
 	const issues: string[] = [];
 	const merged: RosterConfig = {};
-	const dirs = [source.userDir, source.projectTrusted ? source.projectDir : null];
+	// The project layer is kept separately as well as merged. `/flows models`
+	// writes to the *user* file, so it has to know which rungs a trusted project
+	// has already claimed — otherwise it reports an edit as taking effect while
+	// the project's higher-precedence value keeps winning.
+	const project: RosterConfig = {};
+	const projectDir = source.projectTrusted ? source.projectDir : null;
+	const dirs = [source.userDir, projectDir];
 	for (const dir of dirs) {
 		if (!dir) continue;
 		const file = path.join(dir, ROSTER_CONFIG_FILE);
@@ -120,10 +126,12 @@ export function loadRosterConfig(source: RosterConfigSource): { config: RosterCo
 		// which is the same rule the env/config layering downstream applies.
 		for (const tier of ["fast", "capable", "deep"] as const) {
 			const override = config[tier];
-			if (override) merged[tier] = { ...merged[tier], ...override };
+			if (!override) continue;
+			merged[tier] = { ...merged[tier], ...override };
+			if (dir === projectDir) project[tier] = { ...project[tier], ...override };
 		}
 	}
-	return { config: merged, issues };
+	return { config: merged, issues, project };
 }
 
 /**

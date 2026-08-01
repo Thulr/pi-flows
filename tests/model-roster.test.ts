@@ -200,6 +200,27 @@ test("deep falls back to a reasoning model before a pricier one that cannot reas
 	assert.equal(roster.deep.thinking, "medium", "clamped to what it offers, rather than collapsed to off");
 });
 
+test("a rung names the layer that settled it, so an edit cannot be silently shadowed", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	const userDir = path.join(dir, "user");
+	const projectDir = path.join(dir, "project");
+	fs.mkdirSync(userDir);
+	fs.mkdirSync(projectDir);
+	fs.writeFileSync(path.join(userDir, "pi-flows.json"), JSON.stringify({ models: { fast: { model: "acme/mini" } } }));
+	fs.writeFileSync(path.join(projectDir, "pi-flows.json"), JSON.stringify({ models: { deep: { model: "acme/flagship" } } }));
+
+	const loaded = loadRosterConfig({ userDir, projectDir, projectTrusted: true });
+	assert.deepEqual(Object.keys(loaded.project), ["deep"], "the project layer is reported separately from the merge");
+
+	// `/flows models` writes the user's file, which a trusted project outranks.
+	// Without the origin it would report an edit to `deep` as taking effect while
+	// the project's value kept winning.
+	const roster = resolveModelRoster({ available: INSTALL, parent: { model: "acme/standard" }, config: loaded.config, project: loaded.project });
+	assert.equal(roster.deep.origin, "project-config");
+	assert.equal(roster.fast.origin, "user-config");
+	assert.equal(roster.capable.origin, "derived", "a rung nobody configured says so");
+});
+
 test("a project override narrows the user's tier field by field, not wholesale", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
 	const userDir = path.join(dir, "user");
@@ -362,6 +383,28 @@ test("project config is read only for a trusted project", () => {
 	assert.deepEqual(trusted.config.fast, { model: "acme/flagship" }, "a trusted project may narrow the roster");
 
 	fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("the project config search walks past a .pi directory that holds no roster config", async () => {
+	// Searching for the directory rather than the file lets an unrelated nested
+	// `.pi` — a sub-package with its own config dir but no model pins — shadow the
+	// repository's, which is the same silent miss one level down.
+	const { currentModelRoster } = await import("../extensions/pi-flows/roster-source.ts");
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	fs.mkdirSync(path.join(root, ".pi"), { recursive: true });
+	// Pinned to a model derivation would never choose for `deep` — the cheapest
+	// one — so the assertion can only pass if the file was actually read. Pinning
+	// the model derivation already picks would make this test vacuous.
+	fs.writeFileSync(path.join(root, ".pi", "pi-flows.json"), JSON.stringify({ models: { deep: { model: "acme/mini" } } }));
+	const nested = path.join(root, "packages", "web");
+	fs.mkdirSync(path.join(nested, ".pi"), { recursive: true });
+
+	const registry = { getAvailable: () => INSTALL.map((entry) => ({ id: entry.id, provider: entry.provider, reasoning: true, contextWindow: entry.contextWindow, maxTokens: 4096, cost: { input: entry.costPerToken, output: entry.costPerToken } })) };
+	const roster = currentModelRoster({ cwd: nested, modelRegistry: registry, isProjectTrusted: () => true });
+	assert.notEqual(roster.deep.model, "acme/flagship", "derivation's own pick would mean the file was never read");
+	assert.equal(roster.deep.model, "acme/mini", "the repository's pins are found from a subdirectory with its own bare .pi");
+
+	fs.rmSync(root, { recursive: true, force: true });
 });
 
 test("saving one tier override preserves the rest of the user's config file", () => {

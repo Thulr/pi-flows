@@ -190,6 +190,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		why: inputs.parent.thinking
 			? `your pi default model, at the session's current thinking level (${inputs.parent.thinking})`
 			: "your pi default model, at pi's own thinking level",
+		origin: "derived",
 	};
 
 	if (pool.length === 0) {
@@ -225,6 +226,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		model: cheapModel.reference,
 		thinking: clampThinking(TIER_THINKING.fast, cheapModel),
 		why: `cheapest model this install can run${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
+		origin: "derived",
 	}, `your pi default is already the cheapest model available, so fast reruns it at ${TIER_THINKING.fast} thinking`);
 
 	const deep: RosterAssignment = sameOrDefault(strongModel, parentModel, {
@@ -233,6 +235,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		why: supportsExtendedThinking(strongModel)
 			? "most capable model this install can run that supports extended thinking"
 			: "most capable model this install can run (none offer extended thinking)",
+		origin: "derived",
 	}, supportsExtendedThinking(strongModel)
 		? `your pi default is already the most capable model available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`
 		: "your pi default is already the most capable model available, and none offer extended thinking, so deep matches it");
@@ -257,7 +260,7 @@ function sameOrDefault(chosen: AvailableModel, parentModel: string | undefined, 
 	return { model: USE_DEFAULT_MODEL, thinking: assignment.thinking, why: sameWhy };
 }
 
-function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], defaultModel: string | undefined): RosterAssignment {
+function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], defaultModel: string | undefined, origin: RosterAssignment["origin"]): RosterAssignment {
 	if (!override) return base;
 	// An absent `model` keeps whatever the base resolved; a stated one — including
 	// the null that means "the pi default" — replaces it.
@@ -268,11 +271,14 @@ function applyOverride(base: RosterAssignment, override: RosterOverride | undefi
 		model,
 		thinking: clampThinking(override.thinking ?? base.thinking, known),
 		why: said && override.thinking ? `${label} override` : said ? `${label} model override` : `${label} thinking override`,
+		origin,
 	};
 }
 
 export interface ResolveRosterInputs extends RosterInputs {
 	config?: RosterConfig;
+	/** The project-supplied subset of `config`, so a rung can name the layer that settled it. */
+	project?: RosterConfig;
 	env?: RosterConfig;
 	/** Config that could not be read. Carried onto the roster so an ignored override is visible where the roster is shown. */
 	issues?: string[];
@@ -295,8 +301,13 @@ export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
 		if (env || config) configured = true;
 		// Clamping reads the full registry, not the assignable pool: a pin may name a
 		// model that ranking excluded, and it still has real limits.
-		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", inputs.available, derived.defaultModel);
-		return [tier, applyOverride(withEnv, config, ROSTER_CONFIG_FILE, inputs.available, derived.defaultModel)] as const;
+		const project = inputs.project?.[tier];
+		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", inputs.available, derived.defaultModel, "env");
+		// The project layer is a subset of `config`, so a rung it claimed is
+		// labelled as its own — that is what tells /flows models its user-file edit
+		// would be shadowed.
+		const origin = project ? "project-config" : "user-config";
+		return [tier, applyOverride(withEnv, config, ROSTER_CONFIG_FILE, inputs.available, derived.defaultModel, origin)] as const;
 	});
 	const roster = Object.fromEntries(rungs) as Pick<ModelRoster, "fast" | "capable" | "deep">;
 	return {
