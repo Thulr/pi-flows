@@ -53,6 +53,29 @@ test("flow card marks error status with the flow error code", () => {
 	assert.match(lines[0]!, /error:BUDGET_EXCEEDED/);
 });
 
+test("non-clean preset outcomes persist and render as warnings, never green success", () => {
+	const entries: Array<{ customType: string; data: any }> = [];
+	const pi = { appendEntry: (customType: string, data: any) => entries.push({ customType, data }) } as any;
+	appendFlowSessionEntry(pi, {
+		mode: "parallel",
+		version: "test",
+		agentScope: "user",
+		config: {},
+		agentsDir: {},
+		preset: { name: "code-review" },
+		presetOutcome: "FINDINGS",
+		results: [{ agent: "overwatch", agentSource: "package", task: "t", exitCode: 0, messages: [], stderr: "", usage: {} }],
+	} as any);
+	assert.equal(entries[0]?.data.status, "partial");
+
+	const coloredTheme = { fg: (color: string, text: string) => `[${color}]${text}[/${color}]`, bold: (text: string) => text } as any;
+	const legacyInconsistentEntry = entryData({ status: "ok", preset: "code-review", presetOutcome: "PARTIAL", results: [] });
+	const header = flowCardLines(legacyInconsistentEntry, coloredTheme, false)[0]!;
+	assert.match(header, /\[warning\]▣\[\/warning\]/);
+	assert.match(header, /\[warning\]PARTIAL\[\/warning\]/);
+	assert.doesNotMatch(header, /\[success\](?:▣|PARTIAL)/);
+});
+
 test("renderFlowCard tolerates entries written by other versions", () => {
 	assert.equal(renderFlowCard(undefined, false, theme), undefined);
 	assert.equal(renderFlowCard({ mode: "single" }, false, theme), undefined, "entries without results are skipped, not crashed");

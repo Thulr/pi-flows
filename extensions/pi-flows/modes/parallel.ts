@@ -65,7 +65,10 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 	const summaries = results.map((result) => {
 		const status = isFailed(result) ? `failed${result.stopReason ? ` (${result.stopReason})` : ""}` : "completed";
 		const label = result.role ? `${result.role} (${result.agent})` : result.agent;
-		const text = result.envelope?.summary ?? resultText(result);
+		// This response is the terminal consumer for ordinary parallel mode.
+		// Preserve the complete contracted envelope; preset-specific formatters
+		// may compact it after the mode returns.
+		const text = resultText(result);
 		return `### ${label} — ${status}\n\n${sanitizeText(capModelVisibleText(text), policy)}`;
 	});
 	return {

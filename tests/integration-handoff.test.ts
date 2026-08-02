@@ -247,6 +247,8 @@ test("parallel validates typed returns and exposes compatibility provenance for 
 	assert.equal(calls.length, 2);
 	assert.equal(output.details.results[0].handoff?.contractId, delegationContractId(contract));
 	assert.equal(output.details.results[1].handoff?.compatibility, "legacy-prose");
+	assert.match(output.content[0].text, /"data":\{"answer":42\}/, "terminal parallel output preserves the contracted data, not only its summary");
+	assert.match(output.content[0].text, /legacy finding/);
 });
 
 test("graph rejects a stale node envelope before a dependent node is dispatched", async () => {

@@ -12,6 +12,7 @@ import {
 	type CapturePolicy,
 	type DiscoveryIssue,
 	type FlowError,
+	type FlowMode,
 	type FlowPreset,
 	type FlowPresetDiscovery,
 	type FlowPresetSelection,
@@ -172,6 +173,13 @@ export interface ResolvedPreset {
 	params: Record<string, unknown>;
 	preset: FlowPreset;
 	selection: FlowPresetSelection;
+}
+
+/** Resolve the base directory for presets whose runnable roles are nested refs. */
+export function presetRunCwd(preset: FlowPreset | undefined, mode: FlowMode, callerCwd: string, requestedCwd: unknown): string {
+	return preset && (mode === "parallel" || mode === "orchestrate") && typeof requestedCwd === "string"
+		? path.resolve(callerCwd, requestedCwd)
+		: callerCwd;
 }
 
 export function resolveFlowPreset(params: Record<string, unknown>, discovery: FlowPresetDiscovery): ResolvedPreset | { error: FlowError } {

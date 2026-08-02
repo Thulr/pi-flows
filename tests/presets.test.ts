@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
+import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import {
 	discoverFlowPresets,
 	formatPresetResult,
@@ -147,6 +148,64 @@ test("project presets use the project-agent trust gate in headless calls", async
 	assert.equal(result.details.error.code, "PROJECT_PRESET_APPROVAL_REQUIRED");
 	assert.equal(result.details.preset.name, "local-review");
 	assert.doesNotMatch(JSON.stringify(result), /must-not-leak/);
+});
+
+test("nested preset roles and code-review Git verification honor the preset cwd override", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-cwd-"));
+	const repo = path.join(root, "review-target");
+	await mkdir(path.join(repo, "src"), { recursive: true });
+	execFileSync("git", ["init", "-q"], { cwd: repo });
+	await writeFile(path.join(repo, "src", "a.ts"), "before\n");
+	execFileSync("git", ["add", "."], { cwd: repo });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base"], { cwd: repo });
+	const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+	await writeFile(path.join(repo, "src", "a.ts"), "after\n");
+	execFileSync("git", ["add", "."], { cwd: repo });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "head"], { cwd: repo });
+	const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const resolved = resolveFlowPreset(
+		{ preset: "code-review", task: "Review the fixed test range.", why: "independent verification", cwd: "review-target" },
+		discovery,
+	);
+	assert.ok(!("error" in resolved));
+	const tasks = resolved.params.tasks as any[];
+	const envelope = (index: number, axis: "standards" | "spec") => JSON.stringify({
+		schemaVersion: "pi-flows.return-envelope.v1",
+		contractId: delegationContractId(tasks[index].contract),
+		status: "completed",
+		summary: `${axis} complete`,
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data: {
+			axis,
+			base,
+			head,
+			coverage: [{ path: "src/a.ts", status: "reviewed", evidence: "src/a.ts:1" }],
+			findings: [],
+		},
+	});
+	const { result, calls } = await runFlow(
+		{ preset: "code-review", task: "Review the fixed test range.", cwd: "review-target" },
+		{ overwatch: [envelope(0, "standards"), envelope(1, "spec")] },
+		{ cwd: root },
+	);
+	const canonicalRepo = await realpath(repo);
+	assert.deepEqual(calls.map((call) => call.cwd), [canonicalRepo, canonicalRepo]);
+	assert.equal(result.details.presetOutcome, "CLEAN");
+
+	const mapped = await runFlow(
+		{ preset: "map-codebase", task: "Map one area.", cwd: "review-target" },
+		{ commander: JSON.stringify(["inspect one area"]), recon: "mapped", debrief: "summary" },
+		{ cwd: root },
+	);
+	assert.deepEqual(mapped.calls.slice(-3).map((call) => call.cwd), [canonicalRepo, canonicalRepo, canonicalRepo]);
 });
 
 function reviewRun(

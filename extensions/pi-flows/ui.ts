@@ -50,12 +50,13 @@ export function clearFlowUi(ctx: any): void {
 }
 
 export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): void {
+	const nonCleanPreset = details.presetOutcome === "FINDINGS" || details.presetOutcome === "PARTIAL";
 	pi.appendEntry?.("pi-flows.run", {
 		version: details.version,
 		mode: details.mode,
 		preset: details.preset?.name,
 		presetOutcome: details.presetOutcome,
-		status: details.error ? "error" : details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
+		status: details.error ? "error" : nonCleanPreset || details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
 		errorCode: details.error?.code,
 		budgetCeilings: details.budgetCeilings,
 		// Trace pointer travels with the entry so the flow card can link evidence

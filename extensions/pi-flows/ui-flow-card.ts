@@ -72,9 +72,13 @@ function entryTotals(results: FlowRunEntryResult[]): { tokens: number; cost: num
 
 /** Card lines. First line is the header; `expanded` adds per-run failure detail. */
 export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: boolean): string[] {
-	const statusIcon = data.status === "ok" ? theme.fg("success", "▣") : data.status === "partial" ? theme.fg("warning", "▣") : theme.fg("error", "▣");
-	const statusText = data.status === "error" && data.errorCode ? `${data.status}:${data.errorCode}` : data.status;
-	const statusColor = data.status === "ok" ? "success" : data.status === "partial" ? "warning" : "error";
+	// Older entries (and external writers) may persist status=ok alongside a
+	// non-clean preset outcome. Derive the durable presentation defensively so
+	// FINDINGS/PARTIAL can never render as green success.
+	const status = data.status === "ok" && (data.presetOutcome === "FINDINGS" || data.presetOutcome === "PARTIAL") ? "partial" : data.status;
+	const statusIcon = status === "ok" ? theme.fg("success", "▣") : status === "partial" ? theme.fg("warning", "▣") : theme.fg("error", "▣");
+	const statusText = status === "error" && data.errorCode ? `${status}:${data.errorCode}` : status;
+	const statusColor = status === "ok" ? "success" : status === "partial" ? "warning" : "error";
 	const totals = entryTotals(data.results);
 	const maxDuration = Math.max(0, ...data.results.map((result) => result.durationMs ?? 0));
 
