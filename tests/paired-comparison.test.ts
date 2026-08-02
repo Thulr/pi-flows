@@ -279,7 +279,7 @@ test("plain Pi resource budgets terminate execution at a completed response boun
 	const command = path.join(dir, "pi-stub.mjs");
 	writeFileSync(command, `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({type:"message_end",message:{role:"assistant",content:[{type:"text",text:"partial"}],usage:{input:12,output:8,cost:{total:0.25},totalTokens:20},model:"stub"}})+"\\n");
-await new Promise(resolve => setTimeout(resolve, 5000));
+await new Promise(resolve => setTimeout(resolve, 30_000));
 `);
 	chmodSync(command, 0o700);
 	const startedAt = Date.now();
@@ -289,11 +289,11 @@ await new Promise(resolve => setTimeout(resolve, 5000));
 		model: "stub",
 		command,
 		maxGeneratedTokens: 4,
-		// Comfortably above node's cold start: the claim under test is "the budget
-		// stopped it", and a 2s ceiling on a loaded machine makes the harness race
-		// process startup instead. The stub's own 5s hold is what the assertions
-		// below measure against.
-		timeoutMs: 20_000,
+		// The claim under test is "the budget stopped it", so both the process
+		// timeout and the stub's hold leave proportional headroom for startup on a
+		// loaded machine. The assertions below still require the budget stop to
+		// beat the hold by at least 15 seconds.
+		timeoutMs: 45_000,
 		killGraceMs: 10,
 	});
 	const child = result.details.results[0];
@@ -301,8 +301,8 @@ await new Promise(resolve => setTimeout(resolve, 5000));
 	assert.equal(child.exitCode, 1);
 	assert.equal(child.error.code, "BUDGET_EXCEEDED");
 	assert.equal(child.usage.output, 8);
-	assert.ok(child.durationMs < 4000, "budget should stop the child before its 5s hold elapses");
-	assert.ok(Date.now() - startedAt < 4000, "budget should stop the held-open process before timeout");
+	assert.ok(child.durationMs < 15_000, "budget should stop the child well before its 30s hold elapses");
+	assert.ok(Date.now() - startedAt < 15_000, "budget should stop the held-open process before timeout");
 });
 
 test("plain Pi cost budgets fail closed when cost telemetry is absent", async () => {
