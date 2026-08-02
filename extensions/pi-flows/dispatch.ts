@@ -63,6 +63,14 @@ function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, m
 		cwd: ref.cwd,
 		model: ref.model ?? deps.params.model,
 		tier: ref.tier ?? deps.params.tier,
+		// The role's own level and the flow-wide fallback travel separately rather
+		// than being collapsed here. Filling one from the other loses which was
+		// stated, and the resolver needs that: a role's `model:"id:high"` suffix is
+		// a role-level statement and must outrank a flow-level `thinking`, which
+		// the documentation calls a fallback.
+		thinking: ref.thinking,
+		flowThinking: deps.params.thinking,
+		roster: deps.roster,
 		tools: ref.tools,
 		timeoutMs: tighterTimeout(deps.params.timeoutMs, limits.timeoutMs),
 		recordContent: deps.params.recordContent,

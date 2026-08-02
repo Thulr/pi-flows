@@ -3,6 +3,7 @@ import type { Budget, BudgetAuthority } from "./budget.ts";
 import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
 import type { HandoffGuard } from "./handoff-types.ts";
 import type { HandoffConsumer } from "./handoff-consumption.ts";
+import type { ModelRoster, ThinkingLevel } from "./roster-types.ts";
 
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
 // it can be re-exported here without a cycle) and is part of this module's
@@ -20,6 +21,11 @@ export type {
 } from "./trace-scope.ts";
 export { encodeAuthorKey } from "./trace-scope.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
+// Model-selection vocabulary, same arrangement: the terms live in a
+// dependency-free module and the policy that produces a roster lives in
+// model-roster.ts, which the kernel may not import.
+export { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL } from "./roster-types.ts";
+export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterLayer, RosterOverride, ThinkingLevel } from "./roster-types.ts";
 
 export const PI_FLOWS_VERSION = "0.5.0";
 
@@ -165,6 +171,7 @@ export interface FlowAgent {
 	tools?: string[];
 	model?: string;
 	tier?: string;
+	thinking?: ThinkingLevel;
 	systemPrompt: string;
 	source: AgentSource;
 	filePath: string;
@@ -199,6 +206,15 @@ export interface FlowRunResult {
 	stderr: string;
 	usage: UsageStats;
 	model?: string;
+	/**
+	 * The level passed to the child on `--thinking`, lowered to its model's limits
+	 * when that model is known. Undefined when no level was named anywhere.
+	 *
+	 * Not always the level it *ran* at: a child naming no model loads pi's
+	 * configured default, which this extension cannot read, so pi may lower this
+	 * further. `flow.thinking_level_verified` on the span says which case applies.
+	 */
+	thinking?: ThinkingLevel;
 	stopReason?: string;
 	errorMessage?: string;
 	error?: FlowError;
@@ -260,7 +276,7 @@ export interface FlowDetails {
 		project: string | null;
 	};
 	results: FlowRunResult[];
-	agents?: Array<Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "tools">>;
+	agents?: Array<Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "thinking" | "tools">>;
 	discoveryIssues?: DiscoveryIssue[];
 	error?: FlowError;
 	trace?: FlowTraceLink;
@@ -276,6 +292,7 @@ export interface FlowTaskInput {
 	cwd?: string;
 	model?: string;
 	tier?: string;
+	thinking?: ThinkingLevel;
 	tools?: string;
 	returnContract?: string;
 	requireEvidence?: boolean;
@@ -323,6 +340,7 @@ export interface FlowAgentRefInput {
 	agent: string;
 	model?: string;
 	tier?: string;
+	thinking?: ThinkingLevel;
 	tools?: string;
 	cwd?: string;
 	contract?: DelegationContract;
@@ -400,6 +418,11 @@ export interface RunChildOptions {
 	cwd?: string;
 	model?: string;
 	tier?: string;
+	thinking?: ThinkingLevel;
+	/** The flow-wide `thinking` fallback, kept apart from the role's own so specificity survives to resolution. */
+	flowThinking?: ThinkingLevel;
+	/** The resolved per-install roster a tier is read against. Omitted only where no pi runtime supplied one. */
+	roster?: ModelRoster;
 	tools?: string;
 	timeoutMs?: number;
 	recordContent?: boolean;
@@ -431,6 +454,8 @@ export interface ModeDeps {
 	handoffs: HandoffConsumer;
 	agentScope: AgentScope;
 	defaultCwd: string;
+	/** What each tier resolves to for this run. Resolved once at the composition root, where the pi model registry is reachable. */
+	roster?: ModelRoster;
 	signal?: AbortSignal;
 	onUpdate?: Update;
 	budget?: Budget;

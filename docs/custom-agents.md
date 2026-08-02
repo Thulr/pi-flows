@@ -22,6 +22,7 @@ name: sql-reviewer
 description: Reviews SQL migrations for destructive operations, lock risk, and missing indexes. Read-only.
 tools: read,grep,find,ls
 tier: fast
+thinking: low
 ---
 
 You are a SQL migration reviewer.
@@ -48,7 +49,8 @@ Have sql-reviewer check the migrations in db/migrate added this week.
 | `description` | yes | Shown in `flow list:true` and `/flows` — this is what the parent model reads when choosing an agent, so make it say what the agent is *for*. |
 | `tools` | no | Comma-separated pi tool list, e.g. `read,grep,find,ls`. `none` runs with no built-in tools. Omit for pi defaults — which include `bash`, `edit`, and `write`, making the agent **write-capable** and subject to the `SHARED_WRITE_CWD` fan-out guard. |
 | `model` | no | Pin an exact model id. Prefer `tier` so the agent stays portable across providers. |
-| `tier` | no | `capable` (default — the child uses the user's default pi model), `fast` (uses `PI_FLOWS_FAST_MODEL` when the user has set one), or `deep` (uses `PI_FLOWS_DEEP_MODEL` for the hardest reasoning/critique work). Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier` > pi default. A flow-call `tier: capable` always resolves (it forces the default model, even on a `fast`/`deep` agent); an unmapped flow-call `fast`/`deep` falls through, so agents stay portable with zero configuration. |
+| `tier` | no | `capable` (default — the model the user's session is running), `fast` (the cheapest model their install can run), or `deep` (the most capable, for the hardest reasoning/critique work). Resolved against the [model roster](./flow-reference.md#the-model-roster), derived from the models the user actually has — so an agent stays portable with zero configuration. Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier`. A flow-call `tier: capable` always resolves, forcing the session's model even on a `fast`/`deep` agent. |
+| `thinking` | no | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — how hard this agent thinks, independent of which model it runs. Omit it to take the tier's level, which for `capable` means inheriting whatever level the parent session is on; set it when the agent's effort should be fixed regardless (bundled `strategist` pins `high`, `recon` pins `low`). Lowered automatically to what the resolved model supports. An unrecognized level is ignored with an `AGENT_THINKING_INVALID` warning. |
 
 A file missing `name` or `description` is skipped with an `AGENT_FRONTMATTER_INVALID` warning in `/flows status` — it does not break discovery of the other agents.
 

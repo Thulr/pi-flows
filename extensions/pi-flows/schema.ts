@@ -3,9 +3,13 @@ import { Type } from "typebox";
 import { DEFAULT_APPROVAL_TTL_MS, MAX_APPROVAL_TTL_MS, MIN_APPROVAL_TTL_MS } from "./approval.ts";
 import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, DEFAULT_TIMEOUT_MS, MAX_DEBATE_ROUNDS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, MAX_PARALLEL_TASKS, MAX_WORKFLOW_PHASES } from "./types.ts";
 
-const TierDescription = 'Capability tier for this child, portable across providers: "fast" for mechanical scouting/extraction/classification, "capable" (default) for ordinary work, "deep" for the hardest reasoning or final adjudication. Resolves to the user-configured PI_FLOWS_FAST_MODEL / PI_FLOWS_DEEP_MODEL and falls back to their default model when unmapped. Prefer tier over model unless the user named a concrete model.';
+const TierDescription = 'Capability tier for this child, portable across providers: "fast" for mechanical scouting/extraction/classification, "capable" (default) for ordinary work, "deep" for the hardest reasoning or final adjudication. Each tier resolves to a concrete model and thinking level derived from the models this install can actually run, so tiers work with no configuration; `flow showConfig:true` or `/flows models` shows what each currently resolves to. Prefer tier over model unless the user named a concrete model.';
+
+const ThinkingDescription = 'Reasoning effort for this child, overriding the level its tier would use: "off"/"minimal"/"low" for mechanical work, "medium"/"high" for ordinary reasoning, "xhigh"/"max" for the hardest adjudication. Automatically lowered to what the resolved model supports. Set this to right-size effort without changing which model runs; omit it to take the tier default (a plain child inherits the parent session\'s level).';
 
 export const FlowTier = StringEnum(["fast", "capable", "deep"] as const, { description: TierDescription });
+
+export const FlowThinking = StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const, { description: ThinkingDescription });
 
 const StringList = Type.Array(Type.String({ minLength: 1 }));
 const HandoffPolicy = StringEnum(["warn", "quarantine", "fail"] as const);
@@ -74,6 +78,7 @@ const FlowTaskProperties = {
 	cwd: Type.Optional(Type.String({ description: "Working directory for this agent process" })),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this agent process. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
+	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(
 		Type.String({ description: 'Optional comma-separated tool override. Use "none" for no built-in tools or "default" for pi defaults.' }),
 	),
@@ -90,6 +95,7 @@ export const FlowAgentRef = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run for this role. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this role. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
+	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this role's process" })),
 	contract: Type.Optional(FlowDelegationContract),
@@ -100,6 +106,7 @@ export const FlowEvaluateOperatorRef = Type.Object({
 	task: Type.Optional(Type.String({ minLength: 1, description: "Optional alias for the evaluate goal when top-level task is omitted. Prefer top-level task when possible." })),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for the generator. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
+	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the generator process" })),
 	contract: Type.Optional(FlowDelegationContract),
@@ -175,6 +182,7 @@ export const FlowGraphNode = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for this node process" })),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this node. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
+	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this node's task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this node's return.", default: false })),
@@ -218,6 +226,7 @@ export const FlowWorkflowPhase = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for this phase and its checkCommand." })),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this phase. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
+	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this phase task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this phase output.", default: false })),
@@ -240,6 +249,7 @@ export const FlowWorktreeTask = Type.Object({
 	task: Type.String({ minLength: 1, description: "Independent implementation task for this worktree." }),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this worker. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
+	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
 	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this worker task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require evidence in this worker output.", default: true })),
@@ -388,6 +398,7 @@ export const FlowParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for single-agent mode" })),
 	model: Type.Optional(Type.String({ description: "Flow-wide exact-model fallback. Applies to every delegated role unless that task or role sets its own model. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(StringEnum(["fast", "capable", "deep"] as const, { description: `Flow-wide capability tier fallback. Applies to every delegated role unless that task or role sets its own tier or model. ${TierDescription}` })),
+	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const, { description: `Flow-wide thinking-level fallback. Applies to every delegated role unless that task or role sets its own thinking. ${ThinkingDescription}` })),
 	tools: Type.Optional(
 		Type.String({ description: 'Comma-separated tool override for single-agent mode. Use "none" or "default".' }),
 	),

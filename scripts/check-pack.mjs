@@ -63,5 +63,23 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // split, which tells a downstream reader which modules carry the guardrail
 // invariants. The previous ceiling left 1_442 bytes, so one changelog entry for
 // either change would have tripped it.
-assert.ok(pack.unpackedSize < 760_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 815_000 for the model roster: three new runtime modules
+// (model-roster, roster-source, roster-types, ~26KB together) plus the README
+// and flow-reference sections that document what a tier now resolves to and how
+// to override it. The modules ship because tiers resolve at runtime from the
+// user's own model registry, so the ranking has to be in the package, not in a
+// build artifact. Verified against the packed file list rather than the delta
+// alone: 81 files, none of them from tests/, scripts/, or evals/.
+// Raised to 840_000 for the review rounds on that change: a fourth runtime
+// module (roster-config, splitting config I/O out of the ranking policy once
+// model-roster crossed its line cap) and the changelog entries describing the
+// approval-receipt binding. The previous ceiling left ~1_300 bytes, which one
+// more changelog paragraph would have tripped. Same verification: 82 files, none
+// from tests/, scripts/, or evals/.
+// Raised to 880_000 across the review rounds on that change: the approval
+// binding now records what a gated phase resolves to, the roster tracks
+// precedence per field, and workflow-state.ts split out of workflow.ts when it
+// crossed its line cap — plus the changelog entries for each. Same verification
+// as before: 83 files, none from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 880_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

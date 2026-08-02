@@ -745,3 +745,27 @@ test("parallel validates its returns but records no handoff", async () => {
 	);
 	assert.equal(invalid.result.details.error?.code, "RETURN_ENVELOPE_INVALID", "validation still fails closed");
 });
+
+test("a child span records the thinking level it actually ran at", async () => {
+	// An experiment that varies only effort produces children with identical
+	// models and identical prompts. Without the resolved level on the span, those
+	// runs have indistinguishable identities and a recorded result cannot say
+	// whether it ran at low or max — which is the whole claim tracing makes here.
+	const { stubDir } = await runFlow(
+		{
+			traceFile: TRACE,
+			tasks: [
+				{ agent: "recon", task: "scout the api", thinking: "low" },
+				{ agent: "recon", task: "scout the docs", thinking: "high" },
+			],
+		},
+		{ recon: "found" },
+	);
+	const levels = byRole(await readSpans(stubDir), "child").map((span) => attr(span, "flow.thinking_level")).sort();
+	assert.deepEqual(levels, ["high", "low"]);
+
+	// A child that named no level anywhere leaves pi's own default alone, and the
+	// span says nothing rather than inventing one.
+	const plain = await runFlow({ traceFile: TRACE, agent: "operator", task: "implement" }, { operator: "done" });
+	assert.equal(attr(byRole(await readSpans(plain.stubDir), "child")[0], "flow.thinking_level"), undefined);
+});

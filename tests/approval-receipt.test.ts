@@ -21,6 +21,7 @@ import {
 	verifyApprovalReceipt,
 	type ApprovalBinding,
 } from "../extensions/pi-flows/approval.ts";
+import { normalizeGatedPhase, unbindableGatedRefs } from "../extensions/pi-flows/modes/workflow-approval.ts";
 import { freshDir, runFlow, type Call } from "./stub-harness.ts";
 
 const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => ({
@@ -449,6 +450,137 @@ test("a trailing approval binds the debrief it gates, not just the phases", asyn
 	assert.ok(debriefCalls(unchanged.calls) > debriefCalls(changed.calls), "the re-approved debrief runs");
 });
 
+test("a flow-level model or thinking change invalidates a receipt the phase inherited it under", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Ship the change.",
+		// The phase names neither, so both resolve from the flow-level fallback at
+		// dispatch. Binding only the phase's own values would leave a receipt that
+		// survives changing what the child actually runs as.
+		thinking: "low",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "approve", approval: { message: "Approve the rollout" } },
+				{ id: "ship", agent: "strategist", task: "Ship it" },
+			],
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	const paused = await runFlow(params, {}, { cwd });
+	assert.equal(paused.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	// Approve, then fail the gated phase so the receipt survives unspent.
+	await runFlow(resume(), { strategist: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+	const raised = await runFlow(resume({ thinking: "max" }), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(raised.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "raising effort after approval must not ride the old consent");
+	assert.match(raised.result.details.error?.cause ?? "", /no longer holds/);
+
+	// Same for the model: approving on one vendor's model and resuming on
+	// another's is the same class of change.
+	const revendored = await runFlow(resume({ model: "test-provider/other-model" }), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(revendored.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+
+	const unchanged = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+	assert.equal(unchanged.result.details.error, undefined, "an unchanged resume still spends the receipt it was granted");
+});
+
+test("roster drift under a bound tier invalidates the receipt", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Ship the change.",
+		// A tier is a question, not an answer: "deep" resolves through the
+		// per-install roster, so the same word can select a different model,
+		// vendor, and effort after a config change. Binding the word alone would
+		// let the receipt verify while the child ran materially different work.
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "approve", approval: { message: "Approve the rollout" } },
+				{ id: "ship", agent: "strategist", task: "Ship it", tier: "deep" },
+			],
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	const prevDeep = process.env.PI_FLOWS_DEEP_MODEL;
+	process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-one";
+	try {
+		await runFlow(params, {}, { cwd });
+		await runFlow(resume(), { strategist: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+		// Same spec, same tier name — only what "deep" resolves to has moved.
+		process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-two";
+		const drifted = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd });
+		assert.equal(drifted.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the tier resolves elsewhere now, so the old consent does not cover it");
+		assert.match(drifted.result.details.error?.cause ?? "", /no longer holds/);
+
+		process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-one";
+		const restored = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+		assert.equal(restored.result.details.error, undefined, "restoring what was approved lets the original receipt stand");
+	} finally {
+		if (prevDeep === undefined) delete process.env.PI_FLOWS_DEEP_MODEL;
+		else process.env.PI_FLOWS_DEEP_MODEL = prevDeep;
+	}
+});
+
+test("a capable-tier phase binds the session model, and moving it invalidates the receipt", () => {
+	// Tested on the binding directly rather than through a resume: stating a model
+	// on the resume would make the binding differ for that reason alone, which
+	// passes whether or not the model is captured. What changes here is ONLY what
+	// the tier resolves to.
+	const roster = (sessionModel: string) => ({
+		fast: { model: "p/cheap", thinking: "low", why: "t" },
+		capable: { model: sessionModel, thinking: "medium", why: "t" },
+		deep: { model: "p/strong", thinking: "max", why: "t" },
+		available: [],
+		sessionModel,
+		source: "derived" as const,
+		issues: [],
+	});
+	const deps = (sessionModel: string) => ({ discovery: { agents: [] }, roster: roster(sessionModel) } as any);
+	const phase = { id: "ship", agent: "operator", task: "Ship it", tier: "capable" };
+
+	const before = normalizeGatedPhase(phase, {}, deps("p/original"));
+	const after = normalizeGatedPhase(phase, {}, deps("p/replacement"));
+	assert.notDeepEqual(before, after, "the same phase binds differently once its tier resolves elsewhere");
+	assert.equal(before.model, "p/original", "and it records the concrete model, not the tier name");
+
+	// A phase naming no model, no tier, and using an agent that declares none
+	// runs pi's configured default — which an extension cannot read, so the
+	// receipt records null rather than a model the child will not run.
+	const unpinned = { id: "ship", agent: "operator", task: "Ship it" };
+	assert.equal(normalizeGatedPhase(unpinned, {}, deps("p/original")).model, null);
+	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] } } as any).model, null, "an unresolvable roster binds null too");
+});
+
+test("a trailing approval binds the debrief's model and thinking, not just its contract", async () => {
+	const cwd = await freshDir();
+	const params = {
+		task: "Analyze, sign off, then synthesize.",
+		thinking: "low",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze" },
+				{ id: "signoff", approval: { message: "Sign off on the analysis" } },
+			],
+			// The debrief ref names no level, so it inherits the top-level one at
+			// dispatch — a fallback the workflow digest never sees.
+			debrief: { agent: "debrief" },
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	await runFlow(params, { recon: "ANALYSIS" }, { cwd });
+	await runFlow(resume(), { debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+	const raised = await runFlow(resume({ thinking: "max" }), { debrief: "SUMMARY" }, { cwd });
+	assert.equal(raised.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the debrief would run at an effort the operator never approved");
+	assert.match(raised.result.details.error?.cause ?? "", /no longer holds/);
+
+	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd, hasUI: true });
+	assert.equal(unchanged.result.details.error, undefined);
+});
+
 test("a reopen is refused once part of the gated run has already executed", async () => {
 	const cwd = await freshDir();
 	const params = {
@@ -496,9 +628,12 @@ test("a trailing approval gates the workflow's own completion", async () => {
 	assert.equal(resumed.result.details.approvals?.[0].consumedBy, "workflow.phase:signoff");
 });
 
-test("a pre-receipt state migrates to a bound receipt instead of a bare APPROVED string", async () => {
+test("a pre-receipt state migrates to a bound receipt once its gated work has run", async () => {
 	const cwd = await freshDir();
-	const { state } = await receiptIssuedButUnspent(cwd);
+	await pausedAtApproval(cwd);
+	// Spend the consent: the gated phase runs, so the approval is fully answered.
+	await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+	const state = await readState(cwd);
 
 	// Rewind to exactly what a v2 state looked like: consent as a bare string.
 	state.version = 2;
@@ -514,11 +649,34 @@ test("a pre-receipt state migrates to a bound receipt instead of a bare APPROVED
 	assert.equal(migrated?.consumedBy, "workflow.phase:approve");
 	assert.equal((await readState(cwd)).version, 3);
 
-	// Migrated consent still binds. `ship` has now run, so widening the scope hits
-	// the part-executed refusal rather than a re-prompt.
+	// Migrated consent still binds: widening the scope hits the part-executed
+	// refusal rather than a re-prompt.
 	const widened = await runFlow(resumeParams({ agentScope: "all", confirmProjectAgents: false }), { strategist: "SHIPPED" }, { cwd, hasUI: true });
 	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
 	assert.match(widened.result.details.error?.cause ?? "", /already ran under the parameters that were approved/);
+});
+
+test("a pre-receipt approval whose gated work never ran is re-asked, not reconstructed", async () => {
+	// The binding would be computed from the roster that happens to exist at
+	// resume time, so a tier now resolving elsewhere would be retroactively
+	// blessed as what the operator consented to. Nobody approved that.
+	const cwd = await freshDir();
+	const { state, spent } = await receiptIssuedButUnspent(cwd);
+	state.version = 2;
+	state.outputs.approve = "APPROVED";
+	delete state.receipts;
+	await writeState(cwd, state);
+
+	const headless = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(headless.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "outstanding gated work means the consent is re-asked");
+	// The stub log accumulates across runs in one workspace, so this compares
+	// against what the setup already spent rather than against zero.
+	assert.equal(shipCalls(headless.calls), spent, "and nothing new runs on the unreconstructed approval");
+
+	// Answering it again produces a real receipt and lets the work proceed.
+	const reapproved = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+	assert.equal(reapproved.result.details.error, undefined);
+	assert.equal(reapproved.result.details.approvals?.[0].validation, "typed", "the new consent is a real approval, not a legacy stand-in");
 });
 
 test("an invalid approval window is refused before any child runs", async () => {
@@ -564,4 +722,75 @@ test("receipts never carry the approved task text into details or the trace", as
 	assert.equal(resumed.result.details.approvals?.length, 1);
 	assert.doesNotMatch(JSON.stringify(resumed.result.details.approvals), new RegExp(secret));
 	assert.doesNotMatch(JSON.stringify((await readState(cwd)).receipts), new RegExp(secret), "the state file stores the digest, not the parameters");
+});
+
+test("an approval is refused when the work it gates names no model to bind", () => {
+	// A receipt claims to bind the conditions it authorizes. A gated ref that
+	// names no model, no tier, on an agent declaring neither runs pi's configured
+	// default — unknowable here, and free to change before a resume under consent
+	// that still verifies. This codebase refuses in the analogous case rather than
+	// pretend: BUDGET_UNOBSERVABLE stops a run when the cost telemetry a ceiling
+	// depends on is missing.
+	const roster = {
+		fast: { model: "p/cheap", thinking: "low", why: "t" },
+		capable: { model: "p/session", thinking: "medium", why: "t" },
+		deep: { model: "p/strong", thinking: "max", why: "t" },
+		available: [],
+		sessionModel: "p/session",
+		source: "derived" as const,
+		issues: [],
+	};
+	const phases = [
+		{ id: "approve", approval: { message: "Approve" } },
+		{ id: "ship", agent: "operator", task: "Ship it" },
+	];
+	const deps = (agents: any[], params: any = {}) => ({ discovery: { agents }, roster, params } as any);
+
+	// The agent declares no tier, and neither does the phase.
+	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator" }])), ["ship"]);
+
+	// Any of the three ways of naming one closes it.
+	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator", tier: "capable" }])), []);
+	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator" }], { tier: "fast" })), []);
+	const pinned = [phases[0], { ...phases[1], model: "p/explicit" }];
+	assert.deepEqual(unbindableGatedRefs(pinned, 0, deps([{ name: "operator" }])), []);
+
+	// A broken registry does not make the risk smaller — it makes every tier
+	// unresolvable, so more work runs on a model nobody recorded. The refusal has
+	// to be loudest exactly there, and naming a model outright is the way through.
+	const blind = { discovery: { agents: [{ name: "operator", tier: "capable" }] }, params: {}, roster: { ...roster, fast: { why: "x" }, capable: { why: "x" }, deep: { why: "x" }, source: "unavailable" as const } } as any;
+	assert.deepEqual(unbindableGatedRefs(phases, 0, blind), ["ship"], "a tier that cannot resolve is not a bound model");
+	assert.deepEqual(unbindableGatedRefs(pinned, 0, blind), [], "an explicit model still binds without a registry");
+});
+
+test("a trailing legacy approval is re-asked while its debrief is still outstanding", async () => {
+	// A trailing approval gates no phases, so judging it by phases alone calls it
+	// spent — while the workflow completion and debrief it authorizes have not
+	// run. Those would then execute on whatever the roster now resolves.
+	const cwd = await freshDir();
+	const params = {
+		task: "Analyze, then sign off.",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze" },
+				{ id: "signoff", approval: { message: "Sign off" } },
+			],
+			debrief: { agent: "debrief" },
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	await runFlow(params, { recon: "ANALYSIS" }, { cwd });
+	// Approve, then fail the debrief so the workflow never reaches "completed".
+	await runFlow(resume(), { debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+	const state = await readState(cwd);
+	assert.notEqual(state.status, "completed", "the debrief this approval gates has not run");
+	state.version = 2;
+	state.outputs.signoff = "APPROVED";
+	delete state.receipts;
+	await writeState(cwd, state);
+
+	const headless = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd });
+	assert.equal(headless.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "consent that has not been spent is re-asked, not reconstructed");
 });

@@ -1,0 +1,252 @@
+/**
+ * How a user states a tier override, and where those statements are read from.
+ *
+ * Split from the ranking policy next door because these are different jobs: that
+ * module decides what a tier *would* resolve to, this one reads what the user
+ * said it should. Keeping them apart is also what lets the derivation stay a
+ * pure function with no filesystem or environment underneath it.
+ *
+ * Two sources, plus the legacy environment mapping:
+ *
+ *   ~/.pi/agent/pi-flows.json   the user's own
+ *   <project>/.pi/pi-flows.json only when pi says the project is trusted
+ *   PI_FLOWS_FAST_MODEL / PI_FLOWS_DEEP_MODEL
+ *
+ * A malformed file yields no overrides and an issue rather than an exception:
+ * config is an opt-in, and failing a flow call because a *preference* could not
+ * be read would be a worse answer than running without it.
+ */
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, type RosterConfig, type RosterOverride, type ThinkingLevel } from "./types.ts";
+import { isThinkingLevel, parseModelSpec } from "./model-roster.ts";
+
+export { ROSTER_CONFIG_FILE };
+export type { RosterConfig, RosterOverride };
+
+/**
+ * Read one override, accepting either the shorthand a user would type into a
+ * `--model` flag or the explicit object form, and collecting anything it had to
+ * reject into `invalid`.
+ *
+ *   "fast": "anthropic/claude-haiku-4-5:low"
+ *   "fast": { "model": "anthropic/claude-haiku-4-5", "thinking": "low" }
+ *
+ * A stated-but-unusable field is a mistake, not an omission. Dropping
+ * `{"model": 42}` to undefined leaves the tier derived — so a user who pinned a
+ * model watches work go somewhere else with nothing to explain it. Rejections
+ * are reported for the same reason a parse failure is.
+ */
+function readOverride(raw: unknown, invalid: string[] = []): RosterOverride | undefined {
+	const pair = (model: string | null | undefined, thinking: ThinkingLevel | undefined): RosterOverride | undefined => {
+		// Only the keys actually set: an override carrying `thinking: undefined`
+		// reads as "no level" everywhere it is merged, which is true, but it also
+		// makes an override that set nothing indistinguishable from one that did.
+		// `model: null` is a statement, so it survives the check `undefined` fails.
+		if (model === undefined && !thinking) return undefined;
+		return { ...(model !== undefined ? { model } : {}), ...(thinking ? { thinking } : {}) };
+	};
+	if (typeof raw === "string") {
+		const trimmed = raw.trim();
+		if (!trimmed) return undefined;
+		if (isThinkingLevel(trimmed)) return { thinking: trimmed };
+		// The word a user would reach for to say "my own model" in the shorthand
+		// form, with the same meaning as `"model": null` in the object form.
+		if (trimmed.toLowerCase() === "default") return { model: USE_DEFAULT_MODEL };
+		const { model, thinking } = parseModelSpec(trimmed);
+		return pair(model || undefined, thinking);
+	}
+	if (!raw || typeof raw !== "object") {
+		invalid.push("must be a model string, a thinking level, or an object");
+		return undefined;
+	}
+	const record = raw as Record<string, unknown>;
+	const rawModel = record.model;
+	let model: string | null | undefined;
+	if (rawModel === null) model = USE_DEFAULT_MODEL;
+	else if (typeof rawModel === "string" && rawModel.trim()) model = rawModel.trim();
+	else if (rawModel !== undefined) invalid.push(`"model" must be a model reference or null, not ${JSON.stringify(rawModel)}`);
+
+	let thinking: ThinkingLevel | undefined;
+	if (isThinkingLevel(record.thinking)) thinking = record.thinking;
+	else if (record.thinking !== undefined) invalid.push(`"thinking" must be one of ${THINKING_LEVELS.join(", ")}, not ${JSON.stringify(record.thinking)}`);
+
+	return pair(model, thinking);
+}
+
+/** Parse a `pi-flows.json`. Malformed input yields no overrides rather than an exception: config is an opt-in, not a gate. */
+export function parseRosterConfig(text: string): { config: RosterConfig; error?: string; invalid: string[] } {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch (error) {
+		return { config: {}, error: error instanceof Error ? error.message : String(error), invalid: [] };
+	}
+	// Validated on the way in as well as on the way out. `typeof [] === "object"`,
+	// so an array root or an array `models` used to read as an empty config with
+	// nothing reported — every intended override dropped, children routed to a
+	// derived model, and no `modelRoster.issue` to explain it.
+	if (!isPlainObject(parsed)) {
+		return { config: {}, invalid: [`must contain a JSON object (found ${describeJson(parsed)})`] };
+	}
+	const models = parsed.models;
+	if (models === undefined) return { config: {}, invalid: [] };
+	if (!isPlainObject(models)) {
+		return { config: {}, invalid: [`"models" must be an object (found ${describeJson(models)})`] };
+	}
+	const record = models;
+	const config: RosterConfig = {};
+	const invalid: string[] = [];
+	for (const tier of ["fast", "capable", "deep"] as const) {
+		if (record[tier] === undefined) continue;
+		const rejected: string[] = [];
+		const override = readOverride(record[tier], rejected);
+		if (override) config[tier] = override;
+		invalid.push(...rejected.map((reason) => `models.${tier} ${reason}`));
+	}
+	return { config, invalid };
+}
+
+export interface RosterConfigSource {
+	/** Where the user's own pi-flows.json lives (the pi agent dir). */
+	userDir: string;
+	/** Project config dir, or null when there is none. */
+	projectDir: string | null;
+	/** Project config is repo-controlled, so it is read only for a trusted project. */
+	projectTrusted: boolean;
+}
+
+/**
+ * Load overrides from disk. Project config wins over user config, but only when
+ * pi says the project is trusted — a repo-controlled file choosing which model
+ * runs (and therefore which vendor sees the task) is exactly the kind of thing
+ * project trust exists to gate.
+ */
+export function loadRosterConfig(source: RosterConfigSource): { config: RosterConfig; issues: string[]; project: RosterConfig } {
+	const issues: string[] = [];
+	const merged: RosterConfig = {};
+	// The project layer is kept separately as well as merged. `/flows models`
+	// writes to the *user* file, so it has to know which rungs a trusted project
+	// has already claimed — otherwise it reports an edit as taking effect while
+	// the project's higher-precedence value keeps winning.
+	const project: RosterConfig = {};
+	const projectDir = source.projectTrusted ? source.projectDir : null;
+	const dirs = [source.userDir, projectDir];
+	for (const dir of dirs) {
+		if (!dir) continue;
+		const file = path.join(dir, ROSTER_CONFIG_FILE);
+		let text: string;
+		try {
+			text = fs.readFileSync(file, "utf8");
+		} catch (error) {
+			// Only "no such file" is silence — having no config is the normal case
+			// and not worth reporting. Any other failure (permissions, EISDIR, a
+			// bad symlink) means a file the user wrote is being ignored, which is
+			// indistinguishable from their pins not working unless it is said out
+			// loud.
+			if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+				issues.push(`${ROSTER_CONFIG_FILE} could not be read (${(error as NodeJS.ErrnoException)?.code ?? "unknown error"}); its overrides were ignored.`);
+			}
+			continue;
+		}
+		const { config, error, invalid } = parseRosterConfig(text);
+		// Field-level rejections are reported even when the rest of the file
+		// applied: a pin that was silently dropped looks exactly like one that
+		// was never written.
+		issues.push(...invalid.map((reason) => `${ROSTER_CONFIG_FILE}: ${reason}; that setting was ignored.`));
+		if (error) {
+			issues.push(`${ROSTER_CONFIG_FILE} could not be parsed (${error}); its overrides were ignored.`);
+			continue;
+		}
+		// Field by field, not tier by tier. A shallow assign lets a project that
+		// states only `fast.thinking` discard the user's `fast.model` entirely,
+		// silently moving that tier back to the derived model — possibly another
+		// vendor's. A higher-precedence source overrides what it actually says,
+		// which is the same rule the env/config layering downstream applies.
+		for (const tier of ["fast", "capable", "deep"] as const) {
+			const override = config[tier];
+			if (!override) continue;
+			merged[tier] = { ...merged[tier], ...override };
+			if (dir === projectDir) project[tier] = { ...project[tier], ...override };
+		}
+	}
+	return { config: merged, issues, project };
+}
+
+/**
+ * Persist one tier override to the user's `pi-flows.json`.
+ *
+ * Read-modify-write of the parsed file rather than a blind overwrite: the file
+ * is the user's, may hold settings this build does not know about, and losing
+ * them because a tier was changed would be the kind of quiet damage a config
+ * surface must never do. Passing `undefined` clears the override and returns the
+ * tier to derivation.
+ */
+export function saveRosterOverride(userDir: string, tier: "fast" | "capable" | "deep", override: RosterOverride | undefined): string {
+	const file = path.join(userDir, ROSTER_CONFIG_FILE);
+	let existing: Record<string, unknown> = {};
+	let raw: string | undefined;
+	try {
+		raw = fs.readFileSync(file, "utf8");
+	} catch (error) {
+		// Only "no file yet" is a clean slate. Anything else means a file exists
+		// that this function could not read, and writing over it would be the
+		// destruction the read-modify-write exists to prevent.
+		if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+			throw new Error(`Could not read ${ROSTER_CONFIG_FILE} (${(error as NodeJS.ErrnoException)?.code ?? "unknown error"}); no changes were written.`);
+		}
+	}
+	if (raw !== undefined) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch (error) {
+			// A missing comma is a temporary, recoverable mistake. Starting from
+			// `{}` and writing would turn it into permanent data loss — every
+			// unrelated setting and every other tier's override, gone, to record one
+			// menu selection. Refusing keeps the file the user can still fix.
+			throw new Error(`${ROSTER_CONFIG_FILE} is not valid JSON (${error instanceof Error ? error.message : String(error)}); no changes were written, so the existing file can still be repaired by hand.`);
+		}
+		// Valid JSON is not the same as a config file. An array, a string, a number
+		// — each parses cleanly and each would be silently rewritten as an object
+		// below, which is the same destruction the syntax-error refusal exists to
+		// prevent, reached by a different route. Refuse those too.
+		if (!isPlainObject(parsed)) {
+			throw new Error(`${ROSTER_CONFIG_FILE} does not contain a JSON object (found ${describeJson(parsed)}); no changes were written, so the existing file can still be repaired by hand.`);
+		}
+		existing = parsed;
+	}
+	if (existing.models !== undefined && !isPlainObject(existing.models)) {
+		throw new Error(`${ROSTER_CONFIG_FILE} has a "models" value that is not an object (found ${describeJson(existing.models)}); no changes were written, so the existing file can still be repaired by hand.`);
+	}
+	const models = isPlainObject(existing.models) ? { ...existing.models } : {};
+	// `model` is written whenever the override states one, including the explicit
+	// null that means "my pi default" — dropping it there would save the choice as
+	// a bare thinking override and let the derived model quietly stay in force.
+	if (override) models[tier] = { ...(override.model !== undefined ? { model: override.model } : {}), ...(override.thinking ? { thinking: override.thinking } : {}) };
+	else delete models[tier];
+	fs.mkdirSync(userDir, { recursive: true });
+	fs.writeFileSync(file, `${JSON.stringify({ ...existing, models }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+	return file;
+}
+
+/** A JSON object, as distinct from an array or a primitive — both of which parse cleanly and neither of which is a config file. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** What was found where an object was expected, for a refusal a user can act on. */
+function describeJson(value: unknown): string {
+	if (value === null) return "null";
+	return Array.isArray(value) ? "an array" : `a ${typeof value}`;
+}
+
+/** The legacy env mapping. Still honored, now as one override source among several rather than the only one. */
+export function envRosterConfig(): RosterConfig {
+	const config: RosterConfig = {};
+	const fast = readOverride(process.env.PI_FLOWS_FAST_MODEL ?? "");
+	const deep = readOverride(process.env.PI_FLOWS_DEEP_MODEL ?? "");
+	if (fast) config.fast = fast;
+	if (deep) config.deep = deep;
+	return config;
+}

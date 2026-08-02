@@ -8,6 +8,7 @@
 import { sanitizeText } from "../sanitize.ts";
 import { consumeApprovalReceipt, WORKFLOW_COMPLETE_STEP, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
 import type { CapturePolicy, ModeDeps } from "../types.ts";
+import { resolveChildModel } from "../runner.ts";
 
 /** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
 const APPROVER_LABEL_CAP = 256;
@@ -66,19 +67,86 @@ export const gatedRunStarted = (phases: any[], index: number, completedPhaseIds:
 	gatedPhaseIds(phases, index).some((id) => completedPhaseIds.includes(id));
 
 /**
- * A gated phase's EFFECTIVE definition — what it resolves to once flow-level
- * fallbacks are applied. The workflow digest sees `phase.returnContract`; only
- * this sees that an omitted one falls back to `params.returnContract`, so
- * changing the fallback after approval is caught rather than inherited.
+ * What one gated ref will actually run as: the concrete model and thinking
+ * level, resolved exactly the way dispatch resolves them.
+ *
+ * The tier NAME is not enough to bind. `tier:"deep"` is a question, not an
+ * answer — it resolves through the per-install roster, so a config override, a
+ * provider losing auth, or a registry refresh between approval and resume can
+ * leave the same word selecting a different model, vendor, and effort. A receipt
+ * that recorded only the word would still verify while the child ran materially
+ * different work, which is the one thing a binding digest exists to prevent.
+ *
+ * Resolved through `resolveChildModel` rather than re-derived here so the
+ * receipt and the dispatch can never disagree about what a tier means.
  */
-export function normalizeGatedPhase(phase: any, params: any): Record<string, unknown> {
+function resolvedDispatch(ref: any, params: any, deps: ModeDeps): { model: string | null; thinking: string | null; unbound: boolean } {
+	const agent = deps.discovery.agents.find((candidate) => candidate.name === ref.agent);
+	const choice = resolveChildModel(
+		{ model: agent?.model, tier: agent?.tier, thinking: agent?.thinking },
+		// Mirrors childRunOptions exactly, including keeping the role's own level
+		// apart from the flow-wide fallback — a binding that resolved differently
+		// from the dispatch would be worse than no binding.
+		{ model: ref.model ?? params.model, tier: ref.tier ?? params.tier, thinking: ref.thinking, flowThinking: params.thinking },
+		deps.roster,
+	);
+	// `null` here means "this phase names no model, so the child loads pi's
+	// configured default" — genuinely unknowable to an extension, and therefore
+	// unbindable. `unbound` carries that fact up so the approval can refuse rather
+	// than issue a receipt that silently under-binds; substituting the session
+	// model would close the gap on paper while recording a model the child does
+	// not run.
+	return { model: choice.model ?? null, thinking: choice.thinking ?? null, unbound: choice.model === undefined };
+}
+
+/**
+ * Gated refs whose model cannot be bound, by phase id.
+ *
+ * A receipt claims to bind the exact conditions it authorizes. When a ref names
+ * no model, no tier, and runs an agent that declares neither, what it executes
+ * is pi's configured default — which can change before a persisted workflow
+ * resumes, under consent that still verifies. This codebase already refuses in
+ * the analogous case rather than pretend: `BUDGET_UNOBSERVABLE` stops a run when
+ * the cost telemetry a ceiling depends on is missing.
+ *
+ * Reported whether or not the roster resolved. A broken registry does not make
+ * the risk smaller — it makes every tier unresolvable, so *more* work runs on a
+ * model nobody recorded — and the operator can still act on it by naming a model
+ * outright. Excluding that case would have left the refusal absent exactly when
+ * it matters most.
+ */
+export function unbindableGatedRefs(phases: any[], index: number, deps: ModeDeps): string[] {
+	const gatedIds = new Set(gatedPhaseIds(phases, index));
+	const unbindable = phases
+		.filter((phase: any) => gatedIds.has(phase.id) && phase.agent)
+		.filter((phase: any) => resolvedDispatch(phase, deps.params, deps).unbound)
+		.map((phase: any) => phase.id);
+	const debrief = deps.params.workflow?.debrief;
+	if (debrief?.agent && index + gatedIds.size + 1 >= phases.length && resolvedDispatch(debrief, deps.params, deps).unbound) {
+		unbindable.push("debrief");
+	}
+	return unbindable;
+}
+
+/**
+ * A gated phase's EFFECTIVE definition — what it resolves to once flow-level
+ * fallbacks and the model roster are applied. The workflow digest sees
+ * `phase.returnContract`; only this sees that an omitted one falls back to
+ * `params.returnContract`, so changing the fallback after approval is caught
+ * rather than inherited.
+ */
+export function normalizeGatedPhase(phase: any, params: any, deps: ModeDeps): Record<string, unknown> {
+	const dispatch = resolvedDispatch(phase, params, deps);
 	return {
 		id: phase.id,
 		agent: phase.agent ?? null,
 		task: phase.task ?? null,
 		cwd: phase.cwd ?? null,
-		model: phase.model ?? null,
-		tier: phase.tier ?? null,
+		// The tier is kept for legibility — it is what the operator read — but what
+		// binds is what it resolves to, so roster drift invalidates the receipt.
+		tier: phase.tier ?? params.tier ?? null,
+		model: dispatch.model,
+		thinking: dispatch.thinking,
 		tools: phase.tools ?? null,
 		checkCommand: phase.checkCommand ?? null,
 		contract: phase.contract ?? null,
@@ -90,16 +158,21 @@ export function normalizeGatedPhase(phase: any, params: any): Record<string, unk
 /**
  * The debrief's EFFECTIVE parameters. Bound only when the approval gates the
  * workflow's completion, because only then does the debrief run under it — and
- * these three resolve from top-level params the workflow digest never sees, so
- * without this a trailing approval could be granted and the debrief then run
- * under a contract the operator never approved.
+ * these resolve from top-level params the workflow digest never sees, so without
+ * this a trailing approval could be granted and the debrief then run under a
+ * contract, or on a model, the operator never approved.
  */
-function normalizeGatedDebrief(params: any): Record<string, unknown> | null {
-	if (!params.workflow?.debrief?.agent) return null;
+function normalizeGatedDebrief(params: any, deps: ModeDeps): Record<string, unknown> | null {
+	const debrief = params.workflow?.debrief;
+	if (!debrief?.agent) return null;
+	const dispatch = resolvedDispatch(debrief, params, deps);
 	return {
 		contract: params.contract ?? null,
 		returnContract: params.returnContract ?? null,
 		requireEvidence: params.requireEvidence ?? false,
+		tier: debrief.tier ?? params.tier ?? null,
+		model: dispatch.model,
+		thinking: dispatch.thinking,
 	};
 }
 
@@ -121,8 +194,8 @@ export function approvalBindingFor(phases: any[], index: number, deps: ModeDeps,
 			agentScope: deps.agentScope,
 			incompleteHandoffPolicy: deps.params.incompleteHandoffPolicy ?? "fail",
 			handoffPolicy: deps.handoffs.resolution,
-			gatedPhases: gated.map((phase) => normalizeGatedPhase(phase, deps.params)),
-			debrief: index + gatedIds.size + 1 >= phases.length ? normalizeGatedDebrief(deps.params) : null,
+			gatedPhases: gated.map((phase) => normalizeGatedPhase(phase, deps.params, deps)),
+			debrief: index + gatedIds.size + 1 >= phases.length ? normalizeGatedDebrief(deps.params, deps) : null,
 		},
 		requestedBy: "flow:workflow",
 		workflowDigest: digest,

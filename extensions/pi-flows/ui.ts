@@ -1,6 +1,8 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PI_FLOWS_VERSION, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type RecordEvent } from "./types.ts";
-import { isFailed, sanitizeText } from "./sanitize.ts";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { PI_FLOWS_VERSION, ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
+import { describeModelRoster, usableModels } from "./model-roster.ts";
+import { saveRosterOverride, type RosterOverride } from "./roster-config.ts";
+import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
 
 /**
  * What a caller knows about the flow beyond its results. `live` means the flow
@@ -117,16 +119,20 @@ export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, 
 	return null;
 }
 
-export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" | "version" | "status" | "inspect"; scope: AgentScope } | { kind: "report"; traceFile?: string } | { kind: "error"; message: string } {
+export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" | "version" | "status" | "inspect" | "models"; scope: AgentScope } | { kind: "report"; traceFile?: string } | { kind: "error"; message: string } {
 	const parts = rawArgs.trim().split(/\s+/).filter(Boolean);
 	if (parts.length === 0) return { kind: "list", scope: "user" };
 	const [first, second] = parts;
 	const validScopes = new Set(["user", "project", "all"]);
-	const validKinds = new Set(["help", "version", "status", "inspect", "list", "report"]);
+	const validKinds = new Set(["help", "version", "status", "inspect", "list", "report", "models"]);
 
 	if (validKinds.has(first)) {
 		if (first === "help") return { kind: "help", scope: "user" };
 		if (first === "version") return { kind: "version", scope: "user" };
+		if (first === "models") {
+			if (second) return { kind: "error", message: "Use: /flows models" };
+			return { kind: "models", scope: "user" };
+		}
 		if (first === "inspect") {
 			if (second) return { kind: "error", message: "Use: /flows inspect" };
 			return { kind: "inspect", scope: "user" };
@@ -146,7 +152,123 @@ export function parseFlowsCommandArgs(rawArgs: string): { kind: "list" | "help" 
 	}
 
 	if (validScopes.has(first)) return { kind: "list", scope: first as AgentScope };
-	return { kind: "error", message: `Unknown /flows argument "${first}". Use: /flows [user|project|all], /flows inspect, /flows help, /flows version, or /flows status [scope].` };
+	return { kind: "error", message: `Unknown /flows argument "${first}". Use: /flows [user|project|all], /flows models, /flows inspect, /flows help, /flows version, or /flows status [scope].` };
+}
+
+/**
+ * What clearing a user override actually leaves in force.
+ *
+ * "Reset to derived" was a promise this command cannot keep: it only deletes the
+ * user's entry, and a project override or a `PI_FLOWS_*_MODEL` mapping still
+ * outranks derivation. Saying "reset to derived" while an environment variable
+ * silently takes over is the same class of false report as claiming a save
+ * applied when a project shadows it.
+ */
+function clearedMessage(tier: "fast" | "capable" | "deep", file: string): string {
+	const env = tier === "fast" ? process.env.PI_FLOWS_FAST_MODEL : tier === "deep" ? process.env.PI_FLOWS_DEEP_MODEL : undefined;
+	const lines = [`Cleared your override for tier "${tier}" in ${safePath(file)}.`];
+	if (env?.trim()) {
+		lines.push(`PI_FLOWS_${tier.toUpperCase()}_MODEL is still set, so that mapping now applies rather than the derived model. Unset it to fall back to derivation.`);
+	} else {
+		lines.push("The tier falls back to the derived model unless a trusted project's config sets it.");
+	}
+	return lines.join("\n");
+}
+
+/**
+ * Persist one tier, reporting a refusal rather than letting it throw.
+ *
+ * The save refuses when the existing file cannot be read or parsed, because
+ * overwriting it would destroy settings a user can still repair by hand. That
+ * refusal is a normal outcome of an interactive command, not a crash, so it is
+ * shown as an error message with the reason.
+ */
+function saveTierOverride(ctx: ExtensionCommandContext, userDir: string, tier: "fast" | "capable" | "deep", override: RosterOverride | undefined): string | null {
+	try {
+		return saveRosterOverride(userDir, tier, override);
+	} catch (error) {
+		ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+		return null;
+	}
+}
+
+const CLEAR_OVERRIDE = "Clear my override for this tier";
+const PI_DEFAULT_MODEL = "(your pi default model)";
+const INHERIT_THINKING = "(inherit — tier default)";
+
+/**
+ * Show what each tier currently resolves to, then let the user pin one.
+ *
+ * Reading comes first and always: the common reason to open this is "why did
+ * that child run on that model?", which the rationale line answers without
+ * changing anything. Editing is the follow-on, and it writes to the user's
+ * `pi-flows.json` — inside pi, where the setting is visible and revisable, not
+ * to a shell variable exported once and forgotten.
+ */
+export async function showModelRoster(ctx: ExtensionCommandContext, roster: ModelRoster, userDir: string): Promise<void> {
+	const summary = [`pi-flows model roster (${roster.source})`, "", ...describeModelRoster(roster)];
+	if (!ctx.hasUI) {
+		ctx.ui.notify(summary.join("\n"), "info");
+		return;
+	}
+
+	const tier = await ctx.ui.select(`${summary.join("\n")}\n\nOverride which tier?`, ["fast", "capable", "deep"]);
+	if (tier !== "fast" && tier !== "capable" && tier !== "deep") return;
+
+	// This command writes the user's file, which a trusted project's config
+	// outranks. Saving anyway would report an edit as taking effect while the
+	// project's value kept winning on the next call — so say so, and let the
+	// operator decide rather than silently doing nothing useful.
+	// Per field, because the layers merge per field: a project stating only
+	// `thinking` still lets a user's model change take effect. Warning about the
+	// whole rung would claim a model edit is inert when it is not.
+	const shadowed = (["model", "thinking"] as const).filter((field) => roster[tier].origin?.[field] === "project-config");
+	if (shadowed.length > 0) {
+		const proceed = await ctx.ui.confirm(
+			`This project sets ${shadowed.join(" and ")} for tier "${tier}"`,
+			`This project's ${ROSTER_CONFIG_FILE} sets ${shadowed.join(" and ")} for "${tier}", and project config outranks your user config.\n\nAnything you choose for ${shadowed.join(" or ")} will not change what runs until that project entry is removed or changed${shadowed.length === 1 ? `; your ${shadowed[0] === "model" ? "thinking level" : "model"} choice will still apply` : ""}.\n\nSave to your user config anyway?`,
+		);
+		if (!proceed) return;
+	}
+
+	// Only models this install can actually run are offered. A free-text field
+	// here would let a typo become a tier that fails every child that uses it.
+	// Only assignable models are offered: the roster carries the full registry for
+	// capability lookup, but embeddings and context windows too small to hold a
+	// delegated task are not tiers anyone should be able to pick by accident.
+	const modelChoice = await ctx.ui.select(`Model for tier "${tier}"`, [CLEAR_OVERRIDE, PI_DEFAULT_MODEL, ...usableModels(roster.available).map((model) => model.reference)]);
+	if (!modelChoice) return;
+	if (modelChoice === CLEAR_OVERRIDE) {
+		const file = saveTierOverride(ctx, userDir, tier, undefined);
+		if (file) ctx.ui.notify(clearedMessage(tier, file), "info");
+		return;
+	}
+
+	// Choosing the pi default is a decision, so it is persisted as one (`null`)
+	// rather than as an absent model. Saving `undefined` here would read back as
+	// "no model stated" and leave the derived model — possibly another provider's
+	// — quietly in force while this command reported the default.
+	const model = modelChoice === PI_DEFAULT_MODEL ? USE_DEFAULT_MODEL : modelChoice;
+	// Only a named model has knowable levels. Choosing "the pi default" means the
+	// child runs pi's *configured* default, which is not readable here — the
+	// session's model is a different model, and offering its levels would both
+	// advertise ones the default may reject and hide ones it supports.
+	// Only a named model has knowable levels. Choosing "the pi default" means the
+	// child runs pi's *configured* default, which is not readable here — the
+	// session's model is a different model, and offering its levels would both
+	// advertise ones the default may reject and hide ones it supports.
+	const supported = model ? roster.available.find((candidate) => candidate.reference === model)?.thinkingLevels : undefined;
+	const levels = supported?.length ? supported : [...THINKING_LEVELS];
+	const thinkingChoice = await ctx.ui.select(`Thinking level for tier "${tier}"`, [INHERIT_THINKING, ...levels]);
+	if (!thinkingChoice) return;
+	const thinking = thinkingChoice === INHERIT_THINKING ? undefined : (thinkingChoice as ThinkingLevel);
+
+	const file = saveTierOverride(ctx, userDir, tier, { model, thinking });
+	if (!file) return;
+	ctx.ui.notify(
+		`Tier "${tier}" now runs ${model === USE_DEFAULT_MODEL ? PI_DEFAULT_MODEL : model}${thinking ? ` at ${thinking} thinking` : ""}.\nSaved to ${safePath(file)}. It applies to the next flow call.`,
+		"info",
+	);
 }
 
 export function flowsHelpText(): string {
@@ -158,6 +280,7 @@ export function flowsHelpText(): string {
 		"  /flows project                 List bundled + project-local .pi/flow-agents",
 		"  /flows all                     List package + user + project agents",
 		"  /flows status [user|project|all] Show dirs, defaults, and discovery issues",
+		"  /flows models                   Show what each tier resolves to, and override a tier",
 		"  /flows inspect                  Drill into one running child",
 		"  F8                              Toggle the live fleet panel overlay",
 		"  /flows report [trace-file]       Summarize a flow trace JSONL file",

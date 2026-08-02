@@ -33,10 +33,22 @@ export async function freshDir() {
 	return mkdtemp(path.join(tmpdir(), "stub-pi-"));
 }
 
+/** The session model a stubbed run reports. Mirrors what pi supplies, so tiers resolve as they do in production. */
+export const STUB_SESSION_MODEL = { provider: "test-provider", id: "session-model" };
+
+/** A minimal three-model install: cheap, session, strong — enough for fast/capable/deep to resolve distinctly. */
+export const STUB_REGISTRY = {
+	getAvailable: () => [
+		{ id: "cheap-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 0.1, output: 0.4 } },
+		{ id: "session-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 3, output: 12 } },
+		{ id: "strong-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 15, output: 60 } },
+	],
+};
+
 export async function runFlow(
 	params: any,
 	plan: Record<string, unknown>,
-	options: { api?: Record<string, any>; ui?: Record<string, any>; cwd?: string; hasUI?: boolean } = {},
+	options: { api?: Record<string, any>; ui?: Record<string, any>; cwd?: string; hasUI?: boolean; registry?: any; model?: any; projectTrusted?: boolean } = {},
 ) {
 	const stubDir = options.cwd ?? await freshDir();
 	process.env.PI_STUB_DIR = stubDir;
@@ -49,7 +61,19 @@ export async function runFlow(
 		paramsWithWhy,
 		new AbortController().signal,
 		undefined,
-		{ cwd: stubDir, hasUI: options.hasUI ?? false, ui: { confirm: async () => true, notify: () => undefined, ...(options.ui ?? {}) } },
+		{
+			cwd: stubDir,
+			hasUI: options.hasUI ?? false,
+			ui: { confirm: async () => true, notify: () => undefined, ...(options.ui ?? {}) },
+			// A real pi always hands the extension a loaded registry and a current
+			// model. Omitting them here left every test running against a roster
+			// that could not resolve any tier — an install state that means pi is
+			// broken, not a normal one — so tier behavior went unexercised by the
+			// integration path. `options.registry: null` opts back out for the tests
+			// that are specifically about a missing registry.
+			...(options.registry === null ? {} : { modelRegistry: options.registry ?? STUB_REGISTRY, model: options.model ?? STUB_SESSION_MODEL }),
+			isProjectTrusted: () => options.projectTrusted ?? false,
+		},
 	);
 	const log = await readFile(path.join(stubDir, "calls.jsonl"), "utf8").catch(() => "");
 	const calls: Call[] = log.split("\n").filter(Boolean).map((line) => JSON.parse(line));

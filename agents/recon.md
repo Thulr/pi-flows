@@ -3,6 +3,7 @@ name: recon
 description: Fast read-only reconnaissance. Finds relevant files, APIs, commands, and risks, then returns compact evidence.
 tools: read,grep,find,ls
 tier: fast
+thinking: low
 ---
 
 You are a fast reconnaissance agent.

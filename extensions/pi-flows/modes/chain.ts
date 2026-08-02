@@ -31,7 +31,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			: appendReturnRequirements(rendered, step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence);
 		const result = await runAgentRef(
 			deps,
-			{ agent: step.agent, cwd: step.cwd, model: step.model, tier: step.tier, tools: step.tools },
+			{ agent: step.agent, cwd: step.cwd, model: step.model, tier: step.tier, thinking: step.thinking, tools: step.tools },
 			task,
 			"chain",
 			index + 1,

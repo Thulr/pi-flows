@@ -2,7 +2,8 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { type AgentScope, type AgentSource, type DiscoveryIssue, type FlowAgent, type FlowDiscovery } from "./types.ts";
+import { THINKING_LEVELS, type AgentScope, type AgentSource, type DiscoveryIssue, type FlowAgent, type FlowDiscovery, type ThinkingLevel } from "./types.ts";
+import { isThinkingLevel } from "./model-roster.ts";
 import { safePath } from "./sanitize.ts";
 
 export const baseDir = path.dirname(fileURLToPath(import.meta.url));
@@ -73,6 +74,20 @@ export function loadAgentsFromDir(dir: string, source: AgentSource): { agents: F
 			continue;
 		}
 
+		// An unrecognized level is reported rather than silently dropped: a typo
+		// here would otherwise look like the agent simply chose not to set one.
+		const rawThinking = frontmatter.thinking?.trim();
+		if (rawThinking && !isThinkingLevel(rawThinking)) {
+			issues.push({
+				severity: "warning",
+				code: "AGENT_THINKING_INVALID",
+				source,
+				filePath: safePath(filePath) ?? filePath,
+				message: `Ignored thinking level "${rawThinking}" in flow-agent frontmatter: not a pi thinking level.`,
+				fix: `Use one of: ${THINKING_LEVELS.join(", ")}.`,
+			});
+		}
+
 		const rawTools = frontmatter.tools?.trim();
 		let tools: string[] | undefined;
 		if (rawTools) {
@@ -90,6 +105,7 @@ export function loadAgentsFromDir(dir: string, source: AgentSource): { agents: F
 			tools,
 			model: frontmatter.model?.trim() || undefined,
 			tier: frontmatter.tier?.trim() || undefined,
+			thinking: isThinkingLevel(rawThinking) ? (rawThinking as ThinkingLevel) : undefined,
 			systemPrompt: body.trim(),
 			source,
 			filePath,

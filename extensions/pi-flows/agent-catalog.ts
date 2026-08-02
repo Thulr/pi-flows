@@ -12,9 +12,10 @@ import {
 	type FlowError,
 	type FlowMode,
 	type FlowRunResult,
+	type ModelRoster,
 } from "./types.ts";
 import { safePath } from "./sanitize.ts";
-import { configuredTierModels } from "./runner.ts";
+import { describeModelRoster } from "./model-roster.ts";
 import { requestedAgentNamesForParams } from "./modes/contract.ts";
 
 export function summarizeDiscoveryIssues(issues: DiscoveryIssue[]): string {
@@ -32,6 +33,7 @@ export function summarizeAgents(agents: FlowAgent[], issues: DiscoveryIssue[] = 
 					const bits = [`${agent.name} (${agent.source})`, agent.description];
 					if (agent.model) bits.push(`model=${agent.model}`);
 					if (agent.tier) bits.push(`tier=${agent.tier}`);
+					if (agent.thinking) bits.push(`thinking=${agent.thinking}`);
 					if (agent.tools) bits.push(`tools=${agent.tools.length ? agent.tools.join(",") : "none"}`);
 					return `- ${bits.join(" — ")}`;
 				})
@@ -40,7 +42,7 @@ export function summarizeAgents(agents: FlowAgent[], issues: DiscoveryIssue[] = 
 	return issueText ? `${agentText}\n\nDiscovery issues:\n${issueText}` : agentText;
 }
 
-export function safeAgentForDetails(agent: FlowAgent): Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "tools"> {
+export function safeAgentForDetails(agent: FlowAgent): Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "thinking" | "tools"> {
 	return {
 		name: agent.name,
 		description: agent.description,
@@ -48,6 +50,7 @@ export function safeAgentForDetails(agent: FlowAgent): Pick<FlowAgent, "name" | 
 		filePath: safePath(agent.filePath) ?? agent.filePath,
 		model: agent.model,
 		tier: agent.tier,
+		thinking: agent.thinking,
 		tools: agent.tools,
 	};
 }
@@ -94,16 +97,15 @@ export function makeFlowDetails(discovery: FlowDiscovery, agentScope: AgentScope
 	});
 }
 
-export function configSummary(discovery: FlowDiscovery, agentScope: AgentScope): string {
+export function configSummary(discovery: FlowDiscovery, agentScope: AgentScope, roster?: ModelRoster): string {
 	const lines = [
 		`pi-flows ${PI_FLOWS_VERSION}`,
 		`agentScope: ${agentScope}`,
 		`agentsDir.package: ${safePath(discovery.packageAgentsDir)}`,
 		`agentsDir.user: ${safePath(discovery.userAgentsDir)}`,
 		`agentsDir.project: ${safePath(discovery.projectAgentsDir) ?? "(none)"}`,
-		`modelTier.fast: ${configuredTierModels().fast ?? "(unset — falls back to the default pi model; set PI_FLOWS_FAST_MODEL to map it)"}`,
-		`modelTier.capable: (default pi model)`,
-		`modelTier.deep: ${configuredTierModels().deep ?? "(unset — falls back to the default pi model; set PI_FLOWS_DEEP_MODEL to map it)"}`,
+		`modelRoster: ${roster?.source ?? "unresolved"}`,
+		...describeModelRoster(roster),
 		`defaultConcurrency: ${DEFAULT_CONCURRENCY}`,
 		`maxParallelTasks: ${MAX_PARALLEL_TASKS}`,
 		`defaultTimeoutMs: ${DEFAULT_TIMEOUT_MS}`,
@@ -122,7 +124,7 @@ export interface AgentCatalog {
 	discovery: FlowDiscovery;
 	agentScope: AgentScope;
 	summary: () => string;
-	configSummary: () => string;
+	configSummary: (roster?: ModelRoster) => string;
 	projectAgentsFor: (params: any) => FlowAgent[];
 	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
 	errorDetails: (mode: FlowMode, error: FlowError) => FlowDetails;
@@ -133,7 +135,7 @@ export function createAgentCatalog(discovery: FlowDiscovery, agentScope: AgentSc
 		discovery,
 		agentScope,
 		summary: () => summarizeAgents(discovery.agents, discovery.issues),
-		configSummary: () => configSummary(discovery, agentScope),
+		configSummary: (roster) => configSummary(discovery, agentScope, roster),
 		projectAgentsFor: (params) => projectAgentsForRequest(discovery, params),
 		makeDetails: (mode, agents) => makeFlowDetails(discovery, agentScope, mode, agents),
 		errorDetails: (mode, error) => makeFlowDetails(discovery, agentScope, mode)([], error),

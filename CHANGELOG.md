@@ -10,6 +10,57 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Tiers now resolve to real models with no configuration. `fast`, `capable`, and
+  `deep` are matched against a **model roster** derived from pi's own model
+  registry — the models this install has configured auth for, ranked by the
+  provider's advertised pricing, context, and reasoning support. `fast` takes the
+  cheapest usable model (preferring the parent's provider), `capable` the model
+  this session is running — named explicitly, since a fresh child would otherwise
+  load pi's *configured* default — and `deep` the most capable. Previously an unset `PI_FLOWS_FAST_MODEL` /
+  `PI_FLOWS_DEEP_MODEL` meant every tier silently collapsed onto the parent's own
+  model, so a correctly right-sized flow call did nothing. No vendor model id is
+  hard-coded; the ranking comes from the registry, not from a list this repo
+  maintains.
+- `thinking` is a first-class dial on every surface that takes `tier` — flow
+  calls, tasks, phases, graph nodes, worktree workers, agent refs, and agent
+  frontmatter — passed to the child as `--thinking`. It is independent of `tier`,
+  so effort can change while the model stays the same, and it is lowered
+  automatically to what the resolved model supports whenever that model is
+  known. A `capable` child with no level named inherits the
+  parent session's current level, which previously never reached children at all.
+  A model pin may also carry pi's `provider/id:level` shorthand.
+- Child spans carry `flow.thinking_level` — the level passed to the child, after
+  clamping — so two runs of an experiment that varies only effort no longer have
+  indistinguishable span identities. `flow.thinking_level_verified` says whether
+  that level was checked against the model it runs on, which is impossible for a
+  child naming no model, since pi's configured default is not readable here.
+- `/flows models` shows what each tier currently resolves to and why, and pins a
+  tier interactively. Overrides persist to `~/.pi/agent/pi-flows.json`, or
+  `.pi/pi-flows.json` for a trusted project — an untrusted project's file is
+  ignored, since choosing the model also chooses which vendor sees the task.
+  `flow showConfig:true` reports the same roster with its rationale.
+  `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` continue to work, outranked by
+  the config file.
+- A workflow approval is refused when the work it gates names no model, no tier,
+  and runs an agent declaring neither. Such a step executes pi's configured
+  default, which an extension cannot read and which can change before a resume —
+  so the receipt would verify while authorizing work on a model the approver
+  never saw. `WORKFLOW_INVALID` names the steps and the fix, in the same spirit
+  as `BUDGET_UNOBSERVABLE`.
+- A gated workflow phase's approval receipt now binds what that phase will
+  actually *run as* — the concrete model and thinking level, resolved through the
+  same path dispatch uses — for the gated phases and for a gated debrief.
+  Previously only the phase's own `model`/`tier` were bound, so a workflow
+  approved under one flow-level model could be resumed under another. Binding the
+  tier *name* would not have been enough either: `deep` is a question, not an
+  answer, so a roster override or a registry change between approval and resume
+  could leave the same word selecting a different model, vendor, and effort while
+  the receipt still verified. Changing any of it now invalidates the receipt.
+- Bundled agents declare thinking levels where their effort profile is fixed:
+  `recon` and `controller` at `low`, `strategist` at `high`, `redteam` at `max`.
+  `analyst`, `operator`, `overwatch`, `commander`, and `debrief` inherit the
+  parent session's level instead of pinning one.
+
 - `npm run score:domain` scores the domain model, and CI posts it on every PR.
   The structural half — module classification, subdomain import direction, naming, and
   foreign-package containment — is re-derived from the tree on every run and is
