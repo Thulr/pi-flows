@@ -27,6 +27,10 @@ const PASSTHROUGH_KEYS = new Set([
 	"why",
 	"agentScope",
 	"confirmProjectAgents",
+	// A caller must always be able to narrow the aggregate monetary authority of
+	// a preset without the preset opting in. Like capture/tracing controls below,
+	// this does not replace workflow shape.
+	"maxCostUsd",
 	"checkpoint",
 	"reflexion",
 	"traceFile",
@@ -214,11 +218,23 @@ export function resolveFlowPreset(params: Record<string, unknown>, discovery: Fl
 	};
 }
 
-export function summarizePresets(discovery: FlowPresetDiscovery): string {
+export function summarizePresets(
+	discovery: FlowPresetDiscovery,
+	policy: CapturePolicy = { recordContent: true, redactSecrets: true },
+): string {
 	const presetText = discovery.presets.length
-		? discovery.presets.map((preset) => `- ${preset.name} (${preset.source}) — ${preset.description}${preset.overrides.length ? ` — overrides=${preset.overrides.join(",")}` : ""}`).join("\n")
+		? discovery.presets.map((preset) => {
+			const description = sanitizeText(preset.description, policy, 4 * 1024);
+			const overrides = preset.overrides.map((override) => sanitizeText(override, policy, 256));
+			return `- ${preset.name} (${preset.source}) — ${description}${overrides.length ? ` — overrides=${overrides.join(",")}` : ""}`;
+		}).join("\n")
 		: "No flow presets found.";
-	const issueText = discovery.issues.map((item) => `- ${item.severity.toUpperCase()} ${item.code}${item.filePath ? ` (${item.filePath})` : ""}: ${item.message}${item.fix ? ` Fix: ${item.fix}` : ""}`).join("\n");
+	const issueText = discovery.issues.map((item) => {
+		const filePath = item.filePath ? sanitizeText(safePath(item.filePath) ?? item.filePath, policy, 4 * 1024) : "";
+		const message = sanitizeText(item.message, policy, 4 * 1024);
+		const fix = item.fix ? sanitizeText(item.fix, policy, 4 * 1024) : "";
+		return `- ${item.severity.toUpperCase()} ${item.code}${filePath ? ` (${filePath})` : ""}: ${message}${fix ? ` Fix: ${fix}` : ""}`;
+	}).join("\n");
 	return issueText ? `${presetText}\n\nDiscovery issues:\n${issueText}` : presetText;
 }
 

@@ -234,20 +234,20 @@ export default function (pi: ExtensionAPI) {
 				return (results, error) => {
 					const details = build(results, error);
 					if (budgetCeilings.length) details.budgetCeilings = budgetCeilings;
-					return attachPresetDetails(details, presetDiscovery, activePreset);
+					return attachPresetDetails(details, presetDiscovery, activePreset, policy);
 				};
 			};
 
 			if (params.list) {
 				return {
-					content: [{ type: "text", text: `Workflow presets:\n${summarizePresets(presetDiscovery)}\n\nFlow agents:\n${catalog.summary()}` }],
+					content: [{ type: "text", text: `Workflow presets:\n${summarizePresets(presetDiscovery, policy)}\n\nFlow agents:\n${catalog.summary()}` }],
 					details: makeDetails("list")([]),
 				};
 			}
 
 			if (params.showConfig) {
 				return {
-					content: [{ type: "text", text: `${catalog.configSummary(roster)}\n\n${presetConfigSummary(presetDiscovery)}` }],
+					content: [{ type: "text", text: `${catalog.configSummary(roster)}\n\n${presetConfigSummary(presetDiscovery, policy)}` }],
 					details: makeDetails("config")([]),
 				};
 			}
@@ -255,7 +255,7 @@ export default function (pi: ExtensionAPI) {
 			if (params.preset) {
 				const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery);
 				if ("error" in resolved) {
-					return presetResolutionErrorOutput(resolved.error, presetDiscovery, makeDetails("list")([], resolved.error));
+					return presetResolutionErrorOutput(resolved.error, presetDiscovery, makeDetails("list")([], resolved.error), policy);
 				}
 				activePreset = resolved.preset;
 				params = resolved.params as typeof params;

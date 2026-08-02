@@ -7,7 +7,7 @@
  * from runner.ts, which re-exports this module.
  */
 import type { Budget, ChildSpanScope, DelegationContract, FlowAgentRefInput, FlowMode, FlowRunResult, ModeDeps, RunChildOptions, SpanStage } from "./types.ts";
-import { makeEmptyRunResult } from "./sanitize.ts";
+import { makeEmptyRunResult, sanitizeText } from "./sanitize.ts";
 
 export async function mapWithConcurrency<TIn, TOut>(
 	items: TIn[],
@@ -98,7 +98,7 @@ function fanoutScope(stage: SpanStage | undefined, item: AgentFanoutItem, index:
 
 function emptyRun(ref: FlowAgentRefInput, task: string, deps: ModeDeps, error?: FlowRunResult["error"]): FlowRunResult {
 	const result = makeEmptyRunResult(ref.agent, task, deps.policy, error);
-	result.role = ref.role;
+	result.role = ref.role === undefined ? undefined : sanitizeText(ref.role, deps.policy, 4 * 1024);
 	return result;
 }
 

@@ -52,6 +52,43 @@ test("flow list and showConfig expose preset discovery and provenance", async ()
 	assert.ok(configured.details.presetsDir.package);
 });
 
+test("preset metadata is redacted in list, config, and run details", async () => {
+	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-metadata-"));
+	const projectDir = path.join(repo, ".pi", "flow-presets");
+	await mkdir(projectDir, { recursive: true });
+	const secret = "metadata-secret-value";
+	await writeFile(
+		path.join(projectDir, "metadata.md"),
+		`---
+name: metadata
+description: Contact owner@example.com with token=${secret}
+overrides: timeoutMs,password=${secret}
+result: token=${secret}
+---
+{"agent":"recon","task":"{task}","timeoutMs":1000,"maxGeneratedTokens":10}
+`,
+	);
+
+	const tools = new Map<string, any>();
+	registerPiFlows({ registerCommand() {}, registerShortcut() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
+	const flow = tools.get("flow");
+	const context = { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify() {} } };
+	const listed = await flow.execute("preset-list-redaction", { list: true, agentScope: "project" }, new AbortController().signal, undefined, context);
+	const configured = await flow.execute("preset-config-redaction", { showConfig: true, agentScope: "project" }, new AbortController().signal, undefined, context);
+	const run = await runFlow(
+		{ preset: "metadata", task: "Inspect one file.", agentScope: "project", confirmProjectAgents: false },
+		{ recon: ["Reviewed."] },
+		{ cwd: repo },
+	);
+
+	for (const output of [listed, configured, run.result]) {
+		const serialized = JSON.stringify(output);
+		assert.doesNotMatch(serialized, /metadata-secret-value|owner@example\.com/);
+		assert.match(serialized, /\[REDACTED_SECRET\]|\[REDACTED_EMAIL\]/);
+	}
+	assert.equal(run.result.details.preset.description, "Contact [REDACTED_EMAIL] with token=[REDACTED_SECRET]");
+});
+
 test("preset expansion substitutes the complete task and rejects undeclared shape overrides", () => {
 	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
 	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
@@ -66,6 +103,13 @@ test("preset expansion substitutes the complete task and rejects undeclared shap
 	assert.equal((resolved.params.tasks as any[])[0].role, "standards");
 	assert.equal((resolved.params.tasks as any[])[1].role, "spec");
 	assert.equal((resolved.params.tasks as any[])[0].agent, "overwatch");
+
+	const costBounded = resolveFlowPreset(
+		{ preset: "code-review", task: "Review.", why: "test", maxCostUsd: 0.25 },
+		discovery,
+	);
+	assert.ok(!("error" in costBounded));
+	assert.equal(costBounded.params.maxCostUsd, 0.25);
 
 	const invalid = resolveFlowPreset(
 		{ preset: "code-review", task: "Review.", why: "test", evaluate: {} },
@@ -119,6 +163,16 @@ test("a run keeps its topology role distinct from its agent profile", async () =
 	assert.equal(result.details.results[0].agent, "recon");
 	assert.equal(result.details.results[0].role, "standards");
 	assert.match(text, /standards \(recon\)/);
+});
+
+test("a run captures role labels under the active redaction policy", async () => {
+	const { result, text } = await runFlow(
+		{ tasks: [{ agent: "recon", role: "standards token=role-secret-value", task: "Inspect one file." }], concurrency: 1 },
+		{ recon: ["Reviewed."] },
+	);
+	assert.equal(result.details.results[0].role, "standards token=[REDACTED_SECRET]");
+	assert.match(text, /standards token=\[REDACTED_SECRET\] \(recon\)/);
+	assert.doesNotMatch(JSON.stringify(result), /role-secret-value/);
 });
 
 test("project presets shadow bundled presets with a visible diagnostic", async () => {

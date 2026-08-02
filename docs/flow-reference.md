@@ -12,10 +12,11 @@ Presets are the intent-level entrypoint over the raw mode table. A call such as:
 }
 ```
 
-loads one Markdown definition, substitutes `{task}`, applies only its declared
-top-level overrides, then validates and runs the expanded call as an ordinary
-mode. Presets do not bypass mode bounds, budgets, delegation contracts, project
-trust, capture policy, or traces.
+loads one Markdown definition, substitutes `{task}`, applies its declared
+workflow-shape overrides plus safe caller controls such as capture, tracing,
+trust, and `maxCostUsd`, then validates and runs the expanded call as an
+ordinary mode. Presets do not bypass mode bounds, budgets, delegation contracts,
+project trust, capture policy, or traces.
 
 Bundled presets:
 
