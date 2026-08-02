@@ -238,7 +238,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		thinking: clampThinking(TIER_THINKING.fast, cheapModel),
 		why: `cheapest model this install can run${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
 		origin: { model: "derived", thinking: "derived" },
-	}, `your pi default is already the cheapest model available, so fast reruns it at ${TIER_THINKING.fast} thinking`);
+	}, `the model this session is running is already the cheapest available, so fast reruns it at ${TIER_THINKING.fast} thinking`);
 
 	const deep: RosterAssignment = sameOrDefault(strongModel, parentModel, {
 		model: strongModel.reference,
@@ -248,8 +248,8 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 			: "most capable model this install can run (none offer extended thinking)",
 		origin: { model: "derived", thinking: "derived" },
 	}, supportsExtendedThinking(strongModel)
-		? `your pi default is already the most capable model available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`
-		: "your pi default is already the most capable model available, and none offer extended thinking, so deep matches it");
+		? `the model this session is running is already the most capable available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`
+		: "the model this session is running is already the most capable available, and none offer extended thinking, so deep matches it");
 
 	return { fast, capable, deep, available: inputs.available, sessionModel: parentModel, source: "derived", issues: [] };
 }

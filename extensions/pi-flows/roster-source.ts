@@ -69,6 +69,10 @@ export function availableModelsFromRegistry(registry: ModelRegistryLike | undefi
 /**
  * Nearest ancestor whose pi config dir actually holds a roster config, or null.
  *
+ * `stat` is injectable because the branches that matter most are I/O failures —
+ * EACCES, ELOOP — which cannot be induced portably in a test, and a test that
+ * silently does nothing under a root CI user is worse than none.
+ *
  * Walked rather than joined onto cwd because project-agent discovery already
  * walks (`findNearestProjectAgentsDir`), and the two have to agree: starting pi
  * from `src/` would otherwise load the repo's project agents while silently
@@ -81,14 +85,14 @@ export function availableModelsFromRegistry(registry: ModelRegistryLike | undefi
  * miss one level down. `findNearestProjectAgentsDir` looks for `.pi/flow-agents`
  * for exactly this reason.
  */
-function nearestProjectConfigDir(cwd: string): { dir: string | null; issues: string[] } {
+export function nearestProjectConfigDir(cwd: string, stat: (file: string) => { isFile(): boolean } = fs.statSync): { dir: string | null; issues: string[] } {
 	const issues: string[] = [];
 	let current = path.resolve(cwd);
 	while (true) {
 		const candidate = path.join(current, CONFIG_DIR_NAME);
 		try {
-			const stat = fs.statSync(path.join(candidate, ROSTER_CONFIG_FILE));
-			if (stat.isFile()) return { dir: candidate, issues };
+			const entry = stat(path.join(candidate, ROSTER_CONFIG_FILE));
+			if (entry.isFile()) return { dir: candidate, issues };
 			// Something is there and it is not a file — a directory, a socket. The
 			// walk stops rather than continuing: an ancestor's config loaded in its
 			// place would apply settings from a project the user is not in, which is
@@ -103,7 +107,11 @@ function nearestProjectConfigDir(cwd: string): { dir: string | null; issues: str
 			// unrelated ancestor's config in their place.
 			const code = (error as NodeJS.ErrnoException)?.code;
 			if (code !== "ENOENT" && code !== "ENOTDIR") {
-				issues.push(`${CONFIG_DIR_NAME}/${ROSTER_CONFIG_FILE} in this project could not be read (${code ?? "unknown error"}); its overrides were ignored.`);
+				// Same reasoning as the non-file case above: something is there and
+				// cannot be read, so continuing would substitute an unrelated
+				// ancestor's pins — possibly another provider — for the project's.
+				issues.push(`${CONFIG_DIR_NAME}/${ROSTER_CONFIG_FILE} in this project could not be read (${code ?? "unknown error"}); its overrides were ignored, and no ancestor config was used in its place.`);
+				return { dir: null, issues };
 			}
 		}
 		const parent = path.dirname(current);

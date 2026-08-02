@@ -82,9 +82,19 @@ export function parseRosterConfig(text: string): { config: RosterConfig; error?:
 	} catch (error) {
 		return { config: {}, error: error instanceof Error ? error.message : String(error), invalid: [] };
 	}
-	const models = (parsed as Record<string, unknown> | null)?.models;
-	if (!models || typeof models !== "object") return { config: {}, invalid: [] };
-	const record = models as Record<string, unknown>;
+	// Validated on the way in as well as on the way out. `typeof [] === "object"`,
+	// so an array root or an array `models` used to read as an empty config with
+	// nothing reported — every intended override dropped, children routed to a
+	// derived model, and no `modelRoster.issue` to explain it.
+	if (!isPlainObject(parsed)) {
+		return { config: {}, invalid: [`must contain a JSON object (found ${describeJson(parsed)})`] };
+	}
+	const models = parsed.models;
+	if (models === undefined) return { config: {}, invalid: [] };
+	if (!isPlainObject(models)) {
+		return { config: {}, invalid: [`"models" must be an object (found ${describeJson(models)})`] };
+	}
+	const record = models;
 	const config: RosterConfig = {};
 	const invalid: string[] = [];
 	for (const tier of ["fast", "capable", "deep"] as const) {

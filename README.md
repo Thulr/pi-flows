@@ -520,7 +520,7 @@ This works with no configuration. If your default model is already the best one 
 ```
 modelTier.fast: anthropic/claude-haiku-4-5, thinking low — cheapest model this install can run on anthropic
 modelTier.capable: anthropic/claude-opus-5, thinking high — the model this session is running, at its current thinking level (high)
-modelTier.deep: anthropic/claude-opus-5, thinking max — your pi default is already the most capable model available, so deep differs by thinking level (max), not by model
+modelTier.deep: anthropic/claude-opus-5, thinking max — the model this session is running is already the most capable available, so deep differs by thinking level (max), not by model
 ```
 
 To pin a tier yourself, run `/flows models` and pick one, or edit `~/.pi/agent/pi-flows.json` directly:
@@ -539,7 +539,9 @@ To pin a tier yourself, run `/flows models` and pick one, or edit `~/.pi/agent/p
 
 A trusted project may override this in `.pi/pi-flows.json` — found by walking up from the working directory (searching for the file itself, so an unrelated nested `.pi` does not shadow it), like project agents, so it applies when you start pi in a subdirectory. `/flows models` warns before saving a tier the project already claims, since project config outranks your user file. An untrusted project's file is ignored, because a repo-controlled file choosing the model also chooses which vendor sees the task. A project override narrows a tier field by field, so a project that sets only `thinking` keeps your model pin. The older `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` environment variables still work and are still honored, but the config file wins over them.
 
-Full resolution order, narrowest first: flow-call `model` > flow-call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project `pi-flows.json` (when trusted) > user `pi-flows.json` > `PI_FLOWS_*_MODEL` > derived roster > your pi default. A thinking level above what the resolved model supports is lowered automatically, and what gets reported is the level the child actually ran at.
+Full resolution order, narrowest first: flow-call `model` > flow-call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project `pi-flows.json` (when trusted) > user `pi-flows.json` > `PI_FLOWS_*_MODEL` > derived roster > your pi default. A thinking level above what the resolved model supports is lowered automatically, and the reported value is the level the child was asked to run at *after* that lowering.
+
+One case cannot be checked in advance: a tier explicitly set to `"model": null`, or any child that names no model, runs pi's configured default — which pi does not expose to an extension. The level is passed through unchanged and pi may lower it internally, so the trace marks those spans `flow.thinking_level_verified: false`. Treat that value as requested effort rather than effective effort.
 
 ## Documentation ladder
 
