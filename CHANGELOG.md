@@ -8,6 +8,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.6.0 - 2026-08-01
+
 ### Added
 
 - Tiers now resolve to real models with no configuration. `fast`, `capable`, and

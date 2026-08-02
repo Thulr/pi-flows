@@ -128,7 +128,10 @@ Use flow with {"list":true}
 Use flow with {"showConfig":true}
 ```
 
-Or install your working copy as a package with `pi install -l ./`. See [Development](#development) for the build/test loop and [Contributing](./CONTRIBUTING.md).
+Or install your working copy as a package with `pi install -l ..`. Project-local
+package paths are resolved from `.pi/`, so `..` names the checkout root. See
+[Development](#development) for the build/test loop and
+[Contributing](./CONTRIBUTING.md).
 
 ## What it adds
 

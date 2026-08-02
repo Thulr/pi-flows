@@ -56,7 +56,7 @@ permission, and provenance is generated automatically.
 5. Smoke the local package in pi:
 
    ```bash
-   pi install -l ./
+   pi install -l ..
    ```
 
    ```text
