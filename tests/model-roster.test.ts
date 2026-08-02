@@ -402,6 +402,29 @@ test("pinning a tier to a new model re-asks for that tier's level, not the old m
 	assert.equal(explicit.fast.thinking, "high");
 });
 
+test("a model-only override keeps a level a lower layer stated explicitly", () => {
+	// Re-asking the tier default is right only when the level in hand *was* a tier
+	// default. A level the user set is a decision about effort, not an artifact of
+	// the model that layer happened to pick — and the per-field origin already
+	// says the level is still theirs.
+	const roster = resolveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		config: { fast: { model: "acme/flagship", thinking: "high" } },
+		project: { fast: { model: "acme/flagship" } },
+	});
+	assert.equal(roster.fast.thinking, "high", "the user's explicit level survives a project model change");
+	assert.equal(roster.fast.origin?.thinking, "user-config", "and the origin agrees it is still theirs");
+
+	// A level that was only the tier's default is still re-asked for the new model.
+	const derivedLevel = resolveModelRoster({
+		available: [model("plain", { costPerToken: 0.1, reasoning: false }), model("thinker", { costPerToken: 5 })],
+		parent: { model: "acme/thinker" },
+		config: { fast: { model: "acme/thinker" } },
+	});
+	assert.equal(derivedLevel.fast.thinking, "low");
+});
+
 test("a stated-but-unusable override field is reported, not silently dropped", () => {
 	// Dropping `{"model": 42}` to undefined leaves the tier derived, so a user who
 	// pinned a model watches work go elsewhere with nothing to explain it. A

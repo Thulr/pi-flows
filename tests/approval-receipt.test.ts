@@ -762,3 +762,35 @@ test("an approval is refused when the work it gates names no model to bind", () 
 	assert.deepEqual(unbindableGatedRefs(phases, 0, blind), ["ship"], "a tier that cannot resolve is not a bound model");
 	assert.deepEqual(unbindableGatedRefs(pinned, 0, blind), [], "an explicit model still binds without a registry");
 });
+
+test("a trailing legacy approval is re-asked while its debrief is still outstanding", async () => {
+	// A trailing approval gates no phases, so judging it by phases alone calls it
+	// spent — while the workflow completion and debrief it authorizes have not
+	// run. Those would then execute on whatever the roster now resolves.
+	const cwd = await freshDir();
+	const params = {
+		task: "Analyze, then sign off.",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze" },
+				{ id: "signoff", approval: { message: "Sign off" } },
+			],
+			debrief: { agent: "debrief" },
+		},
+	};
+	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
+	await runFlow(params, { recon: "ANALYSIS" }, { cwd });
+	// Approve, then fail the debrief so the workflow never reaches "completed".
+	await runFlow(resume(), { debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+
+	const state = await readState(cwd);
+	assert.notEqual(state.status, "completed", "the debrief this approval gates has not run");
+	state.version = 2;
+	state.outputs.signoff = "APPROVED";
+	delete state.receipts;
+	await writeState(cwd, state);
+
+	const headless = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd });
+	assert.equal(headless.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "consent that has not been spent is re-asked, not reconstructed");
+});

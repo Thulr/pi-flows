@@ -271,23 +271,25 @@ function sameOrDefault(chosen: AvailableModel, parentModel: string | undefined, 
 	return { ...assignment, why: sameWhy };
 }
 
-function applyOverride(base: RosterAssignment, override: RosterOverride | undefined, label: string, available: AvailableModel[], tierDefault: ThinkingLevel | undefined, origin: RosterLayer): RosterAssignment {
+/**
+ * One layer's statement, folded into what the layers below already said.
+ *
+ * The level carried between layers is the one that was *requested*, never a
+ * clamped result. Clamping mid-chain bakes one model's limits into a value that
+ * a later layer may re-point at a different model: a user asking for `high` on a
+ * rung whose derived model caps at `medium` would be lowered to `medium`, and a
+ * project that then changed only the model would inherit `medium` even where
+ * `high` is supported. The clamp happens once, at the end, against the model
+ * that actually won.
+ */
+function applyLayer(base: LayeredAssignment, override: RosterOverride | undefined, label: string, origin: RosterLayer): LayeredAssignment {
 	if (!override) return base;
-	// An absent `model` keeps whatever the base resolved; a stated one — including
-	// the null that means "the pi default" — replaces it.
-	const model = override.model !== undefined ? override.model : base.model;
-	const known = model ? available.find((candidate) => candidate.reference === model) : undefined;
+	// An absent `model` keeps whatever the layers below resolved; a stated one —
+	// including the null that means "the pi default" — replaces it.
 	const said = override.model !== undefined;
-	// A level inherited from the base was already clamped against the model the
-	// base chose. Carrying it onto a *different* model carries the old model's
-	// limits with it: a derived non-reasoning `fast` clamps to `off`, and pinning
-	// that tier to a reasoning model would then keep `off` rather than the `low`
-	// the rung is documented to use. So a model-only override re-asks for the
-	// tier's own level instead of inheriting the previous answer.
-	const requested = override.thinking ?? (said && override.model !== base.model ? tierDefault ?? base.thinking : base.thinking);
 	return {
-		model,
-		thinking: clampThinking(requested, known),
+		model: said ? override.model : base.model,
+		requested: override.thinking ?? base.requested,
 		why: said && override.thinking ? `${label} override` : said ? `${label} model override` : `${label} thinking override`,
 		// Only the fields this layer actually stated change hands; the rest keep
 		// whichever layer supplied them, so precedence stays readable per field.
@@ -314,6 +316,14 @@ function userOnly(config: RosterOverride | undefined, project: RosterOverride | 
 	return { ...(model !== undefined ? { model } : {}), ...(thinking ? { thinking } : {}) };
 }
 
+/** A rung part-way through the layer chain: the level is still the one requested, not one clamped to a model a later layer may replace. */
+interface LayeredAssignment {
+	model?: string | null;
+	requested?: ThinkingLevel;
+	why: string;
+	origin?: RosterAssignment["origin"];
+}
+
 export interface ResolveRosterInputs extends RosterInputs {
 	config?: RosterConfig;
 	/** The project-supplied subset of `config`, so a rung can name the layer that settled it. */
@@ -338,19 +348,31 @@ export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
 		const env = inputs.env?.[tier];
 		const config = inputs.config?.[tier];
 		if (env || config) configured = true;
-		// Clamping reads the full registry, not the assignable pool: a pin may name a
-		// model that ranking excluded, and it still has real limits.
 		const project = inputs.project?.[tier];
-		// Project and user overrides are applied in one pass each so a field states
-		// its own layer. The merged `config` already resolved which value wins; this
-		// only records who supplied it.
-		const tierDefault = tier === "capable" ? inputs.parent.thinking : TIER_THINKING[tier];
-		const withEnv = applyOverride(derived[tier], env, "PI_FLOWS_*_MODEL", inputs.available, tierDefault, "env");
-		// The project layer is a subset of `config`, so a rung it claimed is
-		// labelled as its own — that is what tells /flows models its user-file edit
-		// would be shadowed.
-		const withUser = applyOverride(withEnv, userOnly(config, project), ROSTER_CONFIG_FILE, inputs.available, tierDefault, "user-config");
-		return [tier, applyOverride(withUser, project, ROSTER_CONFIG_FILE, inputs.available, tierDefault, "project-config")] as const;
+
+		// The tier's own requested level, before any model clamped it. The derived
+		// rung's `thinking` is already clamped, so it cannot be the starting point.
+		const start: LayeredAssignment = {
+			model: derived[tier].model,
+			requested: tier === "capable" ? inputs.parent.thinking : TIER_THINKING[tier],
+			why: derived[tier].why,
+			origin: derived[tier].origin,
+		};
+		// Project and user apply as separate passes so each field names its own
+		// layer. The merged `config` already decided which value wins; splitting it
+		// only records who supplied it — that is what tells /flows models whether a
+		// user-file edit would be shadowed.
+		const layered = [
+			[env, "PI_FLOWS_*_MODEL", "env"] as const,
+			[userOnly(config, project), ROSTER_CONFIG_FILE, "user-config"] as const,
+			[project, ROSTER_CONFIG_FILE, "project-config"] as const,
+		].reduce((carried, [override, label, origin]) => applyLayer(carried, override, label, origin), start);
+
+		// Clamped once, against the model that won, and read from the full registry
+		// rather than the assignable pool: a pin may name a model ranking excluded,
+		// and it still has real limits.
+		const known = layered.model ? inputs.available.find((candidate) => candidate.reference === layered.model) : undefined;
+		return [tier, { model: layered.model, thinking: clampThinking(layered.requested, known), why: layered.why, origin: layered.origin }] as const;
 	});
 	const roster = Object.fromEntries(rungs) as Pick<ModelRoster, "fast" | "capable" | "deep">;
 	return {

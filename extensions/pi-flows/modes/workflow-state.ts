@@ -107,7 +107,16 @@ export function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDep
 		// Only consent that is fully spent can be reconstructed, because only then
 		// does the binding describe work that already happened rather than work
 		// this resume is about to authorize.
-		const outstanding = gatedPhaseIds(phases, index).some((id) => !state.completedPhaseIds.includes(id));
+		//
+		// A TRAILING approval gates no phases at all — `gatedPhaseIds` is empty for
+		// it — but it still authorizes the workflow's completion and its debrief.
+		// Judging it by phases alone would call it spent while the debrief had yet
+		// to run, and that debrief would then execute on whatever the roster now
+		// resolves, never re-approved.
+		const gated = gatedPhaseIds(phases, index);
+		const authorizesCompletion = index + gated.length + 1 >= phases.length;
+		const outstanding = gated.some((id) => !state.completedPhaseIds.includes(id))
+			|| (authorizesCompletion && legacy.status !== "completed");
 		if (outstanding) {
 			state.completedPhaseIds = state.completedPhaseIds.filter((id: string) => id !== phase.id);
 			continue;
