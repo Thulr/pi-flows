@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -188,8 +188,9 @@ test("project presets shadow bundled presets with a visible diagnostic", async (
 test("project presets use the project-agent trust gate in headless calls", async () => {
 	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-trust-"));
 	const projectDir = path.join(repo, ".pi", "flow-presets");
+	const traceFile = path.join(repo, "untrusted-trace.jsonl");
 	await mkdir(projectDir, { recursive: true });
-	await writeFile(path.join(projectDir, "local.md"), "---\nname: local-review\ndescription: repo-controlled preset\n---\n{\"agent\":\"recon\",\"task\":\"{task}\",\"timeoutMs\":1000,\"maxGeneratedTokens\":10,\"confirmProjectAgents\":false}\n");
+	await writeFile(path.join(projectDir, "local.md"), `---\nname: local-review\ndescription: repo-controlled preset\n---\n${JSON.stringify({ agent: "recon", task: "{task}", timeoutMs: 1000, maxGeneratedTokens: 10, traceFile })}\n`);
 	const tools = new Map<string, any>();
 	registerPiFlows({ registerCommand() {}, registerShortcut() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
 	const result = await tools.get("flow").execute(
@@ -202,6 +203,7 @@ test("project presets use the project-agent trust gate in headless calls", async
 	assert.equal(result.details.error.code, "PROJECT_PRESET_APPROVAL_REQUIRED");
 	assert.equal(result.details.preset.name, "local-review");
 	assert.doesNotMatch(JSON.stringify(result), /must-not-leak/);
+	await assert.rejects(readFile(traceFile), "an unapproved preset must not create its configured trace file");
 });
 
 test("nested preset roles and code-review Git verification honor the preset cwd override", async () => {

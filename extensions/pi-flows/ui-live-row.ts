@@ -5,7 +5,7 @@ import { flowAgentActivity, flowAgentState } from "./inspector.ts";
 import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
-import { flowProgressText } from "./ui.ts";
+import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -95,6 +95,7 @@ function headerIcon(details: FlowDetails, settled: number, failed: number, tick:
 	// far has settled but the next stage has not spawned. A ✓ there would claim an
 	// outcome beside a header that only claims progress.
 	if (live || settled < details.results.length) return theme.fg("warning", spinnerFrame(tick));
+	if (hasNonCleanPresetOutcome(details)) return theme.fg("warning", "◐");
 	return failed ? theme.fg("warning", "◐") : theme.fg("success", "✓");
 }
 

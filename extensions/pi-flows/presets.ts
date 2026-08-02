@@ -218,6 +218,13 @@ export function resolveFlowPreset(params: Record<string, unknown>, discovery: Fl
 	};
 }
 
+/** Expand a preset for side-effect-free pre-run rendering; invalid/partial calls stay unchanged. */
+export function previewFlowPreset(params: Record<string, unknown>, cwd: string): Record<string, unknown> {
+	const scope = params.agentScope === "project" || params.agentScope === "all" ? params.agentScope : "user";
+	const resolved = resolveFlowPreset(params, discoverFlowPresets(cwd, scope));
+	return "error" in resolved ? params : resolved.params;
+}
+
 export function summarizePresets(
 	discovery: FlowPresetDiscovery,
 	policy: CapturePolicy = { recordContent: true, redactSecrets: true },

@@ -45,7 +45,7 @@ import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
-import { discoverFlowPresets, formatPresetResult, presetRunCwd, resolveFlowPreset, summarizePresets } from "./presets.ts";
+import { discoverFlowPresets, formatPresetResult, presetRunCwd, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
 import { approveProjectPreset } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
@@ -312,6 +312,8 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+			const presetApproval = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx);
+			if (presetApproval.error) return { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details: makeDetails(mode)([], presetApproval.error) };
 
 			// Trace evidence as a gate is opt-in. Ordinary user flows stay
 			// best-effort; an eval or release run asks for strict, and then a run
@@ -331,12 +333,8 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// The sink is built before the human gates, not after: an approval that is
-			// *granted* changes nothing else about the run, so a gate recorded only on
-			// refusal would leave a successful checkpoint with no evidence it was ever
-			// asked for. Every refusal below finalizes it, so those events never end up
-			// orphaned without a root span.
 			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+			presetApproval.record(traceSink?.event);
 			const handoffs = createHandoffConsumer({
 				params,
 				mode,
@@ -354,8 +352,6 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			const projectAgents = catalog.projectAgentsFor(params);
-			const presetApprovalError = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx, traceSink?.event);
-			if (presetApprovalError) return refuse(presetApprovalError);
 			if ((agentScope === "project" || agentScope === "all") && (params.confirmProjectAgents ?? true) && projectAgents.length > 0) {
 				if (!ctx.hasUI) {
 					const error = flowError(
@@ -486,11 +482,11 @@ export default function (pi: ExtensionAPI) {
 				liveFlows.settle(toolCallId, liveDetails);
 			}
 		},
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
 			const scope = args.agentScope ?? "user";
 			if (args.showConfig) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `config [${scope}]`), 0, 0);
 			if (args.list) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `list [${scope}]`), 0, 0);
-			return new Text(flowCallLines(args, theme, args.preset ? `preset ${args.preset}` : renderRunModeLabel(args), scope).join("\n"), 0, 0);
+			return new Text(flowCallLines(args.preset ? previewFlowPreset(args, context.cwd) : args, theme, args.preset ? `preset ${args.preset}` : renderRunModeLabel(args), scope).join("\n"), 0, 0);
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
 			return renderFlowResultRow(result as Parameters<typeof renderFlowResultRow>[0], { expanded, isPartial }, theme, context, summarizeAgents);

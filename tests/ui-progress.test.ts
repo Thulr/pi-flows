@@ -123,6 +123,17 @@ test("the live tool row labels the ratio while running and shows the verdict on 
 	}
 });
 
+test("non-clean preset outcomes cannot render as a successful live-row verdict", () => {
+	const findings = details(
+		[result({ exitCode: 0 }), result({ agent: "analyst", exitCode: 0 })],
+		{ preset: { name: "code-review" }, presetOutcome: "FINDINGS" },
+	);
+	assert.equal(flowProgressText(findings), "FINDINGS");
+	assert.match(boardHeader(findings), /^◐ flow code-review FINDINGS/);
+	assert.match(fleetHeader(findings), /flow code-review FINDINGS/);
+	assert.doesNotMatch(boardHeader(findings), /✓|2 ok/);
+});
+
 test("a live flow clears duplicate transient progress surfaces", () => {
 	const statusCalls: unknown[][] = [];
 	const widgetCalls: unknown[][] = [];

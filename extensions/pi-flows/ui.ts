@@ -13,6 +13,10 @@ export interface FlowProgressOptions {
 	live?: boolean;
 }
 
+export function hasNonCleanPresetOutcome(details: Pick<FlowDetails, "presetOutcome">): boolean {
+	return details.presetOutcome === "FINDINGS" || details.presetOutcome === "PARTIAL";
+}
+
 /**
  * The header state text the live board surfaces share, so neither can drift into
  * its own vocabulary. A bare `settled/total` was ambiguous in both directions:
@@ -39,6 +43,7 @@ export function flowProgressText(details: FlowDetails, options: FlowProgressOpti
 	if (total === 0) return "starting";
 	const settled = details.results.filter((result) => result.exitCode !== -1).length;
 	if (options.live || settled < total) return `${settled}/${total} settled`;
+	if (hasNonCleanPresetOutcome(details)) return details.presetOutcome!;
 	const failed = details.results.filter((result) => isFailed(result)).length;
 	return failed ? `${failed} failed` : `${total} ok`;
 }
@@ -50,13 +55,12 @@ export function clearFlowUi(ctx: any): void {
 }
 
 export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): void {
-	const nonCleanPreset = details.presetOutcome === "FINDINGS" || details.presetOutcome === "PARTIAL";
 	pi.appendEntry?.("pi-flows.run", {
 		version: details.version,
 		mode: details.mode,
 		preset: details.preset?.name,
 		presetOutcome: details.presetOutcome,
-		status: details.error ? "error" : nonCleanPreset || details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
+		status: details.error ? "error" : hasNonCleanPresetOutcome(details) || details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
 		errorCode: details.error?.code,
 		budgetCeilings: details.budgetCeilings,
 		// Trace pointer travels with the entry so the flow card can link evidence
