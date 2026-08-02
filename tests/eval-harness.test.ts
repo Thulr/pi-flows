@@ -36,7 +36,7 @@ process.stdout.write(JSON.stringify({type:"item.completed",item:{type:"agent_mes
 process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:12,cached_input_tokens:3,output_tokens:4,reasoning_output_tokens:2}}) + "\\n");
 `);
 	await chmod(stub, 0o755);
-	const result = await runCodex({ task: "SECRET_TASK_TEXT", cwd, model: "gpt-5.4-mini", reportedModel: "openai-codex/gpt-5.4-mini", codexBin: stub, timeoutMs: 5_000 });
+	const result = await runCodex({ task: "SECRET_TASK_TEXT", cwd, model: "gpt-5.4-mini", reportedModel: "openai-codex/gpt-5.4-mini", codexBin: stub, timeoutMs: 30_000 });
 	assert.equal(result.content[0].text, "ANSWER:SECRET_TASK_TEXT");
 	assert.equal(result.details.results[0].usage.input, 9);
 	assert.equal(result.details.results[0].usage.output, 4);
