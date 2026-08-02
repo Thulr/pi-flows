@@ -25,8 +25,8 @@ export const SELECTION_CASES = defineCases([
 		name: "package-version-no-flow",
 		task: "In package.json, what is the current package version? Answer with only the version string.",
 		expectFlow: false,
-		answerPattern: "\\b0\\.5\\.0\\b",
-		mock: { flowCalls: 0, answer: "0.5.0" },
+		answerPattern: "\\b0\\.6\\.0\\b",
+		mock: { flowCalls: 0, answer: "0.6.0" },
 		sourceExpectation: {
 			path: "package.json",
 			jsonPath: ["version"],
