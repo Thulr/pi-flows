@@ -64,7 +64,9 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 	const success = results.filter((result) => !isFailed(result)).length;
 	const summaries = results.map((result) => {
 		const status = isFailed(result) ? `failed${result.stopReason ? ` (${result.stopReason})` : ""}` : "completed";
-		return `### ${result.agent} — ${status}\n\n${sanitizeText(capModelVisibleText(resultText(result)), policy)}`;
+		const label = result.role ? `${result.role} (${result.agent})` : result.agent;
+		const text = result.envelope?.summary ?? resultText(result);
+		return `### ${label} — ${status}\n\n${sanitizeText(capModelVisibleText(text), policy)}`;
 	});
 	return {
 		content: [{ type: "text", text: `Flow parallel: ${success}/${results.length} succeeded.${incompleteHandoffSummary(results)}\n\n${summaries.join("\n\n---\n\n")}` }],

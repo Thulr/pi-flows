@@ -21,7 +21,7 @@ for (const file of files) {
   for (const pattern of forbidden) assert.ok(!pattern.test(file), `pack includes forbidden file: ${file}`);
 }
 
-for (const required of ["extensions/pi-flows/index.ts", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "AGENTS.md"]) {
+for (const required of ["extensions/pi-flows/index.ts", "presets/code-review.md", "presets/map-codebase.md", "presets/scout.md", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "AGENTS.md"]) {
   assert.ok(files.includes(required), `pack missing required file: ${required}`);
 }
 
@@ -81,5 +81,8 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // precedence per field, and workflow-state.ts split out of workflow.ts when it
 // crossed its line cap — plus the changelog entries for each. Same verification
 // as before: 83 files, none from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 880_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised for the preset layer and three bundled workflow definitions, including
+// the machine-checked code-review return schemas. Presets are runtime inputs,
+// not examples, so all three are required above and intentionally packaged.
+assert.ok(pack.unpackedSize < 930_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

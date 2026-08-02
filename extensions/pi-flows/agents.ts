@@ -9,6 +9,15 @@ import { safePath } from "./sanitize.ts";
 export const baseDir = path.dirname(fileURLToPath(import.meta.url));
 export const packageAgentsDir = path.resolve(baseDir, "../../agents");
 
+/** Keep the pi host's config/frontmatter vocabulary inside this adapter. */
+export function flowAgentDir(): string {
+	return getAgentDir();
+}
+
+export function parseFlowFrontmatter<T extends Record<string, unknown>>(content: string): { frontmatter: T; body: string } {
+	return parseFrontmatter<T>(content);
+}
+
 export function isDirectory(candidate: string): boolean {
 	try {
 		return fsSync.statSync(candidate).isDirectory();
@@ -128,7 +137,7 @@ export function findNearestProjectAgentsDir(cwd: string): string | null {
 }
 
 export function discoverFlowAgents(cwd: string, scope: AgentScope): FlowDiscovery {
-	const userAgentsDir = path.join(getAgentDir(), "flow-agents");
+	const userAgentsDir = path.join(flowAgentDir(), "flow-agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 	const packageOnly = process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY === "1";
 

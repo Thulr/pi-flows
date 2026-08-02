@@ -8,7 +8,20 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Added
+
+- Named workflow presets now sit above the raw mode/agent matrix. Bundled
+  `scout`, `map-codebase`, and `code-review` definitions are discovered from
+  package, user, and trust-gated project scopes; `/flows`, `flow list`, config
+  details, traces, and durable UI retain preset provenance. Templates declare
+  their permitted top-level overrides, and invalid or undeclared expansion
+  fails before a child spawns.
+- `code-review` runs exactly one bounded two-axis pass using sequential
+  `overwatch` runs in separately visible `standards` and `spec` roles.
+  Delegation contracts require typed per-file coverage and anchored findings;
+  the harness returns `CLEAN` only when both axes cover the Git-derived manifest
+  for the same verified commit range, otherwise `FINDINGS` or `PARTIAL`. It
+  never fixes, posts, delegates, or loops until clean.
 
 ## 0.6.0 - 2026-08-01
 

@@ -74,6 +74,7 @@ export const FlowReturnEnvelope = Type.Object({
 
 const FlowTaskProperties = {
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
+	role: Type.Optional(Type.String({ minLength: 1, description: "Human-readable topology slot this agent fills, such as standards or spec. Displayed separately from the agent profile." })),
 	task: Type.String({ minLength: 1, description: "Complete task for that agent, including the target and expected output. Do not use vague one-word tasks. Chain tasks may use {task} and {previous}." }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this agent process" })),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this agent process. Prefer tier unless the user named a concrete model." })),
@@ -93,6 +94,7 @@ export const FlowContractTask = Type.Object(FlowTaskProperties);
 
 export const FlowAgentRef = Type.Object({
 	agent: Type.String({ minLength: 1, description: "Name of the flow agent to run for this role. Bundled agents include recon, analyst, strategist, operator, overwatch, redteam, controller, commander, and debrief. Never leave this empty." }),
+	role: Type.Optional(Type.String({ minLength: 1, description: "Human-readable topology slot this agent fills." })),
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this role. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
@@ -311,8 +313,9 @@ export const FlowReflexion = Type.Object({
 });
 
 export const FlowParams = Type.Object({
-	list: Type.Optional(Type.Boolean({ description: "List available flow agents instead of running one" })),
-	showConfig: Type.Optional(Type.Boolean({ description: "Show effective flow config, agent dirs, tier mappings, discovery issues, and defaults without running an agent" })),
+	list: Type.Optional(Type.Boolean({ description: "List available workflow presets and flow agents instead of running one" })),
+	showConfig: Type.Optional(Type.Boolean({ description: "Show effective flow config, preset and agent dirs, tier mappings, discovery issues, and defaults without running an agent" })),
+	preset: Type.Optional(Type.String({ minLength: 1, description: "Named workflow preset to expand before mode validation. Bundled presets include scout, map-codebase, and code-review. Prefer a preset when it matches the user's intent." })),
 	why: Type.Optional(
 		Type.String({
 			minLength: 1,
@@ -345,7 +348,7 @@ export const FlowParams = Type.Object({
 		}),
 	),
 	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default true. In non-UI contexts, true refuses project agents; set false only for trusted repos.", default: true }),
+		Type.Boolean({ description: "Prompt before using project-local agents or presets. Default true. In non-UI contexts, true refuses them; set false only for trusted repos.", default: true }),
 	),
 	concurrency: Type.Optional(Type.Number({ description: "Parallel mode concurrency. Must be an integer from 1 to 8.", minimum: 1, maximum: 8, default: DEFAULT_CONCURRENCY })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Per-agent child process timeout in milliseconds. Default 36000000 (10 hours).", minimum: 1000, default: DEFAULT_TIMEOUT_MS })),
@@ -403,5 +406,5 @@ export const FlowParams = Type.Object({
 		Type.String({ description: 'Comma-separated tool override for single-agent mode. Use "none" or "default".' }),
 	),
 }, {
-	description: "Exactly one flow mode per call, and every spawning call must set why. For a named agent request, fill both agent and task, e.g. {\"agent\":\"recon\",\"task\":\"inspect package.json\",\"why\":\"user asked for a delegated scout\"}. For parallel inspection, use tasks with concrete agent names. For implementation plus critique, use {\"task\":\"...\",\"evaluate\":{},\"why\":\"...\"}.",
+	description: "Prefer a named preset when it matches the intent, e.g. {\"preset\":\"code-review\",\"task\":\"Review changes against main and issue #25\",\"why\":\"author-independent review\"}. Otherwise provide exactly one raw flow mode. Every spawning call must set why.",
 });

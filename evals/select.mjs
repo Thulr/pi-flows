@@ -131,6 +131,7 @@ function values(value) {
 function modeOf(args) {
 	if (args?.list) return "list";
 	if (args?.showConfig) return "config";
+	if (typeof args?.preset === "string" && args.preset) return "preset";
 	if (Array.isArray(args?.tasks)) return "parallel";
 	if (Array.isArray(args?.chain)) return "chain";
 	if (args?.evaluate !== undefined) return "evaluate";
@@ -209,6 +210,9 @@ function taskText(args) {
 export function flowCallMatchesExpectation(call, expected) {
 	const args = call?.arguments ?? {};
 	const actualMode = modeOf(args);
+	if (expected.preset && args.preset !== expected.preset) {
+		return { pass: false, notes: `expected preset ${expected.preset}, saw ${args.preset ?? "(none)"}` };
+	}
 	const expectedModes = values(expected.mode ?? expected.modes);
 	if (expectedModes.length > 0 && !expectedModes.includes(actualMode)) {
 		return { pass: false, notes: `expected mode ${expectedModes.join("|")}, saw ${actualMode}` };

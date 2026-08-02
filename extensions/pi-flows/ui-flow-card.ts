@@ -16,6 +16,7 @@ import type { BudgetCeiling, FlowMode, UsageStats } from "./types.ts";
 
 export interface FlowRunEntryResult {
 	agent: string;
+	role?: string;
 	agentSource: string;
 	exitCode: number;
 	stopReason?: string;
@@ -29,6 +30,8 @@ export interface FlowRunEntryResult {
 export interface FlowRunEntryData {
 	version: string;
 	mode: FlowMode;
+	preset?: string;
+	presetOutcome?: "CLEAN" | "FINDINGS" | "PARTIAL";
 	status: "ok" | "partial" | "error";
 	errorCode?: string;
 	results: FlowRunEntryResult[];
@@ -80,15 +83,16 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	if (totals.cost) headerParts.push(`$${totals.cost.toFixed(4)}`);
 	if (maxDuration) headerParts.push(formatDuration(maxDuration));
 	const lines = [
-		`${statusIcon} ${theme.fg("toolTitle", theme.bold(`flow ${data.mode}`))} ${theme.fg(statusColor, statusText)}${headerParts.length ? theme.fg("muted", ` · ${headerParts.join(" · ")}`) : ""}`,
+		`${statusIcon} ${theme.fg("toolTitle", theme.bold(`flow ${data.preset ?? data.mode}`))} ${theme.fg(statusColor, data.presetOutcome ?? statusText)}${headerParts.length ? theme.fg("muted", ` · ${headerParts.join(" · ")}`) : ""}`,
 		...budgetDisclosureLines(data.budgetCeilings).map((line) => theme.fg("muted", line)),
 	];
 
-	const nameWidth = Math.min(16, Math.max(4, ...data.results.map((result) => result.agent.length)));
+	const name = (result: FlowRunEntryResult) => result.role ? `${result.role} (${result.agent})` : result.agent;
+	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => name(result).length)));
 	for (const result of data.results) {
 		const failed = entryResultFailed(result);
 		const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
-		let line = `${icon} ${theme.fg("accent", result.agent.padEnd(nameWidth))} ${theme.fg("dim", durationBar(result.durationMs ?? 0, maxDuration))}`;
+		let line = `${icon} ${theme.fg("accent", name(result).padEnd(nameWidth))} ${theme.fg("dim", durationBar(result.durationMs ?? 0, maxDuration))}`;
 		const meta: string[] = [];
 		if (result.durationMs) meta.push(formatDuration(result.durationMs));
 		const tokens = (result.usage?.input || 0) + (result.usage?.output || 0);

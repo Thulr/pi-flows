@@ -205,6 +205,19 @@ export const SELECTION_CASES = defineCases([
 		},
 	},
 	{
+		name: "explicit-scout-uses-preset",
+		task: "Use the bounded scout workflow to find where workflow presets are discovered. Return the file and function; do not edit.",
+		expectFlow: true,
+		expectedFlowCall: { preset: "scout", mode: "preset", taskPattern: "preset|discover" },
+		answerPattern: "presets\\.ts|discoverFlowPresets",
+		mock: { flowCalls: 1, flowCallArgs: [{ preset: "scout", task: "Find where workflow presets are discovered.", why: "user requested a bounded delegated scout" }], answer: "extensions/pi-flows/presets.ts defines discoverFlowPresets." },
+		sourceExpectation: {
+			format: "text",
+			path: "extensions/pi-flows/presets.ts",
+			patterns: ["function discoverFlowPresets"],
+		},
+	},
+	{
 		name: "implicit-readonly-agent-uses-recon",
 		task: "Have a read-only agent find where this extension registers the `flow` tool. Return the file path and symbol.",
 		expectFlow: true,
@@ -216,6 +229,32 @@ export const SELECTION_CASES = defineCases([
 			path: "extensions/pi-flows/index.ts",
 			patterns: ["pi\\.registerTool\\(\\{[\\s\\S]*name: \"flow\""],
 		},
+	},
+	{
+		name: "explicit-code-review-uses-preset",
+		task: "Use a separate author-independent reviewer to review the changes at HEAD against main and issue #25 exactly once. Do not edit files or repeat until clean.",
+		expectFlow: true,
+		expectedFlowCall: { preset: "code-review", mode: "preset", taskPattern: "HEAD|main|issue #25|review" },
+		answerPattern: "review|clean|finding|partial",
+		mock: { flowCalls: 1, flowCallArgs: [{ preset: "code-review", task: "Review HEAD against main and issue #25 exactly once.", why: "author-independent verification" }], answer: "The bounded code review completed with no semantic findings." },
+		sourceExpectation: {
+			format: "text",
+			path: "presets/code-review.md",
+			patterns: ["name: code-review", "result: code-review-v1", "Do not invoke /code-review"],
+		},
+	},
+	{
+		name: "explicit-map-codebase-uses-preset",
+		task: "Use the map-codebase workflow to explain how preset discovery, expansion, trust approval, and mode dispatch fit together. Return one compact map.",
+		expectFlow: true,
+		expectedFlowCall: { preset: "map-codebase", mode: "preset", taskPattern: "preset discovery|expansion|trust|dispatch" },
+		answerPattern: "preset|dispatch|trust|mode",
+		mock: { flowCalls: 1, flowCallArgs: [{ preset: "map-codebase", task: "Map preset discovery, expansion, trust approval, and mode dispatch.", why: "the broad map spans independent modules" }], answer: "Preset discovery and expansion feed trust approval before ordinary mode dispatch." },
+		sourceExpectations: [
+			{ format: "text", path: "extensions/pi-flows/presets.ts", patterns: ["discoverFlowPresets", "resolveFlowPreset"] },
+			{ format: "text", path: "extensions/pi-flows/preset-approval.ts", patterns: ["approveProjectPreset"] },
+			{ format: "text", path: "extensions/pi-flows/index.ts", patterns: ["detectRunMode", "RUN_MODE_HANDLERS"] },
+		],
 	},
 	{
 		name: "implicit-parallel-doc-check-uses-parallel",
@@ -251,7 +290,7 @@ export const SELECTION_CASES = defineCases([
 		task: "Delegate a broad codebase map: split investigation across the pi-flows extension modules to explain how agent discovery, schema validation, and child process running fit together. Return a compact synthesis.",
 		timeoutMs: 180_000,
 		expectFlow: true,
-		expectedFlowCall: { modes: ["orchestrate", "parallel"], agents: ["recon", "analyst"], taskPattern: "agent discovery|schema|child process|runner" },
+		expectedFlowCall: { modes: ["preset", "orchestrate", "parallel"], taskPattern: "agent discovery|schema|child process|runner" },
 		answerPattern: "agents|schema|runner|child",
 		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Map agent discovery, schema validation, and child process running.", orchestrate: {} }], answer: "agents.ts handles discovery, schema.ts validates params, and runner.ts starts child pi processes." },
 		sourceExpectations: [

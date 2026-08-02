@@ -4,6 +4,7 @@ import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } fro
 import type { HandoffGuard } from "./handoff-types.ts";
 import type { HandoffConsumer } from "./handoff-consumption.ts";
 import type { ModelRoster, ThinkingLevel } from "./roster-types.ts";
+import type { FlowPreset, FlowPresetSelection } from "./preset-types.ts";
 
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
 // it can be re-exported here without a cycle) and is part of this module's
@@ -21,6 +22,7 @@ export type {
 } from "./trace-scope.ts";
 export { encodeAuthorKey } from "./trace-scope.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
+export type { FlowPreset, FlowPresetDiscovery, FlowPresetDiscoveryIssue, FlowPresetSelection, PresetSource } from "./preset-types.ts";
 // Model-selection vocabulary, same arrangement: the terms live in a
 // dependency-free module and the policy that produces a roster lives in
 // model-roster.ts, which the kernel may not import.
@@ -90,6 +92,12 @@ export type VerifyPolicy = "note" | "fail" | "revise";
  */
 export const FLOW_ERROR_CODES = [
 	"UNKNOWN_AGENT",
+	"UNKNOWN_PRESET",
+	"PRESET_TASK_REQUIRED",
+	"PRESET_OVERRIDE_INVALID",
+	"PRESET_EXPANSION_INVALID",
+	"PROJECT_PRESET_APPROVAL_REQUIRED",
+	"PROJECT_PRESET_APPROVAL_DENIED",
 	"INVALID_MODE",
 	"WHY_REQUIRED",
 	"INVALID_SCOPE",
@@ -198,6 +206,8 @@ export interface UsageStats {
 
 export interface FlowRunResult {
 	agent: string;
+	/** The topology slot this run filled; distinct from the selected agent profile. */
+	role?: string;
 	agentSource: AgentSource | "unknown";
 	/** Redacted task preview for diagnostics. The raw task is passed by temp file, never argv/details. */
 	task: string;
@@ -275,6 +285,14 @@ export interface FlowDetails {
 		user: string;
 		project: string | null;
 	};
+	presetsDir?: {
+		package: string;
+		user: string;
+		project: string | null;
+	};
+	preset?: FlowPresetSelection;
+	presetOutcome?: "CLEAN" | "FINDINGS" | "PARTIAL";
+	presets?: Array<Pick<FlowPreset, "name" | "description" | "source" | "filePath" | "overrides" | "result">>;
 	results: FlowRunResult[];
 	agents?: Array<Pick<FlowAgent, "name" | "description" | "source" | "filePath" | "model" | "tier" | "thinking" | "tools">>;
 	discoveryIssues?: DiscoveryIssue[];
@@ -288,6 +306,7 @@ export interface FlowDetails {
 
 export interface FlowTaskInput {
 	agent: string;
+	role?: string;
 	task: string;
 	cwd?: string;
 	model?: string;
@@ -338,6 +357,7 @@ export interface DelegationReturnEnvelope {
 
 export interface FlowAgentRefInput {
 	agent: string;
+	role?: string;
 	model?: string;
 	tier?: string;
 	thinking?: ThinkingLevel;
@@ -414,6 +434,7 @@ export interface RunChildOptions {
 	defaultCwd: string;
 	agents: FlowAgent[];
 	agentName: string;
+	role?: string;
 	task: string;
 	cwd?: string;
 	model?: string;

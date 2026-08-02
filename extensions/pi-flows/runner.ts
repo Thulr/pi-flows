@@ -150,6 +150,7 @@ function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefi
 		// model runs pi's configured default, which cannot be read here, so the
 		// level may be lowered inside pi without this ever seeing it.
 		"flow.thinking_level_verified": choice.thinking === undefined ? undefined : choice.thinkingVerified,
+		"flow.role": options.role,
 		...delegationIdentityAttributes({
 			systemPrompt: agent?.systemPrompt ?? "",
 			allowedTools,
@@ -185,7 +186,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				...budgetAttributes(exhaustedBudget.snapshot()),
 			},
 		});
-		return makeEmptyRunResult(options.agentName, options.task, policy, exhaustedBudget.exhaustedError());
+		const result = makeEmptyRunResult(options.agentName, options.task, policy, exhaustedBudget.exhaustedError());
+		result.role = options.role;
+		return result;
 	}
 	const agent = options.agents.find((candidate) => candidate.name === options.agentName);
 	if (!agent) {
@@ -203,7 +206,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			scope: options.scope,
 			attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": error.code },
 		});
-		return makeEmptyRunResult(options.agentName, options.task, policy, error);
+		const result = makeEmptyRunResult(options.agentName, options.task, policy, error);
+		result.role = options.role;
+		return result;
 	}
 
 	const started = Date.now();
@@ -213,6 +218,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const choice = resolveChildModel(agent, { model: options.model, tier: options.tier, thinking: options.thinking, flowThinking: options.flowThinking }, options.roster);
 	const result: FlowRunResult = {
 		agent: agent.name,
+		role: options.role,
 		agentSource: agent.source,
 		task: sanitizeText(options.task, policy, 4 * 1024),
 		exitCode: -1,
