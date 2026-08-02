@@ -628,9 +628,12 @@ test("a trailing approval gates the workflow's own completion", async () => {
 	assert.equal(resumed.result.details.approvals?.[0].consumedBy, "workflow.phase:signoff");
 });
 
-test("a pre-receipt state migrates to a bound receipt instead of a bare APPROVED string", async () => {
+test("a pre-receipt state migrates to a bound receipt once its gated work has run", async () => {
 	const cwd = await freshDir();
-	const { state } = await receiptIssuedButUnspent(cwd);
+	await pausedAtApproval(cwd);
+	// Spend the consent: the gated phase runs, so the approval is fully answered.
+	await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+	const state = await readState(cwd);
 
 	// Rewind to exactly what a v2 state looked like: consent as a bare string.
 	state.version = 2;
@@ -646,11 +649,34 @@ test("a pre-receipt state migrates to a bound receipt instead of a bare APPROVED
 	assert.equal(migrated?.consumedBy, "workflow.phase:approve");
 	assert.equal((await readState(cwd)).version, 3);
 
-	// Migrated consent still binds. `ship` has now run, so widening the scope hits
-	// the part-executed refusal rather than a re-prompt.
+	// Migrated consent still binds: widening the scope hits the part-executed
+	// refusal rather than a re-prompt.
 	const widened = await runFlow(resumeParams({ agentScope: "all", confirmProjectAgents: false }), { strategist: "SHIPPED" }, { cwd, hasUI: true });
 	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
 	assert.match(widened.result.details.error?.cause ?? "", /already ran under the parameters that were approved/);
+});
+
+test("a pre-receipt approval whose gated work never ran is re-asked, not reconstructed", async () => {
+	// The binding would be computed from the roster that happens to exist at
+	// resume time, so a tier now resolving elsewhere would be retroactively
+	// blessed as what the operator consented to. Nobody approved that.
+	const cwd = await freshDir();
+	const { state, spent } = await receiptIssuedButUnspent(cwd);
+	state.version = 2;
+	state.outputs.approve = "APPROVED";
+	delete state.receipts;
+	await writeState(cwd, state);
+
+	const headless = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
+	assert.equal(headless.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "outstanding gated work means the consent is re-asked");
+	// The stub log accumulates across runs in one workspace, so this compares
+	// against what the setup already spent rather than against zero.
+	assert.equal(shipCalls(headless.calls), spent, "and nothing new runs on the unreconstructed approval");
+
+	// Answering it again produces a real receipt and lets the work proceed.
+	const reapproved = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
+	assert.equal(reapproved.result.details.error, undefined);
+	assert.equal(reapproved.result.details.approvals?.[0].validation, "typed", "the new consent is a real approval, not a legacy stand-in");
 });
 
 test("an invalid approval window is refused before any child runs", async () => {
@@ -729,8 +755,10 @@ test("an approval is refused when the work it gates names no model to bind", () 
 	const pinned = [phases[0], { ...phases[1], model: "p/explicit" }];
 	assert.deepEqual(unbindableGatedRefs(pinned, 0, deps([{ name: "operator" }])), []);
 
-	// With no registry every tier is unresolvable, and refusing there would block
-	// workflows for a reason the user cannot act on.
-	const blind = { discovery: { agents: [{ name: "operator" }] }, params: {}, roster: { ...roster, source: "unavailable" as const } } as any;
-	assert.deepEqual(unbindableGatedRefs(phases, 0, blind), []);
+	// A broken registry does not make the risk smaller — it makes every tier
+	// unresolvable, so more work runs on a model nobody recorded. The refusal has
+	// to be loudest exactly there, and naming a model outright is the way through.
+	const blind = { discovery: { agents: [{ name: "operator", tier: "capable" }] }, params: {}, roster: { ...roster, fast: { why: "x" }, capable: { why: "x" }, deep: { why: "x" }, source: "unavailable" as const } } as any;
+	assert.deepEqual(unbindableGatedRefs(phases, 0, blind), ["ship"], "a tier that cannot resolve is not a bound model");
+	assert.deepEqual(unbindableGatedRefs(pinned, 0, blind), [], "an explicit model still binds without a registry");
 });

@@ -81,17 +81,26 @@ export function availableModelsFromRegistry(registry: ModelRegistryLike | undefi
  * miss one level down. `findNearestProjectAgentsDir` looks for `.pi/flow-agents`
  * for exactly this reason.
  */
-function nearestProjectConfigDir(cwd: string): string | null {
+function nearestProjectConfigDir(cwd: string): { dir: string | null; issues: string[] } {
+	const issues: string[] = [];
 	let current = path.resolve(cwd);
 	while (true) {
 		const candidate = path.join(current, CONFIG_DIR_NAME);
 		try {
-			if (fs.statSync(path.join(candidate, ROSTER_CONFIG_FILE)).isFile()) return candidate;
-		} catch {
-			// No roster config at this level; keep walking.
+			if (fs.statSync(path.join(candidate, ROSTER_CONFIG_FILE)).isFile()) return { dir: candidate, issues };
+		} catch (error) {
+			// "Not here" is the normal case and keeps the walk going. Anything else —
+			// a directory where the file should be, a permissions failure, a broken
+			// symlink — means something IS there and could not be read. Walking past
+			// it silently would ignore the project's pins and, worse, could load an
+			// unrelated ancestor's config in their place.
+			const code = (error as NodeJS.ErrnoException)?.code;
+			if (code !== "ENOENT" && code !== "ENOTDIR") {
+				issues.push(`${CONFIG_DIR_NAME}/${ROSTER_CONFIG_FILE} in this project could not be read (${code ?? "unknown error"}); its overrides were ignored.`);
+			}
 		}
 		const parent = path.dirname(current);
-		if (parent === current) return null;
+		if (parent === current) return { dir: null, issues };
 		current = parent;
 	}
 }
@@ -131,9 +140,10 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 	// Both halves of the load are carried forward: a pi-flows.json that failed to
 	// parse has silently *not* applied the user's pins, and dropping the issue
 	// here would leave the resulting model choice with no explanation anywhere.
+	const discovered = ctx.cwd ? nearestProjectConfigDir(ctx.cwd) : { dir: null, issues: [] };
 	const loaded = loadRosterConfig({
 		userDir: getAgentDir(),
-		projectDir: ctx.cwd ? nearestProjectConfigDir(ctx.cwd) : null,
+		projectDir: discovered.dir,
 		projectTrusted,
 	});
 	return resolveModelRoster({
@@ -145,6 +155,8 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 		env: envRosterConfig(),
 		config: loaded.config,
 		project: loaded.project,
-		issues: loaded.issues,
+		// Discovery failures matter as much as load failures: both end with the
+		// project's pins unapplied, and only one of them was previously visible.
+		issues: [...(projectTrusted ? discovered.issues : []), ...loaded.issues],
 	});
 }

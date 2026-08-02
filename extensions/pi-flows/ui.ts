@@ -249,7 +249,15 @@ export async function showModelRoster(ctx: ExtensionCommandContext, roster: Mode
 	// "no model stated" and leave the derived model — possibly another provider's
 	// — quietly in force while this command reported the default.
 	const model = modelChoice === PI_DEFAULT_MODEL ? USE_DEFAULT_MODEL : modelChoice;
-	const supported = roster.available.find((candidate) => candidate.reference === (model ?? roster.sessionModel))?.thinkingLevels;
+	// Only a named model has knowable levels. Choosing "the pi default" means the
+	// child runs pi's *configured* default, which is not readable here — the
+	// session's model is a different model, and offering its levels would both
+	// advertise ones the default may reject and hide ones it supports.
+	// Only a named model has knowable levels. Choosing "the pi default" means the
+	// child runs pi's *configured* default, which is not readable here — the
+	// session's model is a different model, and offering its levels would both
+	// advertise ones the default may reject and hide ones it supports.
+	const supported = model ? roster.available.find((candidate) => candidate.reference === model)?.thinkingLevels : undefined;
 	const levels = supported?.length ? supported : [...THINKING_LEVELS];
 	const thinkingChoice = await ctx.ui.select(`Thinking level for tier "${tier}"`, [INHERIT_THINKING, ...levels]);
 	if (!thinkingChoice) return;

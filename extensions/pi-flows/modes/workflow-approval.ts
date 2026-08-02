@@ -109,12 +109,13 @@ function resolvedDispatch(ref: any, params: any, deps: ModeDeps): { model: strin
  * the analogous case rather than pretend: `BUDGET_UNOBSERVABLE` stops a run when
  * the cost telemetry a ceiling depends on is missing.
  *
- * Only reported when the roster resolved. With no registry every tier is
- * unresolvable, and refusing there would block workflows for a reason the user
- * cannot act on.
+ * Reported whether or not the roster resolved. A broken registry does not make
+ * the risk smaller — it makes every tier unresolvable, so *more* work runs on a
+ * model nobody recorded — and the operator can still act on it by naming a model
+ * outright. Excluding that case would have left the refusal absent exactly when
+ * it matters most.
  */
 export function unbindableGatedRefs(phases: any[], index: number, deps: ModeDeps): string[] {
-	if (!deps.roster || deps.roster.source === "unavailable") return [];
 	const gatedIds = new Set(gatedPhaseIds(phases, index));
 	const unbindable = phases
 		.filter((phase: any) => gatedIds.has(phase.id) && phase.agent)

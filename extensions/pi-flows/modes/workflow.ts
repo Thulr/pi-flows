@@ -9,27 +9,7 @@ import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffS
 import { integrationRunPlan, runIntegrationPlan } from "../integration.ts";
 import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
-
-interface WorkflowState {
-	version: typeof WORKFLOW_STATE_VERSION;
-	digest: string;
-	status: "running" | "paused" | "failed" | "completed";
-	completedPhaseIds: string[];
-	outputs: Record<string, string>;
-	handoffs: Record<string, DelegationHandoffEnvelope>;
-	attestations: Record<string, PersistedHandoffAttestation>;
-	/** Approval receipts keyed by the approval phase that produced them. */
-	receipts: Record<string, ApprovalReceipt>;
-	nextPhaseId?: string;
-	updatedAt: string;
-}
-
-function workflowDigest(task: string | undefined, spec: any): string {
-	return createHash("sha256")
-		.update(JSON.stringify({ task: task ?? "", phases: spec.phases ?? [], debrief: spec.debrief ?? null }))
-		.digest("hex")
-		.slice(0, 16);
-}
+import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
 const phaseStageKey = (phaseId: string) => `phase-${encodeAuthorKey(phaseId)}`;
@@ -59,13 +39,6 @@ function workflowDetails(deps: ModeDeps, results: FlowRunResult[], state?: Workf
 	return details;
 }
 
-async function persistState(file: string, state: WorkflowState): Promise<void> {
-	await mkdir(path.dirname(file), { recursive: true });
-	const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-	await rename(temporary, file);
-}
-
 /**
  * Every durable state change is attributable. A workflow's failure mode is
  * usually "which phase left the state where", and that question is unanswerable
@@ -87,68 +60,6 @@ function recordPhaseState(deps: ModeDeps, phaseId: string, transition: string, s
 			...extra,
 		},
 	});
-}
-
-function freshState(digest: string): WorkflowState {
-	return { version: WORKFLOW_STATE_VERSION, digest, status: "running", completedPhaseIds: [], outputs: {}, handoffs: {}, attestations: {}, receipts: {}, updatedAt: new Date().toISOString() };
-}
-
-function legacyCompatibilityHandoff(phase: any, output: string, step: number, policy: ModeDeps["policy"]): DelegationHandoffEnvelope {
-	const text = policy.recordContent ? sanitizeText(output, policy) : "[content omitted: recordContent=false]";
-	return {
-		schemaVersion: "pi-flows.handoff-envelope.v1",
-		contractId: null,
-		compatibility: "legacy-prose",
-		status: "completed",
-		summary: text,
-		evidence: [],
-		artifactReferences: [],
-		digests: [],
-		changedState: [],
-		unresolvedQuestions: [],
-		retry: { retryable: false },
-		data: { text },
-		provenance: { agent: phase.agent, step },
-	};
-}
-
-/** v1 -> v2: reconstruct the typed handoff layer. Chained into the v3 receipt migration by the resume path. */
-function migrateWorkflowStateV1(legacy: any, phases: any[], policy: ModeDeps["policy"]): any {
-	const state = {
-		...legacy,
-		version: 2,
-		handoffs: {} as Record<string, DelegationHandoffEnvelope>,
-		attestations: {} as Record<string, PersistedHandoffAttestation>,
-	};
-	for (const [index, phase] of phases.entries()) {
-		if (!state.completedPhaseIds.includes(phase.id) || phase.approval?.message) continue;
-		const handoff = legacyCompatibilityHandoff(phase, String(state.outputs[phase.id] ?? ""), index + 1, policy);
-		state.handoffs[phase.id] = handoff;
-		state.attestations[phase.id] = createPersistedHandoffAttestation(handoff);
-		state.outputs[phase.id] = canonicalHandoff(handoff);
-	}
-	return state;
-}
-
-/**
- * Reconstruct receipts for approvals that a pre-receipt state recorded as the
- * bare string "APPROVED". Those states already passed the workflow digest check,
- * so migrating them is not a downgrade — but the old record carried no approver,
- * issue time, or window, so the migrated receipt claims none of them. It is
- * marked spent by the action it already let through, which keeps resume working
- * while still binding: editing a gated phase after migration is still caught.
- */
-function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDeps, digest: string): WorkflowState {
-	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, receipts: {} };
-	for (const [index, phase] of phases.entries()) {
-		if (!phase?.approval?.message || !state.completedPhaseIds.includes(phase.id)) continue;
-		const binding = approvalBindingFor(phases, index, deps, digest);
-		state.receipts[phase.id] = legacyApprovalReceipt(binding, {
-			issuedAt: typeof legacy.updatedAt === "string" ? legacy.updatedAt : new Date().toISOString(),
-			consumedBy: binding.action,
-		});
-	}
-	return state;
 }
 
 export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
@@ -300,8 +211,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				const error = flowError(
 					"WORKFLOW_INVALID",
 					`Approval phase "${phase.id}" gates work whose model cannot be recorded.`,
-					`These gated steps name no model and no tier, and their agents declare neither, so each runs whatever model pi is configured to default to: ${unbindable.join(", ")}. That model can change before this workflow resumes, and the approval receipt would still verify — authorizing work on a model, and possibly a provider, the approver never saw.`,
-					"Give each of those steps a tier (or a model), or set a flow-level tier, so the approval records what it authorizes.",
+					`These gated steps resolve to no model, so each runs whatever model pi is configured to default to: ${unbindable.join(", ")}. That model can change before this workflow resumes, and the approval receipt would still verify — authorizing work on a model, and possibly a provider, the approver never saw.${deps.roster && deps.roster.source === "unavailable" ? " No model registry was readable, so no tier could resolve here; naming a model outright is the way through." : ""}`,
+					"Give each of those steps a model (or a tier, when the model registry is readable), so the approval records what it authorizes.",
 				);
 				recordPhaseState(deps, phase.id, "approval.blocked", state, { "flow.error_code": error.code });
 				return stateError(deps, results, error, state);
