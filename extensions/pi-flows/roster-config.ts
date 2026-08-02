@@ -197,9 +197,19 @@ export function saveRosterOverride(userDir: string, tier: "fast" | "capable" | "
 			// menu selection. Refusing keeps the file the user can still fix.
 			throw new Error(`${ROSTER_CONFIG_FILE} is not valid JSON (${error instanceof Error ? error.message : String(error)}); no changes were written, so the existing file can still be repaired by hand.`);
 		}
-		if (parsed && typeof parsed === "object") existing = parsed as Record<string, unknown>;
+		// Valid JSON is not the same as a config file. An array, a string, a number
+		// — each parses cleanly and each would be silently rewritten as an object
+		// below, which is the same destruction the syntax-error refusal exists to
+		// prevent, reached by a different route. Refuse those too.
+		if (!isPlainObject(parsed)) {
+			throw new Error(`${ROSTER_CONFIG_FILE} does not contain a JSON object (found ${describeJson(parsed)}); no changes were written, so the existing file can still be repaired by hand.`);
+		}
+		existing = parsed;
 	}
-	const models = existing.models && typeof existing.models === "object" ? { ...(existing.models as Record<string, unknown>) } : {};
+	if (existing.models !== undefined && !isPlainObject(existing.models)) {
+		throw new Error(`${ROSTER_CONFIG_FILE} has a "models" value that is not an object (found ${describeJson(existing.models)}); no changes were written, so the existing file can still be repaired by hand.`);
+	}
+	const models = isPlainObject(existing.models) ? { ...existing.models } : {};
 	// `model` is written whenever the override states one, including the explicit
 	// null that means "my pi default" — dropping it there would save the choice as
 	// a bare thinking override and let the derived model quietly stay in force.
@@ -208,6 +218,17 @@ export function saveRosterOverride(userDir: string, tier: "fast" | "capable" | "
 	fs.mkdirSync(userDir, { recursive: true });
 	fs.writeFileSync(file, `${JSON.stringify({ ...existing, models }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 	return file;
+}
+
+/** A JSON object, as distinct from an array or a primitive — both of which parse cleanly and neither of which is a config file. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** What was found where an object was expected, for a refusal a user can act on. */
+function describeJson(value: unknown): string {
+	if (value === null) return "null";
+	return Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }
 
 /** The legacy env mapping. Still honored, now as one override source among several rather than the only one. */

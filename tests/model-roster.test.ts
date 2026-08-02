@@ -465,6 +465,47 @@ test("saving refuses to overwrite a config file it could not parse", () => {
 	fs.rmSync(fresh, { recursive: true, force: true });
 });
 
+test("saving refuses a config file whose JSON is valid but is not an object", () => {
+	// Valid JSON is not the same as a config file. Each of these parses cleanly
+	// and would be silently rewritten as an object — the same destruction the
+	// syntax-error refusal prevents, reached by a different route.
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	const file = path.join(dir, "pi-flows.json");
+	for (const contents of ['["a","b"]', '"just a string"', "42", "null"]) {
+		fs.writeFileSync(file, contents);
+		assert.throws(() => saveRosterOverride(dir, "fast", { model: "acme/mini" }), /does not contain a JSON object/, contents);
+		assert.equal(fs.readFileSync(file, "utf8"), contents, `${contents} must be left exactly as it was`);
+	}
+
+	// Same for a "models" key that is not an object: replacing it with {} would
+	// drop whatever the user actually had there.
+	const badModels = '{ "somethingElse": 42, "models": "oops" }';
+	fs.writeFileSync(file, badModels);
+	assert.throws(() => saveRosterOverride(dir, "fast", { model: "acme/mini" }), /"models" value that is not an object/);
+	assert.equal(fs.readFileSync(file, "utf8"), badModels);
+
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("project discovery stops at a config path that exists but is not a file", async () => {
+	// statSync succeeds for a directory, so the catch never fires and the walk
+	// would continue — applying an ancestor's config in place of the project's,
+	// which is worse than applying none.
+	const { currentModelRoster } = await import("../extensions/pi-flows/roster-source.ts");
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
+	fs.mkdirSync(path.join(root, ".pi"), { recursive: true });
+	fs.writeFileSync(path.join(root, ".pi", "pi-flows.json"), JSON.stringify({ models: { deep: { model: "acme/mini" } } }));
+	const nested = path.join(root, "packages", "web");
+	fs.mkdirSync(path.join(nested, ".pi", "pi-flows.json"), { recursive: true });
+
+	const registry = { getAvailable: () => INSTALL.map((entry) => ({ id: entry.id, provider: entry.provider, reasoning: true, contextWindow: entry.contextWindow, maxTokens: 4096, cost: { input: entry.costPerToken, output: entry.costPerToken } })) };
+	const roster = currentModelRoster({ cwd: nested, modelRegistry: registry, isProjectTrusted: () => true });
+	assert.notEqual(roster.deep.model, "acme/mini", "the ancestor's pins must not stand in for the project's");
+	assert.match(roster.issues.join("\n"), /is not a file/, "and the reason is reported rather than silent");
+
+	fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("an explicit pi-default choice survives a round trip through the config file", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
 	saveRosterOverride(dir, "fast", { model: null, thinking: "low" });

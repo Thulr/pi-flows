@@ -87,7 +87,14 @@ function nearestProjectConfigDir(cwd: string): { dir: string | null; issues: str
 	while (true) {
 		const candidate = path.join(current, CONFIG_DIR_NAME);
 		try {
-			if (fs.statSync(path.join(candidate, ROSTER_CONFIG_FILE)).isFile()) return { dir: candidate, issues };
+			const stat = fs.statSync(path.join(candidate, ROSTER_CONFIG_FILE));
+			if (stat.isFile()) return { dir: candidate, issues };
+			// Something is there and it is not a file — a directory, a socket. The
+			// walk stops rather than continuing: an ancestor's config loaded in its
+			// place would apply settings from a project the user is not in, which is
+			// worse than applying none.
+			issues.push(`${CONFIG_DIR_NAME}/${ROSTER_CONFIG_FILE} in this project is not a file; its overrides were ignored, and no ancestor config was used in its place.`);
+			return { dir: null, issues };
 		} catch (error) {
 			// "Not here" is the normal case and keeps the walk going. Anything else —
 			// a directory where the file should be, a permissions failure, a broken

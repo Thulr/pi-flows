@@ -76,5 +76,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // approval-receipt binding. The previous ceiling left ~1_300 bytes, which one
 // more changelog paragraph would have tripped. Same verification: 82 files, none
 // from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 840_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 880_000 across the review rounds on that change: the approval
+// binding now records what a gated phase resolves to, the roster tracks
+// precedence per field, and workflow-state.ts split out of workflow.ts when it
+// crossed its line cap — plus the changelog entries for each. Same verification
+// as before: 83 files, none from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 880_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
