@@ -6,6 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
+import { attachPresetTraceAttributes } from "../extensions/pi-flows/preset-catalog.ts";
 import {
 	discoverFlowPresets,
 	formatPresetResult,
@@ -103,6 +104,14 @@ test("preset expansion substitutes the complete task and rejects undeclared shap
 	assert.equal((resolved.params.tasks as any[])[0].role, "standards");
 	assert.equal((resolved.params.tasks as any[])[1].role, "spec");
 	assert.equal((resolved.params.tasks as any[])[0].agent, "overwatch");
+
+	const literalTask = "Review replacement examples $& $$ $` $' without changing them.";
+	const literal = resolveFlowPreset(
+		{ preset: "code-review", task: literalTask, why: "test" },
+		discovery,
+	);
+	assert.ok(!("error" in literal));
+	assert.ok((literal.params.tasks as any[]).every((item) => item.task.includes(literalTask)));
 
 	const costBounded = resolveFlowPreset(
 		{ preset: "code-review", task: "Review.", why: "test", maxCostUsd: 0.25 },
@@ -215,15 +224,17 @@ test("nested preset roles and code-review Git verification honor the preset cwd 
 	execFileSync("git", ["add", "."], { cwd: repo });
 	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base"], { cwd: repo });
 	const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+	execFileSync("git", ["branch", "review-base"], { cwd: repo });
 	await writeFile(path.join(repo, "src", "a.ts"), "after\n");
 	execFileSync("git", ["add", "."], { cwd: repo });
 	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "head"], { cwd: repo });
 	const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+	const reviewTask = "Review HEAD against review-base.";
 
 	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
 	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
 	const resolved = resolveFlowPreset(
-		{ preset: "code-review", task: "Review the fixed test range.", why: "independent verification", cwd: "review-target" },
+		{ preset: "code-review", task: reviewTask, why: "independent verification", cwd: "review-target" },
 		discovery,
 	);
 	assert.ok(!("error" in resolved));
@@ -248,12 +259,13 @@ test("nested preset roles and code-review Git verification honor the preset cwd 
 		},
 	});
 	const { result, calls } = await runFlow(
-		{ preset: "code-review", task: "Review the fixed test range.", cwd: "review-target" },
+		{ preset: "code-review", task: reviewTask, cwd: "review-target" },
 		{ overwatch: [envelope(0, "standards"), envelope(1, "spec")] },
 		{ cwd: root },
 	);
 	const canonicalRepo = await realpath(repo);
 	assert.deepEqual(calls.map((call) => call.cwd), [canonicalRepo, canonicalRepo]);
+	assert.ok(calls.every((call) => call.task.includes(`Harness-pinned review range: base ${base}, head ${head}.`)));
 	assert.equal(result.details.presetOutcome, "CLEAN");
 
 	const mapped = await runFlow(
@@ -323,20 +335,20 @@ test("code-review formatter derives CLEAN, FINDINGS, and PARTIAL from Git-verifi
 		content: [{ type: "text" as const, text: "raw" }],
 		details: { mode: "parallel" as const, version: "test", agentScope: "user" as const, config: {} as any, agentsDir: {} as any, results },
 	});
-	const clean = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range)]), policy, repo);
+	const clean = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range)]), policy, repo, range);
 	assert.equal(clean.details.presetOutcome, "CLEAN");
 	assert.equal(clean.content[0].text, "Code review: CLEAN");
 
 	const finding = { path: "src/a.ts", startLine: 7, endLine: 7, severity: "high", claim: "Broken invariant", evidence: "src/a.ts:7", suggestion: "Restore it" };
-	const found = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range, [finding]), reviewRun("spec", range)]), policy, repo);
+	const found = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range, [finding]), reviewRun("spec", range)]), policy, repo, range);
 	assert.equal(found.details.presetOutcome, "FINDINGS");
 	assert.match(found.content[0].text, /HIGH src\/a\.ts:7/);
 
-	const partial = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], [{ path: "src/b.ts", status: "reviewed", evidence: "src/b.ts:1" }])]), policy, repo);
+	const partial = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], [{ path: "src/b.ts", status: "reviewed", evidence: "src/b.ts:1" }])]), policy, repo, range);
 	assert.equal(partial.details.presetOutcome, "PARTIAL");
 	assert.match(partial.content[0].text, /could not be proven complete/);
 
-	const unresolved = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], undefined, ["Issue context unavailable"])]), policy, repo);
+	const unresolved = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], undefined, ["Issue context unavailable"])]), policy, repo, range);
 	assert.equal(unresolved.details.presetOutcome, "PARTIAL");
 
 	await writeFile(path.join(repo, "src", "b.ts"), "new\n");
@@ -348,6 +360,79 @@ test("code-review formatter derives CLEAN, FINDINGS, and PARTIAL from Git-verifi
 		makeOutput([reviewRun("standards", { base, head: secondHead }), reviewRun("spec", { base, head: secondHead })]),
 		policy,
 		repo,
+		{ base, head: secondHead },
 	);
 	assert.equal(omitted.details.presetOutcome, "PARTIAL");
+
+	const wrongRange = { base: head, head: secondHead };
+	const wrongCoverage = [{ path: "src/b.ts", status: "reviewed", evidence: "src/b.ts:1" }];
+	const mismatched = formatPresetResult(
+		reviewPreset,
+		makeOutput([reviewRun("standards", wrongRange, [], wrongCoverage), reviewRun("spec", wrongRange, [], wrongCoverage)]),
+		policy,
+		repo,
+		range,
+	);
+	assert.equal(mismatched.details.presetOutcome, "PARTIAL", "reviewer agreement on a different valid range must not produce CLEAN");
+});
+
+test("code-review retains validated metadata privately when returned content is omitted", async () => {
+	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-private-review-"));
+	await writeFile(path.join(repo, "a.ts"), "before\n");
+	execFileSync("git", ["init", "-q"], { cwd: repo });
+	execFileSync("git", ["add", "."], { cwd: repo });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base"], { cwd: repo });
+	const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+	await writeFile(path.join(repo, "a.ts"), "after\n");
+	execFileSync("git", ["add", "."], { cwd: repo });
+	execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "head"], { cwd: repo });
+	const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const codeReview = loaded.presets.find((preset) => preset.name === "code-review")!;
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const resolved = resolveFlowPreset({ preset: "code-review", task: `Review ${base}..${head}.`, recordContent: false }, discovery);
+	assert.ok(!("error" in resolved));
+	const tasks = resolved.params.tasks as any[];
+	const finding = { id: "hidden", path: "a.ts", startLine: 1, endLine: 1, severity: "high", category: "correctness", claim: "private-review-claim", evidence: "a.ts:1", suggestion: "fix it" };
+	const envelope = (index: number, axis: "standards" | "spec", findings: any[] = []) => JSON.stringify({
+		schemaVersion: "pi-flows.return-envelope.v1",
+		contractId: delegationContractId(tasks[index].contract),
+		status: "completed",
+		summary: `${axis} complete`,
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data: { axis, base, head, coverage: [{ path: "a.ts", status: "reviewed", evidence: "a.ts:1" }], findings },
+	});
+	const traceFile = path.join(repo, "review.jsonl");
+	const { result } = await runFlow(
+		{ preset: codeReview.name, task: `Review ${base}..${head}.`, recordContent: false, traceFile },
+		{ overwatch: [envelope(0, "standards", [finding]), envelope(1, "spec")] },
+		{ cwd: repo },
+	);
+	assert.equal(result.details.presetOutcome, "FINDINGS");
+	assert.equal(result.content[0].text, "Code review: FINDINGS");
+	assert.doesNotMatch(JSON.stringify(result), /private-review-claim/);
+	assert.equal((result.details.results[0].envelope?.data as any).axis, "[content omitted: recordContent=false]");
+	const trace = await readFile(traceFile, "utf8");
+	const root = trace.split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((span) => span.parent_span_id === null);
+	assert.equal(root.attributes["flow.outcome_verified"], true);
+	assert.equal(root.attributes["flow.outcome_success"], false);
+	assert.doesNotMatch(trace, /private-review-claim/);
+});
+
+test("code-review trace attributes publish complete verdicts as verified outcomes", () => {
+	const base = { "flow.outcome_verified": false };
+	const clean = attachPresetTraceAttributes({ ...base }, reviewPreset, { presetOutcome: "CLEAN" } as any);
+	const findings = attachPresetTraceAttributes({ ...base }, reviewPreset, { presetOutcome: "FINDINGS" } as any);
+	const partial = attachPresetTraceAttributes({ ...base, "flow.outcome_success": true }, reviewPreset, { presetOutcome: "PARTIAL" } as any);
+	assert.equal(clean["flow.outcome_verified"], true);
+	assert.equal(clean["flow.outcome_success"], true);
+	assert.equal(findings["flow.outcome_verified"], true);
+	assert.equal(findings["flow.outcome_success"], false);
+	assert.equal(partial["flow.outcome_verified"], false);
+	assert.equal(partial["flow.outcome_success"], undefined);
 });

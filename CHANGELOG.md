@@ -19,8 +19,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 - `code-review` runs exactly one bounded two-axis pass using sequential
   `overwatch` runs in separately visible `standards` and `spec` roles.
   Delegation contracts require typed per-file coverage and anchored findings;
-  the harness returns `CLEAN` only when both axes cover the Git-derived manifest
-  for the same verified commit range, otherwise `FINDINGS` or `PARTIAL`. It
+  the harness pins the caller-requested Git range before dispatch and returns
+  `CLEAN` only when both axes attest to those commits and cover its Git-derived
+  manifest, otherwise `FINDINGS` or `PARTIAL`. Complete verdicts are published
+  as verified trace outcomes even when child content capture is disabled. It
   never fixes, posts, delegates, or loops until clean.
 
 ## 0.6.0 - 2026-08-01

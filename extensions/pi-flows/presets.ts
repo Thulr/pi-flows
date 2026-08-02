@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Compile } from "typebox/compile";
 import { flowAgentDir, isDirectory, parseFlowFrontmatter } from "./agents.ts";
-import { safePath, sanitizeText } from "./sanitize.ts";
+import { safePath, sanitizeText, takeValidatedReturnEnvelope } from "./sanitize.ts";
 import { FlowParams } from "./schema.ts";
 import {
 	flowError,
@@ -161,7 +161,7 @@ export function discoverFlowPresets(cwd: string, scope: AgentScope): FlowPresetD
 }
 
 function substitute(value: unknown, task: string): unknown {
-	if (typeof value === "string") return value.replaceAll("{task}", task);
+	if (typeof value === "string") return value.replaceAll("{task}", () => task);
 	if (Array.isArray(value)) return value.map((item) => substitute(item, task));
 	if (!value || typeof value !== "object") return value;
 	return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, substitute(nested, task)]));
@@ -265,6 +265,52 @@ function gitOutput(cwd: string, args: string[]): string | null {
 	}
 }
 
+export interface CodeReviewRange {
+	base: string;
+	head: string;
+}
+
+function requestedReviewRefs(task: string): { base: string; head: string } | null {
+	const base = task.match(/\bbase(?:\s+(?:commit|sha))?\s*(?:is|=|:)?\s*([0-9a-f]{40,64})\b/i)?.[1];
+	const head = task.match(/\bhead(?:\s+(?:commit|sha))?\s*(?:is|=|:)?\s*([0-9a-f]{40,64})\b/i)?.[1];
+	if (base && head) return { base, head };
+	const gitRef = "[A-Za-z0-9][A-Za-z0-9._/-]*";
+	const range = task.match(new RegExp(`\\b(${gitRef})\\s*\\.{2,3}\\s*(${gitRef})\\b`, "i"));
+	if (range) return { base: range[1], head: range[2] };
+	const against = task.match(new RegExp(`\\b(${gitRef})\\s+against\\s+(${gitRef})\\b`, "i"));
+	return against ? { base: against[2], head: against[1] } : null;
+}
+
+function resolveCommit(cwd: string, ref: string): string | null {
+	const commit = gitOutput(cwd, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`])?.trim();
+	return commit && /^[0-9a-f]{40,64}$/i.test(commit) ? commit.toLowerCase() : null;
+}
+
+/**
+ * Freeze a code-review request before dispatch. Ref syntax remains caller-facing
+ * prose, but children and the formatter receive immutable commit identities.
+ */
+export function preparePresetRun(
+	preset: FlowPreset | undefined,
+	params: Record<string, unknown>,
+	task: string,
+	cwd: string,
+): { params: Record<string, unknown>; codeReviewRange?: CodeReviewRange } {
+	if (preset?.result !== "code-review-v1") return { params };
+	const refs = requestedReviewRefs(task);
+	const base = refs && resolveCommit(cwd, refs.base);
+	const head = refs && resolveCommit(cwd, refs.head);
+	if (!base || !head) return { params };
+	const codeReviewRange = { base, head };
+	const instruction = `Harness-pinned review range: base ${base}, head ${head}. Review and report exactly these commit identities; do not substitute another range.`;
+	const tasks = Array.isArray(params.tasks)
+		? params.tasks.map((item) => item && typeof item === "object" && typeof (item as any).task === "string"
+			? { ...(item as Record<string, unknown>), task: `${(item as any).task}\n\n${instruction}` }
+			: item)
+		: params.tasks;
+	return { params: { ...params, tasks }, codeReviewRange };
+}
+
 function changedFileManifest(cwd: string, base: unknown, head: unknown): Set<string> | null {
 	if (typeof base !== "string" || typeof head !== "string") return null;
 	const repoRoot = gitOutput(cwd, ["rev-parse", "--show-toplevel"])?.trim();
@@ -278,10 +324,17 @@ function changedFileManifest(cwd: string, base: unknown, head: unknown): Set<str
 }
 
 /** Apply a harness-owned formatter after the ordinary mode has validated return envelopes. */
-export function formatPresetResult(preset: FlowPreset, output: ModeOutput, policy: CapturePolicy, cwd = process.cwd()): ModeOutput {
+export function formatPresetResult(
+	preset: FlowPreset,
+	output: ModeOutput,
+	policy: CapturePolicy,
+	cwd = process.cwd(),
+	expectedRange?: CodeReviewRange,
+): ModeOutput {
 	if (preset.result !== "code-review-v1" || output.details.error) return output;
 	const completed = output.details.results.filter((result) => result.exitCode === 0 && result.envelope?.status === "completed");
-	const data = completed.map((result) => result.envelope?.data as any);
+	const envelopes = completed.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope);
+	const data = envelopes.map((envelope) => envelope?.data as any);
 	const axes = new Set(data.map((item) => item?.axis));
 	const coverage = data.map((item) => Array.isArray(item?.coverage) ? item.coverage : []);
 	const coverageSets = coverage.map((items) => new Set(items.map((item: any) => item?.path).filter((item: unknown): item is string => typeof item === "string")));
@@ -290,8 +343,18 @@ export function formatPresetResult(preset: FlowPreset, output: ModeOutput, polic
 		&& coverageSets[0].size === coverageSets[1].size
 		&& [...coverageSets[0]].every((file) => coverageSets[1].has(file));
 	const hasSkipped = coverage.some((items) => items.some((item: any) => item?.status !== "reviewed"));
-	const sameRange = data.length === 2 && data[0]?.base === data[1]?.base && data[0]?.head === data[1]?.head;
-	const manifest = sameRange ? changedFileManifest(cwd, data[0]?.base, data[0]?.head) : null;
+	const sameRange = data.length === 2
+		&& typeof data[0]?.base === "string"
+		&& typeof data[0]?.head === "string"
+		&& data[0].base.toLowerCase() === data[1]?.base?.toLowerCase()
+		&& data[0].head.toLowerCase() === data[1]?.head?.toLowerCase();
+	const matchesExpectedRange = Boolean(expectedRange && data.length === 2 && data.every((item) =>
+		typeof item?.base === "string"
+		&& typeof item?.head === "string"
+		&& item.base.toLowerCase() === expectedRange.base
+		&& item.head.toLowerCase() === expectedRange.head
+	));
+	const manifest = expectedRange ? changedFileManifest(cwd, expectedRange.base, expectedRange.head) : null;
 	const matchesGitManifest = manifest !== null
 		&& coverageSets.length === 2
 		&& coverageSets.every((set) => set.size === manifest.size && [...manifest].every((file) => set.has(file)));
@@ -303,11 +366,11 @@ export function formatPresetResult(preset: FlowPreset, output: ModeOutput, polic
 		&& Number.isFinite(finding?.endLine)
 		&& finding.endLine >= finding.startLine
 	);
-	const noUnresolvedState = completed.every((result) => result.envelope?.unresolvedQuestions.length === 0 && result.envelope.changedState.length === 0);
-	const complete = completed.length === 2 && axes.size === 2 && axes.has("standards") && axes.has("spec") && sameRange && sameCoverage && matchesGitManifest && !hasSkipped && findingsConsistent && noUnresolvedState;
+	const noUnresolvedState = envelopes.every((envelope) => envelope?.unresolvedQuestions.length === 0 && envelope.changedState.length === 0);
+	const complete = completed.length === 2 && axes.size === 2 && axes.has("standards") && axes.has("spec") && sameRange && matchesExpectedRange && sameCoverage && matchesGitManifest && !hasSkipped && findingsConsistent && noUnresolvedState;
 	const status = !complete ? "PARTIAL" : findings.length ? "FINDINGS" : "CLEAN";
 	output.details.presetOutcome = status;
-	const details = findings.length ? `\n\n${findings.map(findingLine).join("\n")}` : "";
+	const details = policy.recordContent && findings.length ? `\n\n${findings.map(findingLine).join("\n")}` : "";
 	const gap = complete ? "" : "\n\nCoverage could not be proven complete across both review axes; do not treat this result as clean.";
 	output.content = [{ type: "text", text: sanitizeText(`Code review: ${status}${details}${gap}`, policy) }];
 	return output;

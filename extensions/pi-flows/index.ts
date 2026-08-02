@@ -45,7 +45,7 @@ import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
-import { discoverFlowPresets, formatPresetResult, presetRunCwd, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
+import { discoverFlowPresets, formatPresetResult, preparePresetRun, presetRunCwd, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
 import { approveProjectPreset } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
@@ -223,6 +223,7 @@ export default function (pi: ExtensionAPI) {
 			const presetDiscovery = discoverFlowPresets(ctx.cwd, agentScope);
 			const catalog = createAgentCatalog(discovery, agentScope);
 			let activePreset: FlowPreset | undefined;
+			const requestedPresetTask = typeof params.task === "string" ? params.task : "";
 			// Resolved once per call rather than per child: the registry read is
 			// synchronous and cheap, but a roster that changed mid-flow would let two
 			// children of the same wave disagree about what "deep" meant.
@@ -273,6 +274,8 @@ export default function (pi: ExtensionAPI) {
 
 			const mode: FlowMode = detected.mode;
 			const runDefaultCwd = presetRunCwd(activePreset, mode, ctx.cwd, params.cwd);
+			const presetRun = preparePresetRun(activePreset, params, requestedPresetTask, runDefaultCwd);
+			params = presetRun.params as typeof params;
 			// Structural friction against reflexive delegation: a spawning call must
 			// articulate why isolation beats doing the work in the parent context.
 			if (typeof params.why !== "string" || params.why.trim().length === 0) {
@@ -446,7 +449,7 @@ export default function (pi: ExtensionAPI) {
 					output.details.error = handoffs.blockingError;
 					output.content = [{ type: "text", text: formatFlowError(handoffs.blockingError) }];
 				}
-				if (activePreset) formatPresetResult(activePreset, output, policy, runDefaultCwd);
+				if (activePreset) formatPresetResult(activePreset, output, policy, runDefaultCwd, presetRun.codeReviewRange);
 				// Record the lesson only when at least one run happened — pre-spawn
 				// refusals (validation errors, approvals) are not lessons about the task.
 				if (output.details.results.length > 0) {

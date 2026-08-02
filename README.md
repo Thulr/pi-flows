@@ -72,7 +72,10 @@ raw mode parameters. The bundled presets are `scout`, `map-codebase`, and
 
 `code-review` is deliberately one-shot. It never fixes findings, posts GitHub
 comments, or repeats until clean. Both reviewers use the `overwatch` agent, but
-the UI and trace retain their distinct `standards` and `spec` roles.
+the UI and trace retain their distinct `standards` and `spec` roles. Before
+dispatch, the harness resolves ranges written as `base..head` or
+`HEAD against main` to immutable commit IDs; an unresolved or substituted range
+can produce only `PARTIAL`, never `CLEAN`.
 
 Ask for a *verified* result and pi reaches for a stronger mode on its own:
 

@@ -75,10 +75,18 @@ export function presetResolutionErrorOutput(
 
 export function attachPresetTraceAttributes(attributes: Record<string, unknown>, preset: FlowPreset | undefined, details: FlowDetails): Record<string, unknown> {
 	if (!preset) return attributes;
-	return {
+	const attached: Record<string, unknown> = {
 		...attributes,
 		"flow.preset": preset.name,
 		"flow.preset_source": preset.source,
 		"flow.preset_outcome": details.presetOutcome,
 	};
+	if (details.presetOutcome === "CLEAN" || details.presetOutcome === "FINDINGS") {
+		attached["flow.outcome_verified"] = true;
+		attached["flow.outcome_success"] = details.presetOutcome === "CLEAN";
+	} else if (details.presetOutcome === "PARTIAL") {
+		attached["flow.outcome_verified"] = false;
+		delete attached["flow.outcome_success"];
+	}
+	return attached;
 }
