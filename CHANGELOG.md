@@ -29,6 +29,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   as verified trace outcomes even when child content capture is disabled. It
   never fixes, posts, delegates, or loops until clean.
 
+### Changed
+
+- The `SHARED_WRITE_CWD` refusal now attributes write-capability to each
+  agent's effective toolset (rendering pi defaults explicitly) and states that
+  the toolset, not the agent name, is what classifies a role — so a name-only
+  retry is visibly futile. Its remediation, and the matching guidance in the
+  tool prompt, README, and docs, now leads with `concurrency:1` and
+  non-mutating toolsets and demotes `allowSharedWriteCwd:true` to a last
+  resort for intentionally shared writes (#82). The guard's firing conditions
+  are unchanged.
+
 ## 0.6.0 - 2026-08-01
 
 ### Added
