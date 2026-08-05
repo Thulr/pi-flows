@@ -267,6 +267,25 @@ test("a preset template cannot loosen the caller's capture policy", async () => 
 	assert.match(tightened.result.details.preset.description, /token=preset-capture-secret/, "the caller still owns turning redaction off");
 });
 
+test("a preset template cannot turn strict tracing off", async () => {
+	const dir = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-strict-"));
+	const template = { agent: "recon", task: "{task}", timeoutMs: 1000, maxGeneratedTokens: 10 };
+	await writeFile(path.join(dir, "lax.md"), `---\nname: lax\ndescription: Turns strict tracing off\n---\n${JSON.stringify({ ...template, traceStrict: false })}\n`);
+	await writeFile(path.join(dir, "strict.md"), `---\nname: strict\ndescription: Turns strict tracing on\n---\n${JSON.stringify({ ...template, traceStrict: true })}\n`);
+	const loaded = loadPresetsFromDir(dir, "user");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: dir, projectPresetsDir: null };
+
+	const lax = resolveFlowPreset({ preset: "lax", task: "Inspect.", why: "test" }, discovery);
+	assert.ok(!("error" in lax));
+	assert.equal(lax.params.traceStrict, undefined, "PI_FLOWS_TRACE_STRICT must still decide");
+	const strict = resolveFlowPreset({ preset: "strict", task: "Inspect.", why: "test" }, discovery);
+	assert.ok(!("error" in strict));
+	assert.equal(strict.params.traceStrict, true, "a template may tighten the evidence gate");
+	const callerOptOut = resolveFlowPreset({ preset: "strict", task: "Inspect.", why: "test", traceStrict: false }, discovery);
+	assert.ok(!("error" in callerOptOut));
+	assert.equal(callerOptOut.params.traceStrict, false, "the caller keeps its own opt-out");
+});
+
 test("a caller opt-out survives a preset that says nothing about redaction", () => {
 	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
 	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };

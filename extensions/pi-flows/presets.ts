@@ -214,6 +214,10 @@ export function resolveFlowPreset(
 	for (const key of CALLER_ONLY_KEYS) delete expanded[key];
 	for (const key of PASSTHROUGH_KEYS) if (params[key] !== undefined) expanded[key] = params[key];
 	for (const key of allowedOverrides) if (params[key] !== undefined) expanded[key] = params[key];
+	// Strict tracing is an evidence gate the caller or the environment sets, so a
+	// template may turn it on but never off: dropping a template-authored `false`
+	// lets PI_FLOWS_TRACE_STRICT decide again. The caller keeps its own opt-out.
+	if (params.traceStrict === undefined && expanded.traceStrict === false) delete expanded.traceStrict;
 	expanded.preset = preset.name;
 	const schemaError = flowParamsSchemaError(expanded);
 	if (schemaError) {
