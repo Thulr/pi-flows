@@ -770,6 +770,9 @@ test("selection eval refuses a preset call that also names raw workflow shape", 
 		assert.equal(match.pass, false, `preset + ${Object.keys(shape)[0]} must not score as a preset selection`);
 		assert.match(match.notes, /preset-conflict/);
 	}
+	const invented = flowCallMatchesExpectation({ arguments: { preset: "made-up", task: "Map agent discovery." } }, { modes: ["preset", "orchestrate"] });
+	assert.equal(invented.pass, false, "the tool answers UNKNOWN_PRESET, so an invented preset is not a selection");
+	assert.match(invented.notes, /preset-unknown/);
 });
 
 test("selection eval keeps simple use-cases as no-flow negatives", () => {

@@ -339,11 +339,14 @@ function requestedReviewRefs(task: string): { base: string; head: string; symmet
 	// `~` and `^` belong to the ref: `HEAD~1..HEAD` is the range people actually
 	// type, and stopping short of the suffix pins the wrong commit or nothing.
 	const gitRef = "[A-Za-z0-9][A-Za-z0-9._/^~-]*";
-	// A ref may contain dots but never ends in one, and without that boundary a
-	// greedy match reads `base...head` as a two-dot range off `base.`.
-	const range = task.match(new RegExp(`\\b(${gitRef})(?<!\\.)\\s*(\\.{2,3})\\s*(${gitRef})\\b`, "i"));
+	// A ref may contain dots but never ends in one, and it may end in `^`/`~N`. `\b`
+	// gets both wrong: it reads `base...head` as a two-dot range off `base.`, and it
+	// backtracks `HEAD^` down to `HEAD` because `^` is not a word character. This
+	// ends a ref at anything that cannot continue one, sentence periods included.
+	const refEnd = "(?<!\\.)(?![A-Za-z0-9_/^~-])";
+	const range = task.match(new RegExp(`\\b(${gitRef})${refEnd}\\s*(\\.{2,3})\\s*(${gitRef})${refEnd}`, "i"));
 	if (range) return { base: range[1], head: range[3], symmetric: range[2].length === 3 };
-	const against = task.match(new RegExp(`\\b(${gitRef})\\s+against\\s+(${gitRef})\\b`, "i"));
+	const against = task.match(new RegExp(`\\b(${gitRef})${refEnd}\\s+against\\s+(${gitRef})${refEnd}`, "i"));
 	return against ? { base: against[2], head: against[1], symmetric: false } : null;
 }
 

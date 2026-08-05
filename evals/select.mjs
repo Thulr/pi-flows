@@ -160,7 +160,10 @@ function modeOf(args) {
 		// The tool refuses a preset call that also names raw workflow shape
 		// (PRESET_OVERRIDE_INVALID), so scoring it as a preset selection would
 		// credit a call the harness never runs.
-		const allowed = presetOverrides.get(args.preset) ?? new Set();
+		// The tool answers UNKNOWN_PRESET for a name it cannot discover, so an
+		// invented preset is not a preset selection either.
+		const allowed = presetOverrides.get(args.preset);
+		if (!allowed) return "preset-unknown";
 		const extra = Object.keys(args).filter((key) => args[key] !== undefined && !PRESET_CALL_KEYS.has(key) && !allowed.has(key));
 		return extra.length ? "preset-conflict" : "preset";
 	}
