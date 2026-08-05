@@ -9,6 +9,8 @@
 //   npm run eval:select -- --model=openai-codex/gpt-5.4-mini --timeout=60000
 //   npm run eval:select -- --dry-run
 import { spawn } from "node:child_process";
+import * as fsSync from "node:fs";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
@@ -128,18 +130,28 @@ function values(value) {
 	return Array.isArray(value) ? value : [value];
 }
 
-// Mirrors resolveFlowPreset: reserved keys, the caller-control passthrough set, and
-// the top-level overrides the bundled presets declare. Anything else is refused as
-// PRESET_OVERRIDE_INVALID, so an allowlist closes the class rather than chasing
-// individual raw fields.
+// Mirrors resolveFlowPreset: reserved keys plus the caller-control passthrough set
+// are always allowed, and anything else must be an override the *selected* preset
+// declares. An allowlist closes the class rather than chasing individual raw fields.
 const PRESET_CALL_KEYS = new Set([
 	"preset", "task", "list", "showConfig",
 	"why", "agentScope", "confirmProjectAgents", "maxCostUsd", "checkpoint", "reflexion",
 	"traceFile", "traceLabel", "traceContext", "traceStrict",
 	"handoffPolicy", "modeHandoffPolicy", "incompleteHandoffPolicy",
 	"recordContent", "redactSecrets", "allowSharedWriteCwd",
-	"cwd", "model", "tier", "thinking", "concurrency", "timeoutMs", "maxTokens", "maxGeneratedTokens",
 ]);
+
+/** Declared overrides per bundled preset, read from the preset files so the eval cannot drift from them. */
+const bundledPresetsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../presets");
+const presetOverrides = new Map(
+	fsSync.readdirSync(bundledPresetsDir)
+		.filter((entry) => entry.endsWith(".md"))
+		.map((entry) => fsSync.readFileSync(path.join(bundledPresetsDir, entry), "utf8"))
+		.map((content) => [
+			content.match(/^name:\s*(\S+)\s*$/m)?.[1] ?? "",
+			new Set((content.match(/^overrides:\s*(.+)$/m)?.[1] ?? "").split(",").map((key) => key.trim()).filter(Boolean)),
+		]),
+);
 
 function modeOf(args) {
 	if (args?.list) return "list";
@@ -148,7 +160,8 @@ function modeOf(args) {
 		// The tool refuses a preset call that also names raw workflow shape
 		// (PRESET_OVERRIDE_INVALID), so scoring it as a preset selection would
 		// credit a call the harness never runs.
-		const extra = Object.keys(args).filter((key) => args[key] !== undefined && !PRESET_CALL_KEYS.has(key));
+		const allowed = presetOverrides.get(args.preset) ?? new Set();
+		const extra = Object.keys(args).filter((key) => args[key] !== undefined && !PRESET_CALL_KEYS.has(key) && !allowed.has(key));
 		return extra.length ? "preset-conflict" : "preset";
 	}
 	if (Array.isArray(args?.tasks)) return "parallel";

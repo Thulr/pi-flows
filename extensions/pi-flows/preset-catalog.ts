@@ -83,7 +83,13 @@ export function presetResolutionErrorOutput(
 	};
 }
 
-export function attachPresetTraceAttributes(attributes: Record<string, unknown>, preset: FlowPreset | undefined, details: FlowDetails): Record<string, unknown> {
+export function attachPresetTraceAttributes(
+	attributes: Record<string, unknown>,
+	preset: FlowPreset | undefined,
+	details: FlowDetails,
+	/** False when the run cannot deliver the verdict it reached — a strict run whose own evidence is incomplete. */
+	deliverable = true,
+): Record<string, unknown> {
 	if (!preset) return attributes;
 	const attached: Record<string, unknown> = {
 		...attributes,
@@ -94,7 +100,7 @@ export function attachPresetTraceAttributes(attributes: Record<string, unknown>,
 	// A verdict the run then failed to deliver — a denied finalize checkpoint, an
 	// incomplete trace — is not a verified outcome, and `/flows report` counts these
 	// attributes directly.
-	if (details.error) return attached;
+	if (details.error || !deliverable) return attached;
 	if (details.presetOutcome === "CLEAN" || details.presetOutcome === "FINDINGS") {
 		attached["flow.outcome_verified"] = true;
 		attached["flow.outcome_success"] = details.presetOutcome === "CLEAN";

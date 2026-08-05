@@ -683,6 +683,10 @@ test("code-review trace attributes publish complete verdicts as verified outcome
 	assert.equal(partial["flow.outcome_verified"], false);
 	assert.equal(partial["flow.outcome_success"], undefined);
 
+	const undeliverable = attachPresetTraceAttributes({ ...base }, reviewPreset, { presetOutcome: "CLEAN" } as any, false);
+	assert.equal(undeliverable["flow.outcome_verified"], false, "a strict run with degraded evidence cannot claim a verified outcome");
+	assert.equal(undeliverable["flow.outcome_success"], undefined);
+
 	const refused = attachPresetTraceAttributes({ ...base }, reviewPreset, { presetOutcome: "CLEAN", error: { code: "CHECKPOINT_DENIED" } } as any);
 	assert.equal(refused["flow.outcome_verified"], false, "a verdict the run never delivered is not a verified outcome");
 	assert.equal(refused["flow.outcome_success"], undefined);

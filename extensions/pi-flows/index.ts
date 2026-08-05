@@ -34,7 +34,7 @@ import { resolveChildModel, runFlowAgent } from "./runner.ts";
 import { availableModelsFromRegistry, currentModelRoster } from "./roster-source.ts";
 import { clampThinking, describeModelRoster, parseModelSpec, resolveModelRoster } from "./model-roster.ts";
 import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
-import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
+import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceHealthStatus, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { collectBudgetCeilings } from "./budget-disclosure.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs, showModelRoster } from "./ui.ts";
@@ -465,8 +465,8 @@ export default function (pi: ExtensionAPI) {
 				liveFlows.update(toolCallId, liveDetails);
 				if (traceSink) {
 					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
-					const traceAttributes = attachPresetTraceAttributes(traceSummaryAttributes(mode, params, output), activePreset, output.details);
-					output.details.trace = await traceSink.finalize({ ok }, traceAttributes);
+					// A strict run whose own evidence is degraded is about to be refused, so the root must not claim a verified outcome it never delivered.
+					output.details.trace = await traceSink.finalize({ ok }, (health) => attachPresetTraceAttributes(traceSummaryAttributes(mode, params, output), activePreset, output.details, !traceStrict || traceHealthStatus(health, true) === "recorded"));
 				}
 				// Strict runs refuse to report a result they cannot evidence. An
 				// already-failed run keeps its own error: the incomplete trace is a

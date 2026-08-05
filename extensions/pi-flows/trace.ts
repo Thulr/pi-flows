@@ -8,6 +8,7 @@ import { formatTokens } from "./trace-report.ts";
 // trace.ts is the trace facade: sink, report, and the root-span summary all
 // reach consumers from here, while the implementations live in focused modules.
 export { makeTraceSink, stableTraceIds, type TraceSink } from "./trace-sink.ts";
+export { traceHealthStatus } from "./trace-scope.ts";
 export {
 	addTraceBucket,
 	boolAttr,
