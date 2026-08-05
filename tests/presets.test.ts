@@ -303,6 +303,26 @@ test("a caller opt-out survives a preset that says nothing about redaction", () 
 	);
 });
 
+test("a caller cannot loosen capture a preset template deliberately tightened", () => {
+	const tight: FlowPreset = {
+		name: "tight",
+		description: "test",
+		source: "user",
+		filePath: "tight.md",
+		overrides: [],
+		template: { agent: "recon", task: "{task}", timeoutMs: 1000, maxGeneratedTokens: 10, recordContent: false, redactSecrets: true },
+	};
+	const discovery = { presets: [tight], issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const loosened = resolveFlowPreset({ preset: "tight", task: "Inspect.", why: "test", recordContent: true, redactSecrets: false }, discovery);
+	assert.ok(!("error" in loosened));
+	assert.equal(loosened.params.recordContent, false, "a template that withholds child content keeps withholding it");
+	assert.equal(loosened.params.redactSecrets, true, "a template that requires redaction keeps requiring it");
+	assert.deepEqual(
+		presetCapturePolicy({ recordContent: true, redactSecrets: false }, loosened.params),
+		{ recordContent: false, redactSecrets: true },
+	);
+});
+
 test("nested preset roles and code-review Git verification honor the preset cwd override", async () => {
 	const root = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-cwd-"));
 	const repo = path.join(root, "review-target");

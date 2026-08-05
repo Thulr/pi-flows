@@ -50,8 +50,9 @@ overrides: cwd,timeoutMs,maxGeneratedTokens
 ```
 
 A template may set `recordContent`/`redactSecrets` to tighten capture, but never
-to loosen it: the effective policy is the stricter of the caller's and the
-template's, so only the caller can turn redaction off or keep child content on.
+to loosen it. The effective policy is the stricter of the caller's and the
+template's in both directions: a template cannot turn the caller's redaction
+off, and a caller cannot re-enable content a template deliberately withholds.
 `traceStrict` follows the same rule — a template can turn the evidence gate on,
 but a template-authored `traceStrict:false` is dropped so the caller and
 `PI_FLOWS_TRACE_STRICT` still decide. `why`, `agentScope`,

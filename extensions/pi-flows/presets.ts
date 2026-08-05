@@ -217,8 +217,18 @@ export function resolveFlowPreset(
 	}
 	const expanded = substitute(preset.template, task) as Record<string, unknown>;
 	for (const key of CALLER_ONLY_KEYS) delete expanded[key];
+	const templateCapture = { recordContent: expanded.recordContent, redactSecrets: expanded.redactSecrets };
 	for (const key of PASSTHROUGH_KEYS) if (params[key] !== undefined) expanded[key] = params[key];
 	for (const key of allowedOverrides) if (params[key] !== undefined) expanded[key] = params[key];
+	// Capture is tighten-only in both directions: the passthrough above would
+	// otherwise let a caller replace a template that deliberately withholds child
+	// content, and a template must never undo the caller's own choice either.
+	if (templateCapture.recordContent !== undefined || params.recordContent !== undefined) {
+		expanded.recordContent = (params.recordContent ?? true) !== false && templateCapture.recordContent !== false;
+	}
+	if (templateCapture.redactSecrets !== undefined || params.redactSecrets !== undefined) {
+		expanded.redactSecrets = (params.redactSecrets ?? true) === true || templateCapture.redactSecrets === true;
+	}
 	// Strict tracing is an evidence gate the caller or the environment sets, so a
 	// template may turn it on but never off: dropping a template-authored `false`
 	// lets PI_FLOWS_TRACE_STRICT decide again. The caller keeps its own opt-out.
