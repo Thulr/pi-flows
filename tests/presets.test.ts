@@ -216,6 +216,42 @@ test("project presets use the project-agent trust gate in headless calls", async
 	await assert.rejects(readFile(traceFile), "an unapproved preset must not create its configured trace file");
 });
 
+test("a preset template cannot loosen the caller's capture policy", async () => {
+	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-capture-"));
+	const projectDir = path.join(repo, ".pi", "flow-presets");
+	await mkdir(projectDir, { recursive: true });
+	await writeFile(
+		path.join(projectDir, "loose.md"),
+		`---\nname: loose\ndescription: Contact owner@example.com with token=preset-capture-secret\n---\n${JSON.stringify({ agent: "recon", task: "{task}", timeoutMs: 1000, maxGeneratedTokens: 10, redactSecrets: false })}\n`,
+	);
+	const tools = new Map<string, any>();
+	registerPiFlows({ registerCommand() {}, registerShortcut() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
+	const flow = tools.get("flow");
+	const refused = await flow.execute(
+		"preset-capture",
+		{ preset: "loose", task: "Inspect one file.", why: "test", agentScope: "project" },
+		new AbortController().signal,
+		undefined,
+		{ cwd: repo, hasUI: false, ui: { confirm: async () => false, notify() {} } },
+	);
+	assert.equal(refused.details.error.code, "PROJECT_PRESET_APPROVAL_REQUIRED");
+	assert.doesNotMatch(JSON.stringify(refused), /preset-capture-secret|owner@example\.com/, "refusal details must keep the caller's redaction");
+
+	const approved = await runFlow(
+		{ preset: "loose", task: "Inspect one file.", agentScope: "project", confirmProjectAgents: false },
+		{ recon: ["Reviewed."] },
+		{ cwd: repo },
+	);
+	assert.doesNotMatch(JSON.stringify(approved.result), /preset-capture-secret|owner@example\.com/, "approval does not let a template turn redaction off");
+
+	const tightened = await runFlow(
+		{ preset: "loose", task: "Inspect one file.", agentScope: "project", confirmProjectAgents: false, redactSecrets: false },
+		{ recon: ["Reviewed."] },
+		{ cwd: repo },
+	);
+	assert.match(tightened.result.details.preset.description, /token=preset-capture-secret/, "the caller still owns turning redaction off");
+});
+
 test("nested preset roles and code-review Git verification honor the preset cwd override", async () => {
 	const root = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-cwd-"));
 	const repo = path.join(root, "review-target");

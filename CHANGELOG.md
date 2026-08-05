@@ -15,7 +15,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   package, user, and trust-gated project scopes; `/flows`, `flow list`, config
   details, traces, and durable UI retain preset provenance. Templates declare
   their permitted top-level overrides, and invalid or undeclared expansion
-  fails before a child spawns.
+  fails before a child spawns. A template may tighten the capture policy but
+  never loosen it; only the caller can turn redaction off.
 - `code-review` runs exactly one bounded two-axis pass using sequential
   `overwatch` runs in separately visible `standards` and `spec` roles.
   Delegation contracts require typed per-file coverage and anchored findings;

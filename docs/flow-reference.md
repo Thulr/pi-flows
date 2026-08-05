@@ -49,6 +49,10 @@ overrides: cwd,timeoutMs,maxGeneratedTokens
 {"agent":"recon","task":"{task}","timeoutMs":900000,"maxGeneratedTokens":4000}
 ```
 
+A template may set `recordContent`/`redactSecrets` to tighten capture, but never
+to loosen it: the effective policy is the stricter of the caller's and the
+template's, so only the caller can turn redaction off or keep child content on.
+
 ## Modes
 
 Exactly one mode is valid per call.

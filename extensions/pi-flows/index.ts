@@ -45,7 +45,7 @@ import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
-import { discoverFlowPresets, formatPresetResult, preparePresetRun, presetRunCwd, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
+import { discoverFlowPresets, formatPresetResult, preparePresetRun, presetCapturePolicy, presetRunCwd, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
 import { approveProjectPreset } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
@@ -260,7 +260,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				activePreset = resolved.preset;
 				params = resolved.params as typeof params;
-				policy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
+				policy = presetCapturePolicy(policy, params as Record<string, unknown>);
+				params = { ...params, ...policy };
 				budgetCeilings = collectBudgetCeilings(params);
 			}
 

@@ -218,6 +218,20 @@ export function resolveFlowPreset(params: Record<string, unknown>, discovery: Fl
 	};
 }
 
+/**
+ * Resolve the capture policy an expanded preset runs under. A template is data
+ * from a source that may not have passed the project trust gate, and its
+ * expansion already feeds the refusal details, so a preset may tighten capture
+ * but never loosen it: only the caller can turn redaction off or keep child
+ * content on.
+ */
+export function presetCapturePolicy(caller: CapturePolicy, expanded: Record<string, unknown>): CapturePolicy {
+	return {
+		recordContent: caller.recordContent && expanded.recordContent !== false,
+		redactSecrets: caller.redactSecrets || expanded.redactSecrets !== false,
+	};
+}
+
 /** Expand a preset for side-effect-free pre-run rendering; invalid/partial calls stay unchanged. */
 export function previewFlowPreset(params: Record<string, unknown>, cwd: string): Record<string, unknown> {
 	const scope = params.agentScope === "project" || params.agentScope === "all" ? params.agentScope : "user";
