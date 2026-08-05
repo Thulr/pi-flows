@@ -316,7 +316,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
-			const presetApproval = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx);
+			const presetApproval = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx, policy);
 			if (presetApproval.error) return { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details: makeDetails(mode)([], presetApproval.error) };
 
 			// Trace evidence as a gate is opt-in. Ordinary user flows stay

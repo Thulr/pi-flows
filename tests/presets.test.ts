@@ -553,4 +553,14 @@ description: Local preset
 	assert.doesNotMatch(configured.content[0].text, /directory-secret-value/);
 	assert.doesNotMatch(JSON.stringify(configured.details.presetsDir), /directory-secret-value/);
 	assert.match(configured.details.presetsDir.project, /token=\[REDACTED_SECRET\]/);
+
+	const refused = await flow.execute(
+		"preset-dir-refusal",
+		{ preset: "local", task: "Inspect one file.", why: "test", agentScope: "project" },
+		new AbortController().signal,
+		undefined,
+		context,
+	);
+	assert.equal(refused.details.error.code, "PROJECT_PRESET_APPROVAL_REQUIRED");
+	assert.doesNotMatch(JSON.stringify(refused), /directory-secret-value/, "the refusal names a repo-controlled path and must redact it");
 });

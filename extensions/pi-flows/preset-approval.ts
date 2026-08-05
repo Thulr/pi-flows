@@ -1,5 +1,5 @@
-import { safePath } from "./sanitize.ts";
-import { flowError, type AgentScope, type FlowError, type FlowPreset, type RecordEvent } from "./types.ts";
+import { safePath, sanitizeText } from "./sanitize.ts";
+import { flowError, type AgentScope, type CapturePolicy, type FlowError, type FlowPreset, type RecordEvent } from "./types.ts";
 
 export interface ProjectPresetApproval {
 	error: FlowError | null;
@@ -12,6 +12,7 @@ export async function approveProjectPreset(
 	agentScope: AgentScope,
 	confirmProjectAgents: boolean | undefined,
 	ctx: any,
+	policy: CapturePolicy = { recordContent: true, redactSecrets: true },
 ): Promise<ProjectPresetApproval> {
 	let approved = false;
 	const record = (recordEvent?: RecordEvent) => {
@@ -24,11 +25,15 @@ export async function approveProjectPreset(
 		});
 	};
 	if ((agentScope !== "project" && agentScope !== "all") || !(confirmProjectAgents ?? true) || preset?.source !== "project") return { error: null, record };
+	// The refusal is returned to the model, so the repo-controlled path it names is
+	// captured content. The interactive prompt below is not: it is the human's own
+	// trust decision, and redacting the path there would hide what they are judging.
+	const capturedFilePath = sanitizeText(safePath(preset.filePath) ?? preset.filePath, policy, 4 * 1024);
 	if (!ctx.hasUI) {
 		return { error: flowError(
 			"PROJECT_PRESET_APPROVAL_REQUIRED",
 			"Project-local flow presets require explicit trust in non-UI/headless runs.",
-			`Preset "${preset.name}" comes from ${safePath(preset.filePath)} and is controlled by the repository.`,
+			`Preset "${preset.name}" comes from ${capturedFilePath} and is controlled by the repository.`,
 			"Run in an interactive UI to approve, or pass confirmProjectAgents:false only after reviewing the project-local preset.",
 		), record };
 	}
