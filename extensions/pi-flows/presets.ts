@@ -372,7 +372,14 @@ export function formatPresetResult(
 ): ModeOutput {
 	if (preset.result !== "code-review-v1" || output.details.error) return output;
 	const completed = output.details.results.filter((result) => result.exitCode === 0 && result.envelope?.status === "completed");
+	// A reviewer that skipped a file can still have anchored a real bug in the files
+	// it did read. Its envelope cannot prove coverage, so it never counts toward the
+	// verdict, but dropping its findings would hide the one thing worth acting on.
+	const incomplete = output.details.results.filter((result) => result.exitCode === 0 && result.envelope && !completed.includes(result));
 	const envelopes = completed.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope);
+	const incompleteFindings = incomplete
+		.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope)
+		.flatMap((envelope) => Array.isArray((envelope?.data as any)?.findings) ? (envelope!.data as any).findings : []);
 	const data = envelopes.map((envelope) => envelope?.data as any);
 	const axes = new Set(data.map((item) => item?.axis));
 	const coverage = data.map((item) => Array.isArray(item?.coverage) ? item.coverage : []);
@@ -409,7 +416,8 @@ export function formatPresetResult(
 	const complete = completed.length === 2 && axes.size === 2 && axes.has("standards") && axes.has("spec") && sameRange && matchesExpectedRange && sameCoverage && matchesGitManifest && !hasSkipped && findingsConsistent && noUnresolvedState;
 	const status = !complete ? "PARTIAL" : findings.length ? "FINDINGS" : "CLEAN";
 	output.details.presetOutcome = status;
-	const details = policy.recordContent && findings.length ? `\n\n${findings.map(findingLine).join("\n")}` : "";
+	const reported = [...findings, ...incompleteFindings];
+	const details = policy.recordContent && reported.length ? `\n\n${reported.map(findingLine).join("\n")}` : "";
 	const gap = complete ? "" : "\n\nCoverage could not be proven complete across both review axes; do not treat this result as clean.";
 	output.content = [{ type: "text", text: sanitizeText(`Code review: ${status}${details}${gap}`, policy) }];
 	return output;

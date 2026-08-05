@@ -13,6 +13,7 @@ import {
 	loadPresetsFromDir,
 	packagePresetsDir,
 	preparePresetRun,
+	presetCapturePolicy,
 	resolveFlowPreset,
 } from "../extensions/pi-flows/presets.ts";
 import { emptyUsage, type FlowPreset, type FlowRunResult } from "../extensions/pi-flows/types.ts";
@@ -266,6 +267,23 @@ test("a preset template cannot loosen the caller's capture policy", async () => 
 	assert.match(tightened.result.details.preset.description, /token=preset-capture-secret/, "the caller still owns turning redaction off");
 });
 
+test("a caller opt-out survives a preset that says nothing about redaction", () => {
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const resolved = resolveFlowPreset({ preset: "scout", task: "Inspect.", why: "test", redactSecrets: false, recordContent: false }, discovery);
+	assert.ok(!("error" in resolved));
+	assert.deepEqual(
+		presetCapturePolicy({ recordContent: false, redactSecrets: false }, resolved.params),
+		{ recordContent: false, redactSecrets: false },
+		"bundled presets set neither control, so the caller's choice is the effective policy",
+	);
+	assert.deepEqual(
+		presetCapturePolicy({ recordContent: true, redactSecrets: true }, { redactSecrets: false, recordContent: false }),
+		{ recordContent: false, redactSecrets: true },
+		"a template may omit content but may not turn redaction off",
+	);
+});
+
 test("nested preset roles and code-review Git verification honor the preset cwd override", async () => {
 	const root = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-cwd-"));
 	const repo = path.join(root, "review-target");
@@ -425,6 +443,13 @@ test("code-review formatter derives CLEAN, FINDINGS, and PARTIAL from Git-verifi
 		range,
 	);
 	assert.equal(mismatched.details.presetOutcome, "PARTIAL", "reviewer agreement on a different valid range must not produce CLEAN");
+
+	const anchored = { id: "salvaged", path: "src/a.ts", startLine: 1, endLine: 1, severity: "high", category: "correctness", claim: "partial-envelope-claim", evidence: "src/a.ts:1" };
+	const partialRun = reviewRun("spec", range, [anchored]);
+	partialRun.envelope!.status = "partial";
+	const salvaged = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), partialRun]), policy, repo, range);
+	assert.equal(salvaged.details.presetOutcome, "PARTIAL", "an unproven axis cannot settle the verdict");
+	assert.match(salvaged.content[0].text, /partial-envelope-claim/, "a finding anchored by a partial reviewer must still be reported");
 });
 
 test("code-review retains validated metadata privately when returned content is omitted", async () => {
