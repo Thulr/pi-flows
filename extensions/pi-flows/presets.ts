@@ -186,21 +186,29 @@ export function presetRunCwd(preset: FlowPreset | undefined, mode: FlowMode, cal
 		: callerCwd;
 }
 
-export function resolveFlowPreset(params: Record<string, unknown>, discovery: FlowPresetDiscovery): ResolvedPreset | { error: FlowError } {
+export function resolveFlowPreset(
+	params: Record<string, unknown>,
+	discovery: FlowPresetDiscovery,
+	policy: CapturePolicy = { recordContent: true, redactSecrets: true },
+): ResolvedPreset | { error: FlowError } {
 	const name = typeof params.preset === "string" ? params.preset.trim() : "";
+	// A rejected name never matched a discovered preset, so it is unvalidated caller
+	// text on its way back into returned content and details.
+	const echoedName = sanitizeText(name, policy, 256);
 	const preset = discovery.presets.find((candidate) => candidate.name === name);
 	if (!preset) {
-		return { error: flowError("UNKNOWN_PRESET", `Unknown flow preset: "${name}".`, "No discovered preset matched the requested name.", "Run `flow` with `{\"list\":true}` or `/flows` to inspect preset names and scopes.") };
+		return { error: flowError("UNKNOWN_PRESET", `Unknown flow preset: "${echoedName}".`, "No discovered preset matched the requested name.", "Run `flow` with `{\"list\":true}` or `/flows` to inspect preset names and scopes.") };
 	}
 	const task = typeof params.task === "string" ? params.task : "";
 	if (containsTaskPlaceholder(preset.template) && !task.trim()) {
-		return { error: flowError("PRESET_TASK_REQUIRED", `Preset "${name}" requires a task.`, "Its template contains a {task} placeholder, but the call supplied no non-empty task.", "Pass task:'<complete goal, fixed point, and relevant issue/spec context>'.") };
+		return { error: flowError("PRESET_TASK_REQUIRED", `Preset "${echoedName}" requires a task.`, "Its template contains a {task} placeholder, but the call supplied no non-empty task.", "Pass task:'<complete goal, fixed point, and relevant issue/spec context>'.") };
 	}
 	const allowedOverrides = new Set(preset.overrides);
 	const reserved = new Set(["preset", "task", "list", "showConfig"]);
 	for (const [key, value] of Object.entries(params)) {
 		if (value === undefined || reserved.has(key) || PASSTHROUGH_KEYS.has(key) || allowedOverrides.has(key)) continue;
-		return { error: flowError("PRESET_OVERRIDE_INVALID", `Preset "${name}" does not allow overriding "${key}".`, "Preset expansion is data-driven and only frontmatter-declared top-level overrides may replace its workflow shape.", `Remove "${key}" or add it to the preset's overrides frontmatter after reviewing the trust and boundedness impact.`) };
+		const echoedKey = sanitizeText(key, policy, 256);
+		return { error: flowError("PRESET_OVERRIDE_INVALID", `Preset "${echoedName}" does not allow overriding "${echoedKey}".`, "Preset expansion is data-driven and only frontmatter-declared top-level overrides may replace its workflow shape.", `Remove "${echoedKey}" or add it to the preset's overrides frontmatter after reviewing the trust and boundedness impact.`) };
 	}
 	const expanded = substitute(preset.template, task) as Record<string, unknown>;
 	for (const key of CALLER_ONLY_KEYS) delete expanded[key];
@@ -209,7 +217,7 @@ export function resolveFlowPreset(params: Record<string, unknown>, discovery: Fl
 	expanded.preset = preset.name;
 	const schemaError = flowParamsSchemaError(expanded);
 	if (schemaError) {
-		return { error: flowError("PRESET_EXPANSION_INVALID", `Preset "${name}" expanded outside the public flow schema.`, schemaError, "Remove or correct the invalid override, or fix the preset template reported by flow showConfig:true.") };
+		return { error: flowError("PRESET_EXPANSION_INVALID", `Preset "${echoedName}" expanded outside the public flow schema.`, sanitizeText(schemaError, policy, 4 * 1024), "Remove or correct the invalid override, or fix the preset template reported by flow showConfig:true.") };
 	}
 	return {
 		params: expanded,

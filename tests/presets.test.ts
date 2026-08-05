@@ -134,6 +134,20 @@ test("preset expansion substitutes the complete task and rejects undeclared shap
 	assert.equal("error" in invalidExpanded ? invalidExpanded.error.code : undefined, "PRESET_EXPANSION_INVALID");
 });
 
+test("a rejected preset name is echoed under the capture policy", () => {
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const unknown = resolveFlowPreset({ preset: "token=echoed-secret-value", task: "Inspect.", why: "test" }, discovery);
+	assert.ok("error" in unknown);
+	assert.equal(unknown.error.code, "UNKNOWN_PRESET");
+	assert.doesNotMatch(JSON.stringify(unknown.error), /echoed-secret-value/);
+
+	const override = resolveFlowPreset({ preset: "scout", task: "Inspect.", why: "test", "password=echoed-secret-value": 1 } as any, discovery);
+	assert.ok("error" in override);
+	assert.equal(override.error.code, "PRESET_OVERRIDE_INVALID");
+	assert.doesNotMatch(JSON.stringify(override.error), /echoed-secret-value/);
+});
+
 test("presets requiring {task} fail closed when task is absent", () => {
 	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
 	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };

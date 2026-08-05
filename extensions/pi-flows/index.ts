@@ -254,7 +254,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.preset) {
-				const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery);
+				const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, policy);
 				if ("error" in resolved) {
 					return presetResolutionErrorOutput(resolved.error, presetDiscovery, makeDetails("list")([], resolved.error), policy);
 				}
