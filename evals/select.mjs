@@ -128,10 +128,17 @@ function values(value) {
 	return Array.isArray(value) ? value : [value];
 }
 
+const RAW_MODE_KEYS = ["tasks", "chain", "evaluate", "vote", "route", "orchestrate", "graph", "loop", "search", "workflow", "worktree", "debate", "dossier", "monitor", "agent"];
+
 function modeOf(args) {
 	if (args?.list) return "list";
 	if (args?.showConfig) return "config";
-	if (typeof args?.preset === "string" && args.preset) return "preset";
+	if (typeof args?.preset === "string" && args.preset) {
+		// The tool refuses a preset call that also names raw workflow shape
+		// (PRESET_OVERRIDE_INVALID), so scoring it as a preset selection would
+		// credit a call the harness never runs.
+		return RAW_MODE_KEYS.some((key) => args[key] !== undefined) ? "preset-conflict" : "preset";
+	}
 	if (Array.isArray(args?.tasks)) return "parallel";
 	if (Array.isArray(args?.chain)) return "chain";
 	if (args?.evaluate !== undefined) return "evaluate";

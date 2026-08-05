@@ -756,6 +756,17 @@ test("selection eval flow argument matcher recognizes implicit delegation modes"
 	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Diagnose event", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED" } } }, { mode: "monitor", agents: ["analyst"], taskPattern: "health-check|DEGRADED" }).pass, true);
 });
 
+test("selection eval refuses a preset call that also names raw workflow shape", () => {
+	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main." } }, { mode: "preset", preset: "code-review" }).pass, true);
+	// The tool answers PRESET_OVERRIDE_INVALID for these, so crediting them would
+	// score a call that never runs.
+	for (const shape of [{ evaluate: {} }, { tasks: [{ agent: "recon", task: "Inspect." }] }, { agent: "recon" }]) {
+		const match = flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", ...shape } }, { mode: "preset", preset: "code-review" });
+		assert.equal(match.pass, false, `preset + ${Object.keys(shape)[0]} must not score as a preset selection`);
+		assert.match(match.notes, /preset-conflict/);
+	}
+});
+
 test("selection eval keeps simple use-cases as no-flow negatives", () => {
 	const noFlow = SELECTION_CASES.filter((c) => c.expectFlow === false);
 	const flow = SELECTION_CASES.filter((c) => c.expectFlow === true);
