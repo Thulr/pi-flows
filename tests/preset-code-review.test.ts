@@ -335,3 +335,42 @@ test("a three-dot review request freezes at the merge base so the manifest is th
 	);
 	assert.equal(endpointReviewed.details.presetOutcome, "PARTIAL", "src/b.ts also differs between the endpoints, so that coverage is incomplete");
 });
+
+test("a validated axis keeps its findings when the other axis fails validation", async () => {
+	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-review-mixed-"));
+	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: repo, encoding: "utf8" }).trim();
+	git("init", "-q");
+	await writeFile(path.join(repo, "a.ts"), "before\n");
+	git("add", ".");
+	git("commit", "-qm", "base");
+	const base = git("rev-parse", "HEAD");
+	await writeFile(path.join(repo, "a.ts"), "after\n");
+	git("add", ".");
+	git("commit", "-qm", "head");
+	const head = git("rev-parse", "HEAD");
+	const task = `Review ${base}..${head}.`;
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const resolved = resolveFlowPreset({ preset: "code-review", task }, discovery);
+	assert.ok(!("error" in resolved));
+	const tasks = resolved.params.tasks as any[];
+	const finding = { id: "kept", path: "a.ts", startLine: 1, endLine: 1, severity: "high", category: "correctness", claim: "surviving-axis-claim", evidence: "a.ts:1", suggestion: "fix it" };
+	const envelope = (index: number, axis: "standards" | "spec", data: unknown) => JSON.stringify({
+		schemaVersion: "pi-flows.return-envelope.v1",
+		contractId: delegationContractId(tasks[index].contract),
+		status: "completed",
+		summary: `${axis} complete`,
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data,
+	});
+	const good = envelope(0, "standards", { axis: "standards", base, head, coverage: [{ path: "a.ts", status: "reviewed", evidence: "a.ts:1" }], findings: [finding] });
+	const malformed = envelope(1, "spec", { axis: "spec", base, head, coverage: "not-an-array", findings: [] });
+	const { result } = await runFlow({ preset: "code-review", task }, { overwatch: [good, malformed] }, { cwd: repo });
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.match(result.content[0].text, /surviving-axis-claim/, "the validated axis's finding must not be hidden by the other axis's error");
+});

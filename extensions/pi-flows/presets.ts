@@ -410,7 +410,19 @@ export function formatPresetResult(
 	cwd = process.cwd(),
 	expectedRange?: CodeReviewRange,
 ): ModeOutput {
-	if (preset.result !== "code-review-v1" || output.details.error) return output;
+	if (preset.result !== "code-review-v1") return output;
+	if (output.details.error) {
+		// One axis failing validation is a flow error, not a verdict — but a finding
+		// the other axis already anchored and had validated is still worth acting on.
+		const anchored = output.details.results
+			.map((result) => takeValidatedReturnEnvelope(result))
+			.flatMap((envelope) => Array.isArray((envelope?.data as any)?.findings) ? (envelope!.data as any).findings : []);
+		if (policy.recordContent && anchored.length) {
+			const text = `${output.content[0]?.text ?? ""}\n\nFindings a validated review axis already anchored:\n${anchored.map(findingLine).join("\n")}`;
+			output.content = [{ type: "text", text: sanitizeText(text, policy) }];
+		}
+		return output;
+	}
 	const completed = output.details.results.filter((result) => result.exitCode === 0 && result.envelope?.status === "completed");
 	// A reviewer that skipped a file can still have anchored a real bug in the files
 	// it did read. Its envelope cannot prove coverage, so it never counts toward the
