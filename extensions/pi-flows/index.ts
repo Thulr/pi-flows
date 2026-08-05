@@ -34,7 +34,7 @@ import { resolveChildModel, runFlowAgent } from "./runner.ts";
 import { availableModelsFromRegistry, currentModelRoster } from "./roster-source.ts";
 import { clampThinking, describeModelRoster, parseModelSpec, resolveModelRoster } from "./model-roster.ts";
 import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
-import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceHealthStatus, traceSummaryAttributes } from "./trace.ts";
+import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceConfigError, strictTraceError, summarizeTraceSpans, traceHealthStatus, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { collectBudgetCeilings } from "./budget-disclosure.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs, showModelRoster } from "./ui.ts";
@@ -47,7 +47,7 @@ import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
 import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
-import { approveProjectPreset } from "./preset-approval.ts";
+import { approveProjectPreset, traceProjectPresetRefusal } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
 // extension was a single file, so tests and downstream imports keep working.
 export {
@@ -253,6 +253,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			const callerTrace = { traceFile: params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE, traceLabel: params.traceLabel, traceContext: params.traceContext };
 			if (params.preset) {
 				const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, policy);
 				if ("error" in resolved) {
@@ -314,7 +315,12 @@ export default function (pi: ExtensionAPI) {
 			}
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 			const presetApproval = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx, policy);
-			if (presetApproval.error) return { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details: makeDetails(mode)([], presetApproval.error) };
+			if (presetApproval.error) {
+				const details = makeDetails(mode)([], presetApproval.error);
+				const link = await traceProjectPresetRefusal(presetApproval.error, activePreset, callerTrace, mode, policy, ctx.cwd, ctx.hasUI);
+				if (link) details.trace = link;
+				return { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details };
+			}
 			// Preset-owned preparation shells out to git in a preset-named directory, so it waits for the trust gate above.
 			const presetRun = preparePresetDispatch(activePreset, params, requestedPresetTask, mode, ctx.cwd);
 			params = presetRun.params as typeof params;
@@ -324,17 +330,9 @@ export default function (pi: ExtensionAPI) {
 			// that cannot prove what it did is a failed run, not a quiet pass.
 			const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
 			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
-			if (traceStrict && !traceFileParam) {
-				const error = flowError(
-					"TRACE_INCOMPLETE",
-					"Flow call refused: strict tracing is on but no trace file is configured.",
-					"traceStrict (or PI_FLOWS_TRACE_STRICT) requires coordination evidence, and nothing would have been exported.",
-					"Set traceFile (or PI_FLOWS_TRACE_FILE) to a writable JSONL path, or turn strict tracing off for ordinary best-effort runs.",
-				);
-				return {
-					content: [{ type: "text", text: formatFlowError(error) }],
-					details: makeDetails(mode)([], error),
-				};
+			const traceConfigError = strictTraceConfigError(traceStrict, traceFileParam);
+			if (traceConfigError) {
+				return { content: [{ type: "text", text: formatFlowError(traceConfigError) }], details: makeDetails(mode)([], traceConfigError) };
 			}
 
 			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;

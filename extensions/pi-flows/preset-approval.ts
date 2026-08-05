@@ -1,5 +1,40 @@
+import * as path from "node:path";
 import { safePath, sanitizeText } from "./sanitize.ts";
-import { flowError, type AgentScope, type CapturePolicy, type FlowError, type FlowPreset, type RecordEvent } from "./types.ts";
+import { makeTraceSink } from "./trace.ts";
+import { flowError, type AgentScope, type CapturePolicy, type FlowError, type FlowMode, type FlowPreset, type FlowTraceContext, type FlowTraceLink, type RecordEvent } from "./types.ts";
+
+/** The trace settings a call owned before any preset expansion could add its own. */
+export interface CallerTraceSettings {
+	traceFile?: string;
+	traceLabel?: string;
+	traceContext?: FlowTraceContext;
+}
+
+/**
+ * Record a refused project preset on the caller's own trace. The preset's trace
+ * settings are repo-controlled and untrusted at this point, but a caller that
+ * asked for evidence still needs the refusal — and a traceContext to correlate it
+ * — exactly like every other pre-spawn refusal.
+ */
+export async function traceProjectPresetRefusal(
+	error: FlowError,
+	preset: FlowPreset | undefined,
+	settings: CallerTraceSettings,
+	mode: FlowMode,
+	policy: CapturePolicy,
+	cwd: string,
+	interactive: boolean,
+): Promise<FlowTraceLink | undefined> {
+	if (!settings.traceFile) return undefined;
+	const sink = makeTraceSink(path.resolve(cwd, settings.traceFile), mode, policy, settings.traceLabel, settings.traceContext);
+	sink.event({
+		kind: "approval",
+		name: "project_preset",
+		ok: false,
+		attributes: { "flow.approval.decision": interactive ? "denied" : "required", "flow.approval.interactive": interactive, "flow.preset": preset?.name },
+	});
+	return sink.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
+}
 
 export interface ProjectPresetApproval {
 	error: FlowError | null;

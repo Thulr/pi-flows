@@ -247,6 +247,17 @@ export function traceEvidenceIssue(link: FlowTraceLink | undefined): string | nu
  * models it (the fault-injection suite) cannot drift apart. Returns null when
  * strict mode is off or the evidence is complete.
  */
+/** The strict-mode refusal for a run that could never have produced evidence at all. */
+export function strictTraceConfigError(strict: boolean, traceFile: string | undefined): FlowError | null {
+	if (!strict || traceFile) return null;
+	return flowError(
+		"TRACE_INCOMPLETE",
+		"Flow call refused: strict tracing is on but no trace file is configured.",
+		"traceStrict (or PI_FLOWS_TRACE_STRICT) requires coordination evidence, and nothing would have been exported.",
+		"Set traceFile (or PI_FLOWS_TRACE_FILE) to a writable JSONL path, or turn strict tracing off for ordinary best-effort runs.",
+	);
+}
+
 export function strictTraceError(link: FlowTraceLink | undefined, strict: boolean): FlowError | null {
 	if (!strict) return null;
 	const issue = traceEvidenceIssue(link);
