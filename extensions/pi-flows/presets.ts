@@ -270,19 +270,32 @@ export interface CodeReviewRange {
 	head: string;
 }
 
-function requestedReviewRefs(task: string): { base: string; head: string } | null {
+/**
+ * `symmetric` records the requested range kind. `base...head` is the proposed
+ * branch change set (diff from the merge base), which is not the same file set as
+ * the two-endpoint `base head` diff once the branches have diverged.
+ */
+function requestedReviewRefs(task: string): { base: string; head: string; symmetric: boolean } | null {
 	const base = task.match(/\bbase(?:\s+(?:commit|sha))?\s*(?:is|=|:)?\s*([0-9a-f]{40,64})\b/i)?.[1];
 	const head = task.match(/\bhead(?:\s+(?:commit|sha))?\s*(?:is|=|:)?\s*([0-9a-f]{40,64})\b/i)?.[1];
-	if (base && head) return { base, head };
+	if (base && head) return { base, head, symmetric: false };
 	const gitRef = "[A-Za-z0-9][A-Za-z0-9._/-]*";
-	const range = task.match(new RegExp(`\\b(${gitRef})\\s*\\.{2,3}\\s*(${gitRef})\\b`, "i"));
-	if (range) return { base: range[1], head: range[2] };
+	// A ref may contain dots but never ends in one, and without that boundary a
+	// greedy match reads `base...head` as a two-dot range off `base.`.
+	const range = task.match(new RegExp(`\\b(${gitRef})(?<!\\.)\\s*(\\.{2,3})\\s*(${gitRef})\\b`, "i"));
+	if (range) return { base: range[1], head: range[3], symmetric: range[2].length === 3 };
 	const against = task.match(new RegExp(`\\b(${gitRef})\\s+against\\s+(${gitRef})\\b`, "i"));
-	return against ? { base: against[2], head: against[1] } : null;
+	return against ? { base: against[2], head: against[1], symmetric: false } : null;
 }
 
 function resolveCommit(cwd: string, ref: string): string | null {
 	const commit = gitOutput(cwd, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`])?.trim();
+	return commit && /^[0-9a-f]{40,64}$/i.test(commit) ? commit.toLowerCase() : null;
+}
+
+/** Both arguments are already-resolved commit hashes, so they cannot be read as options. */
+function mergeBaseCommit(cwd: string, base: string, head: string): string | null {
+	const commit = gitOutput(cwd, ["merge-base", base, head])?.trim();
 	return commit && /^[0-9a-f]{40,64}$/i.test(commit) ? commit.toLowerCase() : null;
 }
 
@@ -298,9 +311,13 @@ export function preparePresetRun(
 ): { params: Record<string, unknown>; codeReviewRange?: CodeReviewRange } {
 	if (preset?.result !== "code-review-v1") return { params };
 	const refs = requestedReviewRefs(task);
-	const base = refs && resolveCommit(cwd, refs.base);
+	const requestedBase = refs && resolveCommit(cwd, refs.base);
 	const head = refs && resolveCommit(cwd, refs.head);
-	if (!base || !head) return { params };
+	if (!requestedBase || !head) return { params };
+	// Freezing a three-dot request at its merge base keeps the pinned pair equal to
+	// the change set the caller asked for, so the manifest diff below stays honest.
+	const base = refs.symmetric ? mergeBaseCommit(cwd, requestedBase, head) : requestedBase;
+	if (!base) return { params };
 	const codeReviewRange = { base, head };
 	const instruction = `Harness-pinned review range: base ${base}, head ${head}. Review and report exactly these commit identities; do not substitute another range.`;
 	const tasks = Array.isArray(params.tasks)

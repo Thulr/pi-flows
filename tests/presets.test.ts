@@ -12,6 +12,7 @@ import {
 	formatPresetResult,
 	loadPresetsFromDir,
 	packagePresetsDir,
+	preparePresetRun,
 	resolveFlowPreset,
 } from "../extensions/pi-flows/presets.ts";
 import { emptyUsage, type FlowPreset, type FlowRunResult } from "../extensions/pi-flows/types.ts";
@@ -435,4 +436,85 @@ test("code-review trace attributes publish complete verdicts as verified outcome
 	assert.equal(findings["flow.outcome_success"], false);
 	assert.equal(partial["flow.outcome_verified"], false);
 	assert.equal(partial["flow.outcome_success"], undefined);
+});
+
+test("a three-dot review request freezes at the merge base so the manifest is the branch change set", async () => {
+	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-review-range-"));
+	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: repo, encoding: "utf8" }).trim();
+	await mkdir(path.join(repo, "src"), { recursive: true });
+	git("init", "-q");
+	await writeFile(path.join(repo, "src", "a.ts"), "before\n");
+	await writeFile(path.join(repo, "src", "b.ts"), "before\n");
+	git("add", ".");
+	git("commit", "-qm", "base");
+	const mergeBase = git("rev-parse", "HEAD");
+	git("checkout", "-qb", "feature");
+	await writeFile(path.join(repo, "src", "a.ts"), "after\n");
+	git("add", ".");
+	git("commit", "-qm", "feature");
+	const featureHead = git("rev-parse", "HEAD");
+	git("checkout", "-q", "-");
+	// The base branch moves on independently: src/b.ts is not part of the branch's
+	// change set, but it does differ between the two endpoints.
+	await writeFile(path.join(repo, "src", "b.ts"), "moved on\n");
+	git("add", ".");
+	git("commit", "-qm", "base branch moves on");
+	const baseHead = git("rev-parse", "HEAD");
+
+	const runParams = { tasks: [{ task: "standards" }, { task: "spec" }] };
+	const symmetric = preparePresetRun(reviewPreset, runParams, `Review ${baseHead}...${featureHead}.`, repo);
+	assert.deepEqual(symmetric.codeReviewRange, { base: mergeBase, head: featureHead });
+	assert.ok((symmetric.params.tasks as any[]).every((item) => item.task.includes(`base ${mergeBase}, head ${featureHead}`)));
+	const twoDot = preparePresetRun(reviewPreset, runParams, `Review ${baseHead}..${featureHead}.`, repo);
+	assert.deepEqual(twoDot.codeReviewRange, { base: baseHead, head: featureHead }, "a two-endpoint request must keep both endpoints");
+
+	const policy = { recordContent: true, redactSecrets: true };
+	const makeOutput = (results: FlowRunResult[]) => ({
+		content: [{ type: "text" as const, text: "raw" }],
+		details: { mode: "parallel" as const, version: "test", agentScope: "user" as const, config: {} as any, agentsDir: {} as any, results },
+	});
+	const range = symmetric.codeReviewRange!;
+	const branchCoverage = [{ path: "src/a.ts", status: "reviewed", evidence: "src/a.ts:1" }];
+	const reviewed = formatPresetResult(
+		reviewPreset,
+		makeOutput([reviewRun("standards", range, [], branchCoverage), reviewRun("spec", range, [], branchCoverage)]),
+		policy,
+		repo,
+		range,
+	);
+	assert.equal(reviewed.details.presetOutcome, "CLEAN", "the branch change set is the whole manifest for a three-dot range");
+
+	const endpointRange = twoDot.codeReviewRange!;
+	const endpointReviewed = formatPresetResult(
+		reviewPreset,
+		makeOutput([reviewRun("standards", endpointRange, [], branchCoverage), reviewRun("spec", endpointRange, [], branchCoverage)]),
+		policy,
+		repo,
+		endpointRange,
+	);
+	assert.equal(endpointReviewed.details.presetOutcome, "PARTIAL", "src/b.ts also differs between the endpoints, so that coverage is incomplete");
+});
+
+test("preset directory paths are sanitized under the capture policy", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-dirs-"));
+	const repo = path.join(root, "token=directory-secret-value", "project");
+	await mkdir(path.join(repo, ".pi", "flow-presets"), { recursive: true });
+	await writeFile(
+		path.join(repo, ".pi", "flow-presets", "local.md"),
+		`---
+name: local
+description: Local preset
+---
+{"agent":"recon","task":"{task}","timeoutMs":1000,"maxGeneratedTokens":10}
+`,
+	);
+
+	const tools = new Map<string, any>();
+	registerPiFlows({ registerCommand() {}, registerShortcut() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
+	const flow = tools.get("flow");
+	const context = { cwd: repo, hasUI: false, ui: { confirm: async () => false, notify() {} } };
+	const configured = await flow.execute("preset-dir-redaction", { showConfig: true, agentScope: "project" }, new AbortController().signal, undefined, context);
+	assert.doesNotMatch(configured.content[0].text, /directory-secret-value/);
+	assert.doesNotMatch(JSON.stringify(configured.details.presetsDir), /directory-secret-value/);
+	assert.match(configured.details.presetsDir.project, /token=\[REDACTED_SECRET\]/);
 });

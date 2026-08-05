@@ -4,12 +4,22 @@ import { summarizePresets } from "./presets.ts";
 
 const defaultPolicy: CapturePolicy = { recordContent: true, redactSecrets: true };
 
+/**
+ * Directory paths are captured content like any other: `safePath` only abbreviates
+ * the home prefix, so a checkout or preset dir whose own segments are secret-shaped
+ * still has to go through the active capture policy before it is returned.
+ */
+function capturedPath(filePath: string | null | undefined, policy: CapturePolicy): string | null {
+	if (!filePath) return null;
+	return sanitizeText(safePath(filePath) ?? filePath, policy, 4 * 1024);
+}
+
 function capturedPreset(preset: FlowPreset, policy: CapturePolicy) {
 	return {
 		name: preset.name,
 		description: sanitizeText(preset.description, policy, 4 * 1024),
 		source: preset.source,
-		filePath: sanitizeText(safePath(preset.filePath) ?? preset.filePath, policy, 4 * 1024),
+		filePath: capturedPath(preset.filePath, policy) ?? preset.filePath,
 		overrides: preset.overrides.map((override) => sanitizeText(override, policy, 256)),
 		result: preset.result === undefined ? undefined : sanitizeText(preset.result, policy, 256),
 	};
@@ -18,7 +28,7 @@ function capturedPreset(preset: FlowPreset, policy: CapturePolicy) {
 function capturedIssue(issue: DiscoveryIssue, policy: CapturePolicy): DiscoveryIssue {
 	return {
 		...issue,
-		filePath: issue.filePath === undefined ? undefined : sanitizeText(safePath(issue.filePath) ?? issue.filePath, policy, 4 * 1024),
+		filePath: issue.filePath === undefined ? undefined : capturedPath(issue.filePath, policy) ?? issue.filePath,
 		message: sanitizeText(issue.message, policy, 4 * 1024),
 		fix: issue.fix === undefined ? undefined : sanitizeText(issue.fix, policy, 4 * 1024),
 	};
@@ -26,9 +36,9 @@ function capturedIssue(issue: DiscoveryIssue, policy: CapturePolicy): DiscoveryI
 
 export function presetConfigSummary(discovery: FlowPresetDiscovery, policy: CapturePolicy = defaultPolicy): string {
 	return [
-		`presetsDir.package: ${safePath(discovery.packagePresetsDir)}`,
-		`presetsDir.user: ${safePath(discovery.userPresetsDir)}`,
-		`presetsDir.project: ${safePath(discovery.projectPresetsDir) ?? "(none)"}`,
+		`presetsDir.package: ${capturedPath(discovery.packagePresetsDir, policy)}`,
+		`presetsDir.user: ${capturedPath(discovery.userPresetsDir, policy)}`,
+		`presetsDir.project: ${capturedPath(discovery.projectPresetsDir, policy) ?? "(none)"}`,
 		"",
 		"Presets:",
 		summarizePresets(discovery, policy),
@@ -42,9 +52,9 @@ export function attachPresetDetails(
 	policy: CapturePolicy = defaultPolicy,
 ): FlowDetails {
 	details.presetsDir = {
-		package: safePath(discovery.packagePresetsDir) ?? discovery.packagePresetsDir,
-		user: safePath(discovery.userPresetsDir) ?? discovery.userPresetsDir,
-		project: safePath(discovery.projectPresetsDir),
+		package: capturedPath(discovery.packagePresetsDir, policy) ?? discovery.packagePresetsDir,
+		user: capturedPath(discovery.userPresetsDir, policy) ?? discovery.userPresetsDir,
+		project: capturedPath(discovery.projectPresetsDir, policy),
 	};
 	details.presets = discovery.presets.map((preset) => capturedPreset(preset, policy));
 	details.discoveryIssues = [...(details.discoveryIssues ?? []), ...discovery.issues.map((issue) => capturedIssue(issue, policy))];

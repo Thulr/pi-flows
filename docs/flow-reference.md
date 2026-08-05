@@ -18,10 +18,12 @@ trust, and `maxCostUsd`, then validates and runs the expanded call as an
 ordinary mode. Presets do not bypass mode bounds, budgets, delegation contracts,
 project trust, capture policy, or traces.
 
-For `code-review`, the caller task names the Git range as `base..head` or
-`head against base`. The harness resolves both refs before dispatch, pins those
-commit IDs into both review tasks, and derives the changed-file manifest from
-that requested range. Both typed returns must attest to those exact IDs.
+For `code-review`, the caller task names the Git range as `base..head`,
+`base...head`, or `head against base`. The harness resolves both refs before
+dispatch, pins those commit IDs into both review tasks, and derives the
+changed-file manifest from that requested range. A three-dot range is pinned at
+the merge base, so the manifest is the branch's own change set rather than a
+two-endpoint diff. Both typed returns must attest to those exact IDs.
 Unresolvable, mismatched, or incomplete ranges produce `PARTIAL`.
 
 Bundled presets:
