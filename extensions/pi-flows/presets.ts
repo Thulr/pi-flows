@@ -191,6 +191,22 @@ export function presetRunCwd(preset: FlowPreset | undefined, mode: FlowMode, cal
 		: callerCwd;
 }
 
+/**
+ * Preset-owned run preparation: the nested-role working directory and the frozen
+ * review range. It shells out to git inside a preset-named directory, so a caller
+ * must not reach it until that preset has passed the project trust gate.
+ */
+export function preparePresetDispatch(
+	preset: FlowPreset | undefined,
+	params: Record<string, unknown>,
+	task: string,
+	mode: FlowMode,
+	callerCwd: string,
+): { params: Record<string, unknown>; runDefaultCwd: string; codeReviewRange?: CodeReviewRange } {
+	const runDefaultCwd = presetRunCwd(preset, mode, callerCwd, params.cwd);
+	return { runDefaultCwd, ...preparePresetRun(preset, params, task, runDefaultCwd) };
+}
+
 export function resolveFlowPreset(
 	params: Record<string, unknown>,
 	discovery: FlowPresetDiscovery,
@@ -447,8 +463,15 @@ export function formatPresetResult(
 		.filter((item: any) => typeof item?.path === "string" && item.status !== "reviewed")
 		.map((item: any) => `${item.path} (${item.status ?? "unknown"})`);
 	const questions = reviewedEnvelopes.flatMap((envelope) => envelope?.unresolvedQuestions ?? []);
+	// These reviewers are contracted read-only but run with a shell, so state they
+	// admit to changing is exactly what the caller needs to see.
+	const changed = reviewedEnvelopes.flatMap((envelope) => envelope?.changedState ?? []);
 	const gapItems = policy.recordContent
-		? [skipped.length ? `skipped coverage: ${skipped.join(", ")}` : "", questions.length ? `unresolved: ${questions.join("; ")}` : ""].filter(Boolean)
+		? [
+			skipped.length ? `skipped coverage: ${skipped.join(", ")}` : "",
+			questions.length ? `unresolved: ${questions.join("; ")}` : "",
+			changed.length ? `changed state: ${changed.map((item: any) => typeof item === "string" ? item : JSON.stringify(item)).join("; ")}` : "",
+		].filter(Boolean)
 		: [];
 	const gap = complete ? "" : `\n\nCoverage could not be proven complete across both review axes; do not treat this result as clean.${gapItems.length ? ` Gaps — ${gapItems.join(" · ")}.` : ""}`;
 	// This formatter replaces the ordinary parallel summary, so a reviewer that

@@ -231,6 +231,36 @@ test("project presets use the project-agent trust gate in headless calls", async
 	await assert.rejects(readFile(traceFile), "an unapproved preset must not create its configured trace file");
 });
 
+test("an unapproved project preset never runs preset-owned Git preparation", async () => {
+	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-prep-"));
+	const projectDir = path.join(repo, ".pi", "flow-presets");
+	await mkdir(projectDir, { recursive: true });
+	const template = { tasks: [{ agent: "overwatch", role: "standards", task: "{task}" }], timeoutMs: 1000, maxGeneratedTokens: 10 };
+	await writeFile(path.join(projectDir, "local.md"), `---\nname: local-review\ndescription: repo-controlled preset\nresult: code-review-v1\n---\n${JSON.stringify(template)}\n`);
+	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: repo, encoding: "utf8" }).trim();
+	git("init", "-q");
+	await writeFile(path.join(repo, "a.ts"), "before\n");
+	git("add", ".");
+	git("commit", "-qm", "base");
+	const base = git("rev-parse", "HEAD");
+	await writeFile(path.join(repo, "a.ts"), "after\n");
+	git("add", ".");
+	git("commit", "-qm", "head");
+	const head = git("rev-parse", "HEAD");
+
+	const tools = new Map<string, any>();
+	registerPiFlows({ registerCommand() {}, registerShortcut() {}, registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
+	const result = await tools.get("flow").execute(
+		"preset-prep",
+		{ preset: "local-review", task: `Review ${base}..${head}.`, why: "test", agentScope: "project" },
+		new AbortController().signal,
+		undefined,
+		{ cwd: repo, hasUI: false, ui: { confirm: async () => false, notify() {} } },
+	);
+	assert.equal(result.details.error.code, "PROJECT_PRESET_APPROVAL_REQUIRED");
+	assert.doesNotMatch(JSON.stringify(result), /Harness-pinned review range/, "range freezing is preset-owned work and waits for trust");
+});
+
 test("a preset template cannot loosen the caller's capture policy", async () => {
 	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-preset-capture-"));
 	const projectDir = path.join(repo, ".pi", "flow-presets");
@@ -464,6 +494,12 @@ test("code-review formatter derives CLEAN, FINDINGS, and PARTIAL from Git-verifi
 	const skipped = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], skippedPath)]), policy, repo, range);
 	assert.equal(skipped.details.presetOutcome, "PARTIAL");
 	assert.match(skipped.content[0].text, /skipped coverage: src\/a\.ts \(skipped\)/);
+	const touchedRun = reviewRun("spec", range);
+	touchedRun.envelope!.changedState = ["wrote /tmp/scratch-notes.md"];
+	const touched = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), touchedRun]), policy, repo, range);
+	assert.equal(touched.details.presetOutcome, "PARTIAL");
+	assert.match(touched.content[0].text, /changed state: wrote \/tmp\/scratch-notes\.md/, "a read-only reviewer that touched state must say so");
+
 	const quiet = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], skippedPath)]), { recordContent: false, redactSecrets: true }, repo, range);
 	assert.doesNotMatch(quiet.content[0].text, /src\/a\.ts/, "gap detail is child content and follows the capture policy");
 

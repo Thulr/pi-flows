@@ -45,7 +45,7 @@ import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
-import { discoverFlowPresets, formatPresetResult, preparePresetRun, presetCapturePolicy, presetRunCwd, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
+import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
 import { approveProjectPreset } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
@@ -274,9 +274,6 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const mode: FlowMode = detected.mode;
-			const runDefaultCwd = presetRunCwd(activePreset, mode, ctx.cwd, params.cwd);
-			const presetRun = preparePresetRun(activePreset, params, requestedPresetTask, runDefaultCwd);
-			params = presetRun.params as typeof params;
 			// Structural friction against reflexive delegation: a spawning call must
 			// articulate why isolation beats doing the work in the parent context.
 			if (typeof params.why !== "string" || params.why.trim().length === 0) {
@@ -318,6 +315,9 @@ export default function (pi: ExtensionAPI) {
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
 			const presetApproval = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx, policy);
 			if (presetApproval.error) return { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details: makeDetails(mode)([], presetApproval.error) };
+			// Preset-owned preparation shells out to git in a preset-named directory, so it waits for the trust gate above.
+			const presetRun = preparePresetDispatch(activePreset, params, requestedPresetTask, mode, ctx.cwd);
+			params = presetRun.params as typeof params;
 
 			// Trace evidence as a gate is opt-in. Ordinary user flows stay
 			// best-effort; an eval or release run asks for strict, and then a run
@@ -343,7 +343,7 @@ export default function (pi: ExtensionAPI) {
 				params,
 				mode,
 				policy,
-				defaultCwd: runDefaultCwd,
+				defaultCwd: presetRun.runDefaultCwd,
 				recordEvent: traceSink?.event,
 			});
 			const refuse = async (error: FlowError) => {
@@ -424,7 +424,7 @@ export default function (pi: ExtensionAPI) {
 					policy,
 					handoffs,
 					agentScope,
-					defaultCwd: runDefaultCwd,
+					defaultCwd: presetRun.runDefaultCwd,
 					roster,
 					signal,
 					onUpdate: liveUpdate,
@@ -450,7 +450,7 @@ export default function (pi: ExtensionAPI) {
 					output.details.error = handoffs.blockingError;
 					output.content = [{ type: "text", text: formatFlowError(handoffs.blockingError) }];
 				}
-				if (activePreset) formatPresetResult(activePreset, output, policy, runDefaultCwd, presetRun.codeReviewRange);
+				if (activePreset) formatPresetResult(activePreset, output, policy, presetRun.runDefaultCwd, presetRun.codeReviewRange);
 				// Record the lesson only when at least one run happened — pre-spawn
 				// refusals (validation errors, approvals) are not lessons about the task.
 				if (output.details.results.length > 0) {
