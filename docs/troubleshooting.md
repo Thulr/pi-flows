@@ -507,11 +507,17 @@ Fix: review the flow request or final result and retry if it should proceed.
 Cause: two or more write-capable agents would run concurrently in the same
 working directory. Agents with `tools` omitted are treated as write-capable
 because they inherit pi's default toolset; agents whose effective tools include
-`bash`, `edit`, or `write` are also write-capable.
+`bash`, `edit`, or `write` are also write-capable. The classification comes from
+the effective toolset alone — a read-only role name or prompt does not change
+it, so retrying with a different agent name and the same tools refuses again.
+The refusal names each agent with the tools that classified it.
 
-Fix: use read-only agents for parallel fan-out, give each writer a distinct
-`cwd`/worktree, or pass `allowSharedWriteCwd:true` only when concurrent writes in
-one checkout are intentional.
+Fix: serialize with `concurrency:1` (the guard only applies to concurrent
+writers), use agents whose effective tools exclude `bash`/`edit`/`write`, or
+give each writer a distinct `cwd`/worktree. For review fan-out specifically,
+prefer the `code-review` preset, which already serializes its shell-capable
+reviewers. Pass `allowSharedWriteCwd:true` only as a last resort, when
+concurrent writes in one checkout are actually intended.
 
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`
 

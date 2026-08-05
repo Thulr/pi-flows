@@ -31,31 +31,47 @@ export function effectiveTools(discovery: FlowDiscovery, ref: { agent: string; t
 	return parseToolsOverride(ref.tools, agent.tools);
 }
 
+const MUTATING_TOOLS = ["bash", "edit", "write"];
+
 export function canMutateWorkspace(discovery: FlowDiscovery, ref: { agent: string; tools?: string }): boolean {
 	const tools = effectiveTools(discovery, ref);
 	if (tools === null) return false;
 	// Undefined means "pi defaults", which include bash/edit/write in the coding agent.
 	if (tools === undefined) return true;
-	return tools.some((tool) => ["bash", "edit", "write"].includes(tool.toLowerCase()));
+	return tools.some((tool) => MUTATING_TOOLS.includes(tool.toLowerCase()));
+}
+
+/**
+ * Why this ref counts as write-capable, stated in terms of its effective tools.
+ * The refusal message must let a reader see that the toolset — not the agent's
+ * name or prompt — is what classified it, so a name-only retry is visibly futile.
+ */
+export function writeCapabilityAttribution(discovery: FlowDiscovery, ref: { agent: string; tools?: string }): string {
+	const tools = effectiveTools(discovery, ref);
+	// Covers both an omitted tools field and an explicit tools:"default".
+	if (tools === undefined) return `${ref.agent} (effective tools are pi defaults, which include ${MUTATING_TOOLS.join("/")})`;
+	const mutating = (tools ?? []).filter((tool) => MUTATING_TOOLS.includes(tool.toLowerCase()));
+	if (mutating.length === 0) return `${ref.agent} (not write-capable by its effective tools)`;
+	return `${ref.agent} (effective tools include ${mutating.join("/")})`;
 }
 
 export function resolvedCwd(defaultCwd: string, cwd?: string): string {
 	return path.resolve(defaultCwd, cwd ?? defaultCwd);
 }
 
-export function sharedWriteCwdError(defaultCwd: string, refs: Array<{ agent: string; cwd?: string }>): FlowError | null {
+export function sharedWriteCwdError(discovery: FlowDiscovery, defaultCwd: string, refs: Array<{ agent: string; cwd?: string; tools?: string }>): FlowError | null {
 	const byCwd = new Map<string, string[]>();
 	for (const ref of refs) {
 		const cwd = resolvedCwd(defaultCwd, ref.cwd);
-		byCwd.set(cwd, [...(byCwd.get(cwd) ?? []), ref.agent]);
+		byCwd.set(cwd, [...(byCwd.get(cwd) ?? []), writeCapabilityAttribution(discovery, ref)]);
 	}
-	for (const [cwd, agents] of byCwd) {
-		if (agents.length > 1) {
+	for (const [cwd, attributions] of byCwd) {
+		if (attributions.length > 1) {
 			return flowError(
 				"SHARED_WRITE_CWD",
 				"Multiple write-capable flow agents would share one working directory.",
-				`Write-capable agents (${agents.join(", ")}) would run concurrently in ${safePath(cwd)}, which risks conflicting edits in the same checkout.`,
-				"Use read-only agents for fan-out, give each writer a distinct cwd/worktree, or pass allowSharedWriteCwd:true only when shared writes are intentional.",
+				`These agents would run concurrently in ${safePath(cwd)}, which risks conflicting edits in the same checkout: ${attributions.join("; ")}. The effective toolset is what classifies a role as write-capable, so switching to a different agent name changes nothing unless its tools change too.`,
+				`Serialize with concurrency:1, use agents whose effective tools exclude ${MUTATING_TOOLS.join("/")}, or give each writer a distinct cwd/worktree. Pass allowSharedWriteCwd:true only as a last resort, when concurrent writes in one shared checkout are actually intended.`,
 			);
 		}
 	}
@@ -73,7 +89,7 @@ export function validateSharedWriteCwd(
 	if (concurrency <= 1) return null;
 	const mutating = refs.filter((ref) => canMutateWorkspace(discovery, ref));
 	if (mutating.length <= 1) return null;
-	return sharedWriteCwdError(defaultCwd, mutating);
+	return sharedWriteCwdError(discovery, defaultCwd, mutating);
 }
 
 export function validateConcurrency(value: number | undefined): FlowError | null {

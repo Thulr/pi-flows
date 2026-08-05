@@ -383,9 +383,12 @@ and behave as before.
 Parallel fan-out is read-optimized by default. If two write-capable agents would
 run concurrently in the same `cwd`, pi-flows returns `SHARED_WRITE_CWD` before
 spawning them. A role is write-capable when its effective tools are pi defaults,
-or include `bash`, `edit`, or `write`. Give each writer a separate worktree/cwd,
-use read-only agents, or set `allowSharedWriteCwd:true` after deciding the shared
-checkout is intentional.
+or include `bash`, `edit`, or `write` — the toolset decides, never the role name
+or prompt, and the refusal names the tools that classified each agent. To
+recover, serialize with `concurrency:1`, use agents whose effective tools
+exclude `bash`/`edit`/`write`, or give each writer a separate worktree/cwd. Set
+`allowSharedWriteCwd:true` only as a last resort, after deciding that concurrent
+writes in one shared checkout are intentional.
 
 ## Evaluate mode (generator-evaluator loop)
 
