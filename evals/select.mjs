@@ -128,7 +128,18 @@ function values(value) {
 	return Array.isArray(value) ? value : [value];
 }
 
-const RAW_MODE_KEYS = ["tasks", "chain", "evaluate", "vote", "route", "orchestrate", "graph", "loop", "search", "workflow", "worktree", "debate", "dossier", "monitor", "agent"];
+// Mirrors resolveFlowPreset: reserved keys, the caller-control passthrough set, and
+// the top-level overrides the bundled presets declare. Anything else is refused as
+// PRESET_OVERRIDE_INVALID, so an allowlist closes the class rather than chasing
+// individual raw fields.
+const PRESET_CALL_KEYS = new Set([
+	"preset", "task", "list", "showConfig",
+	"why", "agentScope", "confirmProjectAgents", "maxCostUsd", "checkpoint", "reflexion",
+	"traceFile", "traceLabel", "traceContext", "traceStrict",
+	"handoffPolicy", "modeHandoffPolicy", "incompleteHandoffPolicy",
+	"recordContent", "redactSecrets", "allowSharedWriteCwd",
+	"cwd", "model", "tier", "thinking", "concurrency", "timeoutMs", "maxTokens", "maxGeneratedTokens",
+]);
 
 function modeOf(args) {
 	if (args?.list) return "list";
@@ -137,7 +148,8 @@ function modeOf(args) {
 		// The tool refuses a preset call that also names raw workflow shape
 		// (PRESET_OVERRIDE_INVALID), so scoring it as a preset selection would
 		// credit a call the harness never runs.
-		return RAW_MODE_KEYS.some((key) => args[key] !== undefined) ? "preset-conflict" : "preset";
+		const extra = Object.keys(args).filter((key) => args[key] !== undefined && !PRESET_CALL_KEYS.has(key));
+		return extra.length ? "preset-conflict" : "preset";
 	}
 	if (Array.isArray(args?.tasks)) return "parallel";
 	if (Array.isArray(args?.chain)) return "chain";

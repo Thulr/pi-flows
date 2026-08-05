@@ -760,7 +760,8 @@ test("selection eval refuses a preset call that also names raw workflow shape", 
 	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main." } }, { mode: "preset", preset: "code-review" }).pass, true);
 	// The tool answers PRESET_OVERRIDE_INVALID for these, so crediting them would
 	// score a call that never runs.
-	for (const shape of [{ evaluate: {} }, { tasks: [{ agent: "recon", task: "Inspect." }] }, { agent: "recon" }]) {
+	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", why: "verification", thinking: "high", traceFile: "t.jsonl" } }, { mode: "preset", preset: "code-review" }).pass, true);
+	for (const shape of [{ evaluate: {} }, { tasks: [{ agent: "recon", task: "Inspect." }] }, { agent: "recon" }, { contract: { returnSchema: {} } }, { returnContract: "typed findings" }, { requireEvidence: true }]) {
 		const match = flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", ...shape } }, { mode: "preset", preset: "code-review" });
 		assert.equal(match.pass, false, `preset + ${Object.keys(shape)[0]} must not score as a preset selection`);
 		assert.match(match.notes, /preset-conflict/);
