@@ -87,7 +87,10 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	if (totals.cost) headerParts.push(`$${totals.cost.toFixed(4)}`);
 	if (maxDuration) headerParts.push(formatDuration(maxDuration));
 	const lines = [
-		`${statusIcon} ${theme.fg("toolTitle", theme.bold(`flow ${data.preset ?? data.mode}`))} ${theme.fg(statusColor, data.presetOutcome ?? statusText)}${headerParts.length ? theme.fg("muted", ` · ${headerParts.join(" · ")}`) : ""}`,
+		// A verdict reached before the run failed (a denied finalize checkpoint, an
+		// incomplete trace) is no longer the headline: the error code is what the
+		// reader can act on.
+		`${statusIcon} ${theme.fg("toolTitle", theme.bold(`flow ${data.preset ?? data.mode}`))} ${theme.fg(statusColor, status === "error" ? statusText : data.presetOutcome ?? statusText)}${headerParts.length ? theme.fg("muted", ` · ${headerParts.join(" · ")}`) : ""}`,
 		...budgetDisclosureLines(data.budgetCeilings).map((line) => theme.fg("muted", line)),
 	];
 

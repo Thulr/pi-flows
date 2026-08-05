@@ -91,6 +91,10 @@ export function attachPresetTraceAttributes(attributes: Record<string, unknown>,
 		"flow.preset_source": preset.source,
 		"flow.preset_outcome": details.presetOutcome,
 	};
+	// A verdict the run then failed to deliver — a denied finalize checkpoint, an
+	// incomplete trace — is not a verified outcome, and `/flows report` counts these
+	// attributes directly.
+	if (details.error) return attached;
 	if (details.presetOutcome === "CLEAN" || details.presetOutcome === "FINDINGS") {
 		attached["flow.outcome_verified"] = true;
 		attached["flow.outcome_success"] = details.presetOutcome === "CLEAN";

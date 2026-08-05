@@ -646,6 +646,11 @@ test("code-review trace attributes publish complete verdicts as verified outcome
 	assert.equal(findings["flow.outcome_success"], false);
 	assert.equal(partial["flow.outcome_verified"], false);
 	assert.equal(partial["flow.outcome_success"], undefined);
+
+	const refused = attachPresetTraceAttributes({ ...base }, reviewPreset, { presetOutcome: "CLEAN", error: { code: "CHECKPOINT_DENIED" } } as any);
+	assert.equal(refused["flow.outcome_verified"], false, "a verdict the run never delivered is not a verified outcome");
+	assert.equal(refused["flow.outcome_success"], undefined);
+	assert.equal(refused["flow.preset_outcome"], "CLEAN");
 });
 
 test("a three-dot review request freezes at the merge base so the manifest is the branch change set", async () => {

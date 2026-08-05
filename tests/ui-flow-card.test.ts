@@ -74,6 +74,12 @@ test("non-clean preset outcomes persist and render as warnings, never green succ
 	assert.match(header, /\[warning\]▣\[\/warning\]/);
 	assert.match(header, /\[warning\]PARTIAL\[\/warning\]/);
 	assert.doesNotMatch(header, /\[success\](?:▣|PARTIAL)/);
+
+	// A verdict reached before the run failed is not the headline; the error is.
+	const failedAfterVerdict = entryData({ status: "error", errorCode: "CHECKPOINT_DENIED", preset: "code-review", presetOutcome: "CLEAN", results: [] });
+	const failedHeader = flowCardLines(failedAfterVerdict, coloredTheme, false)[0]!;
+	assert.match(failedHeader, /\[error\]error:CHECKPOINT_DENIED\[\/error\]/);
+	assert.doesNotMatch(failedHeader, /CLEAN/);
 });
 
 test("renderFlowCard tolerates entries written by other versions", () => {
