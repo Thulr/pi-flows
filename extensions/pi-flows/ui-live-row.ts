@@ -5,7 +5,7 @@ import { flowAgentActivity, flowAgentState } from "./inspector.ts";
 import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
-import { flowProgressText } from "./ui.ts";
+import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -21,6 +21,10 @@ export const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", 
 
 /** Rows shown for agents in the collapsed view before "+n more". */
 export const COLLAPSED_AGENT_ROWS = 8;
+
+export function runDisplayName(result: Pick<FlowRunResult, "agent" | "role">): string {
+	return result.role ? `${result.role} (${result.agent})` : result.agent;
+}
 
 export function spinnerFrame(tick: number, offset = 0): string {
 	const index = (Math.trunc(tick) + Math.trunc(offset)) % SPINNER_FRAMES.length;
@@ -91,6 +95,7 @@ function headerIcon(details: FlowDetails, settled: number, failed: number, tick:
 	// far has settled but the next stage has not spawned. A ✓ there would claim an
 	// outcome beside a header that only claims progress.
 	if (live || settled < details.results.length) return theme.fg("warning", spinnerFrame(tick));
+	if (hasNonCleanPresetOutcome(details)) return theme.fg("warning", "◐");
 	return failed ? theme.fg("warning", "◐") : theme.fg("success", "✓");
 }
 
@@ -127,7 +132,8 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	const outstanding = settled < total;
 	const running = options.live === true || outstanding;
 
-	let header = `${headerIcon(details, settled, failed, options.tick, theme, options.live)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`;
+	const flowLabel = details.preset ? `flow ${details.preset.name}` : `flow ${details.mode}`;
+	let header = `${headerIcon(details, settled, failed, options.tick, theme, options.live)} ${theme.fg("toolTitle", theme.bold(flowLabel))}`;
 	// The state text, progress bar, and rollup exist to summarize a fan-out. With
 	// one child they only restate (or worse, appear to contradict) the agent line
 	// below — "0/1" reads as stuck, and the rollup counts input+output while the
@@ -146,9 +152,9 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		...budgetDisclosureLines(details.budgetCeilings).map((line) => theme.fg("muted", line)),
 	];
 
-	const nameWidth = Math.min(16, Math.max(4, ...details.results.map((item) => item.agent.length)));
+	const nameWidth = Math.min(28, Math.max(4, ...details.results.map((item) => runDisplayName(item).length)));
 	details.results.slice(0, COLLAPSED_AGENT_ROWS).forEach((item, index) => {
-		let line = `${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", item.agent.padEnd(nameWidth))}`;
+		let line = `${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", runDisplayName(item).padEnd(nameWidth))}`;
 		const usage = formatUsage(item.usage, item.model, item.durationMs);
 		if (usage) line += ` ${theme.fg("dim", usage)}`;
 		const state = flowAgentState(item);

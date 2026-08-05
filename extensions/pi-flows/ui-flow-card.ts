@@ -16,6 +16,7 @@ import type { BudgetCeiling, FlowMode, UsageStats } from "./types.ts";
 
 export interface FlowRunEntryResult {
 	agent: string;
+	role?: string;
 	agentSource: string;
 	exitCode: number;
 	stopReason?: string;
@@ -29,6 +30,8 @@ export interface FlowRunEntryResult {
 export interface FlowRunEntryData {
 	version: string;
 	mode: FlowMode;
+	preset?: string;
+	presetOutcome?: "CLEAN" | "FINDINGS" | "PARTIAL";
 	status: "ok" | "partial" | "error";
 	errorCode?: string;
 	results: FlowRunEntryResult[];
@@ -69,9 +72,13 @@ function entryTotals(results: FlowRunEntryResult[]): { tokens: number; cost: num
 
 /** Card lines. First line is the header; `expanded` adds per-run failure detail. */
 export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: boolean): string[] {
-	const statusIcon = data.status === "ok" ? theme.fg("success", "▣") : data.status === "partial" ? theme.fg("warning", "▣") : theme.fg("error", "▣");
-	const statusText = data.status === "error" && data.errorCode ? `${data.status}:${data.errorCode}` : data.status;
-	const statusColor = data.status === "ok" ? "success" : data.status === "partial" ? "warning" : "error";
+	// Older entries (and external writers) may persist status=ok alongside a
+	// non-clean preset outcome. Derive the durable presentation defensively so
+	// FINDINGS/PARTIAL can never render as green success.
+	const status = data.status === "ok" && (data.presetOutcome === "FINDINGS" || data.presetOutcome === "PARTIAL") ? "partial" : data.status;
+	const statusIcon = status === "ok" ? theme.fg("success", "▣") : status === "partial" ? theme.fg("warning", "▣") : theme.fg("error", "▣");
+	const statusText = status === "error" && data.errorCode ? `${status}:${data.errorCode}` : status;
+	const statusColor = status === "ok" ? "success" : status === "partial" ? "warning" : "error";
 	const totals = entryTotals(data.results);
 	const maxDuration = Math.max(0, ...data.results.map((result) => result.durationMs ?? 0));
 
@@ -80,15 +87,19 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	if (totals.cost) headerParts.push(`$${totals.cost.toFixed(4)}`);
 	if (maxDuration) headerParts.push(formatDuration(maxDuration));
 	const lines = [
-		`${statusIcon} ${theme.fg("toolTitle", theme.bold(`flow ${data.mode}`))} ${theme.fg(statusColor, statusText)}${headerParts.length ? theme.fg("muted", ` · ${headerParts.join(" · ")}`) : ""}`,
+		// A verdict reached before the run failed (a denied finalize checkpoint, an
+		// incomplete trace) is no longer the headline: the error code is what the
+		// reader can act on.
+		`${statusIcon} ${theme.fg("toolTitle", theme.bold(`flow ${data.preset ?? data.mode}`))} ${theme.fg(statusColor, status === "error" ? statusText : data.presetOutcome ?? statusText)}${headerParts.length ? theme.fg("muted", ` · ${headerParts.join(" · ")}`) : ""}`,
 		...budgetDisclosureLines(data.budgetCeilings).map((line) => theme.fg("muted", line)),
 	];
 
-	const nameWidth = Math.min(16, Math.max(4, ...data.results.map((result) => result.agent.length)));
+	const name = (result: FlowRunEntryResult) => result.role ? `${result.role} (${result.agent})` : result.agent;
+	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => name(result).length)));
 	for (const result of data.results) {
 		const failed = entryResultFailed(result);
 		const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
-		let line = `${icon} ${theme.fg("accent", result.agent.padEnd(nameWidth))} ${theme.fg("dim", durationBar(result.durationMs ?? 0, maxDuration))}`;
+		let line = `${icon} ${theme.fg("accent", name(result).padEnd(nameWidth))} ${theme.fg("dim", durationBar(result.durationMs ?? 0, maxDuration))}`;
 		const meta: string[] = [];
 		if (result.durationMs) meta.push(formatDuration(result.durationMs));
 		const tokens = (result.usage?.input || 0) + (result.usage?.output || 0);

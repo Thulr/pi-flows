@@ -3,7 +3,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { Compile } from "typebox/compile";
 import { extractLastJsonBlock } from "./protocol.ts";
-import { capModelVisibleText, isFailed, redactValue, resultText, takeRawFinalAssistantText } from "./sanitize.ts";
+import { capModelVisibleText, isFailed, redactValue, resultText, retainValidatedReturnEnvelope, takeRawFinalAssistantText } from "./sanitize.ts";
 import { Budget, flowError, type CapturePolicy, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 import { appendReturnRequirements } from "./validate.ts";
 
@@ -268,7 +268,9 @@ export function validateReturnEnvelope(
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
 	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd);
 	if (validationError) return { error: storedError(validationError, policy), rejected: storedEnvelope(parsed, policy) };
-	const envelope = storedEnvelope({ ...parsed, usage: result.usage }, policy);
+	const validated = { ...parsed, usage: result.usage };
+	retainValidatedReturnEnvelope(result, validated);
+	const envelope = storedEnvelope(validated, policy);
 	result.envelope = envelope;
 	return { envelope };
 }

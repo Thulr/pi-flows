@@ -7,7 +7,7 @@
  * from runner.ts, which re-exports this module.
  */
 import type { Budget, ChildSpanScope, DelegationContract, FlowAgentRefInput, FlowMode, FlowRunResult, ModeDeps, RunChildOptions, SpanStage } from "./types.ts";
-import { makeEmptyRunResult } from "./sanitize.ts";
+import { makeEmptyRunResult, sanitizeText } from "./sanitize.ts";
 
 export async function mapWithConcurrency<TIn, TOut>(
 	items: TIn[],
@@ -59,6 +59,7 @@ function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, m
 		defaultCwd: deps.defaultCwd,
 		agents: deps.discovery.agents,
 		agentName: ref.agent,
+		role: ref.role,
 		task,
 		cwd: ref.cwd,
 		model: ref.model ?? deps.params.model,
@@ -95,6 +96,12 @@ function fanoutScope(stage: SpanStage | undefined, item: AgentFanoutItem, index:
 	return { ...(item.scope ?? {}), ...(stage ? { stage } : {}), key: item.scope?.key ?? (stage ? `${stage.key}.${index + 1}` : undefined) };
 }
 
+function emptyRun(ref: FlowAgentRefInput, task: string, deps: ModeDeps, error?: FlowRunResult["error"]): FlowRunResult {
+	const result = makeEmptyRunResult(ref.agent, task, deps.policy, error);
+	result.role = ref.role === undefined ? undefined : sanitizeText(ref.role, deps.policy, 4 * 1024);
+	return result;
+}
+
 export async function runAgentFanout(
 	deps: ModeDeps,
 	mode: FlowMode,
@@ -105,9 +112,9 @@ export async function runAgentFanout(
 	stage?: SpanStage,
 ): Promise<FlowRunResult[]> {
 	if (deps.handoffs.blockingError) {
-		return items.map((item) => makeEmptyRunResult(item.ref.agent, item.placeholderTask ?? item.task, deps.policy, deps.handoffs.blockingError));
+		return items.map((item) => emptyRun(item.ref, item.placeholderTask ?? item.task, deps, deps.handoffs.blockingError));
 	}
-	const liveResults: FlowRunResult[] = items.map((item) => makeEmptyRunResult(item.ref.agent, item.placeholderTask ?? item.task, deps.policy));
+	const liveResults: FlowRunResult[] = items.map((item) => emptyRun(item.ref, item.placeholderTask ?? item.task, deps));
 	const completed = new Set<number>();
 	const emit = () => {
 		deps.onUpdate?.({
@@ -145,7 +152,7 @@ export interface AgentRunPlacement {
 
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
 export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], placement: AgentRunPlacement = {}): Promise<FlowRunResult> {
-	if (deps.handoffs.blockingError) return Promise.resolve(makeEmptyRunResult(ref.agent, task, deps.policy, deps.handoffs.blockingError));
+	if (deps.handoffs.blockingError) return Promise.resolve(emptyRun(ref, task, deps, deps.handoffs.blockingError));
 	return deps.runChild({
 		...childRunOptions(deps, ref, task, mode, step, placement.limits ?? {}, placement.scope),
 		onUpdate: (partial) => {

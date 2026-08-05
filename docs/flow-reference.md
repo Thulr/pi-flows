@@ -1,5 +1,65 @@
 # Flow reference
 
+## Workflow presets
+
+Presets are the intent-level entrypoint over the raw mode table. A call such as:
+
+```json
+{
+  "preset": "code-review",
+  "task": "Review HEAD against main and issue #25 exactly once",
+  "why": "author-independent verification"
+}
+```
+
+loads one Markdown definition, substitutes `{task}`, applies its declared
+workflow-shape overrides plus safe caller controls such as capture, tracing,
+trust, and `maxCostUsd`, then validates and runs the expanded call as an
+ordinary mode. Presets do not bypass mode bounds, budgets, delegation contracts,
+project trust, capture policy, or traces.
+
+For `code-review`, the caller task names the Git range as `base..head`,
+`base...head`, or `head against base`. The harness resolves both refs before
+dispatch, pins those commit IDs into both review tasks, and derives the
+changed-file manifest from that requested range. A three-dot range is pinned at
+the merge base, so the manifest is the branch's own change set rather than a
+two-endpoint diff. Both typed returns must attest to those exact IDs.
+Unresolvable, mismatched, or incomplete ranges produce `PARTIAL`.
+
+Bundled presets:
+
+| Preset | Expansion | Bounded outcome |
+|---|---|---|
+| `scout` | One `recon` run | One read-only evidence pass |
+| `map-codebase` | `orchestrate` with at most four recon subtasks | One decomposed map and synthesis |
+| `code-review` | Two sequential `overwatch` runs, roles `standards` and `spec` | Exactly one pass; typed coverage/findings; `CLEAN`, `FINDINGS`, or `PARTIAL` |
+
+Preset discovery uses the same precedence as agents: bundled `presets/*.md`,
+user `~/.pi/agent/flow-presets/*.md`, then project
+`.pi/flow-presets/*.md`. Project presets require `agentScope:"project"` or
+`"all"` and use the project-local trust gate. A preset file contains
+frontmatter plus a JSON body:
+
+```md
+---
+name: my-scout
+description: Inspect one target with recon.
+overrides: cwd,timeoutMs,maxGeneratedTokens
+---
+{"agent":"recon","task":"{task}","timeoutMs":900000,"maxGeneratedTokens":4000}
+```
+
+A template may set `recordContent`/`redactSecrets` to tighten capture, but never
+to loosen it. The effective policy is the stricter of the caller's and the
+template's in both directions: a template cannot turn the caller's redaction
+off, and a caller cannot re-enable content a template deliberately withholds.
+`traceStrict` follows the same rule — a template can turn the evidence gate on,
+but a template-authored `traceStrict:false` is dropped so the caller and
+`PI_FLOWS_TRACE_STRICT` still decide. `why`, `agentScope`,
+`confirmProjectAgents`, and `allowSharedWriteCwd` are caller-only: a template
+cannot justify its own delegation, opt its source into trust, or take the
+shared-write exception on the caller's behalf.
+
 ## Modes
 
 Exactly one mode is valid per call.
@@ -98,9 +158,10 @@ if no justification can be stated, the task belongs in the parent context.
 
 | Parameter | Default | Notes |
 |---|---|---|
+| `preset` | (none) | Named workflow preset expanded before mode validation. Prefer it when its intent matches. |
 | `why` | (required to spawn) | One sentence justifying delegation over direct parent execution. Required for every spawning mode; `list`/`showConfig` never need it. Missing/empty ⇒ `WHY_REQUIRED`. |
-| `agentScope` | `user` | `user` = package + user agents; `project` = package + project; `all` = package + user + project. |
-| `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project agents unless this is explicitly `false`. |
+| `agentScope` | `user` | Applies to both presets and agents: `user` = package + user; `project` = package + project; `all` = all three sources. |
+| `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project presets/agents unless this is explicitly `false` after review. |
 | `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
 | `timeoutMs` | `36000000` | Per child process timeout (10 hours). Independently of it, a child that reports a terminal provider error and then stalls is terminated after a short grace (`PI_FLOWS_ERROR_GRACE_MS`, default 30000ms) with `CHILD_PROVIDER_ERROR`. |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
@@ -803,9 +864,12 @@ lesson-augmented.
 
 - `version`: pi-flows version.
 - `mode`: `list`, `config`, `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `orchestrate`, `graph`, `loop`, `search`, `workflow`, `worktree`, `debate`, `dossier`, or `monitor`.
+- `preset`, `presetOutcome`: resolved preset provenance and, for `code-review`, `CLEAN`, `FINDINGS`, or `PARTIAL`.
 - `agentScope`: effective scope.
 - `config`: defaults and caps.
 - `agentsDir`: package/user/project directories with home paths redacted to `~`.
+- `presetsDir`: package/user/project preset directories with home paths redacted to `~`.
+- `presets`: discovered preset summaries and their declared override keys.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
 - `results`: child run summaries with redacted task preview, usage, duration, stderr, optional validated return `envelope`, and structured error when applicable. On error, `results` still contains every run that completed before the failure — a graph that ran two waves before hitting a cycle reports those runs' usage and cost alongside `error`.
@@ -849,3 +913,5 @@ CI to cover every code the tool can return, so it never drifts from the source.
 ```
 
 Invalid arguments return an error instead of silently falling back to another scope.
+List and status output include both presets and agents; status also reports both
+sets of discovery directories and diagnostics.

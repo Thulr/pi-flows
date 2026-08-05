@@ -756,6 +756,25 @@ test("selection eval flow argument matcher recognizes implicit delegation modes"
 	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Diagnose event", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED" } } }, { mode: "monitor", agents: ["analyst"], taskPattern: "health-check|DEGRADED" }).pass, true);
 });
 
+test("selection eval refuses a preset call that also names raw workflow shape", () => {
+	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main." } }, { mode: "preset", preset: "code-review" }).pass, true);
+	// The tool answers PRESET_OVERRIDE_INVALID for these, so crediting them would
+	// score a call that never runs.
+	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", why: "verification", thinking: "high", traceFile: "t.jsonl" } }, { mode: "preset", preset: "code-review" }).pass, true);
+	// `tier` is a code-review override but not a map-codebase one, so the same key is
+	// scored against the preset that was actually selected.
+	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review.", tier: "fast" } }, { mode: "preset", preset: "code-review" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "map-codebase", task: "Map.", tier: "fast" } }, { mode: "preset", preset: "map-codebase" }).pass, false);
+	for (const shape of [{ evaluate: {} }, { tasks: [{ agent: "recon", task: "Inspect." }] }, { agent: "recon" }, { contract: { returnSchema: {} } }, { returnContract: "typed findings" }, { requireEvidence: true }]) {
+		const match = flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", ...shape } }, { mode: "preset", preset: "code-review" });
+		assert.equal(match.pass, false, `preset + ${Object.keys(shape)[0]} must not score as a preset selection`);
+		assert.match(match.notes, /preset-conflict/);
+	}
+	const invented = flowCallMatchesExpectation({ arguments: { preset: "made-up", task: "Map agent discovery." } }, { modes: ["preset", "orchestrate"] });
+	assert.equal(invented.pass, false, "the tool answers UNKNOWN_PRESET, so an invented preset is not a selection");
+	assert.match(invented.notes, /preset-unknown/);
+});
+
 test("selection eval keeps simple use-cases as no-flow negatives", () => {
 	const noFlow = SELECTION_CASES.filter((c) => c.expectFlow === false);
 	const flow = SELECTION_CASES.filter((c) => c.expectFlow === true);

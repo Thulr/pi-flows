@@ -13,6 +13,10 @@ export interface FlowProgressOptions {
 	live?: boolean;
 }
 
+export function hasNonCleanPresetOutcome(details: Pick<FlowDetails, "presetOutcome">): boolean {
+	return details.presetOutcome === "FINDINGS" || details.presetOutcome === "PARTIAL";
+}
+
 /**
  * The header state text the live board surfaces share, so neither can drift into
  * its own vocabulary. A bare `settled/total` was ambiguous in both directions:
@@ -39,6 +43,7 @@ export function flowProgressText(details: FlowDetails, options: FlowProgressOpti
 	if (total === 0) return "starting";
 	const settled = details.results.filter((result) => result.exitCode !== -1).length;
 	if (options.live || settled < total) return `${settled}/${total} settled`;
+	if (hasNonCleanPresetOutcome(details)) return details.presetOutcome!;
 	const failed = details.results.filter((result) => isFailed(result)).length;
 	return failed ? `${failed} failed` : `${total} ok`;
 }
@@ -53,7 +58,9 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 	pi.appendEntry?.("pi-flows.run", {
 		version: details.version,
 		mode: details.mode,
-		status: details.error ? "error" : details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
+		preset: details.preset?.name,
+		presetOutcome: details.presetOutcome,
+		status: details.error ? "error" : hasNonCleanPresetOutcome(details) || details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
 		errorCode: details.error?.code,
 		budgetCeilings: details.budgetCeilings,
 		// Trace pointer travels with the entry so the flow card can link evidence
@@ -61,6 +68,7 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 		trace: details.trace ? { traceFile: details.trace.traceFile, health: details.trace.health } : undefined,
 		results: details.results.map((result) => ({
 			agent: result.agent,
+			role: result.role,
 			agentSource: result.agentSource,
 			exitCode: result.exitCode,
 			stopReason: result.stopReason,
@@ -276,9 +284,9 @@ export function flowsHelpText(): string {
 		`pi-flows ${PI_FLOWS_VERSION}`,
 		"",
 		"Usage:",
-		"  /flows                         List bundled + user flow agents",
-		"  /flows project                 List bundled + project-local .pi/flow-agents",
-		"  /flows all                     List package + user + project agents",
+		"  /flows                         List bundled + user presets and agents",
+		"  /flows project                 List bundled + project-local presets and agents",
+		"  /flows all                     List package + user + project presets and agents",
 		"  /flows status [user|project|all] Show dirs, defaults, and discovery issues",
 		"  /flows models                   Show what each tier resolves to, and override a tier",
 		"  /flows inspect                  Drill into one running child",
@@ -291,6 +299,6 @@ export function flowsHelpText(): string {
 		"  { \"showConfig\": true }",
 		"",
 		"Safety:",
-		"  Project-local agents are repo-controlled prompts. In non-UI/headless runs, pi-flows refuses to run them unless confirmProjectAgents:false is explicitly set.",
+		"  Project-local presets and agents are repo-controlled. In non-UI/headless runs, pi-flows refuses them unless confirmProjectAgents:false is explicitly set after review.",
 	].join("\n");
 }

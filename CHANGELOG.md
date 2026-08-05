@@ -8,7 +8,26 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Added
+
+- Named workflow presets now sit above the raw mode/agent matrix. Bundled
+  `scout`, `map-codebase`, and `code-review` definitions are discovered from
+  package, user, and trust-gated project scopes; `/flows`, `flow list`, config
+  details, traces, and durable UI retain preset provenance. Templates declare
+  their permitted top-level overrides, and invalid or undeclared expansion
+  fails before a child spawns. A template may tighten the capture policy but
+  never loosen it; only the caller can turn redaction off.
+- `code-review` runs exactly one bounded two-axis pass using sequential
+  `overwatch` runs in separately visible `standards` and `spec` roles.
+  Delegation contracts require typed per-file coverage and anchored findings;
+  the harness pins the caller-requested Git range before dispatch and returns
+  `CLEAN` only when both axes attest to those commits and cover its Git-derived
+  manifest, otherwise `FINDINGS` or `PARTIAL`. A `base...head` request is pinned
+  at its merge base, so the manifest stays the branch change set. An axis that
+  could not finish is reported as `PARTIAL` carrying its anchored findings
+  rather than as a handoff failure. Complete verdicts are published
+  as verified trace outcomes even when child content capture is disabled. It
+  never fixes, posts, delegates, or loops until clean.
 
 ## 0.6.0 - 2026-08-01
 

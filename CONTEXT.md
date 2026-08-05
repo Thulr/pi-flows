@@ -13,14 +13,14 @@ Not every part of this repo earns the same depth. This split says where to spend
 **Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
 _Modules_: `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
-**Supporting — coordination patterns and the views onto them.** The modes and their topologies, agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
-_Modules_: `modes/*`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
+**Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
+_Modules_: `modes/*`, `presets.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
 
 **Generic — plumbing and adapters.** Child-process transport, the anti-corruption layer over a child pi run, fan-out plumbing, param schema and arithmetic, command execution, text parsing. Keep thin, keep replaceable, do not model. `runner.ts` and `jsonl-child.mjs` are where a foreign protocol is allowed to be spoken; everything above them should see domain types only.
 _Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`.
 
 **Shared kernel.** `types.ts` — the vocabulary every subdomain imports, re-exported from the concept modules that own each term. A change here ripples everywhere and nothing above owns it, so keep it declarative: a rule that belongs to one concept belongs in that concept's module (see `budget.ts`), not here. `roster-types.ts` is vocabulary of the same kind, held apart only because the kernel may not import the Generic module that derives a roster.
-_Modules_: `types.ts`, `roster-types.ts`.
+_Modules_: `types.ts`, `roster-types.ts`, `preset-types.ts`.
 
 **Composition root.** `index.ts` — registers the tool and command and wires every subdomain together, so it alone may import from all of them. That privilege is also why flow-level invariants keep accumulating in its `execute()` body rather than in a Flow root; treat new ordering rules there as a smell.
 _Modules_: `index.ts`.
@@ -44,6 +44,12 @@ _Avoid_: flow graph, nested run
 **Mode**:
 The coordination pattern a flow uses (single, parallel, evaluate, debate, …).
 _Avoid_: workflow (that names one specific mode), strategy
+
+**Preset**:
+A named, discoverable workflow template that expands an intent and task into one
+ordinary mode call before validation. A preset is data, not a mode, and cannot
+bypass the expanded mode's budgets or trust checks.
+_Avoid_: workflow (that names one mode), macro
 
 **Parent**:
 The pi session that delegates work and makes the final decision.

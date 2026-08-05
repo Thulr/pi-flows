@@ -16,6 +16,7 @@ import {
 	type FlowDetails,
 	type FlowError,
 	type FlowMode,
+	type FlowPreset,
 	type ModelRoster,
 	type RunMode,
 	type Update,
@@ -33,7 +34,7 @@ import { resolveChildModel, runFlowAgent } from "./runner.ts";
 import { availableModelsFromRegistry, currentModelRoster } from "./roster-source.ts";
 import { clampThinking, describeModelRoster, parseModelSpec, resolveModelRoster } from "./model-roster.ts";
 import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
-import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceSummaryAttributes } from "./trace.ts";
+import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceConfigError, strictTraceError, summarizeTraceSpans, traceHealthStatus, traceSummaryAttributes } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { collectBudgetCeilings } from "./budget-disclosure.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs, showModelRoster } from "./ui.ts";
@@ -44,7 +45,9 @@ import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
-
+import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
+import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
+import { approveProjectPreset, traceProjectPresetRefusal } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
 // extension was a single file, so tests and downstream imports keep working.
 export {
@@ -111,6 +114,9 @@ export const __test = {
 	summarizeTraceSpans,
 	formatTraceReport,
 	flowProgressText,
+	discoverFlowPresets,
+	resolveFlowPreset,
+	summarizePresets,
 };
 
 export default function (pi: ExtensionAPI) {
@@ -127,7 +133,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerEntryRenderer?.("pi-flows.run", (entry, options, theme) => renderFlowCard(entry.data, options.expanded, theme));
 
 	pi.registerCommand("flows", {
-		description: "List and inspect first-party flow agents",
+		description: "List and inspect workflow presets and flow agents",
 		handler: async (args, ctx) => {
 			const parsed = parseFlowsCommandArgs(args);
 			if (parsed.kind === "error") {
@@ -162,16 +168,18 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const discovery = discoverFlowAgents(ctx.cwd, parsed.scope);
+			const presetDiscovery = discoverFlowPresets(ctx.cwd, parsed.scope);
 			const catalog = createAgentCatalog(discovery, parsed.scope);
 			if (parsed.kind === "status") {
 				// The command context has a live registry just like the tool path, so
 				// the roster is resolved here too. Omitting it would print
 				// "modelRoster: unresolved" and drop config parse issues from the one
 				// command whose whole job is reporting configuration.
-				ctx.ui.notify(catalog.configSummary(currentModelRoster(ctx)), discovery.issues.some((issue) => issue.severity === "error") ? "error" : "info");
+				const issues = [...discovery.issues, ...presetDiscovery.issues];
+				ctx.ui.notify(`${catalog.configSummary(currentModelRoster(ctx))}\n\n${presetConfigSummary(presetDiscovery)}`, issues.some((issue) => issue.severity === "error") ? "error" : "info");
 				return;
 			}
-			ctx.ui.notify(`Flow agents (${parsed.scope}):\n${catalog.summary()}`, "info");
+			ctx.ui.notify(`Flow presets (${parsed.scope}):\n${summarizePresets(presetDiscovery)}\n\nFlow agents (${parsed.scope}):\n${catalog.summary()}`, "info");
 		},
 	});
 
@@ -182,9 +190,10 @@ export default function (pi: ExtensionAPI) {
 			"Spawn delegated flow agents in isolated pi subprocesses. Each child is a full separate model context that costs real tokens and wall-clock time — typically several times the cost of answering directly, so the isolation must earn its cost.",
 			"Call flow only when at least one of these holds: (1) the user explicitly asked for delegation, separate agents, parallel investigation, or an independent reviewer; (2) the work spans more independent reading or writing than one context can hold; (3) the output needs verification that must be isolated from its author (separate critic, vote, or deterministic gate).",
 			"If none of those hold, do the work directly in your own context — that is the default. Every spawning call must set `why` with the one-sentence reason delegation beats working directly; calls without it are refused.",
-			"Bundled agents: recon, analyst, strategist, operator, overwatch, redteam, controller, commander, debrief.",
-			`Core shapes: one delegated scout => {"agent":"recon","task":"inspect X","why":"..."}; parallel fan-out => {"tasks":[{"agent":"recon","task":"inspect A"},{"agent":"recon","task":"inspect B"}],"why":"..."}; build with separate critique => {"task":"...","evaluate":{},"why":"..."}. Further modes (${RUN_MODE_NAMES.filter((mode) => !["single", "parallel", "evaluate"].includes(mode)).join(", ")}) are documented in their parameter schemas.`,
-			"Default scope includes bundled agents and ~/.pi/agent/flow-agents; project-local .pi/flow-agents requires agentScope project/all and explicit trust in headless runs.",
+			"Prefer bundled workflow presets when the intent matches: scout (one reconnaissance pass), map-codebase (bounded map/reduce), code-review (one two-axis review, never a repeat-until-clean loop). Example: {\"preset\":\"code-review\",\"task\":\"Review HEAD against main and issue #25\",\"why\":\"author-independent verification\"}.",
+			"Bundled agents: recon, analyst, strategist, operator, overwatch, redteam, controller, commander, debrief. Raw modes remain available for custom topologies.",
+			`Raw shapes: one delegated scout => {"agent":"recon","task":"inspect X","why":"..."}; parallel fan-out => {"tasks":[{"agent":"recon","task":"inspect A"},{"agent":"recon","task":"inspect B"}],"why":"..."}; build with separate critique => {"task":"...","evaluate":{},"why":"..."}. Further modes (${RUN_MODE_NAMES.filter((mode) => !["single", "parallel", "evaluate"].includes(mode)).join(", ")}) are documented in their parameter schemas.`,
+			"Default scope includes bundled and user presets/agents; project-local .pi/flow-presets and .pi/flow-agents require agentScope project/all and explicit trust in headless runs.",
 		].join(" "),
 		promptSnippet: "Work directly by default; call flow only for explicit delegation requests or work that genuinely needs isolated contexts, fan-out, or an independent critic",
 		// Editorial guidance, deliberately hand-written: the mechanical mode surface
@@ -192,6 +201,7 @@ export default function (pi: ExtensionAPI) {
 		// modes by intent — when adding a mode, add a line here too if it needs one.
 		promptGuidelines: [
 			"Default to working directly in your own context. A flow child is a separate pi subprocess with its own full model context — it costs real tokens and latency, so spawning must be justified by isolation, fan-out, or independent verification, not by a mode name that happens to match the task.",
+			"Prefer a named workflow preset when it matches the request: scout for one bounded read-only pass, map-codebase for a broad evidence map, and code-review for one author-independent two-axis review. The code-review preset is one-shot; never replay it automatically until CLEAN.",
 			"Do not use flow for simple factual answers, small code lookups, minor single-file edits, obvious shell commands, or tasks you can complete cheaply in the parent context. When the task is small or already clear, answer or edit directly and reserve flow for later if exploration, verification, or fan-out becomes genuinely necessary.",
 			"When the user asks for a separate agent, read-only scout, delegated investigation, parallel inspection, independent reviewer, or critic loop, call flow directly without asking them to invoke it by name; treat 'delegate', 'have agents', 'use a separate agent', and 'split investigation across modules' as explicit flow requests.",
 			"Always fill `why` with the one-sentence justification for spawning (which of: explicit user request, fan-out one context cannot hold, author-independent verification). If you cannot state one, that is the signal to work directly instead.",
@@ -210,34 +220,50 @@ export default function (pi: ExtensionAPI) {
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const discovery = discoverFlowAgents(ctx.cwd, agentScope);
+			const presetDiscovery = discoverFlowPresets(ctx.cwd, agentScope);
 			const catalog = createAgentCatalog(discovery, agentScope);
+			let activePreset: FlowPreset | undefined;
+			const requestedPresetTask = typeof params.task === "string" ? params.task : "";
 			// Resolved once per call rather than per child: the registry read is
 			// synchronous and cheap, but a roster that changed mid-flow would let two
 			// children of the same wave disagree about what "deep" meant.
 			const roster = currentModelRoster(ctx);
-			const policy: CapturePolicy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
-			const budgetCeilings = collectBudgetCeilings(params);
+			let policy: CapturePolicy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
+			let budgetCeilings = collectBudgetCeilings(params);
 			const makeDetails: typeof catalog.makeDetails = (detailsMode, agents) => {
 				const build = catalog.makeDetails(detailsMode, agents);
 				return (results, error) => {
 					const details = build(results, error);
 					if (budgetCeilings.length) details.budgetCeilings = budgetCeilings;
-					return details;
+					return attachPresetDetails(details, presetDiscovery, activePreset, policy);
 				};
 			};
 
 			if (params.list) {
 				return {
-					content: [{ type: "text", text: catalog.summary() }],
+					content: [{ type: "text", text: `Workflow presets:\n${summarizePresets(presetDiscovery, policy)}\n\nFlow agents:\n${catalog.summary()}` }],
 					details: makeDetails("list")([]),
 				};
 			}
 
 			if (params.showConfig) {
 				return {
-					content: [{ type: "text", text: catalog.configSummary(roster) }],
+					content: [{ type: "text", text: `${catalog.configSummary(roster)}\n\n${presetConfigSummary(presetDiscovery, policy)}` }],
 					details: makeDetails("config")([]),
 				};
+			}
+
+			const callerTrace = { traceFile: params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE, traceLabel: params.traceLabel, traceContext: params.traceContext };
+			if (params.preset) {
+				const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, policy);
+				if ("error" in resolved) {
+					return presetResolutionErrorOutput(resolved.error, presetDiscovery, makeDetails("list")([], resolved.error), policy);
+				}
+				activePreset = resolved.preset;
+				params = resolved.params as typeof params;
+				policy = presetCapturePolicy(policy, params as Record<string, unknown>);
+				params = { ...params, ...policy };
+				budgetCeilings = collectBudgetCeilings(params);
 			}
 
 			const detected = detectRunMode(params);
@@ -249,7 +275,6 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const mode: FlowMode = detected.mode;
-
 			// Structural friction against reflexive delegation: a spawning call must
 			// articulate why isolation beats doing the work in the parent context.
 			if (typeof params.why !== "string" || params.why.trim().length === 0) {
@@ -289,36 +314,34 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+			const presetApproval = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx, policy);
+			if (presetApproval.error) {
+				const details = makeDetails(mode)([], presetApproval.error);
+				const link = await traceProjectPresetRefusal(presetApproval.error, activePreset, callerTrace, mode, policy, ctx.cwd, ctx.hasUI);
+				if (link) details.trace = link;
+				return { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details };
+			}
+			// Preset-owned preparation shells out to git in a preset-named directory, so it waits for the trust gate above.
+			const presetRun = preparePresetDispatch(activePreset, params, requestedPresetTask, mode, ctx.cwd);
+			params = presetRun.params as typeof params;
 
 			// Trace evidence as a gate is opt-in. Ordinary user flows stay
 			// best-effort; an eval or release run asks for strict, and then a run
 			// that cannot prove what it did is a failed run, not a quiet pass.
 			const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
 			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
-			if (traceStrict && !traceFileParam) {
-				const error = flowError(
-					"TRACE_INCOMPLETE",
-					"Flow call refused: strict tracing is on but no trace file is configured.",
-					"traceStrict (or PI_FLOWS_TRACE_STRICT) requires coordination evidence, and nothing would have been exported.",
-					"Set traceFile (or PI_FLOWS_TRACE_FILE) to a writable JSONL path, or turn strict tracing off for ordinary best-effort runs.",
-				);
-				return {
-					content: [{ type: "text", text: formatFlowError(error) }],
-					details: makeDetails(mode)([], error),
-				};
+			const traceConfigError = strictTraceConfigError(traceStrict, traceFileParam);
+			if (traceConfigError) {
+				return { content: [{ type: "text", text: formatFlowError(traceConfigError) }], details: makeDetails(mode)([], traceConfigError) };
 			}
 
-			// The sink is built before the human gates, not after: an approval that is
-			// *granted* changes nothing else about the run, so a gate recorded only on
-			// refusal would leave a successful checkpoint with no evidence it was ever
-			// asked for. Every refusal below finalizes it, so those events never end up
-			// orphaned without a root span.
 			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+			presetApproval.record(traceSink?.event);
 			const handoffs = createHandoffConsumer({
 				params,
 				mode,
 				policy,
-				defaultCwd: ctx.cwd,
+				defaultCwd: presetRun.runDefaultCwd,
 				recordEvent: traceSink?.event,
 			});
 			const refuse = async (error: FlowError) => {
@@ -399,7 +422,7 @@ export default function (pi: ExtensionAPI) {
 					policy,
 					handoffs,
 					agentScope,
-					defaultCwd: ctx.cwd,
+					defaultCwd: presetRun.runDefaultCwd,
 					roster,
 					signal,
 					onUpdate: liveUpdate,
@@ -425,6 +448,7 @@ export default function (pi: ExtensionAPI) {
 					output.details.error = handoffs.blockingError;
 					output.content = [{ type: "text", text: formatFlowError(handoffs.blockingError) }];
 				}
+				if (activePreset) formatPresetResult(activePreset, output, policy, presetRun.runDefaultCwd, presetRun.codeReviewRange);
 				// Record the lesson only when at least one run happened — pre-spawn
 				// refusals (validation errors, approvals) are not lessons about the task.
 				if (output.details.results.length > 0) {
@@ -439,7 +463,8 @@ export default function (pi: ExtensionAPI) {
 				liveFlows.update(toolCallId, liveDetails);
 				if (traceSink) {
 					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
-					output.details.trace = await traceSink.finalize({ ok }, traceSummaryAttributes(mode, params, output));
+					// A strict run whose own evidence is degraded is about to be refused, so the root must not claim a verified outcome it never delivered.
+					output.details.trace = await traceSink.finalize({ ok }, (health) => attachPresetTraceAttributes(traceSummaryAttributes(mode, params, output), activePreset, output.details, !traceStrict || traceHealthStatus(health, true) === "recorded"));
 				}
 				// Strict runs refuse to report a result they cannot evidence. An
 				// already-failed run keeps its own error: the incomplete trace is a
@@ -459,11 +484,11 @@ export default function (pi: ExtensionAPI) {
 				liveFlows.settle(toolCallId, liveDetails);
 			}
 		},
-		renderCall(args, theme) {
+		renderCall(args, theme, context) {
 			const scope = args.agentScope ?? "user";
 			if (args.showConfig) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `config [${scope}]`), 0, 0);
 			if (args.list) return new Text(theme.fg("toolTitle", theme.bold("flow ")) + theme.fg("accent", `list [${scope}]`), 0, 0);
-			return new Text(flowCallLines(args, theme, renderRunModeLabel(args), scope).join("\n"), 0, 0);
+			return new Text(flowCallLines(args.preset ? previewFlowPreset(args, context.cwd) : args, theme, args.preset ? `preset ${args.preset}` : renderRunModeLabel(args), scope).join("\n"), 0, 0);
 		},
 		renderResult(result, { expanded, isPartial }, theme, context) {
 			return renderFlowResultRow(result as Parameters<typeof renderFlowResultRow>[0], { expanded, isPartial }, theme, context, summarizeAgents);

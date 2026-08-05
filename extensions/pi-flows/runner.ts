@@ -150,6 +150,7 @@ function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefi
 		// model runs pi's configured default, which cannot be read here, so the
 		// level may be lowered inside pi without this ever seeing it.
 		"flow.thinking_level_verified": choice.thinking === undefined ? undefined : choice.thinkingVerified,
+		"flow.role": sanitizeRole(options.role, policy),
 		...delegationIdentityAttributes({
 			systemPrompt: agent?.systemPrompt ?? "",
 			allowedTools,
@@ -162,9 +163,15 @@ function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefi
 	};
 }
 
+/** A caller or preset controls role labels, so capture them under the same policy as task text. */
+function sanitizeRole(role: string | undefined, policy: CapturePolicy): string | undefined {
+	return role === undefined ? undefined : sanitizeText(role, policy, 4 * 1024);
+}
+
 /** Production adapter for the child-run seam (ModeDeps.runChild): one real pi subprocess per call. */
 export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunResult> {
 	const policy: CapturePolicy = { recordContent: options.recordContent ?? true, redactSecrets: options.redactSecrets ?? true };
+	const capturedRole = sanitizeRole(options.role, policy);
 	const budgets = [options.budget, options.contractBudget].filter((budget): budget is Budget => Boolean(budget));
 	// Flow or contract ceiling: refuse to spawn once the applicable budget is spent.
 	// Everything downstream — the event's authority, its attribute prefix, the
@@ -185,7 +192,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				...budgetAttributes(exhaustedBudget.snapshot()),
 			},
 		});
-		return makeEmptyRunResult(options.agentName, options.task, policy, exhaustedBudget.exhaustedError());
+		const result = makeEmptyRunResult(options.agentName, options.task, policy, exhaustedBudget.exhaustedError());
+		result.role = capturedRole;
+		return result;
 	}
 	const agent = options.agents.find((candidate) => candidate.name === options.agentName);
 	if (!agent) {
@@ -203,7 +212,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			scope: options.scope,
 			attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": error.code },
 		});
-		return makeEmptyRunResult(options.agentName, options.task, policy, error);
+		const result = makeEmptyRunResult(options.agentName, options.task, policy, error);
+		result.role = capturedRole;
+		return result;
 	}
 
 	const started = Date.now();
@@ -213,6 +224,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const choice = resolveChildModel(agent, { model: options.model, tier: options.tier, thinking: options.thinking, flowThinking: options.flowThinking }, options.roster);
 	const result: FlowRunResult = {
 		agent: agent.name,
+		role: capturedRole,
 		agentSource: agent.source,
 		task: sanitizeText(options.task, policy, 4 * 1024),
 		exitCode: -1,

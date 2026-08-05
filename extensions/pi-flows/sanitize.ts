@@ -1,8 +1,9 @@
 import * as os from "node:os";
 import type { Message } from "@earendil-works/pi-ai";
-import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type FlowError, type FlowRunResult } from "./types.ts";
+import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
 
 const rawFinalAssistantText = new WeakMap<FlowRunResult, string>();
+const validatedReturnEnvelopes = new WeakMap<FlowRunResult, DelegationReturnEnvelope>();
 
 export function safePath(candidate: string | null | undefined): string | null {
 	if (!candidate) return null;
@@ -132,6 +133,18 @@ export function takeRawFinalAssistantText(result: FlowRunResult): string | undef
 	const text = rawFinalAssistantText.get(result);
 	rawFinalAssistantText.delete(result);
 	return text;
+}
+
+/** Retain validated content privately until a harness-owned formatter derives structural status from it. */
+export function retainValidatedReturnEnvelope(result: FlowRunResult, envelope: DelegationReturnEnvelope): void {
+	validatedReturnEnvelopes.set(result, structuredClone(envelope));
+}
+
+/** Consume private validated content so it cannot enter returned details or linger after status derivation. */
+export function takeValidatedReturnEnvelope(result: FlowRunResult): DelegationReturnEnvelope | undefined {
+	const envelope = validatedReturnEnvelopes.get(result);
+	validatedReturnEnvelopes.delete(result);
+	return envelope === undefined ? undefined : structuredClone(envelope);
 }
 
 export function isFailed(result: FlowRunResult): boolean {

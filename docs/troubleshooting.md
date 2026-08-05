@@ -76,6 +76,7 @@ normal pi docs, then retry a small single-agent task.
 ### Invalid agent files
 
 Invalid frontmatter is reported in `/flows status` and `flow showConfig:true`.
+The same surfaces report invalid preset frontmatter or non-JSON preset bodies.
 
 Valid minimal agent:
 
@@ -105,6 +106,54 @@ Use flow with {"showConfig":true}
 ```
 
 Confirm `agentScope` and review any discovery issues reported by `/flows status`.
+
+### `UNKNOWN_PRESET`
+
+Cause: no discovered workflow preset matched the requested `preset` name in the
+effective scope.
+
+Fix: run `flow` with `{"list":true}`, `/flows`, or `showConfig:true`; then use
+the exact preset name and confirm `agentScope`.
+
+### `PRESET_TASK_REQUIRED`
+
+Cause: the selected preset contains a `{task}` placeholder, but the call did not
+supply a non-empty top-level `task`.
+
+Fix: pass the complete goal, fixed point, and relevant issue/spec context in
+`task`.
+
+### `PRESET_OVERRIDE_INVALID`
+
+Cause: the call tried to replace a top-level workflow parameter the preset did
+not declare in its `overrides` frontmatter.
+
+Fix: remove the override. If you own the preset and the changed shape is safe,
+add that key to `overrides` after reviewing its bounds and trust implications.
+Use a raw mode call when the requested topology is materially different.
+
+### `PRESET_EXPANSION_INVALID`
+
+Cause: a preset template or a caller-supplied override expanded to parameters
+outside the public `FlowParams` schema.
+
+Fix: inspect `flow showConfig:true` for preset discovery issues, then correct the
+invalid template field or remove the invalid override.
+
+### `PROJECT_PRESET_APPROVAL_REQUIRED`
+
+Cause: a headless run requested a repository-controlled preset from
+`.pi/flow-presets` while project confirmation remained enabled.
+
+Fix: review the preset file. Run interactively to approve it, or pass
+`confirmProjectAgents:false` only in a trusted non-UI repository.
+
+### `PROJECT_PRESET_APPROVAL_DENIED`
+
+Cause: the interactive prompt for a project-local preset was declined.
+
+Fix: review `.pi/flow-presets`, then retry and approve only if the workflow
+parameters are trusted.
 
 ### `WHY_REQUIRED`
 

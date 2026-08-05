@@ -11,6 +11,7 @@ Use pi-flows when the next step would otherwise make your parent pi session nois
 | Your situation | What you ask pi | What pi-flows gives back |
 |---|---|---|
 | You need to understand a code path before touching it. | "Have a read-only agent find the billing routes." | A compact, cited recon report from an agent that cannot mutate the repo or run shell commands. |
+| You want one bounded review of a PR or branch. | "Review HEAD against main and issue #25 exactly once." | Two `overwatch` runs in named `standards` and `spec` roles, typed file coverage, and a harness-derived `CLEAN`, `FINDINGS`, or `PARTIAL` outcome. |
 | You have several independent areas to inspect. | "Check frontend auth and backend auth in parallel." | Separate child runs with capped fan-out instead of one context stuffed with every file. |
 | You want an implementation checked before you accept it. | "Add `/health` with a test, and accept it only after `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
 | You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
@@ -56,6 +57,25 @@ Have a read-only agent find the API routes for billing.
 ```
 
 pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; these docs show the exact JSON interface for when you want to verify it or take manual control.)
+
+For common shapes, pi can choose a named workflow preset instead of assembling
+raw mode parameters. The bundled presets are `scout`, `map-codebase`, and
+`code-review`:
+
+```json
+{
+  "preset": "code-review",
+  "task": "Review HEAD against main and issue #25 exactly once",
+  "why": "the change needs author-independent standards and spec review"
+}
+```
+
+`code-review` is deliberately one-shot. It never fixes findings, posts GitHub
+comments, or repeats until clean. Both reviewers use the `overwatch` agent, but
+the UI and trace retain their distinct `standards` and `spec` roles. Before
+dispatch, the harness resolves ranges written as `base..head` or
+`HEAD against main` to immutable commit IDs; an unresolved or substituted range
+can produce only `PARTIAL`, never `CLEAN`.
 
 Ask for a *verified* result and pi reaches for a stronger mode on its own:
 
@@ -136,14 +156,16 @@ package paths are resolved from `.pi/`, so `..` names the checkout root. See
 ## What it adds
 
 - `flow` tool: runs isolated pi subprocesses for single, parallel, chain, evaluate (generator-evaluator), vote, route, orchestrate, graph, loop, search, workflow, worktree, debate, dossier, and monitor delegation.
-- `/flows` command: lists available flow agents and shows help/status/version output.
+- `/flows` command: lists workflow presets and flow agents and shows help/status/version output.
 - Live TUI monitoring: the `flow` call and compact views disclose every generated cost/token ceiling and name its authority (**flow** or **contract**) before work starts; the live tool row then updates in place while children run (per-run state, current activity, progress, cost rollup). `F8` toggles a non-modal fleet panel showing every live flow and the runs beneath it, with budget burn-down, and `/flows inspect` drills into one child's activity feed. Fan-out headers count **settled** runs (`1/3 settled` — see the [glossary](./CONTEXT.md#delegation-model)) and switch to the verdict (`2 failed`, `3 ok`) once nothing is outstanding. A durable flow card keeps the configured ceilings in the transcript after each flow, including after session reloads. None of these views interrupt children when closed.
 - Bundled agents in [`agents/`](./agents/): `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`.
+- Bundled workflow presets in [`presets/`](./presets/): `scout`, `map-codebase`, and the bounded, typed `code-review`.
+- Your own presets, no code required — one Markdown file (frontmatter + JSON flow-parameter template) per preset. User presets live in `~/.pi/agent/flow-presets/*.md`; project presets in `.pi/flow-presets/*.md`, under the same trust gate and shadowing precedence as agents.
 - Your own agents, no code required — one markdown file (frontmatter + system prompt) per agent. User agents live in `~/.pi/agent/flow-agents/*.md`; project agents in `.pi/flow-agents/*.md` (loaded with `agentScope: "project"` or `"all"`, and trust-gated). Project shadows user shadows bundled, with a visible diagnostic. See [Custom agents](./docs/custom-agents.md).
 
 ## Safety model
 
-Project-local agents are repo-controlled prompts. In interactive pi sessions, pi-flows asks before running them. In headless (non-UI) runs, pi-flows **fails closed by default** and refuses project-local agents unless you explicitly pass `confirmProjectAgents:false` after reviewing the files.
+Project-local agents and presets are repo-controlled prompts/workflow parameters. In interactive pi sessions, pi-flows asks before using them. In headless (non-UI) runs, pi-flows **fails closed by default** unless you explicitly pass `confirmProjectAgents:false` after reviewing the files.
 
 pi-flows also redacts secret-shaped content and home paths from returned content/details by default. A **handoff** is the prepared value that crosses from one role to another after applicable validation, redaction, and policy handling (`{previous}` in chain, the evaluate artifact, vote ballots, routing metadata, orchestrate findings). Handoffs are an indirect prompt-injection surface. A flow-scoped guard strips invisible/bidi characters, scans instruction-override markers, and detects attacks assembled from individually benign fragments across several boundaries. `handoffPolicy` selects `warn` (compatibility default), `quarantine` (withhold the payload), or `fail` (stop before the recipient spawns); `modeHandoffPolicy` can impose a stricter non-downgradable minimum for high-consequence modes. See [Flow reference](./docs/flow-reference.md#handoff-injection-policy) and [Privacy & telemetry](./docs/privacy-telemetry.md).
 
@@ -154,6 +176,18 @@ Cost is bounded as well as count and time: pass `maxCostUsd`, `maxTokens`, or `m
 You don't type these objects — you describe what you want and pi builds the call. This is the exact tool interface behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
 
 Every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution (missing it returns `WHY_REQUIRED` before any child spawns).
+
+### Presets
+
+```json
+{ "preset": "scout", "task": "Find the billing routes", "why": "user requested a delegated scout" }
+```
+
+Preset templates expand before ordinary mode validation, so all existing
+budgets, trust checks, return-envelope validation, traces, and UI apply to the
+resulting mode. A preset declares which top-level parameters callers may
+override; undeclared workflow-shape overrides fail with
+`PRESET_OVERRIDE_INVALID`.
 
 ### List
 

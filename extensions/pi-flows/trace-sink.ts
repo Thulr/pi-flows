@@ -22,7 +22,13 @@ export { stableTraceIds } from "./trace-identity.mjs";
 export interface TraceSink {
 	record: RecordSpan;
 	event: RecordEvent;
-	finalize: (status: { ok: boolean }, attributes?: Record<string, unknown>) => Promise<FlowTraceLink>;
+	/**
+	 * Root attributes may be given as a function of the span accounting observed
+	 * just before the root is written. A caller that must not claim more than the
+	 * evidence supports — a verified outcome under strict tracing — needs to see
+	 * that health while the root record is still being composed.
+	 */
+	finalize: (status: { ok: boolean }, attributes?: Record<string, unknown> | ((health: FlowTraceHealth) => Record<string, unknown>)) => Promise<FlowTraceLink>;
 }
 
 function storedTraceContext(context: FlowTraceContext, policy: CapturePolicy): FlowTraceContext {
@@ -326,6 +332,14 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// covers everything including this row.
 			const expectedSpans = health.expectedSpans + 1;
 			const observedSpans = health.observedSpans + 1;
+			const preRootHealth: FlowTraceHealth = {
+				expectedSpans,
+				observedSpans,
+				droppedSpans: health.droppedSpans,
+				redactedSpans: health.redactedSpans,
+				failedExports: health.failedExports,
+			};
+			const rootAttributes = typeof attributes === "function" ? attributes(preRootHealth) : attributes;
 			const rootAppend = append({
 				trace_id: traceId,
 				span_id: rootSpanId,
@@ -340,7 +354,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
 					...traceContextAttributes(storedContext),
-					...storedAttributes(attributes),
+					...storedAttributes(rootAttributes),
 					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
 					"flow.execution_success": status.ok,
 					"flow.trace.expected_spans": expectedSpans,

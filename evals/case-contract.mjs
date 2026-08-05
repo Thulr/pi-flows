@@ -122,12 +122,15 @@ register([
 register([
 	"explicit-flow-list-uses-flow",
 	"explicit-delegation-uses-flow",
+	"explicit-scout-uses-preset",
 	"implicit-readonly-agent-uses-recon",
 ], "capability", "delegation-selection", lookup);
 register([
 	"implicit-parallel-doc-check-uses-parallel",
 	"implicit-plan-critic-uses-evaluate",
 	"implicit-broad-map-uses-orchestrate",
+	"explicit-code-review-uses-preset",
+	"explicit-map-codebase-uses-preset",
 ], "capability", "delegation-selection", review);
 register([
 	"implicit-phase-gated-work-uses-workflow",

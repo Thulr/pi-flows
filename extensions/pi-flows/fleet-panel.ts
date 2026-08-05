@@ -3,7 +3,7 @@ import { Key, matchesKey, truncateToWidth, visibleWidth, type KeyId, type TUI } 
 import { budgetDisclosureLines, exhaustedBudgetText } from "./budget-disclosure.ts";
 import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRegistry, type InspectorContext, type LiveFlow } from "./inspector.ts";
 import { formatUsage } from "./trace.ts";
-import { spinnerFrame } from "./ui-live-row.ts";
+import { runDisplayName, spinnerFrame } from "./ui-live-row.ts";
 import type { BudgetSnapshot, FlowRunResult } from "./types.ts";
 import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
 
@@ -41,17 +41,17 @@ export function fleetFlowLines(flow: LiveFlow, theme: Theme, tick: number, optio
 	// shared helper rather than a locally formatted ratio.
 	const total = flow.details.results.length;
 	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(flow.details, options))}` : "";
-	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${flow.mode}`))}${progress}`];
+	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${flow.details.preset?.name ?? flow.mode}`))}${progress}`];
 	lines.push(...budgetDisclosureLines(flow.details.budgetCeilings).map((line) => theme.fg("muted", line)));
 	const budget = budgetLine(flow.budget?.snapshot(), theme);
 	if (budget) lines.push(budget);
 
-	const nameWidth = Math.min(16, Math.max(4, ...flow.details.results.map((result: FlowRunResult) => result.agent.length)));
+	const nameWidth = Math.min(28, Math.max(4, ...flow.details.results.map((result: FlowRunResult) => runDisplayName(result).length)));
 	flow.details.results.forEach((result, index) => {
 		const state = flowAgentState(result);
 		const icon = state === "running" ? theme.fg("warning", spinnerFrame(tick, index * 2)) : state === "queued" ? theme.fg("muted", "◌") : state === "failed" ? theme.fg("error", "✗") : theme.fg("success", "✓");
 		const usage = oneLine(formatUsage(result.usage, undefined, result.durationMs), 40, flow.redactSecrets);
-		lines.push(`${icon} ${theme.fg("accent", oneLine(result.agent, nameWidth, flow.redactSecrets).padEnd(nameWidth))} ${theme.fg(agentStateColor(state), state.padEnd(9))}${usage ? ` ${theme.fg("dim", usage)}` : ""}`);
+		lines.push(`${icon} ${theme.fg("accent", oneLine(runDisplayName(result), nameWidth, flow.redactSecrets).padEnd(nameWidth))} ${theme.fg(agentStateColor(state), state.padEnd(9))}${usage ? ` ${theme.fg("dim", usage)}` : ""}`);
 		if (state === "running") {
 			const items = flowAgentActivity(result, flow.redactSecrets);
 			const last = items[items.length - 1];
