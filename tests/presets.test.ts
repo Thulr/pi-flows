@@ -458,6 +458,14 @@ test("code-review formatter derives CLEAN, FINDINGS, and PARTIAL from Git-verifi
 
 	const unresolved = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], undefined, ["Issue context unavailable"])]), policy, repo, range);
 	assert.equal(unresolved.details.presetOutcome, "PARTIAL");
+	assert.match(unresolved.content[0].text, /unresolved: Issue context unavailable/, "the caller needs to know what to supply");
+
+	const skippedPath = [{ path: "src/a.ts", status: "skipped", evidence: "unreadable" }];
+	const skipped = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], skippedPath)]), policy, repo, range);
+	assert.equal(skipped.details.presetOutcome, "PARTIAL");
+	assert.match(skipped.content[0].text, /skipped coverage: src\/a\.ts \(skipped\)/);
+	const quiet = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), reviewRun("spec", range, [], skippedPath)]), { recordContent: false, redactSecrets: true }, repo, range);
+	assert.doesNotMatch(quiet.content[0].text, /src\/a\.ts/, "gap detail is child content and follows the capture policy");
 
 	await writeFile(path.join(repo, "src", "b.ts"), "new\n");
 	execFileSync("git", ["add", "."], { cwd: repo });

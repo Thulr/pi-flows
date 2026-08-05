@@ -396,8 +396,8 @@ export function formatPresetResult(
 	// verdict, but dropping its findings would hide the one thing worth acting on.
 	const incomplete = output.details.results.filter((result) => result.exitCode === 0 && result.envelope && !completed.includes(result));
 	const envelopes = completed.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope);
-	const incompleteFindings = incomplete
-		.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope)
+	const incompleteEnvelopes = incomplete.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope);
+	const incompleteFindings = incompleteEnvelopes
 		.flatMap((envelope) => Array.isArray((envelope?.data as any)?.findings) ? (envelope!.data as any).findings : []);
 	const data = envelopes.map((envelope) => envelope?.data as any);
 	const axes = new Set(data.map((item) => item?.axis));
@@ -437,7 +437,18 @@ export function formatPresetResult(
 	output.details.presetOutcome = status;
 	const reported = [...findings, ...incompleteFindings];
 	const details = policy.recordContent && reported.length ? `\n\n${reported.map(findingLine).join("\n")}` : "";
-	const gap = complete ? "" : "\n\nCoverage could not be proven complete across both review axes; do not treat this result as clean.";
+	// Naming the concrete gap is what makes the verdict actionable: the caller can
+	// supply the missing issue context, fix an unreadable path, or rerun narrower.
+	const reviewedEnvelopes = [...envelopes, ...incompleteEnvelopes];
+	const skipped = reviewedEnvelopes
+		.flatMap((envelope) => Array.isArray((envelope?.data as any)?.coverage) ? (envelope!.data as any).coverage : [])
+		.filter((item: any) => typeof item?.path === "string" && item.status !== "reviewed")
+		.map((item: any) => `${item.path} (${item.status ?? "unknown"})`);
+	const questions = reviewedEnvelopes.flatMap((envelope) => envelope?.unresolvedQuestions ?? []);
+	const gapItems = policy.recordContent
+		? [skipped.length ? `skipped coverage: ${skipped.join(", ")}` : "", questions.length ? `unresolved: ${questions.join("; ")}` : ""].filter(Boolean)
+		: [];
+	const gap = complete ? "" : `\n\nCoverage could not be proven complete across both review axes; do not treat this result as clean.${gapItems.length ? ` Gaps — ${gapItems.join(" · ")}.` : ""}`;
 	// This formatter replaces the ordinary parallel summary, so a reviewer that
 	// timed out or died would otherwise be reported as an unexplained PARTIAL.
 	const failed = output.details.results.filter(isFailed)
