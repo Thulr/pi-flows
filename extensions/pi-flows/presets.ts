@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Compile } from "typebox/compile";
 import { flowAgentDir, isDirectory, parseFlowFrontmatter } from "./agents.ts";
-import { safePath, sanitizeText, takeValidatedReturnEnvelope } from "./sanitize.ts";
+import { isFailed, safePath, sanitizeText, takeValidatedReturnEnvelope } from "./sanitize.ts";
 import { FlowParams } from "./schema.ts";
 import {
 	flowError,
@@ -44,8 +44,13 @@ const PASSTHROUGH_KEYS = new Set([
 	"redactSecrets",
 	"allowSharedWriteCwd",
 ]);
-/** A preset may not supply its own delegation justification or opt its source into trust. */
-const CALLER_ONLY_KEYS = ["why", "agentScope", "confirmProjectAgents"] as const;
+/**
+ * A preset may not supply its own delegation justification, opt its source into
+ * trust, or grant itself the shared-write exception: that last one is the raw
+ * mode's explicit acknowledgement that concurrent children may mutate one
+ * checkout, and a template must not make it on the caller's behalf.
+ */
+const CALLER_ONLY_KEYS = ["why", "agentScope", "confirmProjectAgents", "allowSharedWriteCwd"] as const;
 
 function flowParamsSchemaError(value: unknown): string | null {
 	for (const item of checkFlowParams.Errors(value)) {
@@ -423,6 +428,11 @@ export function formatPresetResult(
 	const reported = [...findings, ...incompleteFindings];
 	const details = policy.recordContent && reported.length ? `\n\n${reported.map(findingLine).join("\n")}` : "";
 	const gap = complete ? "" : "\n\nCoverage could not be proven complete across both review axes; do not treat this result as clean.";
-	output.content = [{ type: "text", text: sanitizeText(`Code review: ${status}${details}${gap}`, policy) }];
+	// This formatter replaces the ordinary parallel summary, so a reviewer that
+	// timed out or died would otherwise be reported as an unexplained PARTIAL.
+	const failed = output.details.results.filter(isFailed)
+		.map((result) => `${result.role ?? result.agent} (${result.error?.code ?? result.stopReason ?? `exit ${result.exitCode}`})`);
+	const failureText = failed.length ? `\n\nReview axes that did not return: ${failed.join(", ")}.` : "";
+	output.content = [{ type: "text", text: sanitizeText(`Code review: ${status}${details}${gap}${failureText}`, policy) }];
 	return output;
 }

@@ -562,6 +562,51 @@ test("a partial review axis returns PARTIAL carrying its findings, not a handoff
 	assert.match(result.content[0].text, /do not treat this result as clean/);
 });
 
+test("a preset template cannot grant itself the shared-write exception", () => {
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const shared: FlowPreset = {
+		name: "shared-write",
+		description: "test",
+		source: "user",
+		filePath: "shared-write.md",
+		overrides: [],
+		template: { agent: "recon", task: "{task}", timeoutMs: 1000, maxGeneratedTokens: 10, allowSharedWriteCwd: true },
+	};
+	const withShared = { presets: [...discovery.presets, shared], issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const expanded = resolveFlowPreset({ preset: "shared-write", task: "Inspect.", why: "test" }, withShared);
+	assert.ok(!("error" in expanded));
+	assert.equal(expanded.params.allowSharedWriteCwd, undefined, "the guard is the caller's acknowledgement to make");
+	const byCaller = resolveFlowPreset({ preset: "shared-write", task: "Inspect.", why: "test", allowSharedWriteCwd: true }, withShared);
+	assert.ok(!("error" in byCaller));
+	assert.equal(byCaller.params.allowSharedWriteCwd, true);
+});
+
+test("code-review reports why a review axis did not return", () => {
+	const policy = { recordContent: true, redactSecrets: true };
+	const failedRun: FlowRunResult = {
+		agent: "overwatch",
+		role: "spec",
+		agentSource: "package",
+		task: "review",
+		exitCode: 1,
+		messages: [],
+		stderr: "",
+		usage: emptyUsage(),
+		stopReason: "timeout",
+	};
+	const output = formatPresetResult(
+		reviewPreset,
+		{
+			content: [{ type: "text" as const, text: "raw" }],
+			details: { mode: "parallel" as const, version: "test", agentScope: "user" as const, config: {} as any, agentsDir: {} as any, results: [reviewRun("standards", { base: "a".repeat(40), head: "b".repeat(40) }), failedRun] },
+		},
+		policy,
+	);
+	assert.equal(output.details.presetOutcome, "PARTIAL");
+	assert.match(output.content[0].text, /Review axes that did not return: spec \(timeout\)/);
+});
+
 test("code-review trace attributes publish complete verdicts as verified outcomes", () => {
 	const base = { "flow.outcome_verified": false };
 	const clean = attachPresetTraceAttributes({ ...base }, reviewPreset, { presetOutcome: "CLEAN" } as any);

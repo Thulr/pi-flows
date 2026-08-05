@@ -54,7 +54,10 @@ to loosen it: the effective policy is the stricter of the caller's and the
 template's, so only the caller can turn redaction off or keep child content on.
 `traceStrict` follows the same rule — a template can turn the evidence gate on,
 but a template-authored `traceStrict:false` is dropped so the caller and
-`PI_FLOWS_TRACE_STRICT` still decide.
+`PI_FLOWS_TRACE_STRICT` still decide. `why`, `agentScope`,
+`confirmProjectAgents`, and `allowSharedWriteCwd` are caller-only: a template
+cannot justify its own delegation, opt its source into trust, or take the
+shared-write exception on the caller's behalf.
 
 ## Modes
 
