@@ -195,6 +195,7 @@ result: code-review-v1
   ],
   "tier": "capable",
   "thinking": "high",
+  "incompleteHandoffPolicy": "include",
   "concurrency": 1,
   "timeoutMs": 1800000,
   "maxTokens": 200000,

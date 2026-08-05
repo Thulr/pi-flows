@@ -519,6 +519,49 @@ test("code-review retains validated metadata privately when returned content is 
 	assert.doesNotMatch(trace, /private-review-claim/);
 });
 
+test("a partial review axis returns PARTIAL carrying its findings, not a handoff error", async () => {
+	const repo = await mkdtemp(path.join(tmpdir(), "pi-flow-partial-axis-"));
+	const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: repo, encoding: "utf8" }).trim();
+	git("init", "-q");
+	await writeFile(path.join(repo, "a.ts"), "before\n");
+	git("add", ".");
+	git("commit", "-qm", "base");
+	const base = git("rev-parse", "HEAD");
+	await writeFile(path.join(repo, "a.ts"), "after\n");
+	git("add", ".");
+	git("commit", "-qm", "head");
+	const head = git("rev-parse", "HEAD");
+	const task = `Review ${base}..${head}.`;
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const resolved = resolveFlowPreset({ preset: "code-review", task }, discovery);
+	assert.ok(!("error" in resolved));
+	const tasks = resolved.params.tasks as any[];
+	const finding = { id: "skipped-axis", path: "a.ts", startLine: 1, endLine: 1, severity: "high", category: "correctness", claim: "unproven-axis-claim", evidence: "a.ts:1", suggestion: "fix it" };
+	const envelope = (index: number, axis: "standards" | "spec", status: string, findings: any[]) => JSON.stringify({
+		schemaVersion: "pi-flows.return-envelope.v1",
+		contractId: delegationContractId(tasks[index].contract),
+		status,
+		summary: `${axis} ${status}`,
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data: { axis, base, head, coverage: [{ path: "a.ts", status: "reviewed", evidence: "a.ts:1" }], findings },
+	});
+	const { result } = await runFlow(
+		{ preset: "code-review", task },
+		{ overwatch: [envelope(0, "standards", "completed", []), envelope(1, "spec", "partial", [finding])] },
+		{ cwd: repo },
+	);
+	assert.equal(result.details.error, undefined, "an axis that could not finish is a PARTIAL verdict, not a flow failure");
+	assert.equal(result.details.presetOutcome, "PARTIAL");
+	assert.match(result.content[0].text, /unproven-axis-claim/);
+	assert.match(result.content[0].text, /do not treat this result as clean/);
+});
+
 test("code-review trace attributes publish complete verdicts as verified outcomes", () => {
 	const base = { "flow.outcome_verified": false };
 	const clean = attachPresetTraceAttributes({ ...base }, reviewPreset, { presetOutcome: "CLEAN" } as any);

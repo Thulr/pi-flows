@@ -23,7 +23,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   the harness pins the caller-requested Git range before dispatch and returns
   `CLEAN` only when both axes attest to those commits and cover its Git-derived
   manifest, otherwise `FINDINGS` or `PARTIAL`. A `base...head` request is pinned
-  at its merge base, so the manifest stays the branch change set. Complete verdicts are published
+  at its merge base, so the manifest stays the branch change set. An axis that
+  could not finish is reported as `PARTIAL` carrying its anchored findings
+  rather than as a handoff failure. Complete verdicts are published
   as verified trace outcomes even when child content capture is disabled. It
   never fixes, posts, delegates, or loops until clean.
 
