@@ -677,6 +677,9 @@ test("a three-dot review request freezes at the merge base so the manifest is th
 	const baseHead = git("rev-parse", "HEAD");
 
 	const runParams = { tasks: [{ task: "standards" }, { task: "spec" }] };
+	for (const [phrase, expected] of [["Review HEAD~1..HEAD.", { base: mergeBase, head: baseHead }], ["Review HEAD^..HEAD.", { base: mergeBase, head: baseHead }]] as const) {
+		assert.deepEqual(preparePresetRun(reviewPreset, runParams, phrase, repo).codeReviewRange, expected, `${phrase} must pin a range`);
+	}
 	const symmetric = preparePresetRun(reviewPreset, runParams, `Review ${baseHead}...${featureHead}.`, repo);
 	assert.deepEqual(symmetric.codeReviewRange, { base: mergeBase, head: featureHead });
 	assert.ok((symmetric.params.tasks as any[]).every((item) => item.task.includes(`base ${mergeBase}, head ${featureHead}`)));

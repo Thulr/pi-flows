@@ -320,7 +320,9 @@ function requestedReviewRefs(task: string): { base: string; head: string; symmet
 	const base = task.match(/\bbase(?:\s+(?:commit|sha))?\s*(?:is|=|:)?\s*([0-9a-f]{40,64})\b/i)?.[1];
 	const head = task.match(/\bhead(?:\s+(?:commit|sha))?\s*(?:is|=|:)?\s*([0-9a-f]{40,64})\b/i)?.[1];
 	if (base && head) return { base, head, symmetric: false };
-	const gitRef = "[A-Za-z0-9][A-Za-z0-9._/-]*";
+	// `~` and `^` belong to the ref: `HEAD~1..HEAD` is the range people actually
+	// type, and stopping short of the suffix pins the wrong commit or nothing.
+	const gitRef = "[A-Za-z0-9][A-Za-z0-9._/^~-]*";
 	// A ref may contain dots but never ends in one, and without that boundary a
 	// greedy match reads `base...head` as a two-dot range off `base.`.
 	const range = task.match(new RegExp(`\\b(${gitRef})(?<!\\.)\\s*(\\.{2,3})\\s*(${gitRef})\\b`, "i"));
