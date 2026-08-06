@@ -138,6 +138,13 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 	// (INVALID_CONCURRENCY), so the guard stays silent rather than mislabeling
 	// the refusal; the admissibility seam scores the concurrency bound itself.
 	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", concurrency: 0, tasks: [{ agent: "operator", task: "A" }, { agent: "operator", task: "B" }] }), null);
+	// handleGraph refuses GRAPH_INVALID for a node count outside
+	// 1..MAX_GRAPH_NODES before its guard; the mirror stays silent behind it
+	// and never iterates the oversized list.
+	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", {
+		why: "x",
+		graph: { nodes: Array.from({ length: 17 }, (_, index) => ({ id: `n${index}`, agent: "operator", task: "A" })) },
+	}), null);
 	// A garbage search ref falls back to the handler default instead of
 	// emitting a non-ref wave element — verdict-neutral either way.
 	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", search: { generator: "operator" } }), null);

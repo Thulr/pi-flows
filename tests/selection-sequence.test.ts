@@ -6,7 +6,7 @@
 // measurement on all three axes, while each safe first-call topology passes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callAdmissibilityFailure, flowCallMatchesExpectation, scoreSelection } from "../evals/select.mjs";
+import { callAdmissibilityFailure, flowCallMatchesExpectation, observationCap, scoreSelection } from "../evals/select.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { validateCaseCorpus } from "../evals/case-contract.mjs";
 
@@ -326,6 +326,38 @@ test("taskPattern reads only contract-blessed task fields, not model-invented on
 	// The same call with the decision question where the tool reads it passes.
 	const contractual = { ...misplaced, task: "Choose the queue migration design under the stated constraints." };
 	assert.equal(flowCallMatchesExpectation({ arguments: contractual }, { mode: "debate", taskPattern: "queue migration" }).pass, true);
+});
+
+test("the observation cap always sits above the case's refused-call budget", () => {
+	// A cap at the budget would terminate the run with exactly budget-many
+	// refusals observed, so the budget could never be exceeded and a
+	// budget-only case would pass without one admitted call.
+	assert.equal(observationCap({}), 5);
+	assert.equal(observationCap({ maxRefusedCalls: 1 }), 5);
+	assert.equal(observationCap({ maxRefusedCalls: 5 }), 7);
+	assert.equal(observationCap({ maxRefusedCalls: 9 }), 11);
+	for (const budget of [0, 1, 4, 5, 9]) {
+		assert.ok(observationCap({ maxRefusedCalls: budget }) > budget + 1, `cap must allow observing a breach of budget ${budget}`);
+	}
+});
+
+test("vacuous predicate values fail preflight — allowed keys that constrain nothing", () => {
+	const structure = { decomposability: "parallel", dependencyDepth: 1, sharedState: "read-only", risk: "medium", reversibility: "reversible" };
+	const base = { id: "vacuous-case", name: "vacuous-case", suite: "regression", taskFamily: "delegation-selection", structure, expectFlow: true, task: "t", mock: { flowCalls: 0, answer: "" } };
+	const validation = validateCaseCorpus({
+		measurement: [],
+		calibration: [],
+		selection: [{
+			...base,
+			expectedFlowCall: { anyOf: [{ params: {} }], agents: [], taskPattern: "" },
+			forbiddenFlowCall: { modes: [] },
+		}],
+	});
+	assert.equal(validation.ok, false);
+	assert.ok(validation.issues.some((issue: string) => issue.includes("anyOf[0].params must pin at least one value")));
+	assert.ok(validation.issues.some((issue: string) => issue.includes("agents must not be an empty list")));
+	assert.ok(validation.issues.some((issue: string) => issue.includes("taskPattern must be a non-empty string")));
+	assert.ok(validation.issues.some((issue: string) => issue.includes("forbiddenFlowCalls[0].modes must not be an empty list")));
 });
 
 test("typo'd sequence predicates fail corpus preflight before any model is invoked", () => {

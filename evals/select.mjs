@@ -128,10 +128,16 @@ function emptyState() {
 	};
 }
 
-// A run that keeps burning pre-dispatch refusals stops producing selection
+// A run that keeps burning refused executions stops producing selection
 // signal past the budget any case would set; cap it instead of letting the
-// refusal loop spend the whole case timeout.
+// refusal loop spend the whole case timeout. The cap must sit above the
+// case's own refused-call budget — a cap at the budget would terminate the
+// run with exactly budget-many refusals observed, so the budget could never
+// be exceeded and a budget-only case would pass without one admitted call.
 const MAX_OBSERVED_FLOW_EXECUTIONS = 5;
+export function observationCap(testCase) {
+	return Math.max(MAX_OBSERVED_FLOW_EXECUTIONS, (testCase.maxRefusedCalls ?? 0) + 2);
+}
 
 async function runSelectionCase(testCase, signal) {
 	if (dryRun) {
@@ -171,7 +177,7 @@ async function runSelectionCase(testCase, signal) {
 			// so an execution never proceeds unjudged.
 			const latest = state.flowExecutions.at(-1);
 			const wouldRefuse = hasUsefulArguments(latest) && callAdmissibilityFailure(latest);
-			if (wouldRefuse && state.flowExecutions.length < MAX_OBSERVED_FLOW_EXECUTIONS) return;
+			if (wouldRefuse && state.flowExecutions.length < observationCap(testCase)) return;
 			state.stoppedAfterFlowCall = true;
 			controls.terminate();
 		},

@@ -327,6 +327,19 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 			issues.push(`${label}.${key} is not a shape field the scorer reads (known: ${[...SHAPE_KEYS, ...(allowFirstCall ? ["firstCall"] : [])].join(", ")})`);
 		}
 	}
+	// A present-but-vacuous predicate constrains nothing: an empty params
+	// object or agent list matches every call (and, as a forbidden shape,
+	// rejects every call), silently — the same trap as an unknown key.
+	for (const listField of ["mode", "modes", "agent", "agents"]) {
+		if (Array.isArray(shape[listField]) && shape[listField].length === 0) {
+			issues.push(`${label}.${listField} must not be an empty list — it would constrain nothing`);
+		}
+	}
+	for (const patternField of ["preset", "taskPattern", "everyTaskPattern"]) {
+		if (shape[patternField] !== undefined && (typeof shape[patternField] !== "string" || shape[patternField] === "")) {
+			issues.push(`${label}.${patternField} must be a non-empty string`);
+		}
+	}
 	if (shape.firstCall !== undefined && typeof shape.firstCall !== "boolean") {
 		issues.push(`${label}.firstCall must be a boolean`);
 	}
@@ -341,6 +354,8 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	if (shape.params !== undefined) {
 		if (!shape.params || typeof shape.params !== "object" || Array.isArray(shape.params)) {
 			issues.push(`${label}.params must be an object of scalar pins`);
+		} else if (Object.keys(shape.params).length === 0) {
+			issues.push(`${label}.params must pin at least one value — an empty pin set would constrain nothing`);
 		} else {
 			for (const [key, value] of Object.entries(shape.params)) {
 				if (!["boolean", "number", "string"].includes(typeof value)) {

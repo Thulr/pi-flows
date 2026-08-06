@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
+import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
 import { safePath } from "./sanitize.ts";
 import { searchTopology } from "./topology.ts";
 
@@ -185,8 +185,14 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 		return [];
 	}
 	if (params?.graph !== undefined) {
-		// Only the first wave is knowable pre-spawn: nodes with no dependencies.
-		return [(refArray(params.graph?.nodes) as Array<SharedWriteRef & { dependsOn?: string[] }>).filter((node) => (node?.dependsOn ?? []).length === 0)];
+		// handleGraph refuses GRAPH_INVALID for a node count outside
+		// 1..MAX_GRAPH_NODES before its guard; stay silent behind that earlier
+		// refusal, and never iterate a hostile-length node list. Within
+		// bounds, only the first wave is knowable pre-spawn: nodes with no
+		// dependencies.
+		const nodes = params.graph?.nodes;
+		if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) return [];
+		return [(refArray(nodes) as Array<SharedWriteRef & { dependsOn?: string[] }>).filter((node) => (node?.dependsOn ?? []).length === 0)];
 	}
 	if (params?.search !== undefined) {
 		const spec = params.search ?? {};
