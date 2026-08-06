@@ -9,8 +9,6 @@
 //   npm run eval:select -- --model=openai-codex/gpt-5.4-mini --timeout=60000
 //   npm run eval:select -- --dry-run
 import { spawn } from "node:child_process";
-import * as fsSync from "node:fs";
-import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { corpusPreflightStep, formatPortfolioReport, portfolioReport } from "./case-contract.mjs";
 import { createFlagReader } from "./cli-flags.mjs";
@@ -18,10 +16,12 @@ import { EVAL_CORPUS, SELECTION_CASES } from "./corpus.mjs";
 import { DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { loadDotenv, runPreflight } from "./preflight.mjs";
 import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
-// This .ts import makes select.mjs require the tsx loader (`node --import tsx`),
-// which every current entrypoint already passes; do not import this module from
+// select-scoring.mjs imports the extension's .ts predicates, so this module
+// still requires the tsx loader (`node --import tsx`); do not import it from
 // a bare-node script such as eval:review or eval:pareto.
-import { nonSpawningFlowCall, spawnJustificationMissing } from "../extensions/pi-flows/validate.ts";
+import { callAdmissibilityFailure, hasUsefulArguments, parseToolArguments, scoreSelection, selectionExitCode } from "./select-scoring.mjs";
+
+export { callAdmissibilityFailure, flowCallMatchesExpectation, scoreSelection, selectionExitCode } from "./select-scoring.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 
@@ -39,19 +39,6 @@ export function flowCallIdsFromMessage(message) {
 	return flowCallsFromMessage(message).map((call) => call.id);
 }
 
-function parseToolArguments(raw) {
-	if (!raw) return {};
-	if (typeof raw === "string") {
-		try {
-			return JSON.parse(raw);
-		} catch {
-			return { __unparsed: raw };
-		}
-	}
-	if (typeof raw === "object") return raw;
-	return { __raw: raw };
-}
-
 export function flowCallsFromMessage(message) {
 	const calls = [];
 	for (const part of message?.content ?? []) {
@@ -63,10 +50,6 @@ export function flowCallsFromMessage(message) {
 		}
 	}
 	return calls;
-}
-
-function hasUsefulArguments(args) {
-	return !!args && typeof args === "object" && !args.__unparsed && !args.__raw && modeOf(args) !== "unknown";
 }
 
 function argumentCompleteness(args) {
@@ -104,8 +87,10 @@ export function collectSelectionEvent(line, state) {
 		return;
 	}
 	if (event.type === "tool_execution_start" && event.toolName === "flow") {
-		recordFlowCall(state, { id: event.toolCallId ?? `flow-call-${state.flowCalls.length}`, arguments: parseToolArguments(event.args) });
+		const args = parseToolArguments(event.args);
+		recordFlowCall(state, { id: event.toolCallId ?? `flow-call-${state.flowCalls.length}`, arguments: args });
 		state.flowExecutionStarted = true;
+		(state.flowExecutions ??= []).push(args);
 	}
 	const messages = [];
 	if (event.message) messages.push(event.message);
@@ -129,233 +114,11 @@ export function collectSelectionEvent(line, state) {
 	}
 }
 
-function values(value) {
-	if (value === undefined) return [];
-	return Array.isArray(value) ? value : [value];
-}
-
-// Mirrors resolveFlowPreset: reserved keys plus the caller-control passthrough set
-// are always allowed, and anything else must be an override the *selected* preset
-// declares. An allowlist closes the class rather than chasing individual raw fields.
-const PRESET_CALL_KEYS = new Set([
-	"preset", "task", "list", "showConfig",
-	"why", "agentScope", "confirmProjectAgents", "maxCostUsd", "checkpoint", "reflexion",
-	"traceFile", "traceLabel", "traceContext", "traceStrict",
-	"handoffPolicy", "modeHandoffPolicy", "incompleteHandoffPolicy",
-	"recordContent", "redactSecrets", "allowSharedWriteCwd",
-]);
-
-/** Declared overrides per bundled preset, read from the preset files so the eval cannot drift from them. */
-const bundledPresetsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../presets");
-const presetOverrides = new Map(
-	fsSync.readdirSync(bundledPresetsDir)
-		.filter((entry) => entry.endsWith(".md"))
-		.map((entry) => fsSync.readFileSync(path.join(bundledPresetsDir, entry), "utf8"))
-		.map((content) => [
-			content.match(/^name:\s*(\S+)\s*$/m)?.[1] ?? "",
-			new Set((content.match(/^overrides:\s*(.+)$/m)?.[1] ?? "").split(",").map((key) => key.trim()).filter(Boolean)),
-		]),
-);
-
-function modeOf(args) {
-	if (args?.list) return "list";
-	if (args?.showConfig) return "config";
-	if (typeof args?.preset === "string" && args.preset) {
-		// The tool refuses a preset call that also names raw workflow shape
-		// (PRESET_OVERRIDE_INVALID), so scoring it as a preset selection would
-		// credit a call the harness never runs.
-		// The tool answers UNKNOWN_PRESET for a name it cannot discover, so an
-		// invented preset is not a preset selection either.
-		const allowed = presetOverrides.get(args.preset);
-		if (!allowed) return "preset-unknown";
-		const extra = Object.keys(args).filter((key) => args[key] !== undefined && !PRESET_CALL_KEYS.has(key) && !allowed.has(key));
-		return extra.length ? "preset-conflict" : "preset";
-	}
-	if (Array.isArray(args?.tasks)) return "parallel";
-	if (Array.isArray(args?.chain)) return "chain";
-	if (args?.evaluate !== undefined) return "evaluate";
-	if (args?.vote !== undefined) return "vote";
-	if (args?.route !== undefined) return "route";
-	if (args?.orchestrate !== undefined) return "orchestrate";
-	if (args?.graph !== undefined) return "graph";
-	if (args?.loop !== undefined) return "loop";
-	if (args?.search !== undefined) return "search";
-	if (args?.workflow !== undefined) return "workflow";
-	if (args?.worktree !== undefined) return "worktree";
-	if (args?.debate !== undefined) return "debate";
-	if (args?.dossier !== undefined) return "dossier";
-	if (args?.monitor !== undefined) return "monitor";
-	if (args?.agent && args?.task) return "single";
-	return "unknown";
-}
-
-function primaryAgents(args, mode) {
-	if (mode === "single") return [args.agent].filter(Boolean);
-	if (mode === "parallel") return (args.tasks ?? []).map((task) => task.agent).filter(Boolean);
-	if (mode === "evaluate") return [args.evaluate?.operator?.agent ?? "operator"].filter(Boolean);
-	if (mode === "orchestrate") return [args.orchestrate?.recon?.agent ?? "recon"].filter(Boolean);
-	if (mode === "workflow") return (args.workflow?.phases ?? []).map((phase) => phase.agent).filter(Boolean);
-	if (mode === "worktree") return (args.worktree?.tasks ?? []).map((task) => task.agent).filter(Boolean);
-	if (mode === "debate") return (args.debate?.participants ?? []).map((participant) => participant.agent).filter(Boolean);
-	if (mode === "dossier") return (args.dossier?.sections ?? []).map((section) => section.agent).filter(Boolean);
-	if (mode === "monitor") return [args.monitor?.reactor?.agent ?? "analyst"].filter(Boolean);
-	return [];
-}
-
-function taskCount(args, mode) {
-	if (mode === "parallel") return args.tasks?.length ?? 0;
-	if (mode === "workflow") return args.workflow?.phases?.length ?? 0;
-	if (mode === "worktree") return args.worktree?.tasks?.length ?? 0;
-	if (mode === "debate") return args.debate?.participants?.length ?? 0;
-	if (mode === "dossier") return args.dossier?.sections?.length ?? 0;
-	return 0;
-}
-
-function taskText(args) {
-	const pieces = [];
-	if (typeof args?.task === "string") pieces.push(args.task);
-	for (const task of args?.tasks ?? []) {
-		if (typeof task?.task === "string") pieces.push(task.task);
-	}
-	for (const task of args?.chain ?? []) {
-		if (typeof task?.task === "string") pieces.push(task.task);
-	}
-	if (typeof args?.evaluate?.operator?.task === "string") pieces.push(args.evaluate.operator.task);
-	if (typeof args?.evaluate?.redteam?.task === "string") pieces.push(args.evaluate.redteam.task);
-	for (const critic of Array.isArray(args?.evaluate?.redteam) ? args.evaluate.redteam : []) {
-		if (typeof critic?.task === "string") pieces.push(critic.task);
-	}
-	if (typeof args?.orchestrate?.task === "string") pieces.push(args.orchestrate.task);
-	if (typeof args?.orchestrate?.returnContract === "string") pieces.push(args.orchestrate.returnContract);
-	for (const node of args?.graph?.nodes ?? []) {
-		if (typeof node?.task === "string") pieces.push(node.task);
-	}
-	for (const phase of args?.workflow?.phases ?? []) {
-		if (typeof phase?.task === "string") pieces.push(phase.task);
-		if (typeof phase?.approval?.message === "string") pieces.push(phase.approval.message);
-		if (typeof phase?.checkCommand === "string") pieces.push(phase.checkCommand);
-	}
-	for (const task of args?.worktree?.tasks ?? []) {
-		if (typeof task?.task === "string") pieces.push(task.task);
-	}
-	for (const section of args?.dossier?.sections ?? []) {
-		if (typeof section?.task === "string") pieces.push(section.task);
-	}
-	if (typeof args?.monitor?.command === "string") pieces.push(args.monitor.command);
-	if (typeof args?.monitor?.pattern === "string") pieces.push(args.monitor.pattern);
-	return pieces.join("\n");
-}
-
-// Admissibility: would the flow tool have accepted this call, or refused it
-// before any child spawned? Scored uniformly across every spawning mode so a
-// call the tool would refuse cannot count as a correct selection, however well
-// its shape fits. Each rule must be the tool's own predicate (imported, not
-// hand-copied) so the scored gate cannot drift from the enforced one. Returns
-// { code, reason } so callers phrase their own notes and #84 — which extends
-// this seam with further pre-dispatch refusals such as SHARED_WRITE_CWD — can
-// group verdicts by refusal code.
-export function callAdmissibilityFailure(args) {
-	if (nonSpawningFlowCall(args ?? {})) return null;
-	if (spawnJustificationMissing(args?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
-	return null;
-}
-
-export function flowCallMatchesExpectation(call, expected) {
-	const args = call?.arguments ?? {};
-	const actualMode = modeOf(args);
-	if (expected.preset && args.preset !== expected.preset) {
-		return { pass: false, notes: `expected preset ${expected.preset}, saw ${args.preset ?? "(none)"}` };
-	}
-	const expectedModes = values(expected.mode ?? expected.modes);
-	if (expectedModes.length > 0 && !expectedModes.includes(actualMode)) {
-		return { pass: false, notes: `expected mode ${expectedModes.join("|")}, saw ${actualMode}` };
-	}
-
-	const allowedAgents = values(expected.agent ?? expected.agents);
-	if (allowedAgents.length > 0) {
-		const agents = primaryAgents(args, actualMode);
-		if (agents.length === 0 || !agents.every((agent) => allowedAgents.includes(agent))) {
-			return { pass: false, notes: `expected primary agent(s) ${allowedAgents.join("|")}, saw ${agents.join(",") || "none"}` };
-		}
-	}
-
-	const actualTaskCount = taskCount(args, actualMode);
-	if (expected.minTasks !== undefined && actualTaskCount < expected.minTasks) {
-		return { pass: false, notes: `expected at least ${expected.minTasks} ${actualMode} task(s), saw ${actualTaskCount}` };
-	}
-
-	if (expected.taskPattern && !new RegExp(expected.taskPattern, "i").test(taskText(args))) {
-		return { pass: false, notes: `task did not match /${expected.taskPattern}/` };
-	}
-
-	// Checked after the shape checks so a gate regression is diagnosable as
-	// "picked the right shape but the tool would have refused the call", which
-	// is a different failure from picking the wrong shape.
-	const inadmissible = callAdmissibilityFailure(args);
-	if (inadmissible) {
-		return { pass: false, notes: `${actualMode} call matches the expected shape, but the spawn gate would refuse it before any child spawns: ${inadmissible.reason} (${inadmissible.code})` };
-	}
-
-	return { pass: true, notes: `${actualMode} flow call matched` };
-}
-
-function scoreFlowCallExpectations(testCase, result) {
-	const expectations = values(testCase.expectedFlowCall ?? testCase.expectedFlowCalls);
-	if (expectations.length === 0) return { pass: true, notes: "no flow argument expectation" };
-	const calls = result.flowCallArgs ?? [];
-	for (const expectation of expectations) {
-		const matches = calls.map((call) => flowCallMatchesExpectation({ arguments: call }, expectation));
-		if (!matches.some((match) => match.pass)) {
-			return {
-				pass: false,
-				notes: `${matches[0]?.notes ?? "no flow call matched"}; calls=${JSON.stringify(calls).slice(0, 800)}`,
-			};
-		}
-	}
-	return { pass: true, notes: "flow arguments matched" };
-}
-
-export function scoreSelection(testCase, result) {
-	if (result.inconclusive || result.timedOut) {
-		return {
-			pass: false,
-			inconclusive: true,
-			selectionOk: null,
-			answerOk: null,
-			argsOk: null,
-			flowUsed: (result.flowCalls ?? result.flowCallArgs?.length ?? 0) > 0,
-			notes: result.error ?? "selection arm was excluded by infrastructure",
-		};
-	}
-	const flowUsed = (result.flowCalls ?? result.flowCallArgs?.length ?? 0) > 0;
-	const selectionOk = flowUsed === testCase.expectFlow;
-	const answerRequired = testCase.answerPattern && !(testCase.expectFlow && result.stoppedAfterFlowCall);
-	const answerOk = answerRequired ? new RegExp(testCase.answerPattern, "i").test(result.answer ?? "") : true;
-	const argsOk = testCase.expectFlow ? scoreFlowCallExpectations(testCase, result) : { pass: true, notes: "no flow expected" };
-	return {
-		pass: !result.error && selectionOk && answerOk && argsOk.pass,
-		selectionOk,
-		answerOk,
-		argsOk: argsOk.pass,
-		flowUsed,
-		notes: result.error
-			? result.error
-			: selectionOk
-				? answerOk
-					? argsOk.pass ? "selection, arguments, and answer matched" : argsOk.notes
-					: "selection matched; answer did not"
-				: `expected flow=${testCase.expectFlow}, saw flow=${flowUsed}`,
-	};
-}
-
-export function selectionExitCode({ failed, comparable }) {
-	return failed === 0 && comparable > 0 ? 0 : 1;
-}
-
 function emptyState() {
 	return {
 		flowCallIds: new Set(),
 		flowCalls: [],
+		flowExecutions: [],
 		flowExecutionStarted: false,
 		stoppedAfterFlowCall: false,
 		answer: "",
@@ -364,6 +127,11 @@ function emptyState() {
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
 	};
 }
+
+// A run that keeps burning pre-dispatch refusals stops producing selection
+// signal past the budget any case would set; cap it instead of letting the
+// refusal loop spend the whole case timeout.
+const MAX_OBSERVED_FLOW_EXECUTIONS = 5;
 
 async function runSelectionCase(testCase, signal) {
 	if (dryRun) {
@@ -391,10 +159,18 @@ async function runSelectionCase(testCase, signal) {
 		stdin: `${testCase.task}\n`,
 		onLine: (line, controls) => {
 			collectSelectionEvent(line, state);
-			if (testCase.expectFlow && state.flowExecutionStarted && !state.stoppedAfterFlowCall) {
-				state.stoppedAfterFlowCall = true;
-				controls.terminate();
-			}
+			if (!testCase.expectFlow || state.stoppedAfterFlowCall || !state.flowExecutionStarted) return;
+			// A call the tool will refuse pre-dispatch is cheap — the refusal
+			// returns before any child spawns — and what the model does next is
+			// exactly what the sequence predicates score, so let refusals play
+			// out. Terminate before an admitted call actually fans out, and cap
+			// runaway refusal loops. Args the parser could not recover fail safe
+			// to termination so an execution never proceeds unjudged.
+			const latest = state.flowExecutions.at(-1);
+			const wouldRefuse = hasUsefulArguments(latest) && callAdmissibilityFailure(latest);
+			if (wouldRefuse && state.flowExecutions.length < MAX_OBSERVED_FLOW_EXECUTIONS) return;
+			state.stoppedAfterFlowCall = true;
+			controls.terminate();
 		},
 		onStderr: (chunk) => { stderr = `${stderr}${chunk}`.slice(-4096); },
 	});

@@ -1,0 +1,333 @@
+// Pure call scoring for the tool-selection eval: given the flow calls a run
+// emitted, decide what they mean — mode classification, expectation matching,
+// admissibility, and the sequence predicates (first-call requirement,
+// forbidden shapes, refused-call budget). No process is spawned here; the
+// stream harness and CLI live in select.mjs and consume this module.
+//
+// The .ts imports make this module require the tsx loader (`node --import
+// tsx`), which every current entrypoint already passes; do not import it from
+// a bare-node script such as eval:review or eval:pareto.
+import * as fsSync from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { nonSpawningFlowCall, preSpawnSharedWriteRefusal, spawnJustificationMissing } from "../extensions/pi-flows/validate.ts";
+import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
+
+export function parseToolArguments(raw) {
+	if (!raw) return {};
+	if (typeof raw === "string") {
+		try {
+			return JSON.parse(raw);
+		} catch {
+			return { __unparsed: raw };
+		}
+	}
+	if (typeof raw === "object") return raw;
+	return { __raw: raw };
+}
+
+export function hasUsefulArguments(args) {
+	return !!args && typeof args === "object" && !args.__unparsed && !args.__raw && modeOf(args) !== "unknown";
+}
+
+function values(value) {
+	if (value === undefined) return [];
+	return Array.isArray(value) ? value : [value];
+}
+
+// Mirrors resolveFlowPreset: reserved keys plus the caller-control passthrough set
+// are always allowed, and anything else must be an override the *selected* preset
+// declares. An allowlist closes the class rather than chasing individual raw fields.
+const PRESET_CALL_KEYS = new Set([
+	"preset", "task", "list", "showConfig",
+	"why", "agentScope", "confirmProjectAgents", "maxCostUsd", "checkpoint", "reflexion",
+	"traceFile", "traceLabel", "traceContext", "traceStrict",
+	"handoffPolicy", "modeHandoffPolicy", "incompleteHandoffPolicy",
+	"recordContent", "redactSecrets", "allowSharedWriteCwd",
+]);
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// Admissibility scoring resolves each agent's effective toolset against the
+// bundled roster only: the shared-write verdict must be a property of the
+// case, not of whatever ~/.pi/flow-agents happens to contain on the machine
+// running the eval. The toggle is restored immediately so the spawned subject
+// still discovers its real environment.
+const packageOnlyPrevious = process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
+process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
+const scoringDiscovery = discoverFlowAgents(repoRoot, "user");
+if (packageOnlyPrevious === undefined) delete process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
+else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
+
+/** Declared overrides per bundled preset, read from the preset files so the eval cannot drift from them. */
+const bundledPresetsDir = path.resolve(repoRoot, "presets");
+const presetOverrides = new Map(
+	fsSync.readdirSync(bundledPresetsDir)
+		.filter((entry) => entry.endsWith(".md"))
+		.map((entry) => fsSync.readFileSync(path.join(bundledPresetsDir, entry), "utf8"))
+		.map((content) => [
+			content.match(/^name:\s*(\S+)\s*$/m)?.[1] ?? "",
+			new Set((content.match(/^overrides:\s*(.+)$/m)?.[1] ?? "").split(",").map((key) => key.trim()).filter(Boolean)),
+		]),
+);
+
+function modeOf(args) {
+	if (args?.list) return "list";
+	if (args?.showConfig) return "config";
+	if (typeof args?.preset === "string" && args.preset) {
+		// The tool refuses a preset call that also names raw workflow shape
+		// (PRESET_OVERRIDE_INVALID), so scoring it as a preset selection would
+		// credit a call the harness never runs.
+		// The tool answers UNKNOWN_PRESET for a name it cannot discover, so an
+		// invented preset is not a preset selection either.
+		const allowed = presetOverrides.get(args.preset);
+		if (!allowed) return "preset-unknown";
+		const extra = Object.keys(args).filter((key) => args[key] !== undefined && !PRESET_CALL_KEYS.has(key) && !allowed.has(key));
+		return extra.length ? "preset-conflict" : "preset";
+	}
+	if (Array.isArray(args?.tasks)) return "parallel";
+	if (Array.isArray(args?.chain)) return "chain";
+	if (args?.evaluate !== undefined) return "evaluate";
+	if (args?.vote !== undefined) return "vote";
+	if (args?.route !== undefined) return "route";
+	if (args?.orchestrate !== undefined) return "orchestrate";
+	if (args?.graph !== undefined) return "graph";
+	if (args?.loop !== undefined) return "loop";
+	if (args?.search !== undefined) return "search";
+	if (args?.workflow !== undefined) return "workflow";
+	if (args?.worktree !== undefined) return "worktree";
+	if (args?.debate !== undefined) return "debate";
+	if (args?.dossier !== undefined) return "dossier";
+	if (args?.monitor !== undefined) return "monitor";
+	if (args?.agent && args?.task) return "single";
+	return "unknown";
+}
+
+function primaryAgents(args, mode) {
+	if (mode === "single") return [args.agent].filter(Boolean);
+	if (mode === "parallel") return (args.tasks ?? []).map((task) => task.agent).filter(Boolean);
+	if (mode === "evaluate") return [args.evaluate?.operator?.agent ?? "operator"].filter(Boolean);
+	if (mode === "orchestrate") return [args.orchestrate?.recon?.agent ?? "recon"].filter(Boolean);
+	if (mode === "workflow") return (args.workflow?.phases ?? []).map((phase) => phase.agent).filter(Boolean);
+	if (mode === "worktree") return (args.worktree?.tasks ?? []).map((task) => task.agent).filter(Boolean);
+	if (mode === "debate") return (args.debate?.participants ?? []).map((participant) => participant.agent).filter(Boolean);
+	if (mode === "dossier") return (args.dossier?.sections ?? []).map((section) => section.agent).filter(Boolean);
+	if (mode === "monitor") return [args.monitor?.reactor?.agent ?? "analyst"].filter(Boolean);
+	return [];
+}
+
+function taskCount(args, mode) {
+	if (mode === "parallel") return args.tasks?.length ?? 0;
+	if (mode === "workflow") return args.workflow?.phases?.length ?? 0;
+	if (mode === "worktree") return args.worktree?.tasks?.length ?? 0;
+	if (mode === "debate") return args.debate?.participants?.length ?? 0;
+	if (mode === "dossier") return args.dossier?.sections?.length ?? 0;
+	return 0;
+}
+
+// Task text is collected only from the fields the flow contract actually
+// reads. Models sometimes invent per-ref task fields (for example
+// debate.participants[].task, recorded on PR #86); those never reach a child,
+// so crediting them would score intent no child receives — and could score a
+// call the tool refuses outright when the required top-level task is missing.
+function taskText(args) {
+	const pieces = [];
+	if (typeof args?.task === "string") pieces.push(args.task);
+	for (const task of args?.tasks ?? []) {
+		if (typeof task?.task === "string") pieces.push(task.task);
+	}
+	for (const task of args?.chain ?? []) {
+		if (typeof task?.task === "string") pieces.push(task.task);
+	}
+	if (typeof args?.evaluate?.operator?.task === "string") pieces.push(args.evaluate.operator.task);
+	if (typeof args?.evaluate?.redteam?.task === "string") pieces.push(args.evaluate.redteam.task);
+	for (const critic of Array.isArray(args?.evaluate?.redteam) ? args.evaluate.redteam : []) {
+		if (typeof critic?.task === "string") pieces.push(critic.task);
+	}
+	if (typeof args?.orchestrate?.task === "string") pieces.push(args.orchestrate.task);
+	if (typeof args?.orchestrate?.returnContract === "string") pieces.push(args.orchestrate.returnContract);
+	for (const node of args?.graph?.nodes ?? []) {
+		if (typeof node?.task === "string") pieces.push(node.task);
+	}
+	for (const phase of args?.workflow?.phases ?? []) {
+		if (typeof phase?.task === "string") pieces.push(phase.task);
+		if (typeof phase?.approval?.message === "string") pieces.push(phase.approval.message);
+		if (typeof phase?.checkCommand === "string") pieces.push(phase.checkCommand);
+	}
+	for (const task of args?.worktree?.tasks ?? []) {
+		if (typeof task?.task === "string") pieces.push(task.task);
+	}
+	for (const section of args?.dossier?.sections ?? []) {
+		if (typeof section?.task === "string") pieces.push(section.task);
+	}
+	if (typeof args?.monitor?.command === "string") pieces.push(args.monitor.command);
+	if (typeof args?.monitor?.pattern === "string") pieces.push(args.monitor.pattern);
+	return pieces.join("\n");
+}
+
+// Admissibility: would the flow tool have accepted this call, or refused it
+// before any child spawned? Scored uniformly across every spawning mode so a
+// call the tool would refuse cannot count as a correct selection, however well
+// its shape fits. Each rule must be the tool's own predicate (imported, not
+// hand-copied) so the scored gate cannot drift from the enforced one: the
+// spawn gate from #83 and, from #84, the pre-spawn shared-write guard —
+// answered by the tool's own validateSharedWriteCwd over the same ref waves
+// the mode handlers check, against the bundled agent roster. Returns
+// { code, reason } so callers phrase their own notes and the refused-call
+// budget can group verdicts by refusal code. Refusal codes outside this
+// seam's vocabulary (unknown agents, per-mode bounds) score as admissible;
+// extending the vocabulary means adding the tool's own predicate here.
+export function callAdmissibilityFailure(args) {
+	if (nonSpawningFlowCall(args ?? {})) return null;
+	if (spawnJustificationMissing(args?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
+	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, args ?? {});
+	if (sharedWrite) return { code: sharedWrite.code, reason: sharedWrite.message.replace(/\.$/, "") };
+	return null;
+}
+
+// The pure shape half of expectation matching: does this call look like the
+// shape, ignoring whether the tool would run it? Kept separate so forbidden
+// shapes can match refused calls too — a guard bypass must not escape its
+// forbidden-shape verdict by being a call the matcher would refuse anyway.
+// Returns a mismatch note, or null when the call matches the shape.
+function flowCallShapeMismatch(args, shape) {
+	const actualMode = modeOf(args);
+	if (shape.preset && args.preset !== shape.preset) {
+		return `expected preset ${shape.preset}, saw ${args.preset ?? "(none)"}`;
+	}
+	const expectedModes = values(shape.mode ?? shape.modes);
+	if (expectedModes.length > 0 && !expectedModes.includes(actualMode)) {
+		return `expected mode ${expectedModes.join("|")}, saw ${actualMode}`;
+	}
+
+	const allowedAgents = values(shape.agent ?? shape.agents);
+	if (allowedAgents.length > 0) {
+		const agents = primaryAgents(args, actualMode);
+		if (agents.length === 0 || !agents.every((agent) => allowedAgents.includes(agent))) {
+			return `expected primary agent(s) ${allowedAgents.join("|")}, saw ${agents.join(",") || "none"}`;
+		}
+	}
+
+	const actualTaskCount = taskCount(args, actualMode);
+	if (shape.minTasks !== undefined && actualTaskCount < shape.minTasks) {
+		return `expected at least ${shape.minTasks} ${actualMode} task(s), saw ${actualTaskCount}`;
+	}
+
+	if (shape.taskPattern && !new RegExp(shape.taskPattern, "i").test(taskText(args))) {
+		return `task did not match /${shape.taskPattern}/`;
+	}
+
+	// Scalar param pins, e.g. { params: { allowSharedWriteCwd: true } }.
+	for (const [key, value] of Object.entries(shape.params ?? {})) {
+		if (!Object.is(args?.[key], value)) {
+			return `expected params.${key}=${JSON.stringify(value)}, saw ${JSON.stringify(args?.[key])}`;
+		}
+	}
+
+	// A disjunction of allowed sub-shapes on top of the shared fields above.
+	if (Array.isArray(shape.anyOf) && shape.anyOf.length > 0) {
+		const mismatches = shape.anyOf.map((arm) => flowCallShapeMismatch(args, arm)).filter((note) => note !== null);
+		if (mismatches.length === shape.anyOf.length) return `no allowed shape matched: ${mismatches.join("; ")}`;
+	}
+
+	return null;
+}
+
+export function flowCallMatchesExpectation(call, expected) {
+	const args = call?.arguments ?? {};
+	const mismatch = flowCallShapeMismatch(args, expected);
+	if (mismatch) return { pass: false, notes: mismatch };
+
+	// Checked after the shape checks so a gate regression is diagnosable as
+	// "picked the right shape but the tool would have refused the call", which
+	// is a different failure from picking the wrong shape.
+	const inadmissible = callAdmissibilityFailure(args);
+	if (inadmissible) {
+		return { pass: false, notes: `${modeOf(args)} call matches the expected shape, but the tool would refuse it before any child spawns: ${inadmissible.reason} (${inadmissible.code})` };
+	}
+
+	return { pass: true, notes: `${modeOf(args)} flow call matched` };
+}
+
+function scoreFlowCallExpectations(testCase, result) {
+	const expectations = values(testCase.expectedFlowCall ?? testCase.expectedFlowCalls);
+	const forbidden = values(testCase.forbiddenFlowCall ?? testCase.forbiddenFlowCalls);
+	const calls = result.flowCallArgs ?? [];
+	if (expectations.length === 0 && forbidden.length === 0 && testCase.maxRefusedCalls === undefined) {
+		return { pass: true, notes: "no flow argument expectation" };
+	}
+	const failures = [];
+
+	// Forbidden shapes are negative properties of the whole run: no emitted
+	// call may match one, whether or not the tool would have refused it.
+	for (const shape of forbidden) {
+		const hits = calls.flatMap((args, index) => (flowCallShapeMismatch(args, shape) === null ? [index + 1] : []));
+		if (hits.length > 0) failures.push(`call ${hits.join(",")} matched the forbidden shape ${JSON.stringify(shape)}`);
+	}
+
+	// The refused-call budget scores recovery discipline: every call the tool
+	// would refuse pre-dispatch burns a turn, and an unchanged or name-only
+	// retry after a refusal is the failure this counts.
+	if (testCase.maxRefusedCalls !== undefined) {
+		const refusals = calls.map((args) => callAdmissibilityFailure(args)).filter(Boolean);
+		if (refusals.length > testCase.maxRefusedCalls) {
+			failures.push(`${refusals.length} call(s) the tool would refuse pre-dispatch (${[...new Set(refusals.map((refusal) => refusal.code))].join(",")}) exceed the case budget of ${testCase.maxRefusedCalls}`);
+		}
+	}
+
+	for (const expectation of expectations) {
+		if (expectation.firstCall) {
+			const match = calls.length > 0
+				? flowCallMatchesExpectation({ arguments: calls[0] }, expectation)
+				: { pass: false, notes: "no flow call was emitted" };
+			if (!match.pass) failures.push(`the first flow call must already satisfy the expectation: ${match.notes}`);
+			continue;
+		}
+		const matches = calls.map((call) => flowCallMatchesExpectation({ arguments: call }, expectation));
+		if (!matches.some((match) => match.pass)) {
+			failures.push(matches[0]?.notes ?? "no flow call matched");
+		}
+	}
+
+	if (failures.length > 0) {
+		return { pass: false, notes: `${failures.join(" | ")}; calls=${JSON.stringify(calls).slice(0, 800)}` };
+	}
+	return { pass: true, notes: "flow arguments matched" };
+}
+
+export function scoreSelection(testCase, result) {
+	if (result.inconclusive || result.timedOut) {
+		return {
+			pass: false,
+			inconclusive: true,
+			selectionOk: null,
+			answerOk: null,
+			argsOk: null,
+			flowUsed: (result.flowCalls ?? result.flowCallArgs?.length ?? 0) > 0,
+			notes: result.error ?? "selection arm was excluded by infrastructure",
+		};
+	}
+	const flowUsed = (result.flowCalls ?? result.flowCallArgs?.length ?? 0) > 0;
+	const selectionOk = flowUsed === testCase.expectFlow;
+	const answerRequired = testCase.answerPattern && !(testCase.expectFlow && result.stoppedAfterFlowCall);
+	const answerOk = answerRequired ? new RegExp(testCase.answerPattern, "i").test(result.answer ?? "") : true;
+	const argsOk = testCase.expectFlow ? scoreFlowCallExpectations(testCase, result) : { pass: true, notes: "no flow expected" };
+	return {
+		pass: !result.error && selectionOk && answerOk && argsOk.pass,
+		selectionOk,
+		answerOk,
+		argsOk: argsOk.pass,
+		flowUsed,
+		notes: result.error
+			? result.error
+			: selectionOk
+				? answerOk
+					? argsOk.pass ? "selection, arguments, and answer matched" : argsOk.notes
+					: "selection matched; answer did not"
+				: `expected flow=${testCase.expectFlow}, saw flow=${flowUsed}`,
+	};
+}
+
+export function selectionExitCode({ failed, comparable }) {
+	return failed === 0 && comparable > 0 ? 0 : 1;
+}

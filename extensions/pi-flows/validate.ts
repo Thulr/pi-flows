@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
 import { safePath } from "./sanitize.ts";
+import { searchTopology } from "./topology.ts";
 
 export function parseToolsOverride(tools: string | undefined, fallback: string[] | undefined): string[] | undefined {
 	if (!tools) return fallback;
@@ -110,6 +111,95 @@ export function validateSharedWriteCwd(
 	const mutating = refs.filter((ref) => canMutateWorkspace(discovery, ref));
 	if (mutating.length <= 1) return null;
 	return sharedWriteCwdError(discovery, defaultCwd, mutating);
+}
+
+type SharedWriteRef = { agent: string; cwd?: string; tools?: string };
+
+/**
+ * Model-controlled params may put anything where a ref list belongs — a
+ * non-array, or nulls and scalars among the refs. The mirror sees such args
+ * before any schema validation, so it keeps only object refs: a malformed
+ * list is a smaller (or empty) wave, never a crash. The tool itself refuses
+ * these calls at its schema layer — a refusal outside this seam's vocabulary.
+ */
+function refArray(value: unknown): SharedWriteRef[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((ref): ref is SharedWriteRef => Boolean(ref) && typeof ref === "object");
+}
+
+/**
+ * The concurrent ref waves a call would run before any child spawns, derived
+ * from call params exactly as each guard-bearing mode handler derives the refs
+ * it passes to validateSharedWriteCwd ahead of its first spawn. Modes that
+ * never run concurrent same-cwd children (single, chain, route, loop,
+ * workflow, monitor, worktree — each writer gets its own worktree) contribute
+ * nothing, and so does orchestrate, whose guard fires only after its recon
+ * child has already run. A call activating several modes at once is refused by
+ * the tool (INVALID_MODE); this mirror just takes the first activator, in
+ * modeOf's order. A call that a handler would refuse before its guard (for
+ * example TOO_MANY_TASKS or TOO_FEW_VOTERS) is still refused pre-spawn, so
+ * this mirror does not repeat those bounds; it answers only whether the
+ * shared-write guard would fire on the refs it can see. Callers feed it
+ * model-emitted args verbatim, so every derivation must be total — malformed
+ * shapes yield empty waves, not throws. tests/admissibility-scoring.test.ts
+ * pins each derivation against the real handler, so a handler edit that moves
+ * or reshapes a guard fails a test instead of silently drifting from this
+ * mirror.
+ */
+export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWriteRef[][] {
+	if (Array.isArray(params?.tasks) && params.tasks.length > 0) return [refArray(params.tasks)];
+	if (params?.evaluate !== undefined) {
+		const spec = params.evaluate ?? {};
+		const evaluators = (Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }])
+			.filter((ref: any): ref is SharedWriteRef => Boolean(ref) && typeof ref.agent === "string")
+			.slice(0, MAX_PARALLEL_TASKS);
+		return [evaluators.length > 0 ? evaluators : [{ agent: "redteam" }]];
+	}
+	if (params?.vote !== undefined) {
+		const spec = params.vote ?? {};
+		if (Array.isArray(spec.voters) && spec.voters.length > 0) return [refArray(spec.voters)];
+		if (spec.agent) {
+			// The handler replicates the agent `count` times unclamped; two repeats
+			// already decide the guard verdict, so bounding the replication here
+			// changes no verdict while keeping a hostile count from allocating.
+			const count = Number.isFinite(spec.count) ? Math.floor(spec.count) : 3;
+			return [Array.from({ length: Math.min(Math.max(count, 0), MAX_PARALLEL_TASKS) }, () => ({ agent: spec.agent as string }))];
+		}
+		return [];
+	}
+	if (params?.graph !== undefined) {
+		// Only the first wave is knowable pre-spawn: nodes with no dependencies.
+		return [(refArray(params.graph?.nodes) as Array<SharedWriteRef & { dependsOn?: string[] }>).filter((node) => (node?.dependsOn ?? []).length === 0)];
+	}
+	if (params?.search !== undefined) {
+		const spec = params.search ?? {};
+		const generator: SharedWriteRef = spec.generator ?? { agent: "strategist" };
+		const scorer: SharedWriteRef = spec.scorer ?? { agent: "redteam", tools: "none" };
+		const { candidateCount } = searchTopology(spec);
+		return [
+			Array.from({ length: candidateCount }, () => generator),
+			Array.from({ length: candidateCount }, () => scorer),
+		];
+	}
+	if (params?.debate !== undefined) return [refArray(params.debate?.participants)];
+	if (params?.dossier !== undefined) return [refArray(params.dossier?.sections)];
+	return [];
+}
+
+/**
+ * Would the shared-write guard refuse this call before any child spawns? The
+ * selection eval imports this beside spawnJustificationMissing so "would the
+ * tool have refused this call" stays one uniform question across refusal
+ * codes, answered by the tool's own guard (validateSharedWriteCwd) over the
+ * same waves the handlers check.
+ */
+export function preSpawnSharedWriteRefusal(discovery: FlowDiscovery, defaultCwd: string, params: Record<string, any>): FlowError | null {
+	const concurrency = params?.concurrency ?? DEFAULT_CONCURRENCY;
+	for (const wave of preSpawnSharedWriteWaves(params)) {
+		const error = validateSharedWriteCwd(discovery, defaultCwd, wave, params?.allowSharedWriteCwd, concurrency);
+		if (error) return error;
+	}
+	return null;
 }
 
 export function validateConcurrency(value: number | undefined): FlowError | null {
