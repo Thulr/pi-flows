@@ -262,26 +262,33 @@ export function preSpawnFanoutRefusal(params: Record<string, any>): FlowError | 
  * first-spawn ref names an unknown agent is refused by the runner
  * (UNKNOWN_AGENT, runner.ts) before any child does work, so the harness can
  * safely let it play out; one known ref among them means real children spawn
- * and the call must count as admitted. Monitor is excluded: its command runs
- * before its reactor would be looked up. Worktree is excluded for the same
- * reason: handleWorktree creates every branch and worktree before the runner
- * resolves any agent, so an unknown-agent refusal there is not a
- * before-any-work refusal — real repository state exists by then.
+ * and the call must count as admitted. Three modes do work before any agent
+ * resolves and are excluded outright: monitor runs its command first,
+ * worktree creates every branch and worktree first (worktree.ts), and
+ * workflow persists fresh state first — to a possibly model-supplied
+ * stateFile (workflow.ts) — so unknown-agent refusals there are not
+ * before-any-work refusals.
  */
 export function firstSpawnAgentRefs(params: Record<string, any>): SharedWriteRef[] {
 	// Evaluate's guard wave is its critic panel, but its generator spawns
-	// first, so it must be resolved ahead of the wave-derived modes.
+	// first, so it must be resolved ahead of the wave-derived modes — and
+	// search scores all generators before any scorer runs (SEARCH_NO_CANDIDATES
+	// ends the call when none produced a candidate), so only its generator
+	// wave spawns first.
 	if (params?.evaluate !== undefined && !Array.isArray(params?.tasks)) {
 		return refArray([params.evaluate?.operator ?? { agent: "operator" }]);
+	}
+	if (params?.search !== undefined && !Array.isArray(params?.tasks)) {
+		return preSpawnSharedWriteWaves(params)[0] ?? [];
 	}
 	const fromWaves = preSpawnSharedWriteWaves(params).flat();
 	if (fromWaves.length > 0) return fromWaves;
 	if (params?.agent && (params?.task || params?.contract)) return refArray([{ agent: params.agent }]);
 	if (Array.isArray(params?.chain) && params.chain.length > 0) return refArray([params.chain[0]]);
 	if (params?.route !== undefined) return refArray([params.route?.controller ?? { agent: "controller" }]);
-	if (params?.orchestrate !== undefined) return refArray([params.orchestrate?.recon ?? { agent: "recon" }]);
+	// Orchestrate's commander decomposes the goal before any recon worker runs.
+	if (params?.orchestrate !== undefined) return refArray([params.orchestrate?.commander ?? { agent: "commander" }]);
 	if (params?.loop !== undefined) return refArray([params.loop?.body]);
-	if (params?.workflow !== undefined) return refArray([Array.isArray(params.workflow?.phases) ? params.workflow.phases[0] : undefined]);
 	return [];
 }
 

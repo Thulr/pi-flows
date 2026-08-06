@@ -147,9 +147,15 @@ function taskCount(args, mode) {
 	if (mode === "worktree") return args.worktree?.tasks?.length ?? 0;
 	if (mode === "debate") return args.debate?.participants?.length ?? 0;
 	if (mode === "dossier") return args.dossier?.sections?.length ?? 0;
-	// Mirrors handleVote's voter construction: an explicit voters list, else
-	// the replicated count, else the handler's default of three.
-	if (mode === "vote") return args.vote?.voters?.length ?? (Number.isFinite(args.vote?.count) ? Math.floor(args.vote.count) : 3);
+	// Mirrors handleVote's voter construction: a NON-EMPTY explicit voters
+	// list, else the replicated count, else the handler's default of three —
+	// an empty voters list is ignored by the handler, so it must not zero the
+	// count here either.
+	if (mode === "vote") {
+		const voters = args.vote?.voters;
+		if (Array.isArray(voters) && voters.length > 0) return voters.length;
+		return Number.isFinite(args.vote?.count) ? Math.floor(args.vote.count) : 3;
+	}
 	return 0;
 }
 
@@ -331,7 +337,9 @@ function flowCallShapeMismatch(args, shape) {
 			chain: args.chain,
 			worktree: args.worktree?.tasks,
 			dossier: args.dossier?.sections,
-			vote: args.vote?.voters,
+			// The handler ignores an empty voters list in favor of replication,
+			// so only a non-empty list carries per-role names here.
+			vote: Array.isArray(args.vote?.voters) && args.vote.voters.length > 0 ? args.vote.voters : undefined,
 		}[actualMode];
 		const names = Array.isArray(roleRefs)
 			? roleRefs.map((role) => (typeof role?.agent === "string" && role.agent ? role.agent : "(unnamed)"))

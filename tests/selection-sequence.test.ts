@@ -156,15 +156,45 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 	// Sequential openers are covered too: a single-mode call to an invented
 	// agent spawns nothing.
 	assert.equal(callAdmissibilityFailure({ why: "x", agent: "made-up-agent", task: "t" })?.code, "UNKNOWN_AGENT");
-	// Worktree is deliberately outside the rule: handleWorktree creates every
-	// branch and worktree before any agent resolves, so an unknown-agent
-	// refusal there happens after real repository state exists — the call is
-	// admitted and the harness terminates before that work begins.
+	// Worktree and workflow are deliberately outside the rule: handleWorktree
+	// creates every branch and worktree before any agent resolves, and
+	// handleWorkflow persists fresh state — to a possibly model-supplied
+	// stateFile — first, so unknown-agent refusals there happen after real
+	// state exists. Such calls are admitted and the harness terminates before
+	// that work begins.
 	assert.equal(callAdmissibilityFailure({
 		why: "x",
 		task: "t",
 		worktree: { tasks: [{ id: "a", agent: "made-up", task: "A" }, { id: "b", agent: "also-made-up", task: "B" }] },
 	}), null);
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		workflow: { phases: [{ id: "a", agent: "made-up", task: "A" }], stateFile: "package.json" },
+	}), null);
+	// Spawn order per mode: orchestrate's commander decomposes before any
+	// recon worker, so an invented recon with the default commander is
+	// admitted, while an invented commander is refused before any child runs.
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", orchestrate: { recon: { agent: "made-up" } } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", orchestrate: { commander: { agent: "made-up" } } })?.code, "UNKNOWN_AGENT");
+	// Search runs every generator before any scorer; an invented generator
+	// yields SEARCH_NO_CANDIDATES with no child work even when the scorer is
+	// bundled, so the bundled scorer must not admit the call. (The scorer is
+	// read-only here because a write-capable scorer wave legitimately trips
+	// the shared-write guard first, exactly as the handler checks it.)
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", search: { generator: { agent: "made-up" }, scorer: { agent: "analyst" } } })?.code, "UNKNOWN_AGENT");
+});
+
+test("an empty explicit voter list falls back to replication, as the handler does", () => {
+	// handleVote ignores voters:[] in favor of agent+count; zeroing the count
+	// here failed a valid two-reviewer topology as a false negative.
+	const emptyVotersCall = {
+		why: "independent review of uncommitted changes",
+		task: "Review the uncommitted changes in this working tree.",
+		vote: { voters: [], agent: "recon", count: 2 },
+	};
+	const result = scored([emptyVotersCall]);
+	assert.equal(result.pass, true, result.notes);
 });
 
 test("an unnamed role cannot slip past knownAgentsOnly", () => {
