@@ -142,6 +142,9 @@ register([
 	"explicit-adversarial-decision-uses-debate",
 ], "capability", "delegation-selection", decision);
 register([
+	"independent-review-safe-first-call",
+], "regression", "delegation-selection", review);
+register([
 	"implicit-evidence-corpus-uses-dossier",
 ], "capability", "delegation-selection", dossier);
 register([
@@ -302,6 +305,109 @@ function sourceSnapshotIssues(snapshots, repoRoot) {
 	return issues;
 }
 
+function asList(value) {
+	if (value === undefined) return [];
+	return Array.isArray(value) ? value : [value];
+}
+
+// The scorer reads exactly these shape fields; anything else is a typo the
+// scorer would silently ignore. firstCall is meaningful only on a top-level
+// expectation — inside anyOf arms and forbidden shapes it would be a silent
+// no-op, so it is unknown there.
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly"]);
+
+function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
+	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
+	const issues = [];
+	if (requireNonEmpty && Object.keys(shape).length === 0) {
+		issues.push(`${label} must name at least one field — an empty forbidden shape would match every call`);
+	}
+	// A top-level expectation carrying no shape field (empty, or firstCall
+	// alone) matches any admitted call, silently disabling the argument
+	// constraints the case appears to have.
+	if (!requireNonEmpty && !Object.keys(shape).some((key) => SHAPE_KEYS.has(key))) {
+		issues.push(`${label} must name at least one shape field (${[...SHAPE_KEYS].join(", ")}) — otherwise any admitted call matches`);
+	}
+	for (const key of Object.keys(shape)) {
+		if (!SHAPE_KEYS.has(key) && !(allowFirstCall && key === "firstCall")) {
+			issues.push(`${label}.${key} is not a shape field the scorer reads (known: ${[...SHAPE_KEYS, ...(allowFirstCall ? ["firstCall"] : [])].join(", ")})`);
+		}
+	}
+	// A present-but-vacuous predicate constrains nothing: an empty params
+	// object or agent list matches every call (and, as a forbidden shape,
+	// rejects every call), silently — the same trap as an unknown key.
+	for (const listField of ["mode", "modes", "agent", "agents"]) {
+		if (Array.isArray(shape[listField]) && shape[listField].length === 0) {
+			issues.push(`${label}.${listField} must not be an empty list — it would constrain nothing`);
+		}
+	}
+	for (const patternField of ["preset", "taskPattern", "everyTaskPattern"]) {
+		if (shape[patternField] !== undefined && (typeof shape[patternField] !== "string" || shape[patternField] === "")) {
+			issues.push(`${label}.${patternField} must be a non-empty string`);
+		}
+	}
+	if (shape.firstCall !== undefined && typeof shape.firstCall !== "boolean") {
+		issues.push(`${label}.firstCall must be a boolean`);
+	}
+	if (shape.knownAgentsOnly !== undefined && shape.knownAgentsOnly !== true) {
+		issues.push(`${label}.knownAgentsOnly must be true when present — false is the default and would constrain nothing`);
+	}
+	if (shape.minTasks !== undefined && (!Number.isInteger(shape.minTasks) || shape.minTasks < 1)) {
+		issues.push(`${label}.minTasks must be a positive integer — anything else makes the comparison vacuous`);
+	}
+	for (const patternField of ["taskPattern", "everyTaskPattern"]) {
+		if (shape[patternField] === undefined) continue;
+		try {
+			new RegExp(shape[patternField], "i");
+		} catch {
+			issues.push(`${label}.${patternField} is not a valid regular expression`);
+		}
+	}
+	if (shape.params !== undefined) {
+		if (!shape.params || typeof shape.params !== "object" || Array.isArray(shape.params)) {
+			issues.push(`${label}.params must be an object of scalar pins`);
+		} else if (Object.keys(shape.params).length === 0) {
+			issues.push(`${label}.params must pin at least one value — an empty pin set would constrain nothing`);
+		} else {
+			for (const [key, value] of Object.entries(shape.params)) {
+				if (!["boolean", "number", "string"].includes(typeof value)) {
+					issues.push(`${label}.params.${key} must pin a boolean, number, or string`);
+				}
+			}
+		}
+	}
+	if (shape.anyOf !== undefined) {
+		if (!Array.isArray(shape.anyOf) || shape.anyOf.length === 0) {
+			issues.push(`${label}.anyOf must be a non-empty array of shapes`);
+		} else {
+			for (const [index, arm] of shape.anyOf.entries()) {
+				issues.push(...flowCallShapeIssues(`${label}.anyOf[${index}]`, arm, { requireNonEmpty: true }));
+			}
+		}
+	}
+	return issues;
+}
+
+/**
+ * The sequence predicates are opt-in per case and silently doing nothing is
+ * their worst failure mode, so a typo'd field must fail corpus preflight
+ * before any model is invoked.
+ */
+function sequencePredicateIssues(testCase) {
+	const label = testCase?.id ?? testCase?.name ?? "<unnamed>";
+	const issues = [];
+	for (const [index, expectation] of asList(testCase?.expectedFlowCall ?? testCase?.expectedFlowCalls).entries()) {
+		issues.push(...flowCallShapeIssues(`${label}.expectedFlowCalls[${index}]`, expectation, { requireNonEmpty: false, allowFirstCall: true }));
+	}
+	for (const [index, shape] of asList(testCase?.forbiddenFlowCall ?? testCase?.forbiddenFlowCalls).entries()) {
+		issues.push(...flowCallShapeIssues(`${label}.forbiddenFlowCalls[${index}]`, shape, { requireNonEmpty: true }));
+	}
+	if (testCase?.maxRefusedCalls !== undefined && (!Number.isInteger(testCase.maxRefusedCalls) || testCase.maxRefusedCalls < 0)) {
+		issues.push(`${label}.maxRefusedCalls must be a non-negative integer`);
+	}
+	return issues;
+}
+
 function caseIssues(testCase, repoRoot) {
 	const label = testCase?.id ?? testCase?.name ?? "<unnamed>";
 	const issues = [];
@@ -318,6 +424,7 @@ function caseIssues(testCase, repoRoot) {
 	if (typeof testCase?.answerPattern === "string" && typeof testCase?.mock?.answer === "string") {
 		issues.push(...patternIssues(`${label}.mock.answer`, testCase.mock.answer, [testCase.answerPattern]));
 	}
+	issues.push(...sequencePredicateIssues(testCase));
 	issues.push(...sourceExpectationIssues(testCase, repoRoot));
 	return issues;
 }

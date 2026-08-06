@@ -625,18 +625,81 @@ shape — for example read-only scouting should become single-agent `recon` or
 become `evaluate`, and broad split/synthesize mapping should become `orchestrate`
 or an equivalent parallel fan-out. Argument scoring also checks admissibility:
 a call the tool would refuse before any child spawns is not a correct selection,
-however well its shape fits. The spawn gate is scored uniformly across every
-spawning mode — a missing or blank `why` (`WHY_REQUIRED`) fails the match with a
-note that distinguishes "right shape, refused call" from a shape mismatch; the
-predicate is imported from the extension so the scored rule cannot drift from the
-enforced one. The new mode thresholds are paired explicitly:
+however well its shape fits. "Would the tool have refused this call" is one
+uniform question across refusal codes: the public schema itself
+(`SCHEMA_INVALID` — pi refuses a call outside the flow schema at parameter
+validation, before `execute` and therefore before every gate below), mode
+detection (`INVALID_MODE`, zero or several active modes), the spawn gate
+(`WHY_REQUIRED`, a missing or blank `why`), the depth guard
+(`FLOW_DEPTH_EXCEEDED`, inherited `PI_FLOWS_DEPTH` at the cap), the
+concurrency bound (`INVALID_CONCURRENCY`), the fan-out bound
+(`TOO_MANY_TASKS`, more tasks than the cap), the budget gate
+(`BUDGET_EXCEEDED`, a zero flow ceiling — or every first-spawn role's
+contract budget starting exhausted), pre-work mode validation
+(`MONITOR_INVALID`, `GRAPH_CYCLE`, and the shape-invisible preset resolution
+failures `PRESET_EXPANSION_INVALID`/`PRESET_TASK_REQUIRED`), the pre-spawn
+shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable refs sharing
+one cwd at concurrency above one), the roster rule (`UNKNOWN_AGENT`, no
+first-spawn role naming a bundled agent — one known ref means real children
+spawn and the call counts as admitted), the strict-trace gate
+(`TRACE_INCOMPLETE`, strict tracing with no trace destination), and the
+headless checkpoint gate (`CHECKPOINT_APPROVAL_REQUIRED`, a spawn-gating
+checkpoint in the UI-less subject) are all scored across every spawning mode,
+in the dispatch core's order, with a note that distinguishes "right shape,
+refused call" from a shape mismatch. A refusal the vocabulary cannot
+name keeps the seam silent rather than mislabeled — a failed preset
+resolution scores as admissible exactly because the tool never reaches the
+scored gates for it — and the refused-call budget counts only what the
+vocabulary names. Each rule is the tool's own
+predicate imported from the extension — the shared-write verdict comes from
+`validateSharedWriteCwd` over the same ref waves the mode handlers check,
+resolved against the bundled agent roster so the verdict is a property of the
+case rather than of the local `~/.pi/flow-agents` — and a preset call is scored
+on its expanded topology via the tool's own `resolveFlowPreset`, so a permitted
+override that un-serializes a preset is scored as the refusal it becomes.
+`tests/admissibility-scoring.test.ts` pins each wave derivation against the real
+handler so the scored gate cannot drift from the enforced one. Refusal codes
+outside that vocabulary (unknown agents, per-mode bounds such as
+`TOO_FEW_VOTERS`) score as admissible until the tool's own predicate for them is
+added to the seam.
+
+Beyond per-call shape, a case can opt into sequence properties of the whole run:
+`firstCall: true` on an expectation requires the **first** emitted flow call to
+satisfy it (not merely some later call after refusals), `forbiddenFlowCalls`
+lists shapes no emitted call may match (matched purely on shape, so a refused
+call cannot escape its forbidden verdict), and `maxRefusedCalls` bounds how many
+calls in the run may be ones the tool would refuse pre-dispatch, so an unchanged
+or name-only retry after a refusal is scored as the failure it is. Expectations
+compose with `anyOf` (a disjunction of allowed sub-shapes over shared fields),
+`params` (scalar pins such as `{ allowSharedWriteCwd: true }`), and
+`everyTaskPattern` (role-by-role intent binding: every assigned task must match
+on its own, so one on-topic task cannot vouch for off-topic siblings the way
+the run-wide `taskPattern` concatenation would allow), and `knownAgentsOnly`
+(every named role must resolve in the bundled roster, so a mixed fan-out whose
+invented sibling the runner would refuse cannot pass as the full requested
+fan-out); corpus preflight validates all of these fields — including
+unknown-key and vacuous-value rejection — so a typo'd predicate fails before
+any model is invoked. The `independent-review-safe-first-call` case reproduces the
+issue-#82 transcript with all three: review-of-uncommitted-changes intent must
+pick the `code-review` preset, a serialized or read-only fan-out, or an
+independent-voter panel on the first call, must never set
+`allowSharedWriteCwd:true`, and gets a budget of one pre-dispatch refusal — so
+the observed refuse/retry/bypass sequence fails on measurement on all three
+axes. Worktree isolation is deliberately not an allowed arm there: worktree
+mode refuses a dirty source by default and branches its workers from committed
+HEAD, so it cannot review uncommitted state. The new mode thresholds are
+paired explicitly:
 one typo is not `workflow`, one branch lookup or ordinary two-file fix is not
 `worktree`, an unrequested constrained decision is not `debate`, one source is not
 `dossier`, and one status command is not `monitor`; gated/resumable phases,
 isolation-critical writers, explicitly requested opposition, multi-source
 reconciliation, and bounded trigger/react prompts are the positive controls. For
-positive cases the harness stops after the real `flow`
-execution starts and captures the final streamed arguments. Child-agent output
+positive cases the harness terminates before an admitted `flow` call fans out
+and captures the final streamed arguments; a call the tool would refuse
+pre-dispatch is allowed to play out instead — the refusal returns before any
+child spawns, and what the model does next is exactly what the sequence
+predicates score — capped at five observed executions so a refusal loop cannot
+spend the whole case timeout. Child-agent output
 quality belongs to the main flow evals; this suite gates whether and how the parent
 delegates. A case-level `timeoutMs` takes precedence over the CLI fallback clock;
 when that clock expires, the case is reported as `INCONCLUSIVE` and removed from
