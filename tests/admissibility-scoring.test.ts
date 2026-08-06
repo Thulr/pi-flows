@@ -125,6 +125,8 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 		{ graph: { nodes: [{ id: "a", agent: "operator", task: "A", dependsOn: 42 }] } },
 		{ graph: { nodes: [{ id: "a", agent: "operator", task: "A", dependsOn: { on: "b" } }] } },
 		{ workflow: { phases: "analyze,then,apply" } },
+		{ tasks: [{ agent: "operator", task: "A", tools: {} }, { agent: "operator", task: "B", cwd: 123 }] },
+		{ evaluate: { redteam: [{ agent: "operator", tools: 7 }, { agent: "operator", cwd: ["x"] }] } },
 		{ evaluate: { redteam: "operator" } },
 		{ search: { generator: "operator" } },
 		{ vote: {} },

@@ -159,6 +159,32 @@ function taskCount(args, mode) {
 	return 0;
 }
 
+// Role-preserving agent names for the modes whose roles carry their own
+// refs: an agent-less counted role contributes "(unnamed)" rather than
+// vanishing, so neither the allowed-agents predicate nor knownAgentsOnly can
+// be satisfied by the named subset of a fan-out (the tool refuses the
+// unnamed role at its schema layer — the shape must not pass what cannot
+// run). Vote mirrors handleVote: a non-empty voters list carries the names;
+// otherwise the one replicated agent does, and its absence is itself
+// "(unnamed)" — the handler refuses that call for having no voters at all.
+// Other modes keep primaryAgents' role/default semantics.
+function perRoleAgentNames(args, mode) {
+	const roleRefs = {
+		parallel: args.tasks,
+		chain: args.chain,
+		worktree: args.worktree?.tasks,
+		dossier: args.dossier?.sections,
+		vote: Array.isArray(args.vote?.voters) && args.vote.voters.length > 0 ? args.vote.voters : undefined,
+	}[mode];
+	if (Array.isArray(roleRefs)) {
+		return roleRefs.map((role) => (typeof role?.agent === "string" && role.agent ? role.agent : "(unnamed)"));
+	}
+	if (mode === "vote") {
+		return typeof args.vote?.agent === "string" && args.vote.agent ? [args.vote.agent] : ["(unnamed)"];
+	}
+	return primaryAgents(args, mode);
+}
+
 // The per-role task strings a call actually assigns, for modes whose roles
 // carry their own tasks; modes whose roles share the top-level task (vote,
 // preset, single, evaluate, …) contribute that. Distinct from taskText, which
@@ -290,7 +316,7 @@ function flowCallShapeMismatch(args, shape) {
 
 	const allowedAgents = values(shape.agent ?? shape.agents);
 	if (allowedAgents.length > 0) {
-		const agents = primaryAgents(args, actualMode);
+		const agents = perRoleAgentNames(args, actualMode);
 		if (agents.length === 0 || !agents.every((agent) => allowedAgents.includes(agent))) {
 			return `expected primary agent(s) ${allowedAgents.join("|")}, saw ${agents.join(",") || "none"}`;
 		}
@@ -327,24 +353,10 @@ function flowCallShapeMismatch(args, shape) {
 	// Admissibility only refuses when NO first-spawn ref is known (one known
 	// ref spawns real children); this shape rule is how a case says a mixed
 	// fan-out — an invented or unnamed sibling silently halving the requested
-	// independence — is not the topology it asked for. Role-preserving like
-	// everyTaskPattern: an agent-less role contributes "(unnamed)" rather
-	// than vanishing before the check.
+	// independence — is not the topology it asked for.
 	if (shape.knownAgentsOnly) {
 		const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
-		const roleRefs = {
-			parallel: args.tasks,
-			chain: args.chain,
-			worktree: args.worktree?.tasks,
-			dossier: args.dossier?.sections,
-			// The handler ignores an empty voters list in favor of replication,
-			// so only a non-empty list carries per-role names here.
-			vote: Array.isArray(args.vote?.voters) && args.vote.voters.length > 0 ? args.vote.voters : undefined,
-		}[actualMode];
-		const names = Array.isArray(roleRefs)
-			? roleRefs.map((role) => (typeof role?.agent === "string" && role.agent ? role.agent : "(unnamed)"))
-			: primaryAgents(args, actualMode);
-		const unknown = names.filter((name) => !known.has(name));
+		const unknown = perRoleAgentNames(args, actualMode).filter((name) => !known.has(name));
 		if (unknown.length > 0) return `role agent(s) ${[...new Set(unknown)].join(", ")} are not bundled flow agents`;
 	}
 

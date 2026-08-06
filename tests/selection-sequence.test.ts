@@ -197,6 +197,32 @@ test("an empty explicit voter list falls back to replication, as the handler doe
 	assert.equal(result.pass, true, result.notes);
 });
 
+test("the agents allowlist is role-preserving too — a named subset cannot satisfy it", () => {
+	// implicit-parallel-doc-check-uses-parallel pins agents recon|analyst with
+	// minTasks 2; one named recon plus an unnamed role counts for minTasks but
+	// the unnamed role cannot run, so the allowlist must see "(unnamed)".
+	const expectation = { mode: "parallel", agents: ["recon", "analyst"], minTasks: 2 };
+	const match = flowCallMatchesExpectation({ arguments: {
+		why: "docs check",
+		tasks: [{ agent: "recon", task: "Inspect README." }, { task: "Inspect docs." }],
+	} }, expectation);
+	assert.equal(match.pass, false);
+	assert.match(match.notes, /saw recon,\(unnamed\)/);
+});
+
+test("a replicated vote with no agent is unnamed, not vacuously known", () => {
+	// handleVote refuses {vote:{count:2}} for naming no voters at all;
+	// taskCount still reports two, so knownAgentsOnly must see "(unnamed)"
+	// instead of an empty (and therefore passing) name list.
+	const result = scored([{
+		why: "independent review of uncommitted changes",
+		task: "Review the uncommitted changes in this working tree.",
+		vote: { count: 2 },
+	}]);
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /\(unnamed\) are not bundled flow agents/);
+});
+
 test("an unnamed role cannot slip past knownAgentsOnly", () => {
 	// minTasks counts the agent-less role and its task text matches, but the
 	// schema requires an agent for it to run; role-preserving agent naming

@@ -117,17 +117,28 @@ type SharedWriteRef = { agent: string; cwd?: string; tools?: string };
 
 /**
  * Model-controlled params may put anything where a ref list belongs — a
- * non-array, or nulls and scalars among the refs. The mirror sees such args
- * before any schema validation, so it keeps only refs that actually name an
- * agent: a malformed list is a smaller (or empty) wave, never a crash, and
- * dropping agent-less entries changes no verdict because an unnamed ref can
- * never resolve to a write-capable toolset. The tool itself refuses these
- * calls at its schema layer — a refusal outside this seam's vocabulary.
+ * non-array, nulls and scalars among the refs, or garbage in a ref's own
+ * fields. The mirror sees such args before any schema validation, so it
+ * keeps only refs that actually name an agent and rebuilds each with only
+ * the string-typed fields the guard path consumes (parseToolsOverride trims
+ * tools; resolvedCwd resolves cwd): a malformed list is a smaller (or empty)
+ * wave and a malformed field is an absent one, never a crash. Dropping
+ * agent-less entries changes no verdict because an unnamed ref can never
+ * resolve to a write-capable toolset. The tool itself refuses these calls at
+ * its schema layer — a refusal outside this seam's vocabulary.
  */
 function refArray(value: unknown): SharedWriteRef[] {
 	if (!Array.isArray(value)) return [];
-	return value.filter((ref): ref is SharedWriteRef =>
-		Boolean(ref) && typeof ref === "object" && !Array.isArray(ref) && typeof (ref as { agent?: unknown }).agent === "string");
+	return value.flatMap((ref): SharedWriteRef[] => {
+		if (!ref || typeof ref !== "object" || Array.isArray(ref)) return [];
+		const { agent, cwd, tools } = ref as { agent?: unknown; cwd?: unknown; tools?: unknown };
+		if (typeof agent !== "string") return [];
+		return [{
+			agent,
+			...(typeof cwd === "string" ? { cwd } : {}),
+			...(typeof tools === "string" ? { tools } : {}),
+		}];
+	});
 }
 
 /**
@@ -159,8 +170,7 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 	}
 	if (params?.evaluate !== undefined) {
 		const spec = params.evaluate ?? {};
-		const evaluators = (Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }])
-			.filter((ref: any): ref is SharedWriteRef => Boolean(ref) && typeof ref.agent === "string")
+		const evaluators = refArray(Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }])
 			.slice(0, MAX_PARALLEL_TASKS);
 		return [evaluators.length > 0 ? evaluators : [{ agent: "redteam" }]];
 	}
@@ -208,7 +218,9 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 				if (!ids.has(dep)) return [];
 			}
 		}
-		return [(refArray(nodes) as Array<SharedWriteRef & { dependsOn?: string[] }>).filter((node) => dependsOn(node).length === 0)];
+		// Select the dependency-free wave BEFORE sanitizing: refArray rebuilds
+		// refs without dependsOn, so filtering after it would take every node.
+		return [refArray(nodes.filter((node: any) => dependsOn(node).length === 0))];
 	}
 	if (params?.search !== undefined) {
 		const spec = params.search ?? {};
