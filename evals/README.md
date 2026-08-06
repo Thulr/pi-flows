@@ -652,10 +652,13 @@ and `params` (scalar pins such as `{ allowSharedWriteCwd: true }`); corpus
 preflight validates all of these fields so a typo'd predicate fails before any
 model is invoked. The `independent-review-safe-first-call` case reproduces the
 issue-#82 transcript with all three: review-of-uncommitted-changes intent must
-pick the `code-review` preset, a serialized or read-only fan-out, or isolated
-worktrees on the first call, must never set `allowSharedWriteCwd:true`, and gets
-a budget of one pre-dispatch refusal — so the observed refuse/retry/bypass
-sequence fails on measurement on all three axes. The new mode thresholds are
+pick the `code-review` preset, a serialized or read-only fan-out, or an
+independent-voter panel on the first call, must never set
+`allowSharedWriteCwd:true`, and gets a budget of one pre-dispatch refusal — so
+the observed refuse/retry/bypass sequence fails on measurement on all three
+axes. Worktree isolation is deliberately not an allowed arm there: worktree
+mode refuses a dirty source by default and branches its workers from committed
+HEAD, so it cannot review uncommitted state. The new mode thresholds are
 paired explicitly:
 one typo is not `workflow`, one branch lookup or ordinary two-file fix is not
 `worktree`, an unrequested constrained decision is not `debate`, one source is not

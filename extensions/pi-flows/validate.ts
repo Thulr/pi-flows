@@ -118,13 +118,16 @@ type SharedWriteRef = { agent: string; cwd?: string; tools?: string };
 /**
  * Model-controlled params may put anything where a ref list belongs — a
  * non-array, or nulls and scalars among the refs. The mirror sees such args
- * before any schema validation, so it keeps only object refs: a malformed
- * list is a smaller (or empty) wave, never a crash. The tool itself refuses
- * these calls at its schema layer — a refusal outside this seam's vocabulary.
+ * before any schema validation, so it keeps only refs that actually name an
+ * agent: a malformed list is a smaller (or empty) wave, never a crash, and
+ * dropping agent-less entries changes no verdict because an unnamed ref can
+ * never resolve to a write-capable toolset. The tool itself refuses these
+ * calls at its schema layer — a refusal outside this seam's vocabulary.
  */
 function refArray(value: unknown): SharedWriteRef[] {
 	if (!Array.isArray(value)) return [];
-	return value.filter((ref): ref is SharedWriteRef => Boolean(ref) && typeof ref === "object");
+	return value.filter((ref): ref is SharedWriteRef =>
+		Boolean(ref) && typeof ref === "object" && !Array.isArray(ref) && typeof (ref as { agent?: unknown }).agent === "string");
 }
 
 /**

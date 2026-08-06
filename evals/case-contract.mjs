@@ -310,11 +310,22 @@ function asList(value) {
 	return Array.isArray(value) ? value : [value];
 }
 
-function flowCallShapeIssues(label, shape, { requireNonEmpty }) {
+// The scorer reads exactly these shape fields; anything else is a typo the
+// scorer would silently ignore. firstCall is meaningful only on a top-level
+// expectation — inside anyOf arms and forbidden shapes it would be a silent
+// no-op, so it is unknown there.
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "taskPattern", "params", "anyOf"]);
+
+function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
 	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
 	const issues = [];
 	if (requireNonEmpty && Object.keys(shape).length === 0) {
 		issues.push(`${label} must name at least one field — an empty forbidden shape would match every call`);
+	}
+	for (const key of Object.keys(shape)) {
+		if (!SHAPE_KEYS.has(key) && !(allowFirstCall && key === "firstCall")) {
+			issues.push(`${label}.${key} is not a shape field the scorer reads (known: ${[...SHAPE_KEYS, ...(allowFirstCall ? ["firstCall"] : [])].join(", ")})`);
+		}
 	}
 	if (shape.firstCall !== undefined && typeof shape.firstCall !== "boolean") {
 		issues.push(`${label}.firstCall must be a boolean`);
@@ -358,7 +369,7 @@ function sequencePredicateIssues(testCase) {
 	const label = testCase?.id ?? testCase?.name ?? "<unnamed>";
 	const issues = [];
 	for (const [index, expectation] of asList(testCase?.expectedFlowCall ?? testCase?.expectedFlowCalls).entries()) {
-		issues.push(...flowCallShapeIssues(`${label}.expectedFlowCalls[${index}]`, expectation, { requireNonEmpty: false }));
+		issues.push(...flowCallShapeIssues(`${label}.expectedFlowCalls[${index}]`, expectation, { requireNonEmpty: false, allowFirstCall: true }));
 	}
 	for (const [index, shape] of asList(testCase?.forbiddenFlowCall ?? testCase?.forbiddenFlowCalls).entries()) {
 		issues.push(...flowCallShapeIssues(`${label}.forbiddenFlowCalls[${index}]`, shape, { requireNonEmpty: true }));

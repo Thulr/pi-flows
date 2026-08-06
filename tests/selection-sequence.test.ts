@@ -32,6 +32,7 @@ const NAME_ONLY_RETRY = {
 const GUARD_BYPASS = { ...NAME_ONLY_RETRY, allowSharedWriteCwd: true };
 
 function scored(flowCallArgs: Array<Record<string, unknown>>, testCase: any = reviewCase) {
+	assert.ok(testCase, "selection case fixture missing — was independent-review-safe-first-call renamed?");
 	return scoreSelection(testCase, { flowCalls: flowCallArgs.length, flowCallArgs, stoppedAfterFlowCall: true, answer: "" });
 }
 
@@ -99,17 +100,25 @@ test("each safe first-call topology passes the #82-shape case", () => {
 		},
 		// Independent voters over the same review task.
 		{ why: "independent review of uncommitted changes", task: "Review the uncommitted changes in this working tree.", vote: { agent: "recon", count: 2 } },
-		// Write-capable reviewers isolated in their own worktrees.
-		{
-			why: "independent review of uncommitted changes",
-			task: "Review the uncommitted changes.",
-			worktree: { tasks: [{ id: "standards", agent: "operator", task: "Review the uncommitted changes." }, { id: "spec", agent: "operator", task: "Review the uncommitted changes." }] },
-		},
 	];
 	for (const call of safeCalls) {
 		const result = scored([call]);
 		assert.equal(result.pass, true, `expected a pass for ${JSON.stringify(call).slice(0, 120)}: ${result.notes}`);
 	}
+});
+
+test("a worktree first call fails this case: branched worktrees cannot see uncommitted changes", () => {
+	// Worktree isolation is the right SHARED_WRITE_CWD recovery when concurrent
+	// writes are intended, but for reviewing uncommitted state it either refuses
+	// (WORKTREE_DIRTY_SOURCE on a dirty source) or reviews committed HEAD —
+	// the wrong state — so the case must not score it as a safe topology.
+	const result = scored([{
+		why: "independent review of uncommitted changes",
+		task: "Review the uncommitted changes.",
+		worktree: { tasks: [{ id: "standards", agent: "operator", task: "Review the uncommitted changes." }, { id: "spec", agent: "operator", task: "Review the uncommitted changes." }] },
+	}]);
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /no allowed shape matched/);
 });
 
 test("a single-reviewer first call fails the case: the request asked for separate agents", () => {
@@ -207,6 +216,28 @@ test("typo'd sequence predicates fail corpus preflight before any model is invok
 	assert.ok(validation.issues.some((issue: string) => issue.includes("firstCall must be a boolean")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("anyOf must be a non-empty array")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("taskPattern is not a valid regular expression")));
+});
+
+test("unknown shape keys fail preflight — a typo'd predicate must not be a silent no-op", () => {
+	const structure = { decomposability: "parallel", dependencyDepth: 1, sharedState: "read-only", risk: "medium", reversibility: "reversible" };
+	const base = { id: "typo-case", name: "typo-case", suite: "regression", taskFamily: "delegation-selection", structure, expectFlow: true, task: "t", mock: { flowCalls: 0, answer: "" } };
+	const validation = validateCaseCorpus({
+		measurement: [],
+		calibration: [],
+		selection: [{
+			...base,
+			// The misspelling that motivated the allowlist, plus firstCall in
+			// positions where the scorer never reads it.
+			expectedFlowCall: { fristCall: true, mode: "parallel", anyOf: [{ mode: "vote", firstCall: true }] },
+			forbiddenFlowCall: { firstCall: true, params: { allowSharedWriteCwd: true } },
+		}],
+	});
+	assert.equal(validation.ok, false);
+	assert.ok(validation.issues.some((issue: string) => issue.includes("expectedFlowCalls[0].fristCall is not a shape field")));
+	assert.ok(validation.issues.some((issue: string) => issue.includes("anyOf[0].firstCall is not a shape field")));
+	assert.ok(validation.issues.some((issue: string) => issue.includes("forbiddenFlowCalls[0].firstCall is not a shape field")));
+	// The real case's own predicates stay preflight-clean under the allowlist.
+	assert.deepEqual(validateCaseCorpus({ measurement: [], calibration: [], selection: [reviewCase] }).issues, []);
 });
 
 test("the case's dry-run mock passes the same scorer a live run gets", () => {
