@@ -6,7 +6,7 @@
 // measurement on all three axes, while each safe first-call topology passes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callAdmissibilityFailure, flowCallMatchesExpectation, observationCap, scoreSelection } from "../evals/select.mjs";
+import { callAdmissibilityFailure, flowCallMatchesExpectation, letRefusalPlayOut, observationCap, scoreSelection } from "../evals/select.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { validateCaseCorpus } from "../evals/case-contract.mjs";
 
@@ -414,6 +414,20 @@ test("taskPattern reads only contract-blessed task fields, not model-invented on
 	// The same call with the decision question where the tool reads it passes.
 	const contractual = { ...misplaced, task: "Choose the queue migration design under the stated constraints." };
 	assert.equal(flowCallMatchesExpectation({ arguments: contractual }, { mode: "debate", taskPattern: "queue migration" }).pass, true);
+});
+
+test("only writeless, vocabulary-named refusals play out in the live harness", () => {
+	const budgeted = { expectFlow: true, maxRefusedCalls: 1 };
+	// A plain scored refusal plays out…
+	assert.equal(letRefusalPlayOut(REFUSED_FANOUT, 1, budgeted), true);
+	// …but the extension creates and finalizes a trace sink at a
+	// caller-controlled traceFile even for refused calls, so a refusal
+	// carrying one could append spans to any writable path — terminate it.
+	assert.equal(letRefusalPlayOut({ ...REFUSED_FANOUT, traceFile: "package.json" }, 1, budgeted), false);
+	// Admitted calls, unparseable args, and the cap all terminate too.
+	assert.equal(letRefusalPlayOut({ ...REFUSED_FANOUT, concurrency: 1 }, 1, budgeted), false);
+	assert.equal(letRefusalPlayOut({ __unparsed: "{" }, 1, budgeted), false);
+	assert.equal(letRefusalPlayOut(REFUSED_FANOUT, observationCap(budgeted), budgeted), false);
 });
 
 test("the observation cap always sits above the case's refused-call budget", () => {

@@ -139,6 +139,22 @@ export function observationCap(testCase) {
 	return Math.max(MAX_OBSERVED_FLOW_EXECUTIONS, (testCase.maxRefusedCalls ?? 0) + 2);
 }
 
+// A call the scored admissibility vocabulary flags as refused may play out —
+// that refusal returns before any child spawns, and what the model does next
+// is exactly what the sequence predicates score. Everything else terminates
+// before it can act: admitted calls, unparseable args, pre-dispatch refusals
+// the vocabulary cannot name (a failed preset resolution, say), and refusals
+// that would still write — the extension creates and finalizes a trace sink
+// at a caller-controlled traceFile even for refused calls, so a refusal
+// carrying one could append spans to any writable path. The cap stops
+// runaway refusal loops.
+export function letRefusalPlayOut(args, observedCount, testCase) {
+	if (!hasUsefulArguments(args)) return false;
+	if (!callAdmissibilityFailure(args)) return false;
+	if (args?.traceFile) return false;
+	return observedCount < observationCap(testCase);
+}
+
 async function runSelectionCase(testCase, signal) {
 	if (dryRun) {
 		return {
@@ -166,18 +182,7 @@ async function runSelectionCase(testCase, signal) {
 		onLine: (line, controls) => {
 			collectSelectionEvent(line, state);
 			if (!testCase.expectFlow || state.stoppedAfterFlowCall || !state.flowExecutionStarted) return;
-			// A call the scored admissibility vocabulary flags as refused is
-			// cheap — that refusal returns before any child spawns — and what
-			// the model does next is exactly what the sequence predicates
-			// score, so let those play out. Everything else terminates before
-			// it can fan out: admitted calls, and pre-dispatch refusals the
-			// vocabulary cannot name (a failed preset resolution, say), which
-			// are indistinguishable from admitted here and must fail safe. The
-			// cap stops runaway refusal loops; unparseable args terminate too,
-			// so an execution never proceeds unjudged.
-			const latest = state.flowExecutions.at(-1);
-			const wouldRefuse = hasUsefulArguments(latest) && callAdmissibilityFailure(latest);
-			if (wouldRefuse && state.flowExecutions.length < observationCap(testCase)) return;
+			if (letRefusalPlayOut(state.flowExecutions.at(-1), state.flowExecutions.length, testCase)) return;
 			state.stoppedAfterFlowCall = true;
 			controls.terminate();
 		},
