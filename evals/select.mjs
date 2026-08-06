@@ -183,8 +183,12 @@ export function letRefusalPlayOut(args, observedCount, testCase) {
 	}
 	// The sink path is params.traceFile ?? PI_FLOWS_TRACE_FILE in the
 	// extension, and the spawned subject inherits this process's environment
-	// (loadDotenv included) — either source makes the refusal a writer.
+	// (loadDotenv included) — either source makes the refusal a writer. So
+	// does reflexion: a runner-level refusal produces a FAILED RESULT, which
+	// counts as a run, and appendReflexion then writes to the caller-named
+	// reflexion file.
 	if (args?.traceFile || process.env.PI_FLOWS_TRACE_FILE) return false;
+	if (args?.reflexion) return false;
 	return observedCount < observationCap(testCase);
 }
 

@@ -267,10 +267,12 @@ export const SELECTION_CASES = defineCases([
 			// role, so listing "review" here would make this alternation
 			// satisfiable by any review of anything.
 			taskPattern: "uncommitted|working tree",
-			// Role by role, not concatenated: every assigned task must itself be a
-			// review, so "implement frontend changes" + "implement backend
-			// changes" cannot ride the run-wide alternation's "changes".
-			everyTaskPattern: "review",
+			// Role by role, not concatenated: every assigned task must itself
+			// review the uncommitted working tree — the lookaheads require both
+			// the intent and the subject per role, so neither an off-intent
+			// sibling ("implement the backend") nor an off-subject one ("review
+			// README") can ride the top-level task's wording.
+			everyTaskPattern: "(?=[\\s\\S]*review)(?=[\\s\\S]*(uncommitted|working tree))",
 			// Two independent reviews means two roles that can actually run: a
 			// mixed fan-out naming one invented reviewer is admitted (the known
 			// ref spawns) but the runner refuses the invented sibling, halving

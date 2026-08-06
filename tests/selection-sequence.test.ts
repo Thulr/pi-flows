@@ -78,6 +78,28 @@ test("the shared-write guard is scored through the admissibility seam, against t
 	assert.equal(callAdmissibilityFailure(noWhy)?.code, "WHY_REQUIRED");
 });
 
+test("every parallel role must bind the review target, not just the intent", () => {
+	// The top-level task can carry the subject while the children review
+	// unrelated files; the per-role lookaheads require intent AND subject in
+	// each assigned task.
+	const offSubjectChildren = scored([{
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
+		task: "Review the uncommitted working tree.",
+		tasks: [{ agent: "recon", task: "Review README." }, { agent: "analyst", task: "Review package.json." }],
+	}]);
+	assert.equal(offSubjectChildren.pass, false);
+	assert.match(offSubjectChildren.notes, /role task 1 did not match/);
+});
+
+test("a refused call carrying reflexion never plays out", () => {
+	// A runner-level refusal produces a failed result, which counts as a run,
+	// and appendReflexion then writes to the caller-named reflexion file — so
+	// a reflexion-enabled refusal terminates like a trace-enabled one.
+	const invented = { why: "x", agent: "made-up-agent", task: "t", reflexion: { enabled: true, file: "package.json" } };
+	assert.equal(letRefusalPlayOut(invented, 1, { expectFlow: true, maxRefusedCalls: 1 }), false);
+});
+
 test("a counted role with no task cannot slip past everyTaskPattern", () => {
 	// taskCount sees two roles, but the second assigns no task string; it must
 	// contribute an unmatchable entry, not vanish from the binding.
@@ -87,7 +109,7 @@ test("a counted role with no task cannot slip past everyTaskPattern", () => {
 		tasks: [{ agent: "operator", task: "Review the uncommitted changes." }, { agent: "operator" }],
 	}]);
 	assert.equal(tasklessSibling.pass, false);
-	assert.match(tasklessSibling.notes, /role task 2 did not match \/review\//);
+	assert.match(tasklessSibling.notes, /role task 2 did not match/);
 });
 
 test("an empty explicit voter list falls back to replication, as the handler does", () => {
@@ -227,7 +249,7 @@ test("a serialized non-review fan-out fails the case: every role task must itsel
 		],
 	}]);
 	assert.equal(implementers.pass, false);
-	assert.match(implementers.notes, /task did not match \/uncommitted\|working tree\//);
+	assert.match(implementers.notes, /task did not match/);
 	// …and when the subject binding is satisfied, one on-topic task still
 	// cannot vouch for an off-topic sibling: the role binding catches it.
 	const mixed = scored([{
@@ -239,7 +261,7 @@ test("a serialized non-review fan-out fails the case: every role task must itsel
 		],
 	}]);
 	assert.equal(mixed.pass, false);
-	assert.match(mixed.notes, /role task 2 did not match \/review\//);
+	assert.match(mixed.notes, /role task 2 did not match/);
 });
 
 test("a single-reviewer first call fails the case: the request asked for separate agents", () => {
