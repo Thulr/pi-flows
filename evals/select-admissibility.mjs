@@ -31,10 +31,17 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 // scorer and subject resolve the identical bundled roster.
 const packageOnlyPrevious = process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
 process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
-export const scoringDiscovery = discoverFlowAgents(repoRoot, "user");
-const scoringPresetDiscovery = discoverFlowPresets(repoRoot, "user");
-if (packageOnlyPrevious === undefined) delete process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
-else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
+let discoveredAgents;
+let discoveredPresets;
+try {
+	discoveredAgents = discoverFlowAgents(repoRoot, "user");
+	discoveredPresets = discoverFlowPresets(repoRoot, "user");
+} finally {
+	if (packageOnlyPrevious === undefined) delete process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
+	else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
+}
+export const scoringDiscovery = discoveredAgents;
+const scoringPresetDiscovery = discoveredPresets;
 
 /** The modes whose handlers apply the top-level params.contract to their FIRST child (verified per handler: single uses it directly; chain, parallel, vote, debate pass fallbackContract; evaluate's operator falls back to it). Dossier is deliberately absent: its fallback goes to the debrief synthesizer, and its first-spawn section plans carry only their own contracts. */
 const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "debate", "evaluate"]);
