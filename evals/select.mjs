@@ -18,6 +18,10 @@ import { EVAL_CORPUS, SELECTION_CASES } from "./corpus.mjs";
 import { DEFAULT_EVAL_MODEL } from "./lib.mjs";
 import { loadDotenv, runPreflight } from "./preflight.mjs";
 import { runJsonlProcess } from "../extensions/pi-flows/jsonl-child.mjs";
+// This .ts import makes select.mjs require the tsx loader (`node --import tsx`),
+// which every current entrypoint already passes; do not import this module from
+// a bare-node script such as eval:review or eval:pareto.
+import { nonSpawningFlowCall, spawnJustificationMissing } from "../extensions/pi-flows/validate.ts";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
 
@@ -242,6 +246,20 @@ function taskText(args) {
 	return pieces.join("\n");
 }
 
+// Admissibility: would the flow tool have accepted this call, or refused it
+// before any child spawned? Scored uniformly across every spawning mode so a
+// call the tool would refuse cannot count as a correct selection, however well
+// its shape fits. Each rule must be the tool's own predicate (imported, not
+// hand-copied) so the scored gate cannot drift from the enforced one. Returns
+// { code, reason } so callers phrase their own notes and #84 — which extends
+// this seam with further pre-dispatch refusals such as SHARED_WRITE_CWD — can
+// group verdicts by refusal code.
+export function callAdmissibilityFailure(args) {
+	if (nonSpawningFlowCall(args ?? {})) return null;
+	if (spawnJustificationMissing(args?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
+	return null;
+}
+
 export function flowCallMatchesExpectation(call, expected) {
 	const args = call?.arguments ?? {};
 	const actualMode = modeOf(args);
@@ -268,6 +286,14 @@ export function flowCallMatchesExpectation(call, expected) {
 
 	if (expected.taskPattern && !new RegExp(expected.taskPattern, "i").test(taskText(args))) {
 		return { pass: false, notes: `task did not match /${expected.taskPattern}/` };
+	}
+
+	// Checked after the shape checks so a gate regression is diagnosable as
+	// "picked the right shape but the tool would have refused the call", which
+	// is a different failure from picking the wrong shape.
+	const inadmissible = callAdmissibilityFailure(args);
+	if (inadmissible) {
+		return { pass: false, notes: `${actualMode} call matches the expected shape, but the spawn gate would refuse it before any child spawns: ${inadmissible.reason} (${inadmissible.code})` };
 	}
 
 	return { pass: true, notes: `${actualMode} flow call matched` };

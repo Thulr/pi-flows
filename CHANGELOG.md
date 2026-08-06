@@ -31,6 +31,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Selection-eval scoring (`npm run eval:select`) now checks call admissibility:
+  a spawning call whose `why` is missing or blank — one the tool would refuse
+  with `WHY_REQUIRED` before any child spawns — no longer scores as a correct
+  selection in any mode (#83). The gate predicate is imported from the
+  extension, so the scored rule cannot drift from the enforced one; tool
+  behavior is unchanged.
 - The `SHARED_WRITE_CWD` refusal now attributes write-capability to each
   agent's effective toolset (rendering pi defaults explicitly) and states that
   the toolset, not the agent name, is what classifies a role — so a name-only

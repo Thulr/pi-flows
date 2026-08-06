@@ -22,7 +22,7 @@ import {
 	type Update,
 } from "./types.ts";
 import { capModelVisibleText, isFailed, redactText, resultText, safePath, sanitizeText, scanForInjection, stripControlChars } from "./sanitize.ts";
-import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
+import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, spawnJustificationMissing, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
 import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
 import { createHandoffConsumer } from "./handoff-consumption.ts";
@@ -279,7 +279,7 @@ export default function (pi: ExtensionAPI) {
 			const mode: FlowMode = detected.mode;
 			// Structural friction against reflexive delegation: a spawning call must
 			// articulate why isolation beats doing the work in the parent context.
-			if (typeof params.why !== "string" || params.why.trim().length === 0) {
+			if (spawnJustificationMissing(params.why)) {
 				const error = flowError(
 					"WHY_REQUIRED",
 					"Flow call refused: `why` is required for any call that spawns agents.",

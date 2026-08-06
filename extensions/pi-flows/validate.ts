@@ -55,6 +55,26 @@ export function writeCapabilityAttribution(discovery: FlowDiscovery, ref: { agen
 	return `${ref.agent} (effective tools include ${mutating.join("/")})`;
 }
 
+/**
+ * The spawn gate's predicate: a call that spawns children must justify the
+ * delegation with a non-empty `why`, or the tool refuses it (WHY_REQUIRED)
+ * before any child starts. The selection eval imports this same function to
+ * score admissibility, so the scored rule cannot drift from the enforced one.
+ */
+export function spawnJustificationMissing(why: unknown): boolean {
+	return typeof why !== "string" || why.trim().length === 0;
+}
+
+/**
+ * The surfaces that return before the spawn gate — this list must name exactly
+ * the params the flow tool answers ahead of its WHY_REQUIRED check, so the
+ * selection eval exempts the same calls the tool does. Adding a pre-gate
+ * surface to the tool means adding it here too.
+ */
+export function nonSpawningFlowCall(params: { list?: unknown; showConfig?: unknown }): boolean {
+	return Boolean(params?.list || params?.showConfig);
+}
+
 export function resolvedCwd(defaultCwd: string, cwd?: string): string {
 	return path.resolve(defaultCwd, cwd ?? defaultCwd);
 }

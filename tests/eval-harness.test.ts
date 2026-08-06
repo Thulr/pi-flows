@@ -710,13 +710,13 @@ test("selection eval scores overuse, correct non-use, and wrong flow arguments",
 
 	const correct = scoreSelection(
 		{ expectFlow: true, answerPattern: "done", expectedFlowCall: { mode: "parallel", minTasks: 2, taskPattern: "auth" } },
-		{ flowCalls: 1, flowCallArgs: [{ tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }] }], answer: "done" },
+		{ flowCalls: 1, flowCallArgs: [{ why: "fan-out", tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }] }], answer: "done" },
 	);
 	assert.equal(correct.pass, true);
 
 	const stoppedAfterSelection = scoreSelection(
 		{ expectFlow: true, answerPattern: "done", expectedFlowCall: { mode: "single", agent: "recon", taskPattern: "auth" } },
-		{ flowCalls: 1, flowCallArgs: [{ agent: "recon", task: "inspect auth" }], answer: "", stoppedAfterFlowCall: true },
+		{ flowCalls: 1, flowCallArgs: [{ why: "delegated scout", agent: "recon", task: "inspect auth" }], answer: "", stoppedAfterFlowCall: true },
 	);
 	assert.equal(stoppedAfterSelection.pass, true);
 
@@ -744,27 +744,27 @@ test("selection eval requires at least one comparable case for a green exit", ()
 });
 
 test("selection eval flow argument matcher recognizes implicit delegation modes", () => {
-	assert.equal(flowCallMatchesExpectation({ arguments: { agent: "recon", task: "Find the flow tool" } }, { mode: "single", agents: ["recon", "analyst"], taskPattern: "flow" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Draft and verify", evaluate: {} } }, { mode: "evaluate", agent: "operator", taskPattern: "verify" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { evaluate: { operator: { agent: "operator", task: "Draft the release checklist for install, safety, and evals." } } } }, { mode: "evaluate", agent: "operator", taskPattern: "release checklist|install|safety|eval" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Map modules", orchestrate: {} } }, { modes: ["orchestrate", "parallel"], agents: ["recon"] }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { orchestrate: { returnContract: "Map agent discovery, schema validation, and child process running." } } }, { modes: ["orchestrate", "parallel"], agents: ["recon"], taskPattern: "agent discovery|schema|child process" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Release migration", workflow: { phases: [{ id: "scan", agent: "recon", task: "Analyze migration" }, { id: "approve", approval: { message: "Approve release" } }] } } }, { mode: "workflow", agents: ["recon"], minTasks: 2, taskPattern: "migration|approve" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Integrate fixes", worktree: { tasks: [{ id: "ui", agent: "operator", task: "Fix frontend" }, { id: "api", agent: "operator", task: "Fix backend" }] } } }, { mode: "worktree", agents: ["operator"], minTasks: 2, taskPattern: "frontend|backend" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Choose queue design", debate: { participants: [{ agent: "analyst" }, { agent: "strategist" }] } } }, { mode: "debate", agents: ["analyst", "strategist"], minTasks: 2, taskPattern: "queue" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Build evidence", dossier: { sections: [{ agent: "recon", task: "Inspect runbook" }, { agent: "analyst", task: "Inspect incident" }] } } }, { mode: "dossier", agents: ["recon", "analyst"], minTasks: 2, taskPattern: "runbook|incident" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { task: "Diagnose event", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED" } } }, { mode: "monitor", agents: ["analyst"], taskPattern: "health-check|DEGRADED" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "delegated scout", agent: "recon", task: "Find the flow tool" } }, { mode: "single", agents: ["recon", "analyst"], taskPattern: "flow" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "independent critic", task: "Draft and verify", evaluate: {} } }, { mode: "evaluate", agent: "operator", taskPattern: "verify" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "independent critic", evaluate: { operator: { agent: "operator", task: "Draft the release checklist for install, safety, and evals." } } } }, { mode: "evaluate", agent: "operator", taskPattern: "release checklist|install|safety|eval" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "broad map", task: "Map modules", orchestrate: {} } }, { modes: ["orchestrate", "parallel"], agents: ["recon"] }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "broad map", orchestrate: { returnContract: "Map agent discovery, schema validation, and child process running." } } }, { modes: ["orchestrate", "parallel"], agents: ["recon"], taskPattern: "agent discovery|schema|child process" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "gated phases", task: "Release migration", workflow: { phases: [{ id: "scan", agent: "recon", task: "Analyze migration" }, { id: "approve", approval: { message: "Approve release" } }] } } }, { mode: "workflow", agents: ["recon"], minTasks: 2, taskPattern: "migration|approve" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "isolated writers", task: "Integrate fixes", worktree: { tasks: [{ id: "ui", agent: "operator", task: "Fix frontend" }, { id: "api", agent: "operator", task: "Fix backend" }] } } }, { mode: "worktree", agents: ["operator"], minTasks: 2, taskPattern: "frontend|backend" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "requested advocates", task: "Choose queue design", debate: { participants: [{ agent: "analyst" }, { agent: "strategist" }] } } }, { mode: "debate", agents: ["analyst", "strategist"], minTasks: 2, taskPattern: "queue" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "multi-source evidence", task: "Build evidence", dossier: { sections: [{ agent: "recon", task: "Inspect runbook" }, { agent: "analyst", task: "Inspect incident" }] } } }, { mode: "dossier", agents: ["recon", "analyst"], minTasks: 2, taskPattern: "runbook|incident" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "bounded polling", task: "Diagnose event", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED" } } }, { mode: "monitor", agents: ["analyst"], taskPattern: "health-check|DEGRADED" }).pass, true);
 });
 
 test("selection eval refuses a preset call that also names raw workflow shape", () => {
-	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main." } }, { mode: "preset", preset: "code-review" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "author-independent review", preset: "code-review", task: "Review HEAD against main." } }, { mode: "preset", preset: "code-review" }).pass, true);
 	// The tool answers PRESET_OVERRIDE_INVALID for these, so crediting them would
 	// score a call that never runs.
 	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", why: "verification", thinking: "high", traceFile: "t.jsonl" } }, { mode: "preset", preset: "code-review" }).pass, true);
 	// `tier` is a code-review override but not a map-codebase one, so the same key is
 	// scored against the preset that was actually selected.
-	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review.", tier: "fast" } }, { mode: "preset", preset: "code-review" }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { preset: "map-codebase", task: "Map.", tier: "fast" } }, { mode: "preset", preset: "map-codebase" }).pass, false);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "author-independent review", preset: "code-review", task: "Review.", tier: "fast" } }, { mode: "preset", preset: "code-review" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "broad map", preset: "map-codebase", task: "Map.", tier: "fast" } }, { mode: "preset", preset: "map-codebase" }).pass, false);
 	for (const shape of [{ evaluate: {} }, { tasks: [{ agent: "recon", task: "Inspect." }] }, { agent: "recon" }, { contract: { returnSchema: {} } }, { returnContract: "typed findings" }, { requireEvidence: true }]) {
 		const match = flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", ...shape } }, { mode: "preset", preset: "code-review" });
 		assert.equal(match.pass, false, `preset + ${Object.keys(shape)[0]} must not score as a preset selection`);
