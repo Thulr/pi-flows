@@ -349,6 +349,38 @@ test("oversized debate and dossier role lists are schema-refused, never guard-mi
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", dossier: { sections: many } })?.code, "SCHEMA_INVALID");
 });
 
+test("mixed per-role refusal causes combine: a wave nobody can start is refused", () => {
+	// One reviewer is outside the roster, the other's contract starts
+	// exhausted — neither cause alone covers every role, but no child can
+	// spawn, so admission would credit a call that does nothing.
+	const mixedCauses = {
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
+		tasks: [
+			{ agent: "invented-reviewer", task: "Review the uncommitted changes." },
+			{ agent: "recon", task: "Review the uncommitted changes.", contract: fullContract({ timeoutMs: 60_000, maxTokens: 0, maxGeneratedTokens: 100 }) },
+		],
+	};
+	const refusal = callAdmissibilityFailure(mixedCauses);
+	assert.ok(refusal, "a wave nobody can start must be refused");
+	assert.match(refusal.reason, /no first-spawn role can start \(.*\+.*\)/);
+	// One startable role still admits the call.
+	assert.equal(callAdmissibilityFailure({
+		...mixedCauses,
+		tasks: [mixedCauses.tasks[0], { agent: "recon", task: "Review the uncommitted changes." }],
+	}), null);
+});
+
+test("a top-level expectation without a shape field fails preflight", () => {
+	const structure = { decomposability: "parallel", dependencyDepth: 1, sharedState: "read-only", risk: "medium", reversibility: "reversible" };
+	const base = { id: "vacuous-top", name: "vacuous-top", suite: "regression", taskFamily: "delegation-selection", structure, expectFlow: true, task: "t", mock: { flowCalls: 0, answer: "" } };
+	for (const expectation of [{}, { firstCall: true }]) {
+		const validation = validateCaseCorpus({ measurement: [], calibration: [], selection: [{ ...base, expectedFlowCall: expectation }] });
+		assert.equal(validation.ok, false, JSON.stringify(expectation));
+		assert.ok(validation.issues.some((issue: string) => issue.includes("must name at least one shape field")));
+	}
+});
+
 test("a rootless graph is refused with the tool's own GRAPH_CYCLE, not admitted", () => {
 	// Every node depends on another, so no first wave can ever run;
 	// handleGraph refuses GRAPH_CYCLE before any child spawns, and admitting

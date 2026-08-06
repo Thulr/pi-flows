@@ -131,27 +131,22 @@ export function callAdmissibilityFailure(args) {
 	if (monitorInvalid) return { code: monitorInvalid.code, reason: monitorInvalid.message.replace(/\.$/, "") };
 	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, effective ?? {});
 	if (sharedWrite) return { code: sharedWrite.code, reason: sharedWrite.message.replace(/\.$/, "") };
-	// The runner refuses each unknown agent at its spawn (UNKNOWN_AGENT); when
-	// every first-spawn ref names one, nothing can do work before the refusal,
-	// so the call is refused rather than admitted. One known ref among them
-	// means real children spawn, and the call counts as admitted.
-	const firstSpawnNames = firstSpawnAgentRefs(effective ?? {}).map((ref) => ref.agent).filter((name) => typeof name === "string");
-	const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
-	if (firstSpawnNames.length > 0 && firstSpawnNames.every((name) => !known.has(name))) {
-		return { code: "UNKNOWN_AGENT", reason: `no first-spawn role names a bundled agent (${[...new Set(firstSpawnNames)].join(", ")})` };
-	}
 	// A flow budget that starts exhausted (a zero ceiling) refuses at the
 	// first spawn, before any child runs — the tool's own Budget object is
 	// the judge, exactly as the runner consults it.
 	if (Budget.forFlow(effective ?? {})?.refusesSpawn()) {
 		return { code: "BUDGET_EXCEEDED", reason: "a zero budget ceiling refuses the first spawn" };
 	}
-	// The runner also consults each child's contract budget (role contract,
-	// else the top-level fallback). When every first-spawn role's contract
-	// starts exhausted, no child can spawn — one funded role means real
-	// children run and the call counts as admitted.
-	const firstSpawnRefs = firstSpawnAgentRefs(effective ?? {});
-	const contractRefused = (ref) => {
+	// The runner refuses each first-spawn role for its own cause — an agent
+	// outside the roster (UNKNOWN_AGENT) or a contract budget that starts
+	// exhausted (BUDGET_EXCEEDED, role contract else the top-level fallback
+	// where the opener consumes it) — so the causes must be judged per role
+	// and COMBINED: a wave mixing one unknown reviewer with one exhausted one
+	// spawns nothing, even though neither cause alone covers every role. One
+	// startable role means real children run and the call counts as admitted.
+	const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
+	const roleRefusal = (ref) => {
+		if (typeof ref.agent === "string" && !known.has(ref.agent)) return "UNKNOWN_AGENT";
 		// A contract counts only where the tool's opener actually consumes it:
 		// integrationRunPlan resolves ref.contract ?? the top-level fallback
 		// for the ROLE_CONTRACT_MODES; route/search/loop/orchestrate openers
@@ -160,11 +155,16 @@ export function callAdmissibilityFailure(args) {
 		// call the tool admits.
 		const roleContract = ROLE_CONTRACT_MODES.has(mode) ? ref.contract : undefined;
 		const contract = roleContract ?? (CONTRACT_FALLBACK_MODES.has(mode) ? effective?.contract : undefined);
-		if (!contract || typeof contract !== "object" || Array.isArray(contract)) return false;
-		return Boolean(Budget.forContract(contract.budget)?.refusesSpawn());
+		if (contract && typeof contract === "object" && !Array.isArray(contract) && Budget.forContract(contract.budget)?.refusesSpawn()) {
+			return "BUDGET_EXCEEDED";
+		}
+		return null;
 	};
-	if (firstSpawnRefs.length > 0 && firstSpawnRefs.every(contractRefused)) {
-		return { code: "BUDGET_EXCEEDED", reason: "every first-spawn role's contract budget starts exhausted" };
+	const firstSpawnRefs = firstSpawnAgentRefs(effective ?? {});
+	const causes = firstSpawnRefs.map(roleRefusal);
+	if (firstSpawnRefs.length > 0 && causes.every(Boolean)) {
+		const codes = [...new Set(causes)];
+		return { code: codes.length === 1 ? codes[0] : "UNKNOWN_AGENT", reason: `no first-spawn role can start (${codes.join(" + ")})` };
 	}
 	return null;
 }

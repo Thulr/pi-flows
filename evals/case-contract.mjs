@@ -322,6 +322,12 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	if (requireNonEmpty && Object.keys(shape).length === 0) {
 		issues.push(`${label} must name at least one field — an empty forbidden shape would match every call`);
 	}
+	// A top-level expectation carrying no shape field (empty, or firstCall
+	// alone) matches any admitted call, silently disabling the argument
+	// constraints the case appears to have.
+	if (!requireNonEmpty && !Object.keys(shape).some((key) => SHAPE_KEYS.has(key))) {
+		issues.push(`${label} must name at least one shape field (${[...SHAPE_KEYS].join(", ")}) — otherwise any admitted call matches`);
+	}
 	for (const key of Object.keys(shape)) {
 		if (!SHAPE_KEYS.has(key) && !(allowFirstCall && key === "firstCall")) {
 			issues.push(`${label}.${key} is not a shape field the scorer reads (known: ${[...SHAPE_KEYS, ...(allowFirstCall ? ["firstCall"] : [])].join(", ")})`);
