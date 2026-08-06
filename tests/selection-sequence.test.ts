@@ -105,6 +105,49 @@ test("a counted role with no task cannot slip past everyTaskPattern", () => {
 	assert.match(tasklessSibling.notes, /role task 2 did not match \/review\//);
 });
 
+test("an oversized fan-out is refused with the tool's own TOO_MANY_TASKS, not admitted", () => {
+	// The public schema has no maxItems, so nine serialized review tasks are a
+	// schema-valid live input; the handler refuses TOO_MANY_TASKS before its
+	// guard, and admitting the call would let minTasks record a false pass.
+	const nineTasks = {
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
+		tasks: Array.from({ length: 9 }, (_, index) => ({ agent: "recon", task: `Review the uncommitted changes, part ${index + 1}.` })),
+	};
+	assert.equal(callAdmissibilityFailure(nineTasks)?.code, "TOO_MANY_TASKS");
+	const result = scored([nineTasks]);
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /TOO_MANY_TASKS/);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", vote: { agent: "recon", count: 9 } })?.code, "TOO_MANY_TASKS");
+});
+
+test("a first call whose every reviewer is an invented agent is refused, not admitted", () => {
+	// The runner refuses each unknown agent at spawn (UNKNOWN_AGENT); with no
+	// known ref among the first-spawn roles, no child can do work, so the
+	// seam refuses the call instead of letting the case record a pass for a
+	// review nothing performed.
+	const invented = {
+		why: "independent review of uncommitted changes",
+		tasks: [
+			{ agent: "standards-reviewer", task: "Review the uncommitted changes." },
+			{ agent: "spec-reviewer", task: "Review the uncommitted changes." },
+		],
+	};
+	assert.equal(callAdmissibilityFailure(invented)?.code, "UNKNOWN_AGENT");
+	const result = scored([invented]);
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /UNKNOWN_AGENT/);
+	// One known ref means real children spawn: the call is admitted, and the
+	// harness must terminate rather than let live children run to completion.
+	assert.equal(callAdmissibilityFailure({
+		why: "independent review",
+		tasks: [{ agent: "recon", task: "Review the uncommitted changes." }, { agent: "spec-reviewer", task: "Review the uncommitted changes." }],
+	}), null);
+	// Sequential openers are covered too: a single-mode call to an invented
+	// agent spawns nothing.
+	assert.equal(callAdmissibilityFailure({ why: "x", agent: "made-up-agent", task: "t" })?.code, "UNKNOWN_AGENT");
+});
+
 test("an invalid concurrency is scored as the tool's own INVALID_CONCURRENCY, not as the guard behind it", () => {
 	// The dispatch core refuses these before any handler guard runs; claiming
 	// SHARED_WRITE_CWD (or admitting them) would mis-count refusal budgets.
@@ -122,7 +165,7 @@ test("the #82 transcript fails on measurement, attributed on all three axes", ()
 	assert.equal(result.pass, false);
 	assert.equal(result.argsOk, false);
 	assert.match(result.notes, /forbidden shape/, "the allowSharedWriteCwd:true bypass must be named");
-	assert.match(result.notes, /2 call\(s\) the tool would refuse pre-dispatch \(SHARED_WRITE_CWD\) exceed the case budget of 1/);
+	assert.match(result.notes, /2 call\(s\) refused by the scored admissibility vocabulary \(SHARED_WRITE_CWD\) exceed the case budget of 1/);
 	assert.match(result.notes, /first flow call must already satisfy the expectation/);
 	assert.match(result.notes, /SHARED_WRITE_CWD/);
 });

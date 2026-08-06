@@ -207,6 +207,62 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 }
 
 /**
+ * The fan-out bounds handlers enforce before any spawn, as one call-level
+ * predicate: parallel refuses more than MAX_PARALLEL_TASKS tasks
+ * (modes/parallel.ts) and vote refuses more than MAX_PARALLEL_TASKS voters,
+ * explicit or replicated (modes/vote.ts), both with TOO_MANY_TASKS and both
+ * before their shared-write guard runs. The wave mirror above stays silent
+ * for these so the refusal is never mislabeled as the guard; this predicate
+ * is how the admissibility seam scores the refusal itself.
+ */
+export function preSpawnFanoutRefusal(params: Record<string, any>): FlowError | null {
+	const tooMany = (count: number, what: string): FlowError => flowError(
+		"TOO_MANY_TASKS",
+		`Too many ${what} (${count}).`,
+		`At most ${MAX_PARALLEL_TASKS} concurrent children are allowed to prevent runaway subprocess fanout.`,
+		`Use ${MAX_PARALLEL_TASKS} or fewer ${what}.`,
+	);
+	if (Array.isArray(params?.tasks) && params.tasks.length > MAX_PARALLEL_TASKS) return tooMany(params.tasks.length, "flow tasks");
+	if (params?.vote !== undefined) {
+		const spec = params.vote ?? {};
+		if (Array.isArray(spec.voters) && spec.voters.length > MAX_PARALLEL_TASKS) return tooMany(spec.voters.length, "voters");
+		if (typeof spec.agent === "string" && spec.agent && Number.isFinite(spec.count) && Math.floor(spec.count) > MAX_PARALLEL_TASKS) {
+			return tooMany(Math.floor(spec.count), "voters");
+		}
+	}
+	return null;
+}
+
+/**
+ * The refs a call would spawn before anything else: the concurrent first
+ * waves for fan-out modes, the opening role for sequential ones. The
+ * selection eval uses this for the roster rule — a call whose every
+ * first-spawn ref names an unknown agent is refused by the runner
+ * (UNKNOWN_AGENT, runner.ts) before any child does work, so the harness can
+ * safely let it play out; one known ref among them means real children spawn
+ * and the call must count as admitted. Monitor is excluded: its command runs
+ * before its reactor would be looked up, so an unknown reactor is not a
+ * before-any-work refusal.
+ */
+export function firstSpawnAgentRefs(params: Record<string, any>): SharedWriteRef[] {
+	// Evaluate's guard wave is its critic panel, but its generator spawns
+	// first, so it must be resolved ahead of the wave-derived modes.
+	if (params?.evaluate !== undefined && !Array.isArray(params?.tasks)) {
+		return refArray([params.evaluate?.operator ?? { agent: "operator" }]);
+	}
+	const fromWaves = preSpawnSharedWriteWaves(params).flat();
+	if (fromWaves.length > 0) return fromWaves;
+	if (params?.agent && (params?.task || params?.contract)) return refArray([{ agent: params.agent }]);
+	if (Array.isArray(params?.chain) && params.chain.length > 0) return refArray([params.chain[0]]);
+	if (params?.route !== undefined) return refArray([params.route?.controller ?? { agent: "controller" }]);
+	if (params?.orchestrate !== undefined) return refArray([params.orchestrate?.recon ?? { agent: "recon" }]);
+	if (params?.loop !== undefined) return refArray([params.loop?.body]);
+	if (params?.workflow !== undefined) return refArray([(params.workflow?.phases ?? [])[0]]);
+	if (params?.worktree !== undefined) return refArray(params.worktree?.tasks);
+	return [];
+}
+
+/**
  * Would the shared-write guard refuse this call before any child spawns? The
  * selection eval imports this beside spawnJustificationMissing so "would the
  * tool have refused this call" stays one uniform question across refusal

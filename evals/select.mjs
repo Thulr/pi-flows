@@ -160,12 +160,15 @@ async function runSelectionCase(testCase, signal) {
 		onLine: (line, controls) => {
 			collectSelectionEvent(line, state);
 			if (!testCase.expectFlow || state.stoppedAfterFlowCall || !state.flowExecutionStarted) return;
-			// A call the tool will refuse pre-dispatch is cheap — the refusal
-			// returns before any child spawns — and what the model does next is
-			// exactly what the sequence predicates score, so let refusals play
-			// out. Terminate before an admitted call actually fans out, and cap
-			// runaway refusal loops. Args the parser could not recover fail safe
-			// to termination so an execution never proceeds unjudged.
+			// A call the scored admissibility vocabulary flags as refused is
+			// cheap — that refusal returns before any child spawns — and what
+			// the model does next is exactly what the sequence predicates
+			// score, so let those play out. Everything else terminates before
+			// it can fan out: admitted calls, and pre-dispatch refusals the
+			// vocabulary cannot name (a failed preset resolution, say), which
+			// are indistinguishable from admitted here and must fail safe. The
+			// cap stops runaway refusal loops; unparseable args terminate too,
+			// so an execution never proceeds unjudged.
 			const latest = state.flowExecutions.at(-1);
 			const wouldRefuse = hasUsefulArguments(latest) && callAdmissibilityFailure(latest);
 			if (wouldRefuse && state.flowExecutions.length < MAX_OBSERVED_FLOW_EXECUTIONS) return;

@@ -10,7 +10,7 @@
 import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { nonSpawningFlowCall, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
+import { firstSpawnAgentRefs, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
@@ -244,8 +244,19 @@ export function callAdmissibilityFailure(args) {
 	if (spawnJustificationMissing(effective?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
 	const concurrencyError = validateConcurrency(effective?.concurrency);
 	if (concurrencyError) return { code: concurrencyError.code, reason: concurrencyError.message.replace(/\.$/, "") };
+	const fanout = preSpawnFanoutRefusal(effective ?? {});
+	if (fanout) return { code: fanout.code, reason: fanout.message.replace(/\.$/, "") };
 	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, effective ?? {});
 	if (sharedWrite) return { code: sharedWrite.code, reason: sharedWrite.message.replace(/\.$/, "") };
+	// The runner refuses each unknown agent at its spawn (UNKNOWN_AGENT); when
+	// every first-spawn ref names one, nothing can do work before the refusal,
+	// so the call is refused rather than admitted. One known ref among them
+	// means real children spawn, and the call counts as admitted.
+	const firstSpawnNames = firstSpawnAgentRefs(effective ?? {}).map((ref) => ref.agent).filter((name) => typeof name === "string");
+	const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
+	if (firstSpawnNames.length > 0 && firstSpawnNames.every((name) => !known.has(name))) {
+		return { code: "UNKNOWN_AGENT", reason: `no first-spawn role names a bundled agent (${[...new Set(firstSpawnNames)].join(", ")})` };
+	}
 	return null;
 }
 
@@ -340,13 +351,15 @@ function scoreFlowCallExpectations(testCase, result) {
 		if (hits.length > 0) failures.push(`call ${hits.join(",")} matched the forbidden shape ${JSON.stringify(shape)}`);
 	}
 
-	// The refused-call budget scores recovery discipline: every call the tool
-	// would refuse pre-dispatch burns a turn, and an unchanged or name-only
-	// retry after a refusal is the failure this counts.
+	// The refused-call budget scores recovery discipline: every refused call
+	// burns a turn, and an unchanged or name-only retry after a refusal is the
+	// failure this counts. It counts exactly the refusals the admissibility
+	// vocabulary can name — a pre-dispatch refusal outside it (say a failed
+	// preset resolution) is not counted, so the note names the codes.
 	if (testCase.maxRefusedCalls !== undefined) {
 		const refusals = calls.map((args) => callAdmissibilityFailure(args)).filter(Boolean);
 		if (refusals.length > testCase.maxRefusedCalls) {
-			failures.push(`${refusals.length} call(s) the tool would refuse pre-dispatch (${[...new Set(refusals.map((refusal) => refusal.code))].join(",")}) exceed the case budget of ${testCase.maxRefusedCalls}`);
+			failures.push(`${refusals.length} call(s) refused by the scored admissibility vocabulary (${[...new Set(refusals.map((refusal) => refusal.code))].join(",")}) exceed the case budget of ${testCase.maxRefusedCalls}`);
 		}
 	}
 
