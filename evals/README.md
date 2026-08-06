@@ -623,7 +623,13 @@ should not have been. Positive controls also assert the selected `flow` argument
 shape — for example read-only scouting should become single-agent `recon` or
 `analyst`, parallel document inspection should become `tasks`, critic loops should
 become `evaluate`, and broad split/synthesize mapping should become `orchestrate`
-or an equivalent parallel fan-out. The new mode thresholds are paired explicitly:
+or an equivalent parallel fan-out. Argument scoring also checks admissibility:
+a call the tool would refuse before any child spawns is not a correct selection,
+however well its shape fits. The spawn gate is scored uniformly across every
+spawning mode — a missing or blank `why` (`WHY_REQUIRED`) fails the match with a
+note that distinguishes "right shape, refused call" from a shape mismatch; the
+predicate is imported from the extension so the scored rule cannot drift from the
+enforced one. The new mode thresholds are paired explicitly:
 one typo is not `workflow`, one branch lookup or ordinary two-file fix is not
 `worktree`, an unrequested constrained decision is not `debate`, one source is not
 `dossier`, and one status command is not `monitor`; gated/resumable phases,
