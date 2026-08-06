@@ -346,6 +346,9 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	if (shape.knownAgentsOnly !== undefined && shape.knownAgentsOnly !== true) {
 		issues.push(`${label}.knownAgentsOnly must be true when present — false is the default and would constrain nothing`);
 	}
+	if (shape.minTasks !== undefined && (!Number.isInteger(shape.minTasks) || shape.minTasks < 1)) {
+		issues.push(`${label}.minTasks must be a positive integer — anything else makes the comparison vacuous`);
+	}
 	for (const patternField of ["taskPattern", "everyTaskPattern"]) {
 		if (shape[patternField] === undefined) continue;
 		try {

@@ -193,17 +193,22 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 		// wave is knowable pre-spawn: nodes with no dependencies.
 		const nodes = params.graph?.nodes;
 		if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) return [];
+		// A present-but-non-array dependsOn is schema-refused before the handler
+		// runs; totality over raw model args means treating it as no wave, not
+		// iterating a non-iterable.
+		const dependsOn = (node: any): string[] => (Array.isArray(node?.dependsOn) ? node.dependsOn : []);
 		const ids = new Set<string>();
 		for (const node of nodes) {
 			if (!node?.id || !node.agent || !node.task || ids.has(node.id)) return [];
+			if (node.dependsOn !== undefined && !Array.isArray(node.dependsOn)) return [];
 			ids.add(node.id);
 		}
 		for (const node of nodes) {
-			for (const dep of node.dependsOn ?? []) {
+			for (const dep of dependsOn(node)) {
 				if (!ids.has(dep)) return [];
 			}
 		}
-		return [(refArray(nodes) as Array<SharedWriteRef & { dependsOn?: string[] }>).filter((node) => (node?.dependsOn ?? []).length === 0)];
+		return [(refArray(nodes) as Array<SharedWriteRef & { dependsOn?: string[] }>).filter((node) => dependsOn(node).length === 0)];
 	}
 	if (params?.search !== undefined) {
 		const spec = params.search ?? {};
@@ -258,8 +263,10 @@ export function preSpawnFanoutRefusal(params: Record<string, any>): FlowError | 
  * (UNKNOWN_AGENT, runner.ts) before any child does work, so the harness can
  * safely let it play out; one known ref among them means real children spawn
  * and the call must count as admitted. Monitor is excluded: its command runs
- * before its reactor would be looked up, so an unknown reactor is not a
- * before-any-work refusal.
+ * before its reactor would be looked up. Worktree is excluded for the same
+ * reason: handleWorktree creates every branch and worktree before the runner
+ * resolves any agent, so an unknown-agent refusal there is not a
+ * before-any-work refusal — real repository state exists by then.
  */
 export function firstSpawnAgentRefs(params: Record<string, any>): SharedWriteRef[] {
 	// Evaluate's guard wave is its critic panel, but its generator spawns
@@ -274,8 +281,7 @@ export function firstSpawnAgentRefs(params: Record<string, any>): SharedWriteRef
 	if (params?.route !== undefined) return refArray([params.route?.controller ?? { agent: "controller" }]);
 	if (params?.orchestrate !== undefined) return refArray([params.orchestrate?.recon ?? { agent: "recon" }]);
 	if (params?.loop !== undefined) return refArray([params.loop?.body]);
-	if (params?.workflow !== undefined) return refArray([(params.workflow?.phases ?? [])[0]]);
-	if (params?.worktree !== undefined) return refArray(params.worktree?.tasks);
+	if (params?.workflow !== undefined) return refArray([Array.isArray(params.workflow?.phases) ? params.workflow.phases[0] : undefined]);
 	return [];
 }
 

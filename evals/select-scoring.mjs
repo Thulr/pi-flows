@@ -317,14 +317,26 @@ function flowCallShapeMismatch(args, shape) {
 		}
 	}
 
-	// Every named role must resolve in the bundled roster. Admissibility only
-	// refuses when NO first-spawn ref is known (one known ref spawns real
-	// children); this shape rule is how a case says a mixed fan-out — where an
-	// invented sibling silently halves the requested independence — is not
-	// the topology it asked for.
+	// Every counted role must name an agent the bundled roster resolves.
+	// Admissibility only refuses when NO first-spawn ref is known (one known
+	// ref spawns real children); this shape rule is how a case says a mixed
+	// fan-out — an invented or unnamed sibling silently halving the requested
+	// independence — is not the topology it asked for. Role-preserving like
+	// everyTaskPattern: an agent-less role contributes "(unnamed)" rather
+	// than vanishing before the check.
 	if (shape.knownAgentsOnly) {
 		const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
-		const unknown = primaryAgents(args, actualMode).filter((name) => !known.has(name));
+		const roleRefs = {
+			parallel: args.tasks,
+			chain: args.chain,
+			worktree: args.worktree?.tasks,
+			dossier: args.dossier?.sections,
+			vote: args.vote?.voters,
+		}[actualMode];
+		const names = Array.isArray(roleRefs)
+			? roleRefs.map((role) => (typeof role?.agent === "string" && role.agent ? role.agent : "(unnamed)"))
+			: primaryAgents(args, actualMode);
+		const unknown = names.filter((name) => !known.has(name));
 		if (unknown.length > 0) return `role agent(s) ${[...new Set(unknown)].join(", ")} are not bundled flow agents`;
 	}
 

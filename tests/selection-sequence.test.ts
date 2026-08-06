@@ -156,6 +156,28 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 	// Sequential openers are covered too: a single-mode call to an invented
 	// agent spawns nothing.
 	assert.equal(callAdmissibilityFailure({ why: "x", agent: "made-up-agent", task: "t" })?.code, "UNKNOWN_AGENT");
+	// Worktree is deliberately outside the rule: handleWorktree creates every
+	// branch and worktree before any agent resolves, so an unknown-agent
+	// refusal there happens after real repository state exists — the call is
+	// admitted and the harness terminates before that work begins.
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		worktree: { tasks: [{ id: "a", agent: "made-up", task: "A" }, { id: "b", agent: "also-made-up", task: "B" }] },
+	}), null);
+});
+
+test("an unnamed role cannot slip past knownAgentsOnly", () => {
+	// minTasks counts the agent-less role and its task text matches, but the
+	// schema requires an agent for it to run; role-preserving agent naming
+	// keeps the case honest about how many independent reviews can happen.
+	const unnamedSibling = scored([{
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
+		tasks: [{ agent: "recon", task: "Review the uncommitted changes." }, { task: "Review the uncommitted changes." }],
+	}]);
+	assert.equal(unnamedSibling.pass, false);
+	assert.match(unnamedSibling.notes, /\(unnamed\) are not bundled flow agents/);
 });
 
 test("an invalid concurrency is scored as the tool's own INVALID_CONCURRENCY, not as the guard behind it", () => {
@@ -368,6 +390,15 @@ test("vacuous predicate values fail preflight — allowed keys that constrain no
 	assert.ok(validation.issues.some((issue: string) => issue.includes("agents must not be an empty list")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("taskPattern must be a non-empty string")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("forbiddenFlowCalls[0].modes must not be an empty list")));
+	// minTasks typos make the comparison vacuously false and the arm
+	// unconditional; preflight names them too.
+	const minTasksTypo = validateCaseCorpus({
+		measurement: [],
+		calibration: [],
+		selection: [{ ...base, id: "min-tasks-typo", name: "min-tasks-typo", expectedFlowCall: { mode: "parallel", minTasks: null } }],
+	});
+	assert.equal(minTasksTypo.ok, false);
+	assert.ok(minTasksTypo.issues.some((issue: string) => issue.includes("minTasks must be a positive integer")));
 });
 
 test("typo'd sequence predicates fail corpus preflight before any model is invoked", () => {
