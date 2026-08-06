@@ -270,9 +270,45 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 			Array.from({ length: candidateCount }, () => scorer),
 		];
 	}
-	if (params?.debate !== undefined) return [refArray(params.debate?.participants)];
-	if (params?.dossier !== undefined) return [refArray(params.dossier?.sections)];
+	if (params?.debate !== undefined) {
+		// The schema caps participants at MAX_PARALLEL_TASKS; an oversized list
+		// is refused before the handler runs, so it derives no wave (and never
+		// iterates a hostile-length array). Same for dossier sections below.
+		const participants = params.debate?.participants;
+		return [Array.isArray(participants) && participants.length > MAX_PARALLEL_TASKS ? [] : refArray(participants)];
+	}
+	if (params?.dossier !== undefined) {
+		const sections = params.dossier?.sections;
+		return [Array.isArray(sections) && sections.length > MAX_PARALLEL_TASKS ? [] : refArray(sections)];
+	}
 	return [];
+}
+
+/**
+ * handleMonitor's pre-probe validation, as one call-level predicate: a
+ * missing probe command, or a match trigger without a compilable pattern, is
+ * refused MONITOR_INVALID before the probe command ever runs — so the
+ * selection eval can score the refusal and safely let it play out. The
+ * trigger normalization mirrors the handler exactly: anything other than
+ * "failure" or "match" falls back to "success", which needs no pattern.
+ */
+export function monitorInvalidRefusal(params: Record<string, any>): FlowError | null {
+	if (params?.monitor === undefined) return null;
+	const spec = params.monitor ?? {};
+	const invalid = (message: string, cause: string, fix: string): FlowError => flowError("MONITOR_INVALID", message, cause, fix);
+	if (typeof spec.command !== "string" || !spec.command.trim()) {
+		return invalid("Monitor mode requires a probe command.", "No deterministic observation source was configured.", "Provide monitor.command and a bounded trigger policy.");
+	}
+	const trigger = ["failure", "match"].includes(spec.trigger) ? spec.trigger : "success";
+	if (trigger === "match") {
+		try {
+			if (!spec.pattern) throw new Error("pattern is required for a match trigger");
+			new RegExp(spec.pattern, "i");
+		} catch (cause) {
+			return invalid("Monitor match trigger has an invalid pattern.", cause instanceof Error ? cause.message : String(cause), "Provide a valid JavaScript regular expression in monitor.pattern.");
+		}
+	}
+	return null;
 }
 
 /**

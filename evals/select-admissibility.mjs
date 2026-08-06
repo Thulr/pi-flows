@@ -9,7 +9,7 @@
 // a bare-node script such as eval:review or eval:pareto.
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
+import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
@@ -118,6 +118,10 @@ export function callAdmissibilityFailure(args) {
 	// handleGraph refuses GRAPH_CYCLE before any child spawns.
 	const cycle = graphCycleRefusal(effective ?? {});
 	if (cycle) return { code: cycle.code, reason: cycle.message.replace(/\.$/, "") };
+	// handleMonitor validates its probe command and match pattern before the
+	// probe ever runs; a call it refuses MONITOR_INVALID spawns nothing.
+	const monitorInvalid = monitorInvalidRefusal(effective ?? {});
+	if (monitorInvalid) return { code: monitorInvalid.code, reason: monitorInvalid.message.replace(/\.$/, "") };
 	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, effective ?? {});
 	if (sharedWrite) return { code: sharedWrite.code, reason: sharedWrite.message.replace(/\.$/, "") };
 	// The runner refuses each unknown agent at its spawn (UNKNOWN_AGENT); when

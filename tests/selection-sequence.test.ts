@@ -306,6 +306,25 @@ test("contracts count only where the opener consumes them", () => {
 	})?.code, "BUDGET_EXCEEDED");
 });
 
+test("monitor calls the tool would refuse before probing are refused here too", () => {
+	// A match trigger without a pattern (or with an uncompilable one) and a
+	// blank command are all refused MONITOR_INVALID before the probe runs;
+	// the pre-existing monitor case must not credit them.
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "Diagnose DEGRADED", monitor: { command: "./health-check", trigger: "match" } })?.code, "MONITOR_INVALID");
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "./health-check", trigger: "match", pattern: "(" } })?.code, "MONITOR_INVALID");
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "   " } })?.code, "MONITOR_INVALID");
+	// The handler normalizes unknown triggers to "success", which needs no
+	// pattern; a well-formed match monitor stays admitted.
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "./health-check", trigger: "sometimes" } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED", reactor: { agent: "analyst" } } }), null);
+});
+
+test("oversized debate and dossier role lists derive no wave, like every other schema cap", () => {
+	const many = Array.from({ length: 9 }, (_, index) => ({ agent: "overwatch", task: `part ${index}` }));
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", debate: { participants: many } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", dossier: { sections: many } }), null);
+});
+
 test("a rootless graph is refused with the tool's own GRAPH_CYCLE, not admitted", () => {
 	// Every node depends on another, so no first wave can ever run;
 	// handleGraph refuses GRAPH_CYCLE before any child spawns, and admitting
