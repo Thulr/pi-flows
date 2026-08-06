@@ -34,6 +34,9 @@ const scoringPresetDiscovery = discoverFlowPresets(repoRoot, "user");
 if (packageOnlyPrevious === undefined) delete process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
 else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
 
+/** The modes whose handlers apply the top-level params.contract to their first child (verified per handler: single uses it directly; chain, parallel, vote, dossier, debate pass fallbackContract; evaluate's operator falls back to it). */
+const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "dossier", "debate", "evaluate"]);
+
 // The tool resolves a preset before any gate runs, so admissibility must be
 // asked of the expanded call, not the raw preset reference: a permitted
 // override (say concurrency:2 on code-review) can turn a safe preset into a
@@ -76,6 +79,7 @@ export function callAdmissibilityFailure(args) {
 	// must not quietly admit it.
 	const detected = detectRunMode(effective ?? {});
 	if ("error" in detected) return { code: detected.error.code, reason: "exactly one mode must be active" };
+	const mode = detected.mode;
 	if (spawnJustificationMissing(effective?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
 	// The subject inherits PI_FLOWS_DEPTH; at the cap it refuses every
 	// spawning call, so an eval launched from inside a flow child must score
@@ -121,7 +125,11 @@ export function callAdmissibilityFailure(args) {
 	// children run and the call counts as admitted.
 	const firstSpawnRefs = firstSpawnAgentRefs(effective ?? {});
 	const contractRefused = (ref) => {
-		const contract = ref.contract ?? effective?.contract;
+		// Only the handlers that actually pass the top-level contract to their
+		// first child inherit it here; route/search/loop/graph run their
+		// openers without it, so a zero top-level budget must not exhaust
+		// them. Role-level contracts count everywhere.
+		const contract = ref.contract ?? (CONTRACT_FALLBACK_MODES.has(mode) ? effective?.contract : undefined);
 		if (!contract || typeof contract !== "object" || Array.isArray(contract)) return false;
 		return Boolean(Budget.forContract(contract.budget)?.refusesSpawn());
 	};

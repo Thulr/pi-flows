@@ -151,19 +151,26 @@ export function observationCap(testCase) {
 // Only refusals that provably precede all work may play out: the dispatch
 // core's own gates (returned before any handler runs) and the entry guards
 // of the fan-out handlers (checked before those handlers act). Runner-level
-// refusals (UNKNOWN_AGENT, BUDGET_EXCEEDED) are mode-dependent — monitor
-// runs its probe command, workflow persists its state file, and worktree
-// creates branches before the runner's gates — so they terminate like
-// admitted calls.
+// refusals (UNKNOWN_AGENT, BUDGET_EXCEEDED) precede all work only in
+// stateless modes: monitor runs its probe command, workflow persists its
+// state file, and worktree creates branches before the runner's gates — and
+// a raw preset reference hides its expanded shape from this layer — so for
+// those the refusal terminates like an admitted call.
 const PLAYOUT_SAFE_CODES = new Set([
 	"INVALID_MODE", "WHY_REQUIRED", "FLOW_DEPTH_EXCEEDED", "INVALID_CONCURRENCY",
 	"TRACE_INCOMPLETE", "CHECKPOINT_APPROVAL_REQUIRED", "TOO_MANY_TASKS", "SHARED_WRITE_CWD",
 ]);
 
+function actsBeforeRunner(args) {
+	return args?.monitor !== undefined || args?.workflow !== undefined || args?.worktree !== undefined
+		|| Boolean(typeof args?.preset === "string" && args.preset);
+}
+
 export function letRefusalPlayOut(args, observedCount, testCase) {
 	if (!hasUsefulArguments(args)) return false;
 	const refusal = callAdmissibilityFailure(args);
-	if (!refusal || !PLAYOUT_SAFE_CODES.has(refusal.code)) return false;
+	if (!refusal) return false;
+	if (!PLAYOUT_SAFE_CODES.has(refusal.code) && actsBeforeRunner(args)) return false;
 	// The sink path is params.traceFile ?? PI_FLOWS_TRACE_FILE in the
 	// extension, and the spawned subject inherits this process's environment
 	// (loadDotenv included) — either source makes the refusal a writer.

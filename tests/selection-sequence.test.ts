@@ -267,12 +267,23 @@ test("inherited flow depth and initially exhausted budgets are refused, not cred
 		...admissible,
 		tasks: [{ ...admissible.tasks[0], contract: zeroBudgetContract }, admissible.tasks[1]],
 	}), null);
-	// Runner-level refusals never play out: monitor runs its probe command,
-	// workflow persists state, and worktree creates branches before the
-	// runner's budget gate, so the harness terminates instead.
+	// Runner-level refusals play out only where the runner's gate is the
+	// first thing that acts: monitor runs its probe command, workflow
+	// persists state, and worktree creates branches first, so those (and raw
+	// preset references, whose expanded shape this layer cannot see)
+	// terminate — while a stateless serialized fan-out may reach its retry.
 	const budgeted = { expectFlow: true, maxRefusedCalls: 1 };
 	assert.equal(letRefusalPlayOut({ why: "x", task: "t", maxCostUsd: 0, monitor: { command: "./probe", trigger: "match", pattern: "DOWN" } }, 1, budgeted), false);
-	assert.equal(letRefusalPlayOut({ ...admissible, maxCostUsd: 0 }, 1, budgeted), false);
+	assert.equal(letRefusalPlayOut({ why: "x", task: "t", maxCostUsd: 0, workflow: { phases: [{ id: "a", agent: "recon", task: "A" }] } }, 1, budgeted), false);
+	assert.equal(letRefusalPlayOut({ ...admissible, maxCostUsd: 0 }, 1, budgeted), true);
+});
+
+test("a zero top-level contract does not exhaust modes that never apply it to their opener", () => {
+	// handleRoute runs its controller with no contract limits; search and
+	// loop likewise. Only role-level contracts count there.
+	const zeroBudgetContract = { objective: "route", budget: { maxTokens: 0 } };
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, route: { candidates: ["recon", "analyst"] } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, search: {} }), null);
 });
 
 test("a spawn checkpoint and a destination-less strict trace are refused in the headless subject", () => {
