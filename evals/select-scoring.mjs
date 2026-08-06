@@ -52,8 +52,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 // Admissibility scoring resolves each agent's effective toolset against the
 // bundled roster only: the shared-write verdict must be a property of the
 // case, not of whatever ~/.pi/flow-agents happens to contain on the machine
-// running the eval. The toggle is restored immediately so the spawned subject
-// still discovers its real environment.
+// running the eval. The toggle is restored immediately so importing this
+// module never leaks the env var to anything else in the process; the harness
+// (select.mjs) separately pins the same toggle for the spawned subject, so
+// scorer and subject resolve the identical bundled roster.
 const packageOnlyPrevious = process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
 process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
 const scoringDiscovery = discoverFlowAgents(repoRoot, "user");
@@ -141,6 +143,25 @@ function taskCount(args, mode) {
 	// the replicated count, else the handler's default of three.
 	if (mode === "vote") return args.vote?.voters?.length ?? (Number.isFinite(args.vote?.count) ? Math.floor(args.vote.count) : 3);
 	return 0;
+}
+
+// The per-role task strings a call actually assigns, for modes whose roles
+// carry their own tasks; modes whose roles share the top-level task (vote,
+// preset, single, evaluate, …) contribute that. Distinct from taskText, which
+// concatenates for a run-wide match: everyTaskPattern must hold role by role,
+// so one on-topic task cannot vouch for an off-topic sibling.
+function perRoleTaskTexts(args, mode) {
+	const roleTasks = {
+		parallel: args.tasks,
+		chain: args.chain,
+		workflow: args.workflow?.phases,
+		worktree: args.worktree?.tasks,
+		dossier: args.dossier?.sections,
+	}[mode];
+	if (roleTasks !== undefined) {
+		return (roleTasks ?? []).map((role) => role?.task).filter((task) => typeof task === "string");
+	}
+	return typeof args?.task === "string" ? [args.task] : [];
 }
 
 // Task text is collected only from the fields the flow contract actually
@@ -239,6 +260,17 @@ function flowCallShapeMismatch(args, shape) {
 
 	if (shape.taskPattern && !new RegExp(shape.taskPattern, "i").test(taskText(args))) {
 		return `task did not match /${shape.taskPattern}/`;
+	}
+
+	// Role-by-role intent binding: every assigned task must match on its own,
+	// so a fan-out cannot pass on one on-topic task concatenated with
+	// off-topic siblings.
+	if (shape.everyTaskPattern) {
+		const texts = perRoleTaskTexts(args, actualMode);
+		const pattern = new RegExp(shape.everyTaskPattern, "i");
+		if (texts.length === 0) return `no role task text to match /${shape.everyTaskPattern}/`;
+		const offTopic = texts.findIndex((text) => !pattern.test(text));
+		if (offTopic !== -1) return `role task ${offTopic + 1} did not match /${shape.everyTaskPattern}/`;
 	}
 
 	// Scalar param pins, e.g. { params: { allowSharedWriteCwd: true } }.

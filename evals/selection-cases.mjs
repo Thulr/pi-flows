@@ -263,6 +263,10 @@ export const SELECTION_CASES = defineCases([
 		expectedFlowCall: {
 			firstCall: true,
 			taskPattern: "review|uncommitted|working tree|changes",
+			// Role by role, not concatenated: every assigned task must itself be a
+			// review, so "implement frontend changes" + "implement backend
+			// changes" cannot ride the run-wide alternation's "changes".
+			everyTaskPattern: "review",
 			anyOf: [
 				{ preset: "code-review", mode: "preset" },
 				{ mode: "parallel", minTasks: 2 },

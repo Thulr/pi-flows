@@ -314,7 +314,7 @@ function asList(value) {
 // scorer would silently ignore. firstCall is meaningful only on a top-level
 // expectation — inside anyOf arms and forbidden shapes it would be a silent
 // no-op, so it is unknown there.
-const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "taskPattern", "params", "anyOf"]);
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "taskPattern", "everyTaskPattern", "params", "anyOf"]);
 
 function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
 	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
@@ -330,11 +330,12 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	if (shape.firstCall !== undefined && typeof shape.firstCall !== "boolean") {
 		issues.push(`${label}.firstCall must be a boolean`);
 	}
-	if (shape.taskPattern !== undefined) {
+	for (const patternField of ["taskPattern", "everyTaskPattern"]) {
+		if (shape[patternField] === undefined) continue;
 		try {
-			new RegExp(shape.taskPattern, "i");
+			new RegExp(shape[patternField], "i");
 		} catch {
-			issues.push(`${label}.taskPattern is not a valid regular expression`);
+			issues.push(`${label}.${patternField} is not a valid regular expression`);
 		}
 	}
 	if (shape.params !== undefined) {

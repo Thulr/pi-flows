@@ -142,6 +142,33 @@ test("a worktree first call fails this case: branched worktrees cannot see uncom
 	assert.match(result.notes, /no allowed shape matched/);
 });
 
+test("a serialized non-review fan-out fails the case: every role task must itself be a review", () => {
+	// concurrency:1 makes this admissible and minTasks sees two tasks, but the
+	// tasks implement rather than review; only the run-wide alternation's
+	// "changes" matches. Role-by-role binding refuses to let one word carry it.
+	const implementers = scored([{
+		why: "independent work on the changes",
+		concurrency: 1,
+		tasks: [
+			{ agent: "operator", task: "Implement the frontend changes." },
+			{ agent: "operator", task: "Implement the backend changes." },
+		],
+	}]);
+	assert.equal(implementers.pass, false);
+	assert.match(implementers.notes, /role task 1 did not match \/review\//);
+	// One on-topic task cannot vouch for an off-topic sibling either.
+	const mixed = scored([{
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
+		tasks: [
+			{ agent: "operator", task: "Review the uncommitted changes." },
+			{ agent: "operator", task: "Implement the backend changes." },
+		],
+	}]);
+	assert.equal(mixed.pass, false);
+	assert.match(mixed.notes, /role task 2 did not match \/review\//);
+});
+
 test("a single-reviewer first call fails the case: the request asked for separate agents", () => {
 	const result = scored([{ why: "review requested", agent: "recon", task: "Review the uncommitted changes." }]);
 	assert.equal(result.pass, false);

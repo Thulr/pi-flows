@@ -161,7 +161,10 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 	if (params?.vote !== undefined) {
 		const spec = params.vote ?? {};
 		if (Array.isArray(spec.voters) && spec.voters.length > 0) return [refArray(spec.voters)];
-		if (spec.agent) {
+		// Same ref hygiene as refArray: a non-string agent can never name a
+		// toolset (the schema rejects it), so replicating it would only put
+		// non-refs in the wave.
+		if (typeof spec.agent === "string" && spec.agent) {
 			// The handler replicates the agent `count` times unclamped; two repeats
 			// already decide the guard verdict, so bounding the replication here
 			// changes no verdict while keeping a hostile count from allocating.

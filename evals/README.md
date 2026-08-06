@@ -651,10 +651,13 @@ lists shapes no emitted call may match (matched purely on shape, so a refused
 call cannot escape its forbidden verdict), and `maxRefusedCalls` bounds how many
 calls in the run may be ones the tool would refuse pre-dispatch, so an unchanged
 or name-only retry after a refusal is scored as the failure it is. Expectations
-compose with `anyOf` (a disjunction of allowed sub-shapes over shared fields)
-and `params` (scalar pins such as `{ allowSharedWriteCwd: true }`); corpus
-preflight validates all of these fields so a typo'd predicate fails before any
-model is invoked. The `independent-review-safe-first-call` case reproduces the
+compose with `anyOf` (a disjunction of allowed sub-shapes over shared fields),
+`params` (scalar pins such as `{ allowSharedWriteCwd: true }`), and
+`everyTaskPattern` (role-by-role intent binding: every assigned task must match
+on its own, so one on-topic task cannot vouch for off-topic siblings the way
+the run-wide `taskPattern` concatenation would allow); corpus preflight
+validates all of these fields — including unknown-key rejection — so a typo'd
+predicate fails before any model is invoked. The `independent-review-safe-first-call` case reproduces the
 issue-#82 transcript with all three: review-of-uncommitted-changes intent must
 pick the `code-review` preset, a serialized or read-only fan-out, or an
 independent-voter panel on the first call, must never set

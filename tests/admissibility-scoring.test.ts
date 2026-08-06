@@ -121,6 +121,7 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 		{ tasks: [null, "recon", { agent: "operator", task: "A" }] },
 		{ vote: { voters: [null, 42] } },
 		{ vote: { agent: "operator", count: -5 } },
+		{ vote: { agent: { name: "operator" }, count: 3 } },
 		{ evaluate: { redteam: "operator" } },
 		{ search: { generator: "operator" } },
 		{ vote: {} },
