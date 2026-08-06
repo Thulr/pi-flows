@@ -124,6 +124,13 @@ function modeOf(args) {
 function primaryAgents(args, mode) {
 	if (mode === "single") return [args.agent].filter(Boolean);
 	if (mode === "parallel") return (args.tasks ?? []).map((task) => task.agent).filter(Boolean);
+	// Mirrors handleVote's voter construction: an explicit list, else the one
+	// replicated agent.
+	if (mode === "vote") {
+		const voters = (args.vote?.voters ?? []).map((voter) => voter?.agent).filter(Boolean);
+		if (voters.length > 0) return voters;
+		return [args.vote?.agent].filter(Boolean);
+	}
 	if (mode === "evaluate") return [args.evaluate?.operator?.agent ?? "operator"].filter(Boolean);
 	if (mode === "orchestrate") return [args.orchestrate?.recon?.agent ?? "recon"].filter(Boolean);
 	if (mode === "workflow") return (args.workflow?.phases ?? []).map((phase) => phase.agent).filter(Boolean);
@@ -308,6 +315,17 @@ function flowCallShapeMismatch(args, shape) {
 		if (!Object.is(args?.[key], value)) {
 			return `expected params.${key}=${JSON.stringify(value)}, saw ${JSON.stringify(args?.[key])}`;
 		}
+	}
+
+	// Every named role must resolve in the bundled roster. Admissibility only
+	// refuses when NO first-spawn ref is known (one known ref spawns real
+	// children); this shape rule is how a case says a mixed fan-out — where an
+	// invented sibling silently halves the requested independence — is not
+	// the topology it asked for.
+	if (shape.knownAgentsOnly) {
+		const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
+		const unknown = primaryAgents(args, actualMode).filter((name) => !known.has(name));
+		if (unknown.length > 0) return `role agent(s) ${[...new Set(unknown)].join(", ")} are not bundled flow agents`;
 	}
 
 	// A disjunction of allowed sub-shapes on top of the shared fields above.

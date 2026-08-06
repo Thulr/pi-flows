@@ -136,13 +136,23 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 	assert.equal(callAdmissibilityFailure(invented)?.code, "UNKNOWN_AGENT");
 	const result = scored([invented]);
 	assert.equal(result.pass, false);
-	assert.match(result.notes, /UNKNOWN_AGENT/);
+	// knownAgentsOnly reports it as a shape mismatch before the admissibility
+	// rider would name UNKNOWN_AGENT; both describe the same defect.
+	assert.match(result.notes, /not bundled flow agents/);
 	// One known ref means real children spawn: the call is admitted, and the
 	// harness must terminate rather than let live children run to completion.
-	assert.equal(callAdmissibilityFailure({
-		why: "independent review",
+	const mixed = {
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
 		tasks: [{ agent: "recon", task: "Review the uncommitted changes." }, { agent: "spec-reviewer", task: "Review the uncommitted changes." }],
-	}), null);
+	};
+	assert.equal(callAdmissibilityFailure(mixed), null);
+	// …but admitted is not correct: the runner refuses the invented sibling,
+	// so only one independent review can run, and knownAgentsOnly fails the
+	// shape instead.
+	const mixedScore = scored([mixed]);
+	assert.equal(mixedScore.pass, false);
+	assert.match(mixedScore.notes, /spec-reviewer are not bundled flow agents/);
 	// Sequential openers are covered too: a single-mode call to an invented
 	// agent spawns nothing.
 	assert.equal(callAdmissibilityFailure({ why: "x", agent: "made-up-agent", task: "t" })?.code, "UNKNOWN_AGENT");

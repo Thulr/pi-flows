@@ -267,6 +267,11 @@ export const SELECTION_CASES = defineCases([
 			// review, so "implement frontend changes" + "implement backend
 			// changes" cannot ride the run-wide alternation's "changes".
 			everyTaskPattern: "review",
+			// Two independent reviews means two roles that can actually run: a
+			// mixed fan-out naming one invented reviewer is admitted (the known
+			// ref spawns) but the runner refuses the invented sibling, halving
+			// the requested independence.
+			knownAgentsOnly: true,
 			anyOf: [
 				{ preset: "code-review", mode: "preset" },
 				{ mode: "parallel", minTasks: 2 },

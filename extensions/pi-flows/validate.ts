@@ -185,13 +185,24 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 		return [];
 	}
 	if (params?.graph !== undefined) {
-		// handleGraph refuses GRAPH_INVALID for a node count outside
-		// 1..MAX_GRAPH_NODES before its guard; stay silent behind that earlier
-		// refusal, and never iterate a hostile-length node list. Within
-		// bounds, only the first wave is knowable pre-spawn: nodes with no
-		// dependencies.
+		// handleGraph refuses GRAPH_INVALID for every structural defect before
+		// its guard — node count outside 1..MAX_GRAPH_NODES, a node missing
+		// id/agent/task, a duplicated id, or a dependsOn naming no node — so
+		// the mirror stays silent behind each of those refusals (and never
+		// iterates a hostile-length list). For a valid graph, only the first
+		// wave is knowable pre-spawn: nodes with no dependencies.
 		const nodes = params.graph?.nodes;
 		if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) return [];
+		const ids = new Set<string>();
+		for (const node of nodes) {
+			if (!node?.id || !node.agent || !node.task || ids.has(node.id)) return [];
+			ids.add(node.id);
+		}
+		for (const node of nodes) {
+			for (const dep of node.dependsOn ?? []) {
+				if (!ids.has(dep)) return [];
+			}
+		}
 		return [(refArray(nodes) as Array<SharedWriteRef & { dependsOn?: string[] }>).filter((node) => (node?.dependsOn ?? []).length === 0)];
 	}
 	if (params?.search !== undefined) {

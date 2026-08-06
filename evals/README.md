@@ -663,9 +663,12 @@ compose with `anyOf` (a disjunction of allowed sub-shapes over shared fields),
 `params` (scalar pins such as `{ allowSharedWriteCwd: true }`), and
 `everyTaskPattern` (role-by-role intent binding: every assigned task must match
 on its own, so one on-topic task cannot vouch for off-topic siblings the way
-the run-wide `taskPattern` concatenation would allow); corpus preflight
-validates all of these fields — including unknown-key rejection — so a typo'd
-predicate fails before any model is invoked. The `independent-review-safe-first-call` case reproduces the
+the run-wide `taskPattern` concatenation would allow), and `knownAgentsOnly`
+(every named role must resolve in the bundled roster, so a mixed fan-out whose
+invented sibling the runner would refuse cannot pass as the full requested
+fan-out); corpus preflight validates all of these fields — including
+unknown-key and vacuous-value rejection — so a typo'd predicate fails before
+any model is invoked. The `independent-review-safe-first-call` case reproduces the
 issue-#82 transcript with all three: review-of-uncommitted-changes intent must
 pick the `code-review` preset, a serialized or read-only fan-out, or an
 independent-voter panel on the first call, must never set
