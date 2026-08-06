@@ -44,13 +44,18 @@ const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph"]);
 // asked of the expanded call, not the raw preset reference: a permitted
 // override (say concurrency:2 on code-review) can turn a safe preset into a
 // call the shared-write guard refuses, and a raw-args check would credit it.
-// Resolution failures (unknown preset, undeclared overrides) are pre-dispatch
-// refusals outside this seam's vocabulary; the raw args stand and shape
-// scoring reports those as preset-unknown/preset-conflict.
+// Resolution failures split two ways: an unknown name or undeclared override
+// key is visible to shape scoring (preset-unknown/preset-conflict), so those
+// stay outside the vocabulary — but a declared key with a schema-invalid
+// value, or a missing required task, still classifies as a clean preset
+// shape, so those are scored with the tool's own resolution codes
+// (PRESET_EXPANSION_INVALID, PRESET_TASK_REQUIRED).
+const SHAPE_VISIBLE_PRESET_FAILURES = new Set(["UNKNOWN_PRESET", "PRESET_OVERRIDE_INVALID"]);
+
 function effectiveCallParams(args) {
-	if (typeof args?.preset !== "string" || !args.preset) return args;
+	if (typeof args?.preset !== "string" || !args.preset) return { params: args };
 	const resolved = resolveFlowPreset(args, scoringPresetDiscovery);
-	return "error" in resolved ? args : resolved.params;
+	return "error" in resolved ? { params: args, resolutionError: resolved.error } : { params: resolved.params };
 }
 
 // Admissibility: would the flow tool have accepted this call, or refused it
@@ -71,12 +76,16 @@ function effectiveCallParams(args) {
 // the tool's own predicate here.
 export function callAdmissibilityFailure(args) {
 	if (nonSpawningFlowCall(args ?? {})) return null;
-	const effective = effectiveCallParams(args ?? {});
-	// A preset whose resolution failed is refused by the tool right there
-	// (UNKNOWN_PRESET, PRESET_OVERRIDE_INVALID, PRESET_EXPANSION_INVALID) —
-	// codes outside this seam's vocabulary, and none of the later gates ever
-	// run, so none may be claimed for it.
-	if (typeof args?.preset === "string" && args.preset && effective === args) return null;
+	const resolution = effectiveCallParams(args ?? {});
+	const effective = resolution.params;
+	// A preset whose resolution failed is refused by the tool right there, and
+	// none of the later gates ever run, so none of their codes may be claimed
+	// for it. Shape-visible failures score as shape mismatches; the rest score
+	// as the tool's own resolution refusal.
+	if (resolution.resolutionError) {
+		if (SHAPE_VISIBLE_PRESET_FAILURES.has(resolution.resolutionError.code)) return null;
+		return { code: resolution.resolutionError.code, reason: resolution.resolutionError.message.replace(/\.$/, "") };
+	}
 	// The tool requires exactly one active mode; a call activating zero or
 	// several is refused before any other gate, so first-activator scoring
 	// must not quietly admit it.

@@ -73,9 +73,19 @@ test("preset calls are scored on their expanded topology, exactly as the tool re
 		callAdmissibilityFailure({ preset: "code-review", task: "Review HEAD.", why: "independent review", concurrency: 2 })?.code,
 		"SHARED_WRITE_CWD",
 	);
-	// A resolution failure (unknown preset) is a pre-dispatch refusal outside
-	// the seam's vocabulary; the raw args stand and shape scoring reports it.
+	// Shape-visible resolution failures (unknown name, undeclared override
+	// key) stay outside the vocabulary; the raw args stand and shape scoring
+	// reports preset-unknown/preset-conflict.
 	assert.equal(callAdmissibilityFailure({ preset: "no-such-preset", task: "t", why: "x" }), null);
+	// A declared override key with a schema-invalid value still classifies as
+	// a clean preset shape, so the seam scores the tool's own resolution
+	// refusal instead of crediting a call no reviewer ever starts.
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: "one" })?.code, "PRESET_EXPANSION_INVALID");
+	const wordConcurrency = scored([{ preset: "code-review", task: "Review the uncommitted changes.", why: "independent review", concurrency: "one" }]);
+	assert.equal(wordConcurrency.pass, false);
+	assert.match(wordConcurrency.notes, /PRESET_EXPANSION_INVALID/);
+	// A known preset missing its required task is the same class.
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", why: "x" })?.code, "PRESET_TASK_REQUIRED");
 });
 
 test("a call activating several modes is refused with the tool's own exactly-one-mode rule", () => {
