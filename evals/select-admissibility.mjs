@@ -9,7 +9,7 @@
 // a bare-node script such as eval:review or eval:pareto.
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
+import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency, workflowHeadlessApprovalRefusal } from "../extensions/pi-flows/validate.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
@@ -39,8 +39,8 @@ else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
 /** The modes whose handlers apply the top-level params.contract to their FIRST child (verified per handler: single uses it directly; chain, parallel, vote, debate pass fallbackContract; evaluate's operator falls back to it). Dossier is deliberately absent: its fallback goes to the debrief synthesizer, and its first-spawn section plans carry only their own contracts. */
 const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "debate", "evaluate"]);
 
-/** The modes whose openers run through integrationRunPlan, which resolves each ref's own contract — graph nodes carry contracts too, but route/search/loop/orchestrate openers use runAgentRef with no contract limits, so a role contract there is ignored by the tool and must be ignored here. */
-const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph"]);
+/** The modes whose openers run through integrationRunPlan, which resolves (and validates) each ref's own contract: the fallback modes plus graph nodes, dossier sections (modes/dossier.ts:33 — no fallback, own contracts only), and the orchestrate commander (modes/orchestrate.ts:53). route/search/loop openers use runAgentRef with no contract limits, so a role contract there is ignored by the tool and must be ignored here. */
+const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph", "dossier", "orchestrate"]);
 
 // The tool resolves a preset before any gate runs, so admissibility must be
 // asked of the expanded call, not the raw preset reference: a permitted
@@ -130,6 +130,11 @@ export function callAdmissibilityFailure(args) {
 	// probe ever runs; a call it refuses MONITOR_INVALID spawns nothing.
 	const monitorInvalid = monitorInvalidRefusal(effective ?? {});
 	if (monitorInvalid) return { code: monitorInvalid.code, reason: monitorInvalid.message.replace(/\.$/, "") };
+	// A workflow opening with an approval phase is refused in the headless
+	// subject before any child spawns (state is persisted first, so the
+	// play-out branch still terminates it via the stateful-mode rule).
+	const workflowApproval = workflowHeadlessApprovalRefusal(effective ?? {});
+	if (workflowApproval) return { code: workflowApproval.code, reason: workflowApproval.message.replace(/\.$/, "") };
 	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, effective ?? {});
 	if (sharedWrite) return { code: sharedWrite.code, reason: sharedWrite.message.replace(/\.$/, "") };
 	// A flow budget that starts exhausted (a zero ceiling) refuses at the

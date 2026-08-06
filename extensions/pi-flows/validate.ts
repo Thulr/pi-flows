@@ -339,6 +339,27 @@ export function preSpawnFanoutRefusal(params: Record<string, any>): FlowError | 
 }
 
 /**
+ * handleWorkflow walks its phases in order, and an approval phase reached in
+ * a headless run is refused WORKFLOW_APPROVAL_REQUIRED before any child
+ * spawns (state is persisted first, so this is pre-spawn, not pre-work). A
+ * workflow whose FIRST phase gates on approval therefore never starts a
+ * child in the headless selection subject; the eval scores that refusal. The
+ * `.message` check mirrors the handler's own approval-phase marker.
+ */
+export function workflowHeadlessApprovalRefusal(params: Record<string, any>): FlowError | null {
+	if (params?.workflow === undefined) return null;
+	const phases = params.workflow?.phases;
+	if (!Array.isArray(phases)) return null;
+	if (!phases[0]?.approval?.message) return null;
+	return flowError(
+		"WORKFLOW_APPROVAL_REQUIRED",
+		"Workflow approval phase requires a human decision.",
+		"The workflow opens with an approval phase, and a headless run has no UI to collect the decision, so no child can spawn.",
+		"Run in an interactive UI, or open with a work phase.",
+	);
+}
+
+/**
  * The refs a call would spawn before anything else: the concurrent first
  * waves for fan-out modes, the opening role for sequential ones. The
  * selection eval uses this for the roster rule — a call whose every
