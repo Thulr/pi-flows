@@ -37,6 +37,13 @@ function values(value) {
 	return Array.isArray(value) ? value : [value];
 }
 
+// Raw model args can put anything where the schema wants a list; matcher
+// helpers iterate through this so a defined-but-non-array collection is an
+// empty one, never a crash mid-eval.
+function asArray(value) {
+	return Array.isArray(value) ? value : [];
+}
+
 // Mirrors resolveFlowPreset: reserved keys plus the caller-control passthrough set
 // are always allowed, and anything else must be an override the *selected* preset
 // declares. An allowlist closes the class rather than chasing individual raw fields.
@@ -123,20 +130,20 @@ function modeOf(args) {
 
 function primaryAgents(args, mode) {
 	if (mode === "single") return [args.agent].filter(Boolean);
-	if (mode === "parallel") return (args.tasks ?? []).map((task) => task.agent).filter(Boolean);
+	if (mode === "parallel") return asArray(args.tasks).map((task) => task?.agent).filter(Boolean);
 	// Mirrors handleVote's voter construction: an explicit list, else the one
 	// replicated agent.
 	if (mode === "vote") {
-		const voters = (args.vote?.voters ?? []).map((voter) => voter?.agent).filter(Boolean);
+		const voters = asArray(args.vote?.voters).map((voter) => voter?.agent).filter(Boolean);
 		if (voters.length > 0) return voters;
 		return [args.vote?.agent].filter(Boolean);
 	}
 	if (mode === "evaluate") return [args.evaluate?.operator?.agent ?? "operator"].filter(Boolean);
 	if (mode === "orchestrate") return [args.orchestrate?.recon?.agent ?? "recon"].filter(Boolean);
-	if (mode === "workflow") return (args.workflow?.phases ?? []).map((phase) => phase.agent).filter(Boolean);
-	if (mode === "worktree") return (args.worktree?.tasks ?? []).map((task) => task.agent).filter(Boolean);
-	if (mode === "debate") return (args.debate?.participants ?? []).map((participant) => participant.agent).filter(Boolean);
-	if (mode === "dossier") return (args.dossier?.sections ?? []).map((section) => section.agent).filter(Boolean);
+	if (mode === "workflow") return asArray(args.workflow?.phases).map((phase) => phase?.agent).filter(Boolean);
+	if (mode === "worktree") return asArray(args.worktree?.tasks).map((task) => task?.agent).filter(Boolean);
+	if (mode === "debate") return asArray(args.debate?.participants).map((participant) => participant?.agent).filter(Boolean);
+	if (mode === "dossier") return asArray(args.dossier?.sections).map((section) => section?.agent).filter(Boolean);
 	if (mode === "monitor") return [args.monitor?.reactor?.agent ?? "analyst"].filter(Boolean);
 	return [];
 }
@@ -197,7 +204,7 @@ function perRoleAgentNames(args, mode) {
 // task-bearing phases are bound.
 function perRoleTaskTexts(args, mode) {
 	if (mode === "workflow") {
-		return (args.workflow?.phases ?? []).map((phase) => phase?.task).filter((task) => typeof task === "string");
+		return asArray(args.workflow?.phases).map((phase) => phase?.task).filter((task) => typeof task === "string");
 	}
 	const roleTasks = {
 		parallel: args.tasks,
@@ -206,7 +213,7 @@ function perRoleTaskTexts(args, mode) {
 		dossier: args.dossier?.sections,
 	}[mode];
 	if (roleTasks !== undefined) {
-		return (roleTasks ?? []).map((role) => (typeof role?.task === "string" ? role.task : ""));
+		return asArray(roleTasks).map((role) => (typeof role?.task === "string" ? role.task : ""));
 	}
 	return typeof args?.task === "string" ? [args.task] : [];
 }
@@ -219,10 +226,10 @@ function perRoleTaskTexts(args, mode) {
 function taskText(args) {
 	const pieces = [];
 	if (typeof args?.task === "string") pieces.push(args.task);
-	for (const task of args?.tasks ?? []) {
+	for (const task of asArray(args?.tasks)) {
 		if (typeof task?.task === "string") pieces.push(task.task);
 	}
-	for (const task of args?.chain ?? []) {
+	for (const task of asArray(args?.chain)) {
 		if (typeof task?.task === "string") pieces.push(task.task);
 	}
 	if (typeof args?.evaluate?.operator?.task === "string") pieces.push(args.evaluate.operator.task);
@@ -232,18 +239,18 @@ function taskText(args) {
 	}
 	if (typeof args?.orchestrate?.task === "string") pieces.push(args.orchestrate.task);
 	if (typeof args?.orchestrate?.returnContract === "string") pieces.push(args.orchestrate.returnContract);
-	for (const node of args?.graph?.nodes ?? []) {
+	for (const node of asArray(args?.graph?.nodes)) {
 		if (typeof node?.task === "string") pieces.push(node.task);
 	}
-	for (const phase of args?.workflow?.phases ?? []) {
+	for (const phase of asArray(args?.workflow?.phases)) {
 		if (typeof phase?.task === "string") pieces.push(phase.task);
 		if (typeof phase?.approval?.message === "string") pieces.push(phase.approval.message);
 		if (typeof phase?.checkCommand === "string") pieces.push(phase.checkCommand);
 	}
-	for (const task of args?.worktree?.tasks ?? []) {
+	for (const task of asArray(args?.worktree?.tasks)) {
 		if (typeof task?.task === "string") pieces.push(task.task);
 	}
-	for (const section of args?.dossier?.sections ?? []) {
+	for (const section of asArray(args?.dossier?.sections)) {
 		if (typeof section?.task === "string") pieces.push(section.task);
 	}
 	if (typeof args?.monitor?.command === "string") pieces.push(args.monitor.command);

@@ -151,7 +151,10 @@ export function observationCap(testCase) {
 export function letRefusalPlayOut(args, observedCount, testCase) {
 	if (!hasUsefulArguments(args)) return false;
 	if (!callAdmissibilityFailure(args)) return false;
-	if (args?.traceFile) return false;
+	// The sink path is params.traceFile ?? PI_FLOWS_TRACE_FILE in the
+	// extension, and the spawned subject inherits this process's environment
+	// (loadDotenv included) — either source makes the refusal a writer.
+	if (args?.traceFile || process.env.PI_FLOWS_TRACE_FILE) return false;
 	return observedCount < observationCap(testCase);
 }
 

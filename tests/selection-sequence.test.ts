@@ -428,6 +428,33 @@ test("only writeless, vocabulary-named refusals play out in the live harness", (
 	assert.equal(letRefusalPlayOut({ ...REFUSED_FANOUT, concurrency: 1 }, 1, budgeted), false);
 	assert.equal(letRefusalPlayOut({ __unparsed: "{" }, 1, budgeted), false);
 	assert.equal(letRefusalPlayOut(REFUSED_FANOUT, observationCap(budgeted), budgeted), false);
+	// The sink path falls back to PI_FLOWS_TRACE_FILE, which the subject
+	// inherits from this process — an environment-supplied destination makes
+	// every refusal a writer just as an explicit traceFile does.
+	const previousTraceFile = process.env.PI_FLOWS_TRACE_FILE;
+	process.env.PI_FLOWS_TRACE_FILE = "trace.jsonl";
+	try {
+		assert.equal(letRefusalPlayOut(REFUSED_FANOUT, 1, budgeted), false);
+	} finally {
+		if (previousTraceFile === undefined) delete process.env.PI_FLOWS_TRACE_FILE;
+		else process.env.PI_FLOWS_TRACE_FILE = previousTraceFile;
+	}
+});
+
+test("the matcher is total over malformed role collections", () => {
+	// modeOf classifies the defined object mode even when the collection is
+	// not an array; one such call must degrade to a mismatch, not crash the
+	// selection command mid-run.
+	const malformedCalls: Array<Record<string, unknown>> = [
+		{ why: "x", task: "Review the changes.", worktree: { tasks: {} } },
+		{ why: "x", task: "Review the changes.", dossier: { sections: "runbook" } },
+		{ why: "x", task: "Review the changes.", workflow: { phases: 7 } },
+		{ why: "x", tasks: [{ agent: "recon", task: "Review." }], chain: "a,b" },
+	];
+	for (const call of malformedCalls) {
+		assert.doesNotThrow(() => flowCallMatchesExpectation({ arguments: call }, { minTasks: 2, everyTaskPattern: "review", agents: ["recon"], taskPattern: "review" }), JSON.stringify(call));
+		assert.doesNotThrow(() => scored([call]), JSON.stringify(call));
+	}
 });
 
 test("the observation cap always sits above the case's refused-call budget", () => {
