@@ -14,6 +14,7 @@ import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
+import { flowParamsSchemaError } from "../extensions/pi-flows/schema.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
 import { strictTraceConfigError } from "../extensions/pi-flows/trace.ts";
 import { checkpointGates } from "../extensions/pi-flows/ui.ts";
@@ -75,6 +76,12 @@ function effectiveCallParams(args) {
 // TOO_FEW_VOTERS) score as admissible; extending the vocabulary means adding
 // the tool's own predicate here.
 export function callAdmissibilityFailure(args) {
+	// pi validates the raw call against the public flow schema before execute
+	// ever runs, so a schema-invalid call is refused ahead of every gate below
+	// — including list/showConfig and preset resolution. No FlowError code
+	// exists for that layer; the seam names it SCHEMA_INVALID.
+	const schemaError = flowParamsSchemaError(args ?? {});
+	if (schemaError) return { code: "SCHEMA_INVALID", reason: `outside the public flow schema: ${schemaError}` };
 	if (nonSpawningFlowCall(args ?? {})) return null;
 	const resolution = effectiveCallParams(args ?? {});
 	const effective = resolution.params;

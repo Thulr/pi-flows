@@ -1,5 +1,6 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { Compile } from "typebox/compile";
 import { DEFAULT_APPROVAL_TTL_MS, MAX_APPROVAL_TTL_MS, MIN_APPROVAL_TTL_MS } from "./approval.ts";
 import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, DEFAULT_TIMEOUT_MS, MAX_DEBATE_ROUNDS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, MAX_PARALLEL_TASKS, MAX_WORKFLOW_PHASES } from "./types.ts";
 
@@ -408,3 +409,13 @@ export const FlowParams = Type.Object({
 }, {
 	description: "Prefer a named preset when it matches the intent, e.g. {\"preset\":\"code-review\",\"task\":\"Review changes against main and issue #25\",\"why\":\"author-independent review\"}. Otherwise provide exactly one raw flow mode. Every spawning call must set why.",
 });
+
+const checkFlowParams = Compile(FlowParams);
+
+/** The public flow schema's own verdict, one error at a time. Preset expansion validates its expanded params with this, and the selection eval imports it so a call pi would refuse at parameter validation — before execute ever runs — is never scored as admissible. */
+export function flowParamsSchemaError(value: unknown): string | null {
+	for (const item of checkFlowParams.Errors(value)) {
+		return `${item.instancePath || "/"} ${item.message}`;
+	}
+	return null;
+}

@@ -12,6 +12,22 @@ import { validateCaseCorpus } from "../evals/case-contract.mjs";
 
 const reviewCase = SELECTION_CASES.find((testCase: any) => testCase.name === "independent-review-safe-first-call");
 
+/** A complete public-schema delegation contract; budget ceilings vary per test. */
+function fullContract(budget: Record<string, number>): Record<string, unknown> {
+	return {
+		objective: "review the change set",
+		constraints: ["read-only"],
+		nonGoals: ["fixing findings"],
+		dependencies: [],
+		authority: { may: ["read repository files"], mustNot: ["edit files"], requiresApproval: [] },
+		sideEffectClass: "read-only",
+		budget,
+		acceptanceChecks: ["coverage is complete"],
+		returnSchema: { type: "object" },
+		owner: "standards",
+	};
+}
+
 /** Every direct dereference goes through this, so a renamed case fails with a named error, not a TypeError. */
 function theReviewCase(): any {
 	assert.ok(reviewCase, "selection case fixture missing — was independent-review-safe-first-call renamed?");
@@ -77,13 +93,14 @@ test("preset calls are scored on their expanded topology, exactly as the tool re
 	// key) stay outside the vocabulary; the raw args stand and shape scoring
 	// reports preset-unknown/preset-conflict.
 	assert.equal(callAdmissibilityFailure({ preset: "no-such-preset", task: "t", why: "x" }), null);
-	// A declared override key with a schema-invalid value still classifies as
-	// a clean preset shape, so the seam scores the tool's own resolution
-	// refusal instead of crediting a call no reviewer ever starts.
-	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: "one" })?.code, "PRESET_EXPANSION_INVALID");
+	// A declared override key with an out-of-schema value is refused by pi's
+	// own parameter validation before execute — and before resolution — so
+	// the seam scores SCHEMA_INVALID rather than crediting a call no
+	// reviewer ever starts.
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: "one" })?.code, "SCHEMA_INVALID");
 	const wordConcurrency = scored([{ preset: "code-review", task: "Review the uncommitted changes.", why: "independent review", concurrency: "one" }]);
 	assert.equal(wordConcurrency.pass, false);
-	assert.match(wordConcurrency.notes, /PRESET_EXPANSION_INVALID/);
+	assert.match(wordConcurrency.notes, /SCHEMA_INVALID/);
 	// A known preset missing its required task is the same class.
 	assert.equal(callAdmissibilityFailure({ preset: "code-review", why: "x" })?.code, "PRESET_TASK_REQUIRED");
 });
@@ -128,7 +145,9 @@ test("an oversized fan-out is refused with the tool's own TOO_MANY_TASKS, not ad
 	const result = scored([nineTasks]);
 	assert.equal(result.pass, false);
 	assert.match(result.notes, /TOO_MANY_TASKS/);
-	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", vote: { agent: "recon", count: 9 } })?.code, "TOO_MANY_TASKS");
+	// The schema itself caps vote.count at the fan-out limit, so an over-cap
+	// count is refused a layer earlier than the handler's bound.
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", vote: { agent: "recon", count: 9 } })?.code, "SCHEMA_INVALID");
 });
 
 test("a first call whose every reviewer is an invented agent is refused, not admitted", () => {
@@ -267,7 +286,9 @@ test("inherited flow depth and initially exhausted budgets are refused, not cred
 	assert.equal(callAdmissibilityFailure({ ...admissible, maxCostUsd: 5 }), null);
 	// Contract budgets refuse the same way: when every first-spawn role's
 	// contract starts exhausted, no child can spawn — one funded role admits.
-	const zeroBudgetContract = { objective: "review", budget: { maxTokens: 0 } };
+	// The fixture is a complete public-schema contract; a partial one is
+	// refused SCHEMA_INVALID before any budget is consulted.
+	const zeroBudgetContract = fullContract({ timeoutMs: 60_000, maxTokens: 0, maxGeneratedTokens: 100 });
 	assert.equal(callAdmissibilityFailure({
 		...admissible,
 		tasks: admissible.tasks.map((task) => ({ ...task, contract: zeroBudgetContract })),
@@ -293,10 +314,10 @@ test("contracts count only where the opener consumes them", () => {
 	// loop likewise — neither the top-level fallback nor a role contract
 	// reaches those openers, so claiming a refusal would let the play-out
 	// branch execute a call the tool admits and spawn a live child.
-	const zeroBudgetContract = { objective: "route", budget: { maxTokens: 0 } };
+	const zeroBudgetContract = fullContract({ timeoutMs: 60_000, maxTokens: 0, maxGeneratedTokens: 100 });
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, route: { candidates: ["recon", "analyst"] } }), null);
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, search: {} }), null);
-	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", route: { controller: { agent: "controller", contract: zeroBudgetContract } } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", route: { candidates: ["recon", "analyst"], controller: { agent: "controller", contract: zeroBudgetContract } } }), null);
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", search: { generator: { agent: "strategist", contract: zeroBudgetContract } } }), null);
 	// Graph nodes run through integrationRunPlan, which resolves each ref's
 	// own contract — a first wave of exhausted nodes is a real refusal.
@@ -313,16 +334,19 @@ test("monitor calls the tool would refuse before probing are refused here too", 
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "Diagnose DEGRADED", monitor: { command: "./health-check", trigger: "match" } })?.code, "MONITOR_INVALID");
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "./health-check", trigger: "match", pattern: "(" } })?.code, "MONITOR_INVALID");
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "   " } })?.code, "MONITOR_INVALID");
-	// The handler normalizes unknown triggers to "success", which needs no
-	// pattern; a well-formed match monitor stays admitted.
-	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "./health-check", trigger: "sometimes" } }), null);
+	// An unknown trigger never reaches the handler's normalization: the
+	// public schema enumerates the allowed values and pi refuses the call.
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "./health-check", trigger: "sometimes" } })?.code, "SCHEMA_INVALID");
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", monitor: { command: "./health-check", trigger: "match", pattern: "DEGRADED", reactor: { agent: "analyst" } } }), null);
 });
 
-test("oversized debate and dossier role lists derive no wave, like every other schema cap", () => {
+test("oversized debate and dossier role lists are schema-refused, never guard-mislabeled", () => {
+	// The schema caps both lists at the fan-out limit, so pi refuses the call
+	// before the handler or its guard runs; the wave mirror stays silent for
+	// the same shapes so the guard can never claim them.
 	const many = Array.from({ length: 9 }, (_, index) => ({ agent: "overwatch", task: `part ${index}` }));
-	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", debate: { participants: many } }), null);
-	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", dossier: { sections: many } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", debate: { participants: many } })?.code, "SCHEMA_INVALID");
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", dossier: { sections: many } })?.code, "SCHEMA_INVALID");
 });
 
 test("a rootless graph is refused with the tool's own GRAPH_CYCLE, not admitted", () => {
@@ -369,12 +393,14 @@ test("a spawn checkpoint and a destination-less strict trace are refused in the 
 test("an invalid concurrency is scored as the tool's own INVALID_CONCURRENCY, not as the guard behind it", () => {
 	// The dispatch core refuses these before any handler guard runs; claiming
 	// SHARED_WRITE_CWD (or admitting them) would mis-count refusal budgets.
-	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 0 })?.code, "INVALID_CONCURRENCY");
+	// concurrency:0 is below the schema's own minimum, so pi refuses it a
+	// layer before the dispatch core would; 2.5 passes the schema and is the
+	// dispatch core's non-integer refusal.
+	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 0 })?.code, "SCHEMA_INVALID");
 	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 2.5 })?.code, "INVALID_CONCURRENCY");
-	// On a preset call the same bad value is refused earlier, at resolution —
-	// scored as the tool's own PRESET_EXPANSION_INVALID (shape scoring cannot
-	// see a declared key's invalid value), never as a later gate's code.
-	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: 0.5 })?.code, "PRESET_EXPANSION_INVALID");
+	// The same sub-minimum value on a preset call is equally schema-refused
+	// on the raw args, before resolution ever runs.
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: 0.5 })?.code, "SCHEMA_INVALID");
 });
 
 test("the #82 transcript fails on measurement, attributed on all three axes", () => {

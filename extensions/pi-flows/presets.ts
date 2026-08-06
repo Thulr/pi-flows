@@ -2,10 +2,9 @@ import { execFileSync } from "node:child_process";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Compile } from "typebox/compile";
 import { flowAgentDir, isDirectory, parseFlowFrontmatter } from "./agents.ts";
 import { isFailed, safePath, sanitizeText, takeValidatedReturnEnvelope } from "./sanitize.ts";
-import { FlowParams } from "./schema.ts";
+import { FlowParams, flowParamsSchemaError } from "./schema.ts";
 import {
 	flowError,
 	type AgentScope,
@@ -22,7 +21,6 @@ import {
 const baseDir = path.dirname(fileURLToPath(import.meta.url));
 export const packagePresetsDir = path.resolve(baseDir, "../../presets");
 const PRESET_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const checkFlowParams = Compile(FlowParams);
 const PASSTHROUGH_KEYS = new Set([
 	"why",
 	"agentScope",
@@ -51,13 +49,6 @@ const PASSTHROUGH_KEYS = new Set([
  * checkout, and a template must not make it on the caller's behalf.
  */
 const CALLER_ONLY_KEYS = ["why", "agentScope", "confirmProjectAgents", "allowSharedWriteCwd"] as const;
-
-function flowParamsSchemaError(value: unknown): string | null {
-	for (const item of checkFlowParams.Errors(value)) {
-		return `${item.instancePath || "/"} ${item.message}`;
-	}
-	return null;
-}
 
 function commaList(value: unknown): string[] {
 	if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);

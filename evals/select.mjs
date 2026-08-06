@@ -160,7 +160,13 @@ const PLAYOUT_SAFE_CODES = new Set([
 	"INVALID_MODE", "WHY_REQUIRED", "FLOW_DEPTH_EXCEEDED", "INVALID_CONCURRENCY",
 	"TRACE_INCOMPLETE", "CHECKPOINT_APPROVAL_REQUIRED", "TOO_MANY_TASKS", "SHARED_WRITE_CWD",
 	"GRAPH_CYCLE", "PRESET_EXPANSION_INVALID", "PRESET_TASK_REQUIRED", "MONITOR_INVALID",
+	"SCHEMA_INVALID",
 ]);
+
+// Runner-level refusals precede all work only when nothing acts before the
+// runner; any code in neither set — including one a future vocabulary
+// extension forgets to classify — terminates, never plays out.
+const RUNNER_LEVEL_CODES = new Set(["UNKNOWN_AGENT", "BUDGET_EXCEEDED"]);
 
 function actsBeforeRunner(args) {
 	return args?.monitor !== undefined || args?.workflow !== undefined || args?.worktree !== undefined
@@ -171,7 +177,10 @@ export function letRefusalPlayOut(args, observedCount, testCase) {
 	if (!hasUsefulArguments(args)) return false;
 	const refusal = callAdmissibilityFailure(args);
 	if (!refusal) return false;
-	if (!PLAYOUT_SAFE_CODES.has(refusal.code) && actsBeforeRunner(args)) return false;
+	if (!PLAYOUT_SAFE_CODES.has(refusal.code)) {
+		if (!RUNNER_LEVEL_CODES.has(refusal.code)) return false;
+		if (actsBeforeRunner(args)) return false;
+	}
 	// The sink path is params.traceFile ?? PI_FLOWS_TRACE_FILE in the
 	// extension, and the spawned subject inherits this process's environment
 	// (loadDotenv included) — either source makes the refusal a writer.
