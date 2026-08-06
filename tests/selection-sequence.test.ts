@@ -556,6 +556,20 @@ test("the matcher is total over malformed role collections", () => {
 		assert.doesNotThrow(() => flowCallMatchesExpectation({ arguments: call }, { minTasks: 2, everyTaskPattern: "review", agents: ["recon"], taskPattern: "review" }), JSON.stringify(call));
 		assert.doesNotThrow(() => scored([call]), JSON.stringify(call));
 	}
+	// A non-array collection counts zero roles — a string has a .length too,
+	// and letting it satisfy minTasks would match a call that cannot run.
+	const stringPhases = flowCallMatchesExpectation({ arguments: { why: "x", task: "t", workflow: { phases: "abc" } } }, { mode: "workflow", minTasks: 2 });
+	assert.equal(stringPhases.pass, false);
+	assert.match(stringPhases.notes, /expected at least 2 workflow task\(s\), saw 0/);
+	// Likewise a present but non-numeric vote count is schema-refused: it
+	// counts zero roles instead of inheriting the handler default of three.
+	const wordCount = scored([{
+		why: "independent review of uncommitted changes",
+		task: "Review the uncommitted changes in this working tree.",
+		vote: { agent: "recon", count: "two" },
+	}]);
+	assert.equal(wordCount.pass, false);
+	assert.match(wordCount.notes, /expected at least 2 vote task\(s\), saw 0/);
 });
 
 test("the observation cap always sits above the case's refused-call budget", () => {

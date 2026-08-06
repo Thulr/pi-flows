@@ -238,9 +238,12 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 		// toolset (the schema rejects it), so replicating it would only put
 		// non-refs in the wave.
 		if (typeof spec.agent === "string" && spec.agent) {
-			// The handler builds voters before its TOO_MANY_TASKS check, but the
+			// A present but non-numeric count is schema-refused before the
+			// handler runs, so it derives no wave rather than defaulting. The
+			// handler builds voters before its TOO_MANY_TASKS check, but the
 			// refusal still lands before the guard, so an over-cap count is
 			// silent here too — and a hostile count never allocates.
+			if (spec.count !== undefined && !Number.isFinite(spec.count)) return [];
 			const count = Number.isFinite(spec.count) ? Math.floor(spec.count) : 3;
 			if (count > MAX_PARALLEL_TASKS) return [];
 			return [Array.from({ length: Math.max(count, 0) }, () => ({ agent: spec.agent as string }))];

@@ -123,11 +123,14 @@ function primaryAgents(args, mode) {
 }
 
 function taskCount(args, mode) {
-	if (mode === "parallel") return args.tasks?.length ?? 0;
-	if (mode === "workflow") return args.workflow?.phases?.length ?? 0;
-	if (mode === "worktree") return args.worktree?.tasks?.length ?? 0;
-	if (mode === "debate") return args.debate?.participants?.length ?? 0;
-	if (mode === "dossier") return args.dossier?.sections?.length ?? 0;
+	// asArray, not .length: a schema-invalid non-array collection (a string
+	// has a length too) must count as zero roles, per this module's totality
+	// contract, or minTasks could be satisfied by a call that cannot run.
+	if (mode === "parallel") return asArray(args.tasks).length;
+	if (mode === "workflow") return asArray(args.workflow?.phases).length;
+	if (mode === "worktree") return asArray(args.worktree?.tasks).length;
+	if (mode === "debate") return asArray(args.debate?.participants).length;
+	if (mode === "dossier") return asArray(args.dossier?.sections).length;
 	// Mirrors handleVote's voter construction: a NON-EMPTY explicit voters
 	// list, else the replicated count, else the handler's default of three —
 	// an empty voters list is ignored by the handler, so it must not zero the
@@ -135,7 +138,11 @@ function taskCount(args, mode) {
 	if (mode === "vote") {
 		const voters = args.vote?.voters;
 		if (Array.isArray(voters) && voters.length > 0) return voters.length;
-		return Number.isFinite(args.vote?.count) ? Math.floor(args.vote.count) : 3;
+		// A present but non-numeric count is schema-refused, so it counts zero
+		// roles instead of inheriting the handler default of three.
+		const count = args.vote?.count;
+		if (count !== undefined) return Number.isFinite(count) ? Math.floor(count) : 0;
+		return 3;
 	}
 	return 0;
 }
