@@ -88,11 +88,19 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
  * changes nothing else about the run, so without the event a successful human
  * gate leaves no evidence it was ever asked for.
  */
+/**
+ * Does this call's checkpoint gate the given moment? "spawn" is the default
+ * target, so a bare `checkpoint: {}` gates the spawn. checkpointApproval
+ * consumes this, and the selection eval imports it to score the headless
+ * refusal (CHECKPOINT_APPROVAL_REQUIRED) with the tool's own predicate.
+ */
+export function checkpointGates(checkpoint: any, when: "spawn" | "finalize"): boolean {
+	return Boolean(checkpoint) && (checkpoint.before ?? "spawn") === when;
+}
+
 export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, when: "spawn" | "finalize", preview?: string, recordEvent?: RecordEvent): Promise<FlowError | null> {
 	const checkpoint = params.checkpoint;
-	if (!checkpoint) return null;
-	const target = checkpoint.before ?? "spawn";
-	if (target !== when) return null;
+	if (!checkpointGates(checkpoint, when)) return null;
 	const record = (decision: "approved" | "required" | "denied") => recordEvent?.({
 		kind: "approval",
 		name: `checkpoint.${when}`,

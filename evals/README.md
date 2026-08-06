@@ -631,11 +631,14 @@ several active modes), the spawn gate (`WHY_REQUIRED`, a missing or blank
 `why`), the concurrency bound (`INVALID_CONCURRENCY`), the fan-out bound
 (`TOO_MANY_TASKS`, more tasks or voters than the cap), the pre-spawn
 shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable refs sharing
-one cwd at concurrency above one), and the roster rule (`UNKNOWN_AGENT`, no
+one cwd at concurrency above one), the roster rule (`UNKNOWN_AGENT`, no
 first-spawn role naming a bundled agent — one known ref means real children
-spawn and the call counts as admitted) are all scored across every spawning
-mode, in the dispatch core's order, with a note that distinguishes "right
-shape, refused call" from a shape mismatch. A refusal the vocabulary cannot
+spawn and the call counts as admitted), the strict-trace gate
+(`TRACE_INCOMPLETE`, strict tracing with no trace destination), and the
+headless checkpoint gate (`CHECKPOINT_APPROVAL_REQUIRED`, a spawn-gating
+checkpoint in the UI-less subject) are all scored across every spawning mode,
+in the dispatch core's order, with a note that distinguishes "right shape,
+refused call" from a shape mismatch. A refusal the vocabulary cannot
 name keeps the seam silent rather than mislabeled — a failed preset
 resolution scores as admissible exactly because the tool never reaches the
 scored gates for it — and the refused-call budget counts only what the

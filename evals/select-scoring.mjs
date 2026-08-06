@@ -14,6 +14,8 @@ import { firstSpawnAgentRefs, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpa
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
+import { strictTraceConfigError } from "../extensions/pi-flows/trace.ts";
+import { checkpointGates } from "../extensions/pi-flows/ui.ts";
 
 export function parseToolArguments(raw) {
 	if (!raw) return {};
@@ -290,6 +292,17 @@ export function callAdmissibilityFailure(args) {
 	if (spawnJustificationMissing(effective?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
 	const concurrencyError = validateConcurrency(effective?.concurrency);
 	if (concurrencyError) return { code: concurrencyError.code, reason: concurrencyError.message.replace(/\.$/, "") };
+	// The dispatch core resolves both strict-trace inputs from params with the
+	// same environment fallbacks the spawned subject inherits, and refuses a
+	// strict run with no trace destination before dispatch.
+	const traceStrict = effective?.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
+	const traceError = strictTraceConfigError(traceStrict, effective?.traceFile ?? process.env.PI_FLOWS_TRACE_FILE);
+	if (traceError) return { code: traceError.code, reason: traceError.message.replace(/\.$/, "") };
+	// The subject runs headless, so a checkpoint gating the spawn (the
+	// default target) is refused before the handler runs.
+	if (checkpointGates(effective?.checkpoint, "spawn")) {
+		return { code: "CHECKPOINT_APPROVAL_REQUIRED", reason: "a spawn checkpoint cannot collect approval in the headless subject" };
+	}
 	const fanout = preSpawnFanoutRefusal(effective ?? {});
 	if (fanout) return { code: fanout.code, reason: fanout.message.replace(/\.$/, "") };
 	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, effective ?? {});

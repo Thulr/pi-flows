@@ -236,6 +236,26 @@ test("an unnamed role cannot slip past knownAgentsOnly", () => {
 	assert.match(unnamedSibling.notes, /\(unnamed\) are not bundled flow agents/);
 });
 
+test("a spawn checkpoint and a destination-less strict trace are refused in the headless subject", () => {
+	// checkpoint gates "spawn" by default and the JSON-mode subject has no UI,
+	// so the tool refuses CHECKPOINT_APPROVAL_REQUIRED before the handler runs.
+	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 1, checkpoint: {} })?.code, "CHECKPOINT_APPROVAL_REQUIRED");
+	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 1, checkpoint: { before: "spawn" } })?.code, "CHECKPOINT_APPROVAL_REQUIRED");
+	// A finalize checkpoint does not gate the spawn; the call is admitted.
+	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 1, checkpoint: { before: "finalize" } }), null);
+	// Strict tracing with no trace destination is refused pre-dispatch.
+	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 1, traceStrict: true })?.code, "TRACE_INCOMPLETE");
+	// The environment supplies the same inputs the subject inherits.
+	const previousStrict = process.env.PI_FLOWS_TRACE_STRICT;
+	process.env.PI_FLOWS_TRACE_STRICT = "1";
+	try {
+		assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 1 })?.code, "TRACE_INCOMPLETE");
+	} finally {
+		if (previousStrict === undefined) delete process.env.PI_FLOWS_TRACE_STRICT;
+		else process.env.PI_FLOWS_TRACE_STRICT = previousStrict;
+	}
+});
+
 test("an invalid concurrency is scored as the tool's own INVALID_CONCURRENCY, not as the guard behind it", () => {
 	// The dispatch core refuses these before any handler guard runs; claiming
 	// SHARED_WRITE_CWD (or admitting them) would mis-count refusal budgets.
