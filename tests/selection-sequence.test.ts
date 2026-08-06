@@ -296,6 +296,27 @@ test("contracts count only where the opener consumes them", () => {
 	})?.code, "BUDGET_EXCEEDED");
 });
 
+test("a rootless graph is refused with the tool's own GRAPH_CYCLE, not admitted", () => {
+	// Every node depends on another, so no first wave can ever run;
+	// handleGraph refuses GRAPH_CYCLE before any child spawns, and admitting
+	// it would credit delegation that never occurred.
+	const cyclic = {
+		why: "x",
+		graph: { nodes: [
+			{ id: "a", agent: "recon", task: "A", dependsOn: ["b"] },
+			{ id: "b", agent: "recon", task: "B", dependsOn: ["a"] },
+		] },
+	};
+	assert.equal(callAdmissibilityFailure(cyclic)?.code, "GRAPH_CYCLE");
+	// A rooted graph stays admitted, and a structurally invalid one stays
+	// silent (GRAPH_INVALID is refused earlier, outside the vocabulary).
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		graph: { nodes: [{ id: "a", agent: "recon", task: "A" }, { id: "b", agent: "recon", task: "B", dependsOn: ["a"] }] },
+	}), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", graph: { nodes: [{ id: "a", agent: "recon", task: "A", dependsOn: ["missing"] }] } }), null);
+});
+
 test("a spawn checkpoint and a destination-less strict trace are refused in the headless subject", () => {
 	// checkpoint gates "spawn" by default and the JSON-mode subject has no UI,
 	// so the tool refuses CHECKPOINT_APPROVAL_REQUIRED before the handler runs.

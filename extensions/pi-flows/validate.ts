@@ -144,6 +144,56 @@ function refArray(value: unknown): SharedWriteRef[] {
 	});
 }
 
+/** A present-but-non-array dependsOn is schema-refused before the handler runs; totality over raw model args means treating it as no deps, never iterating a non-iterable. */
+function graphDependsOn(node: any): string[] {
+	return Array.isArray(node?.dependsOn) ? node.dependsOn : [];
+}
+
+/**
+ * handleGraph refuses GRAPH_INVALID for every structural defect before its
+ * guard — node count outside 1..MAX_GRAPH_NODES, a node missing string
+ * id/agent/task, a duplicated id, a non-array dependsOn, or a dependsOn
+ * naming no node. A graph failing any of those yields null (the mirror and
+ * the cycle check stay silent behind that earlier refusal, and never iterate
+ * a hostile-length list); a structurally valid one yields its nodes.
+ */
+function validGraphNodes(params: Record<string, any>): any[] | null {
+	const nodes = params.graph?.nodes;
+	if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) return null;
+	const ids = new Set<string>();
+	for (const node of nodes) {
+		if (typeof node?.id !== "string" || !node.id || typeof node.agent !== "string" || !node.agent || typeof node.task !== "string" || !node.task || ids.has(node.id)) return null;
+		if (node.dependsOn !== undefined && !Array.isArray(node.dependsOn)) return null;
+		ids.add(node.id);
+	}
+	for (const node of nodes) {
+		for (const dep of graphDependsOn(node)) {
+			if (typeof dep !== "string" || !ids.has(dep)) return null;
+		}
+	}
+	return nodes;
+}
+
+/**
+ * A structurally valid graph with no dependency-free node deadlocks
+ * immediately: handleGraph computes an empty first wave and refuses
+ * GRAPH_CYCLE before any child spawns. The selection eval scores that
+ * refusal so an all-cyclic graph cannot terminate the harness into credit
+ * for delegation that never occurred.
+ */
+export function graphCycleRefusal(params: Record<string, any>): FlowError | null {
+	if (params?.graph === undefined) return null;
+	const nodes = validGraphNodes(params);
+	if (!nodes) return null;
+	if (nodes.some((node) => graphDependsOn(node).length === 0)) return null;
+	return flowError(
+		"GRAPH_CYCLE",
+		"Graph has a cycle or unsatisfied dependency.",
+		"No graph node is dependency-free, so no first wave can ever become runnable.",
+		"Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node.",
+	);
+}
+
 /**
  * The concurrent ref waves a call would run before any child spawns, derived
  * from call params exactly as each guard-bearing mode handler derives the refs
@@ -198,35 +248,11 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 		return [];
 	}
 	if (params?.graph !== undefined) {
-		// handleGraph refuses GRAPH_INVALID for every structural defect before
-		// its guard — node count outside 1..MAX_GRAPH_NODES, a node missing
-		// id/agent/task, a duplicated id, or a dependsOn naming no node — so
-		// the mirror stays silent behind each of those refusals (and never
-		// iterates a hostile-length list). For a valid graph, only the first
-		// wave is knowable pre-spawn: nodes with no dependencies.
-		const nodes = params.graph?.nodes;
-		if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) return [];
-		// A present-but-non-array dependsOn is schema-refused before the handler
-		// runs; totality over raw model args means treating it as no wave, not
-		// iterating a non-iterable.
-		const dependsOn = (node: any): string[] => (Array.isArray(node?.dependsOn) ? node.dependsOn : []);
-		const ids = new Set<string>();
-		for (const node of nodes) {
-			// The public schema requires string id/agent/task and string
-			// dependsOn entries; a schema-invalid graph never reaches the
-			// handler, so it derives no wave here either.
-			if (typeof node?.id !== "string" || !node.id || typeof node.agent !== "string" || !node.agent || typeof node.task !== "string" || !node.task || ids.has(node.id)) return [];
-			if (node.dependsOn !== undefined && !Array.isArray(node.dependsOn)) return [];
-			ids.add(node.id);
-		}
-		for (const node of nodes) {
-			for (const dep of dependsOn(node)) {
-				if (typeof dep !== "string" || !ids.has(dep)) return [];
-			}
-		}
+		const nodes = validGraphNodes(params);
+		if (!nodes) return [];
 		// Select the dependency-free wave BEFORE sanitizing: refArray rebuilds
 		// refs without dependsOn, so filtering after it would take every node.
-		return [refArray(nodes.filter((node: any) => dependsOn(node).length === 0))];
+		return [refArray(nodes.filter((node: any) => graphDependsOn(node).length === 0))];
 	}
 	if (params?.search !== undefined) {
 		const spec = params.search ?? {};
