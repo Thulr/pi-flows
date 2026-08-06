@@ -627,18 +627,22 @@ or an equivalent parallel fan-out. Argument scoring also checks admissibility:
 a call the tool would refuse before any child spawns is not a correct selection,
 however well its shape fits. "Would the tool have refused this call" is one
 uniform question across refusal codes: the spawn gate (`WHY_REQUIRED`, a missing
-or blank `why`) and the pre-spawn shared-write guard (`SHARED_WRITE_CWD`, two or
-more write-capable refs sharing one cwd at concurrency above one) are both
-scored across every spawning mode, with a note that distinguishes "right shape,
-refused call" from a shape mismatch. Each rule is the tool's own predicate
-imported from the extension — the shared-write verdict comes from
+or blank `why`), the concurrency bound (`INVALID_CONCURRENCY`), and the
+pre-spawn shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable
+refs sharing one cwd at concurrency above one) are all scored across every
+spawning mode, in the dispatch core's order, with a note that distinguishes
+"right shape, refused call" from a shape mismatch. Each rule is the tool's own
+predicate imported from the extension — the shared-write verdict comes from
 `validateSharedWriteCwd` over the same ref waves the mode handlers check,
 resolved against the bundled agent roster so the verdict is a property of the
-case rather than of the local `~/.pi/flow-agents` — and
+case rather than of the local `~/.pi/flow-agents` — and a preset call is scored
+on its expanded topology via the tool's own `resolveFlowPreset`, so a permitted
+override that un-serializes a preset is scored as the refusal it becomes.
 `tests/admissibility-scoring.test.ts` pins each wave derivation against the real
 handler so the scored gate cannot drift from the enforced one. Refusal codes
-outside that vocabulary (unknown agents, per-mode bounds) score as admissible
-until the tool's own predicate for them is added to the seam.
+outside that vocabulary (unknown agents, per-mode bounds such as
+`TOO_FEW_VOTERS`) score as admissible until the tool's own predicate for them is
+added to the seam.
 
 Beyond per-call shape, a case can opt into sequence properties of the whole run:
 `firstCall: true` on an expectation requires the **first** emitted flow call to

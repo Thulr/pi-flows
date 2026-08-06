@@ -266,7 +266,7 @@ export const SELECTION_CASES = defineCases([
 			anyOf: [
 				{ preset: "code-review", mode: "preset" },
 				{ mode: "parallel", minTasks: 2 },
-				{ mode: "vote" },
+				{ mode: "vote", minTasks: 2 },
 			],
 		},
 		forbiddenFlowCall: { params: { allowSharedWriteCwd: true } },

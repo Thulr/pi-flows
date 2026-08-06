@@ -54,9 +54,30 @@ test("the shared-write guard is scored through the admissibility seam, against t
 	// WHY_REQUIRED still comes first, exactly as the dispatch core orders it.
 	const { why, ...noWhy } = REFUSED_FANOUT;
 	assert.equal(callAdmissibilityFailure(noWhy)?.code, "WHY_REQUIRED");
-	// A preset call carries no raw waves; its expanded topology is the preset
-	// file's responsibility, pinned by this case's source expectations.
+});
+
+test("preset calls are scored on their expanded topology, exactly as the tool resolves them", () => {
+	// The bundled code-review preset serializes its shell-capable reviewers
+	// (concurrency:1), so the plain call is admissible…
 	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "Review HEAD.", why: "independent review" }), null);
+	// …but concurrency is a declared override: raising it re-creates exactly
+	// the two-overwatch collision the guard exists for, and the tool refuses
+	// the expanded call. Scoring raw preset args would credit that call.
+	assert.equal(
+		callAdmissibilityFailure({ preset: "code-review", task: "Review HEAD.", why: "independent review", concurrency: 2 })?.code,
+		"SHARED_WRITE_CWD",
+	);
+	// A resolution failure (unknown preset) is a pre-dispatch refusal outside
+	// the seam's vocabulary; the raw args stand and shape scoring reports it.
+	assert.equal(callAdmissibilityFailure({ preset: "no-such-preset", task: "t", why: "x" }), null);
+});
+
+test("an invalid concurrency is scored as the tool's own INVALID_CONCURRENCY, not as the guard behind it", () => {
+	// The dispatch core refuses these before any handler guard runs; claiming
+	// SHARED_WRITE_CWD (or admitting them) would mis-count refusal budgets.
+	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 0 })?.code, "INVALID_CONCURRENCY");
+	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 2.5 })?.code, "INVALID_CONCURRENCY");
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: 0.5 })?.code, "INVALID_CONCURRENCY");
 });
 
 test("the #82 transcript fails on measurement, attributed on all three axes", () => {
@@ -125,6 +146,11 @@ test("a single-reviewer first call fails the case: the request asked for separat
 	const result = scored([{ why: "review requested", agent: "recon", task: "Review the uncommitted changes." }]);
 	assert.equal(result.pass, false);
 	assert.match(result.notes, /no allowed shape matched/);
+	// A one-voter panel is a single reviewer too: handleVote refuses it with
+	// TOO_FEW_VOTERS before spawning, so the vote arm must require two.
+	const oneVoter = scored([{ why: "review requested", task: "Review the uncommitted changes.", vote: { agent: "recon", count: 1 } }]);
+	assert.equal(oneVoter.pass, false);
+	assert.match(oneVoter.notes, /no allowed shape matched/);
 });
 
 test("firstCall is what separates got-it-first-try from recovered-after-refusals", () => {

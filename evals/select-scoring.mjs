@@ -10,8 +10,9 @@
 import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { nonSpawningFlowCall, preSpawnSharedWriteRefusal, spawnJustificationMissing } from "../extensions/pi-flows/validate.ts";
+import { nonSpawningFlowCall, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
+import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
 
 export function parseToolArguments(raw) {
 	if (!raw) return {};
@@ -56,8 +57,22 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const packageOnlyPrevious = process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
 process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
 const scoringDiscovery = discoverFlowAgents(repoRoot, "user");
+const scoringPresetDiscovery = discoverFlowPresets(repoRoot, "user");
 if (packageOnlyPrevious === undefined) delete process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
 else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
+
+// The tool resolves a preset before any gate runs, so admissibility must be
+// asked of the expanded call, not the raw preset reference: a permitted
+// override (say concurrency:2 on code-review) can turn a safe preset into a
+// call the shared-write guard refuses, and a raw-args check would credit it.
+// Resolution failures (unknown preset, undeclared overrides) are pre-dispatch
+// refusals outside this seam's vocabulary; the raw args stand and shape
+// scoring reports those as preset-unknown/preset-conflict.
+function effectiveCallParams(args) {
+	if (typeof args?.preset !== "string" || !args.preset) return args;
+	const resolved = resolveFlowPreset(args, scoringPresetDiscovery);
+	return "error" in resolved ? args : resolved.params;
+}
 
 /** Declared overrides per bundled preset, read from the preset files so the eval cannot drift from them. */
 const bundledPresetsDir = path.resolve(repoRoot, "presets");
@@ -122,6 +137,9 @@ function taskCount(args, mode) {
 	if (mode === "worktree") return args.worktree?.tasks?.length ?? 0;
 	if (mode === "debate") return args.debate?.participants?.length ?? 0;
 	if (mode === "dossier") return args.dossier?.sections?.length ?? 0;
+	// Mirrors handleVote's voter construction: an explicit voters list, else
+	// the replicated count, else the handler's default of three.
+	if (mode === "vote") return args.vote?.voters?.length ?? (Number.isFinite(args.vote?.count) ? Math.floor(args.vote.count) : 3);
 	return 0;
 }
 
@@ -170,17 +188,23 @@ function taskText(args) {
 // call the tool would refuse cannot count as a correct selection, however well
 // its shape fits. Each rule must be the tool's own predicate (imported, not
 // hand-copied) so the scored gate cannot drift from the enforced one: the
-// spawn gate from #83 and, from #84, the pre-spawn shared-write guard —
-// answered by the tool's own validateSharedWriteCwd over the same ref waves
-// the mode handlers check, against the bundled agent roster. Returns
-// { code, reason } so callers phrase their own notes and the refused-call
-// budget can group verdicts by refusal code. Refusal codes outside this
-// seam's vocabulary (unknown agents, per-mode bounds) score as admissible;
-// extending the vocabulary means adding the tool's own predicate here.
+// spawn gate from #83 and, from #84, the concurrency bound and the pre-spawn
+// shared-write guard — the latter answered by the tool's own
+// validateSharedWriteCwd over the same ref waves the mode handlers check,
+// against the bundled agent roster, and asked of the preset-expanded call
+// exactly as the tool asks it. Checks run in the dispatch core's order.
+// Returns { code, reason } so callers phrase their own notes and the
+// refused-call budget can group verdicts by refusal code. Refusal codes
+// outside this seam's vocabulary (unknown agents, per-mode bounds such as
+// TOO_FEW_VOTERS) score as admissible; extending the vocabulary means adding
+// the tool's own predicate here.
 export function callAdmissibilityFailure(args) {
 	if (nonSpawningFlowCall(args ?? {})) return null;
-	if (spawnJustificationMissing(args?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
-	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, args ?? {});
+	const effective = effectiveCallParams(args ?? {});
+	if (spawnJustificationMissing(effective?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
+	const concurrencyError = validateConcurrency(effective?.concurrency);
+	if (concurrencyError) return { code: concurrencyError.code, reason: concurrencyError.message.replace(/\.$/, "") };
+	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, effective ?? {});
 	if (sharedWrite) return { code: sharedWrite.code, reason: sharedWrite.message.replace(/\.$/, "") };
 	return null;
 }

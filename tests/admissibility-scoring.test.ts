@@ -132,6 +132,13 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 	// A hostile replication count is bounded instead of allocated: the verdict
 	// needs at most MAX_PARALLEL_TASKS repeats, and two already decide it.
 	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", vote: { agent: "operator", count: 1e9 } })?.code, "SHARED_WRITE_CWD");
+	// Behind an invalid concurrency the dispatch core refuses first
+	// (INVALID_CONCURRENCY), so the guard stays silent rather than mislabeling
+	// the refusal; the admissibility seam scores the concurrency bound itself.
+	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", concurrency: 0, tasks: [{ agent: "operator", task: "A" }, { agent: "operator", task: "B" }] }), null);
+	// A garbage search ref falls back to the handler default instead of
+	// emitting a non-ref wave element — verdict-neutral either way.
+	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", search: { generator: "operator" } }), null);
 	// Garbage elements shrink the wave but honest refs still count: one null
 	// plus two write-capable tasks is still a collision.
 	assert.equal(

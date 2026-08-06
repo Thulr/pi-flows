@@ -176,8 +176,11 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 	}
 	if (params?.search !== undefined) {
 		const spec = params.search ?? {};
-		const generator: SharedWriteRef = spec.generator ?? { agent: "strategist" };
-		const scorer: SharedWriteRef = spec.scorer ?? { agent: "redteam", tools: "none" };
+		// The same object-with-agent rule refArray applies: a garbage ref cannot
+		// name a toolset, so falling back to the handler's default is
+		// verdict-neutral and keeps the emitted waves actual refs.
+		const generator = refArray([spec.generator])[0] ?? { agent: "strategist" };
+		const scorer = refArray([spec.scorer])[0] ?? { agent: "redteam", tools: "none" };
 		const { candidateCount } = searchTopology(spec);
 		return [
 			Array.from({ length: candidateCount }, () => generator),
@@ -197,6 +200,11 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
  * same waves the handlers check.
  */
 export function preSpawnSharedWriteRefusal(discovery: FlowDiscovery, defaultCwd: string, params: Record<string, any>): FlowError | null {
+	// The dispatch core refuses an invalid concurrency (INVALID_CONCURRENCY)
+	// before any handler guard runs, so the guard can never fire behind one;
+	// answering SHARED_WRITE_CWD for such a call would mislabel the refusal.
+	// The concurrency bound itself is scored by the admissibility seam.
+	if (validateConcurrency(params?.concurrency)) return null;
 	const concurrency = params?.concurrency ?? DEFAULT_CONCURRENCY;
 	for (const wave of preSpawnSharedWriteWaves(params)) {
 		const error = validateSharedWriteCwd(discovery, defaultCwd, wave, params?.allowSharedWriteCwd, concurrency);
