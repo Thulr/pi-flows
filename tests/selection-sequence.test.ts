@@ -352,10 +352,10 @@ test("an invalid concurrency is scored as the tool's own INVALID_CONCURRENCY, no
 	// SHARED_WRITE_CWD (or admitting them) would mis-count refusal budgets.
 	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 0 })?.code, "INVALID_CONCURRENCY");
 	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 2.5 })?.code, "INVALID_CONCURRENCY");
-	// On a preset call the same bad value is refused earlier, at resolution
-	// (PRESET_EXPANSION_INVALID via the schema check) — outside the seam's
-	// vocabulary, so no later gate's code may be claimed for it.
-	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: 0.5 }), null);
+	// On a preset call the same bad value is refused earlier, at resolution —
+	// scored as the tool's own PRESET_EXPANSION_INVALID (shape scoring cannot
+	// see a declared key's invalid value), never as a later gate's code.
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: 0.5 })?.code, "PRESET_EXPANSION_INVALID");
 });
 
 test("the #82 transcript fails on measurement, attributed on all three axes", () => {
