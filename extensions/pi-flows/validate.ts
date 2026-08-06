@@ -223,6 +223,10 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 	}
 	if (params?.evaluate !== undefined) {
 		const spec = params.evaluate ?? {};
+		// The schema caps an explicit critic panel at MAX_PARALLEL_TASKS; an
+		// oversized list is refused before the handler runs, so it derives no
+		// wave — and a hostile-length array is never iterated.
+		if (Array.isArray(spec.redteam) && spec.redteam.length > MAX_PARALLEL_TASKS) return [];
 		const evaluators = refArray(Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }])
 			.slice(0, MAX_PARALLEL_TASKS);
 		return [evaluators.length > 0 ? evaluators : [{ agent: "redteam" }]];

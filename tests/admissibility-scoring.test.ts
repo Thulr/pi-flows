@@ -127,6 +127,7 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 		{ workflow: { phases: "analyze,then,apply" } },
 		{ tasks: [{ agent: "operator", task: "A", tools: {} }, { agent: "operator", task: "B", cwd: 123 }] },
 		{ evaluate: { redteam: [{ agent: "operator", tools: 7 }, { agent: "operator", cwd: ["x"] }] } },
+		{ evaluate: { redteam: Array.from({ length: 9 }, () => ({ agent: "operator" })) } },
 		{ evaluate: { redteam: "operator" } },
 		{ search: { generator: "operator" } },
 		{ vote: {} },
