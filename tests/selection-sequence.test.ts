@@ -349,6 +349,32 @@ test("oversized debate and dossier role lists are schema-refused, never guard-mi
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", dossier: { sections: many } })?.code, "SCHEMA_INVALID");
 });
 
+test("an invalid consumed contract refuses the whole call at plan construction", () => {
+	// integrationRunPlan validates each consumed contract while building
+	// plans, before any fanout starts — a returnSchema with a malformed
+	// regex pattern fails there, so one bad contract among the roles refuses
+	// the call rather than being admitted into a terminated pass.
+	const badContract = { ...fullContract({ timeoutMs: 60_000, maxTokens: 1000, maxGeneratedTokens: 100 }), returnSchema: { type: "string", pattern: "(" } };
+	const refusal = callAdmissibilityFailure({
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
+		tasks: [
+			{ agent: "recon", task: "Review the uncommitted changes.", contract: badContract },
+			{ agent: "recon", task: "Review the uncommitted changes." },
+		],
+	});
+	assert.equal(refusal?.code, "INVALID_DELEGATION_CONTRACT");
+	// Dossier's top-level fallback goes to its synthesizer, not its sections:
+	// an exhausted top-level contract with uncontracted sections stays
+	// admitted, exactly as handleDossier builds its section plans.
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		contract: fullContract({ timeoutMs: 60_000, maxTokens: 0, maxGeneratedTokens: 100 }),
+		dossier: { sections: [{ agent: "recon", task: "Source A" }, { agent: "analyst", task: "Source B" }] },
+	}), null);
+});
+
 test("mixed per-role refusal causes combine: a wave nobody can start is refused", () => {
 	// One reviewer is outside the roster, the other's contract starts
 	// exhausted — neither cause alone covers every role, but no child can

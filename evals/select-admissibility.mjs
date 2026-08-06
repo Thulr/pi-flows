@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
+import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
@@ -35,8 +36,8 @@ const scoringPresetDiscovery = discoverFlowPresets(repoRoot, "user");
 if (packageOnlyPrevious === undefined) delete process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY;
 else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
 
-/** The modes whose handlers apply the top-level params.contract to their first child (verified per handler: single uses it directly; chain, parallel, vote, dossier, debate pass fallbackContract; evaluate's operator falls back to it). */
-const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "dossier", "debate", "evaluate"]);
+/** The modes whose handlers apply the top-level params.contract to their FIRST child (verified per handler: single uses it directly; chain, parallel, vote, debate pass fallbackContract; evaluate's operator falls back to it). Dossier is deliberately absent: its fallback goes to the debrief synthesizer, and its first-spawn section plans carry only their own contracts. */
+const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "debate", "evaluate"]);
 
 /** The modes whose openers run through integrationRunPlan, which resolves each ref's own contract — graph nodes carry contracts too, but route/search/loop/orchestrate openers use runAgentRef with no contract limits, so a role contract there is ignored by the tool and must be ignored here. */
 const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph"]);
@@ -145,22 +146,35 @@ export function callAdmissibilityFailure(args) {
 	// spawns nothing, even though neither cause alone covers every role. One
 	// startable role means real children run and the call counts as admitted.
 	const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
+	const consumedContract = (ref) => {
+		const roleContract = ROLE_CONTRACT_MODES.has(mode) ? ref.contract : undefined;
+		const contract = roleContract ?? (CONTRACT_FALLBACK_MODES.has(mode) ? effective?.contract : undefined);
+		return contract && typeof contract === "object" && !Array.isArray(contract) ? contract : undefined;
+	};
 	const roleRefusal = (ref) => {
 		if (typeof ref.agent === "string" && !known.has(ref.agent)) return "UNKNOWN_AGENT";
 		// A contract counts only where the tool's opener actually consumes it:
 		// integrationRunPlan resolves ref.contract ?? the top-level fallback
-		// for the ROLE_CONTRACT_MODES; route/search/loop/orchestrate openers
-		// run with no contract limits, so neither source applies there —
-		// claiming a refusal for them would let the play-out branch execute a
-		// call the tool admits.
-		const roleContract = ROLE_CONTRACT_MODES.has(mode) ? ref.contract : undefined;
-		const contract = roleContract ?? (CONTRACT_FALLBACK_MODES.has(mode) ? effective?.contract : undefined);
-		if (contract && typeof contract === "object" && !Array.isArray(contract) && Budget.forContract(contract.budget)?.refusesSpawn()) {
+		// for the fallback modes; route/search/loop/orchestrate openers run
+		// with no contract limits, so neither source applies there — claiming
+		// a refusal for them would let the play-out branch execute a call the
+		// tool admits.
+		const contract = consumedContract(ref);
+		if (contract && Budget.forContract(contract.budget)?.refusesSpawn()) {
 			return "BUDGET_EXCEEDED";
 		}
 		return null;
 	};
 	const firstSpawnRefs = firstSpawnAgentRefs(effective ?? {});
+	// integrationRunPlan validates each consumed contract while constructing
+	// plans, before any fanout starts — one invalid contract among the
+	// first-spawn roles refuses the whole call (INVALID_DELEGATION_CONTRACT),
+	// unlike the per-child budget refusals below.
+	for (const ref of firstSpawnRefs) {
+		const contract = consumedContract(ref);
+		const contractError = contract ? validateDelegationContract(contract) : null;
+		if (contractError) return { code: contractError.code, reason: contractError.message.replace(/\.$/, "") };
+	}
 	const causes = firstSpawnRefs.map(roleRefusal);
 	if (firstSpawnRefs.length > 0 && causes.every(Boolean)) {
 		const codes = [...new Set(causes)];
