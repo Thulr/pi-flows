@@ -115,5 +115,18 @@ export function callAdmissibilityFailure(args) {
 	if (Budget.forFlow(effective ?? {})?.refusesSpawn()) {
 		return { code: "BUDGET_EXCEEDED", reason: "a zero budget ceiling refuses the first spawn" };
 	}
+	// The runner also consults each child's contract budget (role contract,
+	// else the top-level fallback). When every first-spawn role's contract
+	// starts exhausted, no child can spawn — one funded role means real
+	// children run and the call counts as admitted.
+	const firstSpawnRefs = firstSpawnAgentRefs(effective ?? {});
+	const contractRefused = (ref) => {
+		const contract = ref.contract ?? effective?.contract;
+		if (!contract || typeof contract !== "object" || Array.isArray(contract)) return false;
+		return Boolean(Budget.forContract(contract.budget)?.refusesSpawn());
+	};
+	if (firstSpawnRefs.length > 0 && firstSpawnRefs.every(contractRefused)) {
+		return { code: "BUDGET_EXCEEDED", reason: "every first-spawn role's contract budget starts exhausted" };
+	}
 	return null;
 }

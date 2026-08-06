@@ -628,8 +628,11 @@ a call the tool would refuse before any child spawns is not a correct selection,
 however well its shape fits. "Would the tool have refused this call" is one
 uniform question across refusal codes: mode detection (`INVALID_MODE`, zero or
 several active modes), the spawn gate (`WHY_REQUIRED`, a missing or blank
-`why`), the concurrency bound (`INVALID_CONCURRENCY`), the fan-out bound
-(`TOO_MANY_TASKS`, more tasks or voters than the cap), the pre-spawn
+`why`), the depth guard (`FLOW_DEPTH_EXCEEDED`, inherited `PI_FLOWS_DEPTH` at
+the cap), the concurrency bound (`INVALID_CONCURRENCY`), the fan-out bound
+(`TOO_MANY_TASKS`, more tasks or voters than the cap), the budget gate
+(`BUDGET_EXCEEDED`, a zero flow ceiling — or every first-spawn role's
+contract budget starting exhausted), the pre-spawn
 shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable refs sharing
 one cwd at concurrency above one), the roster rule (`UNKNOWN_AGENT`, no
 first-spawn role naming a bundled agent — one known ref means real children

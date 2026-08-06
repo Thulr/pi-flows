@@ -255,6 +255,24 @@ test("inherited flow depth and initially exhausted budgets are refused, not cred
 	assert.equal(callAdmissibilityFailure({ ...admissible, maxTokens: 0 })?.code, "BUDGET_EXCEEDED");
 	// A real, positive ceiling is not a refusal.
 	assert.equal(callAdmissibilityFailure({ ...admissible, maxCostUsd: 5 }), null);
+	// Contract budgets refuse the same way: when every first-spawn role's
+	// contract starts exhausted, no child can spawn — one funded role admits.
+	const zeroBudgetContract = { objective: "review", budget: { maxTokens: 0 } };
+	assert.equal(callAdmissibilityFailure({
+		...admissible,
+		tasks: admissible.tasks.map((task) => ({ ...task, contract: zeroBudgetContract })),
+	})?.code, "BUDGET_EXCEEDED");
+	assert.equal(callAdmissibilityFailure({ ...admissible, contract: zeroBudgetContract })?.code, "BUDGET_EXCEEDED");
+	assert.equal(callAdmissibilityFailure({
+		...admissible,
+		tasks: [{ ...admissible.tasks[0], contract: zeroBudgetContract }, admissible.tasks[1]],
+	}), null);
+	// Runner-level refusals never play out: monitor runs its probe command,
+	// workflow persists state, and worktree creates branches before the
+	// runner's budget gate, so the harness terminates instead.
+	const budgeted = { expectFlow: true, maxRefusedCalls: 1 };
+	assert.equal(letRefusalPlayOut({ why: "x", task: "t", maxCostUsd: 0, monitor: { command: "./probe", trigger: "match", pattern: "DOWN" } }, 1, budgeted), false);
+	assert.equal(letRefusalPlayOut({ ...admissible, maxCostUsd: 0 }, 1, budgeted), false);
 });
 
 test("a spawn checkpoint and a destination-less strict trace are refused in the headless subject", () => {

@@ -113,7 +113,7 @@ export function validateSharedWriteCwd(
 	return sharedWriteCwdError(discovery, defaultCwd, mutating);
 }
 
-type SharedWriteRef = { agent: string; cwd?: string; tools?: string };
+type SharedWriteRef = { agent: string; cwd?: string; tools?: string; contract?: Record<string, unknown> };
 
 /**
  * Model-controlled params may put anything where a ref list belongs — a
@@ -131,12 +131,15 @@ function refArray(value: unknown): SharedWriteRef[] {
 	if (!Array.isArray(value)) return [];
 	return value.flatMap((ref): SharedWriteRef[] => {
 		if (!ref || typeof ref !== "object" || Array.isArray(ref)) return [];
-		const { agent, cwd, tools } = ref as { agent?: unknown; cwd?: unknown; tools?: unknown };
+		const { agent, cwd, tools, contract } = ref as { agent?: unknown; cwd?: unknown; tools?: unknown; contract?: unknown };
 		if (typeof agent !== "string") return [];
 		return [{
 			agent,
 			...(typeof cwd === "string" ? { cwd } : {}),
 			...(typeof tools === "string" ? { tools } : {}),
+			// The guard ignores contracts, but the selection eval's budget rule
+			// reads each first-spawn role's contract; keep it when object-shaped.
+			...(contract && typeof contract === "object" && !Array.isArray(contract) ? { contract: contract as Record<string, unknown> } : {}),
 		}];
 	});
 }
