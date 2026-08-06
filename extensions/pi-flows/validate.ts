@@ -209,13 +209,16 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 		const dependsOn = (node: any): string[] => (Array.isArray(node?.dependsOn) ? node.dependsOn : []);
 		const ids = new Set<string>();
 		for (const node of nodes) {
-			if (!node?.id || !node.agent || !node.task || ids.has(node.id)) return [];
+			// The public schema requires string id/agent/task and string
+			// dependsOn entries; a schema-invalid graph never reaches the
+			// handler, so it derives no wave here either.
+			if (typeof node?.id !== "string" || !node.id || typeof node.agent !== "string" || !node.agent || typeof node.task !== "string" || !node.task || ids.has(node.id)) return [];
 			if (node.dependsOn !== undefined && !Array.isArray(node.dependsOn)) return [];
 			ids.add(node.id);
 		}
 		for (const node of nodes) {
 			for (const dep of dependsOn(node)) {
-				if (!ids.has(dep)) return [];
+				if (typeof dep !== "string" || !ids.has(dep)) return [];
 			}
 		}
 		// Select the dependency-free wave BEFORE sanitizing: refArray rebuilds

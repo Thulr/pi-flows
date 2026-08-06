@@ -236,6 +236,27 @@ test("an unnamed role cannot slip past knownAgentsOnly", () => {
 	assert.match(unnamedSibling.notes, /\(unnamed\) are not bundled flow agents/);
 });
 
+test("inherited flow depth and initially exhausted budgets are refused, not credited", () => {
+	// The subject inherits PI_FLOWS_DEPTH; at the cap every spawning call is
+	// refused, so scoring must not credit selections that can never run.
+	const admissible = { ...REFUSED_FANOUT, concurrency: 1 };
+	const previousDepth = process.env.PI_FLOWS_DEPTH;
+	process.env.PI_FLOWS_DEPTH = "2";
+	try {
+		assert.equal(callAdmissibilityFailure(admissible)?.code, "FLOW_DEPTH_EXCEEDED");
+	} finally {
+		if (previousDepth === undefined) delete process.env.PI_FLOWS_DEPTH;
+		else process.env.PI_FLOWS_DEPTH = previousDepth;
+	}
+	assert.equal(callAdmissibilityFailure(admissible), null);
+	// A zero ceiling starts the flow budget exhausted; the runner refuses the
+	// first spawn with BUDGET_EXCEEDED before any child runs.
+	assert.equal(callAdmissibilityFailure({ ...admissible, maxCostUsd: 0 })?.code, "BUDGET_EXCEEDED");
+	assert.equal(callAdmissibilityFailure({ ...admissible, maxTokens: 0 })?.code, "BUDGET_EXCEEDED");
+	// A real, positive ceiling is not a refusal.
+	assert.equal(callAdmissibilityFailure({ ...admissible, maxCostUsd: 5 }), null);
+});
+
 test("a spawn checkpoint and a destination-less strict trace are refused in the headless subject", () => {
 	// checkpoint gates "spawn" by default and the JSON-mode subject has no UI,
 	// so the tool refuses CHECKPOINT_APPROVAL_REQUIRED before the handler runs.
