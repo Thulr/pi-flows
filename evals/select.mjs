@@ -24,13 +24,6 @@ import { callAdmissibilityFailure, hasUsefulArguments, parseToolArguments, score
 export { callAdmissibilityFailure, flowCallMatchesExpectation, scoreSelection, selectionExitCode } from "./select-scoring.mjs";
 
 process.env.PI_FLOWS_CHILD_NO_EXTENSIONS = "1";
-// The spawned subject inherits this, so the extension under test discovers the
-// same bundled-only roster the scorer resolves admissibility against (matching
-// eval:run). Without it, a user-level agent shadowing a bundled name with a
-// different toolset makes the scored SHARED_WRITE_CWD verdict disagree with
-// the enforced one — the harness could keep running a call the real tool
-// admits, or terminate and score one it refuses.
-process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
 
 loadDotenv();
 
@@ -214,6 +207,15 @@ async function preflight() {
 }
 
 async function main() {
+	// The spawned subject inherits this, so the extension under test discovers
+	// the same bundled-only roster the scorer resolves admissibility against
+	// (matching eval:run). Without it, a user-level agent shadowing a bundled
+	// name with a different toolset makes the scored SHARED_WRITE_CWD verdict
+	// disagree with the enforced one — the harness could keep running a call
+	// the real tool admits, or terminate and score one it refuses. Set here,
+	// not at module top: importing this module for its helpers must not
+	// mutate process.env.
+	process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
 	if (!(await preflight())) {
 		console.error("FAIL `pi` was not found on PATH. Smoke-test with: npm run eval:select -- --dry-run");
 		process.exit(2);

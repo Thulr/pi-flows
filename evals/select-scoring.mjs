@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { nonSpawningFlowCall, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
+import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
 
 export function parseToolArguments(raw) {
 	if (!raw) return {};
@@ -149,17 +150,24 @@ function taskCount(args, mode) {
 // carry their own tasks; modes whose roles share the top-level task (vote,
 // preset, single, evaluate, …) contribute that. Distinct from taskText, which
 // concatenates for a run-wide match: everyTaskPattern must hold role by role,
-// so one on-topic task cannot vouch for an off-topic sibling.
+// so one on-topic task cannot vouch for an off-topic sibling. Every counted
+// role keeps an entry — a role whose required task is absent or non-string
+// contributes "", which no pattern matches, so a taskless role cannot slip
+// past the binding the way a filtered-out one would. Workflow phases are the
+// exception: an approval-only phase legitimately carries no task, so only
+// task-bearing phases are bound.
 function perRoleTaskTexts(args, mode) {
+	if (mode === "workflow") {
+		return (args.workflow?.phases ?? []).map((phase) => phase?.task).filter((task) => typeof task === "string");
+	}
 	const roleTasks = {
 		parallel: args.tasks,
 		chain: args.chain,
-		workflow: args.workflow?.phases,
 		worktree: args.worktree?.tasks,
 		dossier: args.dossier?.sections,
 	}[mode];
 	if (roleTasks !== undefined) {
-		return (roleTasks ?? []).map((role) => role?.task).filter((task) => typeof task === "string");
+		return (roleTasks ?? []).map((role) => (typeof role?.task === "string" ? role.task : ""));
 	}
 	return typeof args?.task === "string" ? [args.task] : [];
 }
@@ -208,8 +216,9 @@ function taskText(args) {
 // before any child spawned? Scored uniformly across every spawning mode so a
 // call the tool would refuse cannot count as a correct selection, however well
 // its shape fits. Each rule must be the tool's own predicate (imported, not
-// hand-copied) so the scored gate cannot drift from the enforced one: the
-// spawn gate from #83 and, from #84, the concurrency bound and the pre-spawn
+// hand-copied) so the scored gate cannot drift from the enforced one: mode
+// detection (detectRunMode's exactly-one-active-mode rule), the spawn gate
+// from #83, and, from #84, the concurrency bound and the pre-spawn
 // shared-write guard — the latter answered by the tool's own
 // validateSharedWriteCwd over the same ref waves the mode handlers check,
 // against the bundled agent roster, and asked of the preset-expanded call
@@ -222,6 +231,16 @@ function taskText(args) {
 export function callAdmissibilityFailure(args) {
 	if (nonSpawningFlowCall(args ?? {})) return null;
 	const effective = effectiveCallParams(args ?? {});
+	// A preset whose resolution failed is refused by the tool right there
+	// (UNKNOWN_PRESET, PRESET_OVERRIDE_INVALID, PRESET_EXPANSION_INVALID) —
+	// codes outside this seam's vocabulary, and none of the later gates ever
+	// run, so none may be claimed for it.
+	if (typeof args?.preset === "string" && args.preset && effective === args) return null;
+	// The tool requires exactly one active mode; a call activating zero or
+	// several is refused before any other gate, so first-activator scoring
+	// must not quietly admit it.
+	const detected = detectRunMode(effective ?? {});
+	if ("error" in detected) return { code: detected.error.code, reason: "exactly one mode must be active" };
 	if (spawnJustificationMissing(effective?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
 	const concurrencyError = validateConcurrency(effective?.concurrency);
 	if (concurrencyError) return { code: concurrencyError.code, reason: concurrencyError.message.replace(/\.$/, "") };

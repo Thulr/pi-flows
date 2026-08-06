@@ -130,9 +130,10 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 	for (const params of malformed) {
 		assert.doesNotThrow(() => preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", ...params }), `must not throw for ${JSON.stringify(params)}`);
 	}
-	// A hostile replication count is bounded instead of allocated: the verdict
-	// needs at most MAX_PARALLEL_TASKS repeats, and two already decide it.
-	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", vote: { agent: "operator", count: 1e9 } })?.code, "SHARED_WRITE_CWD");
+	// A hostile replication count never allocates — and because the handler
+	// refuses TOO_MANY_TASKS before its guard, the mirror stays silent behind
+	// that earlier refusal instead of mislabeling it SHARED_WRITE_CWD.
+	assert.equal(preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", vote: { agent: "operator", count: 1e9 } }), null);
 	// Behind an invalid concurrency the dispatch core refuses first
 	// (INVALID_CONCURRENCY), so the guard stays silent rather than mislabeling
 	// the refusal; the admissibility seam scores the concurrency bound itself.
@@ -146,6 +147,22 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 		preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", tasks: [null, { agent: "operator", task: "A" }, { agent: "operator", task: "B" }] })?.code,
 		"SHARED_WRITE_CWD",
 	);
+});
+
+test("the mirror stays silent behind TOO_MANY_TASKS, agreeing with the handler's refusal order", async () => {
+	const discovery = faultDiscovery();
+	const oversized = {
+		tasks: Array.from({ length: 9 }, (_, index) => ({ agent: "operator", task: `write ${index}` })),
+	};
+	// The handler refuses TOO_MANY_TASKS before validateSharedWriteCwd runs…
+	const { errorCode, cwd } = await handlerOutcome("parallel", oversized);
+	assert.equal(errorCode, "TOO_MANY_TASKS");
+	// …so the mirror yields no wave rather than claiming the guard fired.
+	assert.equal(preSpawnSharedWriteRefusal(discovery, cwd, { why: "x", ...oversized }), null);
+	assert.equal(preSpawnSharedWriteRefusal(discovery, cwd, {
+		why: "x",
+		vote: { voters: Array.from({ length: 9 }, () => ({ agent: "operator" })) },
+	}), null);
 });
 
 test("wave derivations mirror handler defaults, not just explicit refs", () => {

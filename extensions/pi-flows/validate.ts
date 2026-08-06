@@ -138,11 +138,13 @@ function refArray(value: unknown): SharedWriteRef[] {
  * workflow, monitor, worktree — each writer gets its own worktree) contribute
  * nothing, and so does orchestrate, whose guard fires only after its recon
  * child has already run. A call activating several modes at once is refused by
- * the tool (INVALID_MODE); this mirror just takes the first activator, in
- * modeOf's order. A call that a handler would refuse before its guard (for
- * example TOO_MANY_TASKS or TOO_FEW_VOTERS) is still refused pre-spawn, so
- * this mirror does not repeat those bounds; it answers only whether the
- * shared-write guard would fire on the refs it can see. Callers feed it
+ * the tool (INVALID_MODE) — the selection eval's admissibility seam scores
+ * that with detectRunMode itself; a standalone caller of this mirror gets
+ * first-activator semantics, in modeOf's order. Refusals that land before a
+ * handler's guard stay silent here rather than being mislabeled as the guard:
+ * an oversized fan-out (TOO_MANY_TASKS) yields no wave, like an invalid
+ * concurrency below. Remaining pre-guard refusals that cannot collide anyway
+ * (TOO_FEW_VOTERS and kin) need no special case. Callers feed it
  * model-emitted args verbatim, so every derivation must be total — malformed
  * shapes yield empty waves, not throws. tests/admissibility-scoring.test.ts
  * pins each derivation against the real handler, so a handler edit that moves
@@ -150,7 +152,11 @@ function refArray(value: unknown): SharedWriteRef[] {
  * mirror.
  */
 export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWriteRef[][] {
-	if (Array.isArray(params?.tasks) && params.tasks.length > 0) return [refArray(params.tasks)];
+	if (Array.isArray(params?.tasks) && params.tasks.length > 0) {
+		// The handler refuses TOO_MANY_TASKS before its guard; stay silent
+		// behind that earlier refusal (and never iterate a hostile-length list).
+		return params.tasks.length > MAX_PARALLEL_TASKS ? [] : [refArray(params.tasks)];
+	}
 	if (params?.evaluate !== undefined) {
 		const spec = params.evaluate ?? {};
 		const evaluators = (Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }])
@@ -160,16 +166,21 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWri
 	}
 	if (params?.vote !== undefined) {
 		const spec = params.vote ?? {};
-		if (Array.isArray(spec.voters) && spec.voters.length > 0) return [refArray(spec.voters)];
+		if (Array.isArray(spec.voters) && spec.voters.length > 0) {
+			// TOO_MANY_TASKS refuses an oversized voter list before the guard;
+			// stay silent behind it, exactly as for parallel tasks.
+			return spec.voters.length > MAX_PARALLEL_TASKS ? [] : [refArray(spec.voters)];
+		}
 		// Same ref hygiene as refArray: a non-string agent can never name a
 		// toolset (the schema rejects it), so replicating it would only put
 		// non-refs in the wave.
 		if (typeof spec.agent === "string" && spec.agent) {
-			// The handler replicates the agent `count` times unclamped; two repeats
-			// already decide the guard verdict, so bounding the replication here
-			// changes no verdict while keeping a hostile count from allocating.
+			// The handler builds voters before its TOO_MANY_TASKS check, but the
+			// refusal still lands before the guard, so an over-cap count is
+			// silent here too — and a hostile count never allocates.
 			const count = Number.isFinite(spec.count) ? Math.floor(spec.count) : 3;
-			return [Array.from({ length: Math.min(Math.max(count, 0), MAX_PARALLEL_TASKS) }, () => ({ agent: spec.agent as string }))];
+			if (count > MAX_PARALLEL_TASKS) return [];
+			return [Array.from({ length: Math.max(count, 0) }, () => ({ agent: spec.agent as string }))];
 		}
 		return [];
 	}

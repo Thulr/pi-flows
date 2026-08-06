@@ -626,12 +626,17 @@ become `evaluate`, and broad split/synthesize mapping should become `orchestrate
 or an equivalent parallel fan-out. Argument scoring also checks admissibility:
 a call the tool would refuse before any child spawns is not a correct selection,
 however well its shape fits. "Would the tool have refused this call" is one
-uniform question across refusal codes: the spawn gate (`WHY_REQUIRED`, a missing
-or blank `why`), the concurrency bound (`INVALID_CONCURRENCY`), and the
-pre-spawn shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable
-refs sharing one cwd at concurrency above one) are all scored across every
-spawning mode, in the dispatch core's order, with a note that distinguishes
-"right shape, refused call" from a shape mismatch. Each rule is the tool's own
+uniform question across refusal codes: mode detection (`INVALID_MODE`, zero or
+several active modes), the spawn gate (`WHY_REQUIRED`, a missing or blank
+`why`), the concurrency bound (`INVALID_CONCURRENCY`), and the pre-spawn
+shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable refs sharing
+one cwd at concurrency above one) are all scored across every spawning mode,
+in the dispatch core's order, with a note that distinguishes "right shape,
+refused call" from a shape mismatch. A refusal that lands before one of these
+gates keeps the seam silent rather than mislabeled — a failed preset
+resolution or an oversized fan-out (`TOO_MANY_TASKS`) scores as admissible,
+outside the vocabulary, exactly because the tool never reaches the scored
+gates for it. Each rule is the tool's own
 predicate imported from the extension — the shared-write verdict comes from
 `validateSharedWriteCwd` over the same ref waves the mode handlers check,
 resolved against the bundled agent roster so the verdict is a property of the

@@ -12,6 +12,12 @@ import { validateCaseCorpus } from "../evals/case-contract.mjs";
 
 const reviewCase = SELECTION_CASES.find((testCase: any) => testCase.name === "independent-review-safe-first-call");
 
+/** Every direct dereference goes through this, so a renamed case fails with a named error, not a TypeError. */
+function theReviewCase(): any {
+	assert.ok(reviewCase, "selection case fixture missing — was independent-review-safe-first-call renamed?");
+	return reviewCase;
+}
+
 // The #82 transcript, replayed against the bundled roster: overwatch and any
 // toolset containing bash are write-capable, so both fan-outs are refused
 // before any child spawns, and the third call bypasses the guard outright.
@@ -72,12 +78,42 @@ test("preset calls are scored on their expanded topology, exactly as the tool re
 	assert.equal(callAdmissibilityFailure({ preset: "no-such-preset", task: "t", why: "x" }), null);
 });
 
+test("a call activating several modes is refused with the tool's own exactly-one-mode rule", () => {
+	// tasks + vote together: first-activator scoring would classify this as
+	// parallel and could admit it, but detectRunMode refuses the call with
+	// INVALID_MODE before any other gate — so must the seam.
+	const multiMode = {
+		why: "independent review of uncommitted changes",
+		tasks: [{ agent: "recon", task: "Review the uncommitted changes." }, { agent: "analyst", task: "Review the uncommitted changes." }],
+		vote: { agent: "recon", count: 2 },
+	};
+	assert.equal(callAdmissibilityFailure(multiMode)?.code, "INVALID_MODE");
+	const result = scored([multiMode]);
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /INVALID_MODE/);
+});
+
+test("a counted role with no task cannot slip past everyTaskPattern", () => {
+	// taskCount sees two roles, but the second assigns no task string; it must
+	// contribute an unmatchable entry, not vanish from the binding.
+	const tasklessSibling = scored([{
+		why: "independent review of uncommitted changes",
+		concurrency: 1,
+		tasks: [{ agent: "operator", task: "Review the uncommitted changes." }, { agent: "operator" }],
+	}]);
+	assert.equal(tasklessSibling.pass, false);
+	assert.match(tasklessSibling.notes, /role task 2 did not match \/review\//);
+});
+
 test("an invalid concurrency is scored as the tool's own INVALID_CONCURRENCY, not as the guard behind it", () => {
 	// The dispatch core refuses these before any handler guard runs; claiming
 	// SHARED_WRITE_CWD (or admitting them) would mis-count refusal budgets.
 	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 0 })?.code, "INVALID_CONCURRENCY");
 	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 2.5 })?.code, "INVALID_CONCURRENCY");
-	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: 0.5 })?.code, "INVALID_CONCURRENCY");
+	// On a preset call the same bad value is refused earlier, at resolution
+	// (PRESET_EXPANSION_INVALID via the schema check) — outside the seam's
+	// vocabulary, so no later gate's code may be claimed for it.
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "t", why: "x", concurrency: 0.5 }), null);
 });
 
 test("the #82 transcript fails on measurement, attributed on all three axes", () => {
@@ -214,7 +250,7 @@ test("shape matching stays pure: a forbidden shape catches calls the matcher wou
 });
 
 test("anyOf arms compose with shared fields and the admissibility rider", () => {
-	const expectation = reviewCase.expectedFlowCall;
+	const expectation = theReviewCase().expectedFlowCall;
 	// Right arm, wrong shared taskPattern: the shared field still gates.
 	const offTopic = flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Summarize the roadmap.", why: "delegated" } }, expectation);
 	assert.equal(offTopic.pass, false);
@@ -290,14 +326,15 @@ test("unknown shape keys fail preflight — a typo'd predicate must not be a sil
 	assert.ok(validation.issues.some((issue: string) => issue.includes("anyOf[0].firstCall is not a shape field")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("forbiddenFlowCalls[0].firstCall is not a shape field")));
 	// The real case's own predicates stay preflight-clean under the allowlist.
-	assert.deepEqual(validateCaseCorpus({ measurement: [], calibration: [], selection: [reviewCase] }).issues, []);
+	assert.deepEqual(validateCaseCorpus({ measurement: [], calibration: [], selection: [theReviewCase()] }).issues, []);
 });
 
 test("the case's dry-run mock passes the same scorer a live run gets", () => {
-	const result = scoreSelection(reviewCase, {
-		flowCalls: reviewCase.mock.flowCalls,
-		flowCallArgs: reviewCase.mock.flowCallArgs ?? [],
-		answer: reviewCase.mock.answer,
+	const testCase = theReviewCase();
+	const result = scoreSelection(testCase, {
+		flowCalls: testCase.mock.flowCalls,
+		flowCallArgs: testCase.mock.flowCallArgs ?? [],
+		answer: testCase.mock.answer,
 	});
 	assert.equal(result.pass, true, result.notes);
 });
