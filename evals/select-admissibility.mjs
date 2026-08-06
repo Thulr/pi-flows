@@ -37,6 +37,9 @@ else process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = packageOnlyPrevious;
 /** The modes whose handlers apply the top-level params.contract to their first child (verified per handler: single uses it directly; chain, parallel, vote, dossier, debate pass fallbackContract; evaluate's operator falls back to it). */
 const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "dossier", "debate", "evaluate"]);
 
+/** The modes whose openers run through integrationRunPlan, which resolves each ref's own contract — graph nodes carry contracts too, but route/search/loop/orchestrate openers use runAgentRef with no contract limits, so a role contract there is ignored by the tool and must be ignored here. */
+const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph"]);
+
 // The tool resolves a preset before any gate runs, so admissibility must be
 // asked of the expanded call, not the raw preset reference: a permitted
 // override (say concurrency:2 on code-review) can turn a safe preset into a
@@ -125,11 +128,14 @@ export function callAdmissibilityFailure(args) {
 	// children run and the call counts as admitted.
 	const firstSpawnRefs = firstSpawnAgentRefs(effective ?? {});
 	const contractRefused = (ref) => {
-		// Only the handlers that actually pass the top-level contract to their
-		// first child inherit it here; route/search/loop/graph run their
-		// openers without it, so a zero top-level budget must not exhaust
-		// them. Role-level contracts count everywhere.
-		const contract = ref.contract ?? (CONTRACT_FALLBACK_MODES.has(mode) ? effective?.contract : undefined);
+		// A contract counts only where the tool's opener actually consumes it:
+		// integrationRunPlan resolves ref.contract ?? the top-level fallback
+		// for the ROLE_CONTRACT_MODES; route/search/loop/orchestrate openers
+		// run with no contract limits, so neither source applies there —
+		// claiming a refusal for them would let the play-out branch execute a
+		// call the tool admits.
+		const roleContract = ROLE_CONTRACT_MODES.has(mode) ? ref.contract : undefined;
+		const contract = roleContract ?? (CONTRACT_FALLBACK_MODES.has(mode) ? effective?.contract : undefined);
 		if (!contract || typeof contract !== "object" || Array.isArray(contract)) return false;
 		return Boolean(Budget.forContract(contract.budget)?.refusesSpawn());
 	};

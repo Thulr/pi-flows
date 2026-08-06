@@ -278,12 +278,22 @@ test("inherited flow depth and initially exhausted budgets are refused, not cred
 	assert.equal(letRefusalPlayOut({ ...admissible, maxCostUsd: 0 }, 1, budgeted), true);
 });
 
-test("a zero top-level contract does not exhaust modes that never apply it to their opener", () => {
+test("contracts count only where the opener consumes them", () => {
 	// handleRoute runs its controller with no contract limits; search and
-	// loop likewise. Only role-level contracts count there.
+	// loop likewise — neither the top-level fallback nor a role contract
+	// reaches those openers, so claiming a refusal would let the play-out
+	// branch execute a call the tool admits and spawn a live child.
 	const zeroBudgetContract = { objective: "route", budget: { maxTokens: 0 } };
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, route: { candidates: ["recon", "analyst"] } }), null);
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, search: {} }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", route: { controller: { agent: "controller", contract: zeroBudgetContract } } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", search: { generator: { agent: "strategist", contract: zeroBudgetContract } } }), null);
+	// Graph nodes run through integrationRunPlan, which resolves each ref's
+	// own contract — a first wave of exhausted nodes is a real refusal.
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		graph: { nodes: [{ id: "a", agent: "recon", task: "A", contract: zeroBudgetContract }] },
+	})?.code, "BUDGET_EXCEEDED");
 });
 
 test("a spawn checkpoint and a destination-less strict trace are refused in the headless subject", () => {
