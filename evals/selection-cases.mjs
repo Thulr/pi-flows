@@ -262,7 +262,11 @@ export const SELECTION_CASES = defineCases([
 		expectFlow: true,
 		expectedFlowCall: {
 			firstCall: true,
-			taskPattern: "review|uncommitted|working tree|changes",
+			// The run-wide pattern binds the SUBJECT (the uncommitted working
+			// tree); everyTaskPattern below already binds the review intent per
+			// role, so listing "review" here would make this alternation
+			// satisfiable by any review of anything.
+			taskPattern: "uncommitted|working tree",
 			// Role by role, not concatenated: every assigned task must itself be a
 			// review, so "implement frontend changes" + "implement backend
 			// changes" cannot ride the run-wide alternation's "changes".

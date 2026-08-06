@@ -469,6 +469,7 @@ test("a serialized non-review fan-out fails the case: every role task must itsel
 	// concurrency:1 makes this admissible and minTasks sees two tasks, but the
 	// tasks implement rather than review; only the run-wide alternation's
 	// "changes" matches. Role-by-role binding refuses to let one word carry it.
+	// Two implementers now fail the run-wide subject binding outright…
 	const implementers = scored([{
 		why: "independent work on the changes",
 		concurrency: 1,
@@ -478,14 +479,15 @@ test("a serialized non-review fan-out fails the case: every role task must itsel
 		],
 	}]);
 	assert.equal(implementers.pass, false);
-	assert.match(implementers.notes, /role task 1 did not match \/review\//);
-	// One on-topic task cannot vouch for an off-topic sibling either.
+	assert.match(implementers.notes, /task did not match \/uncommitted\|working tree\//);
+	// …and when the subject binding is satisfied, one on-topic task still
+	// cannot vouch for an off-topic sibling: the role binding catches it.
 	const mixed = scored([{
 		why: "independent review of uncommitted changes",
 		concurrency: 1,
 		tasks: [
 			{ agent: "operator", task: "Review the uncommitted changes." },
-			{ agent: "operator", task: "Implement the backend changes." },
+			{ agent: "operator", task: "Implement the backend changes in this working tree." },
 		],
 	}]);
 	assert.equal(mixed.pass, false);
