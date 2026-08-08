@@ -269,12 +269,17 @@ export class AdmittedFlow {
 				recordSpan: state.sink?.record,
 				recordEvent: state.sink?.event,
 				requestApproval: async (title, message) => {
-					const decision = !ports.hasUI || !ports.confirm ? "required" : (await ports.confirm(title, message) ? "approved" : "denied");
+					// Interactivity requires both a UI and a confirm port: recording
+					// `hasUI` alone could claim an approval was interactive when no
+					// confirm function existed to ask it.
+					const confirm = ports.hasUI ? ports.confirm : undefined;
+					const interactive = confirm !== undefined;
+					const decision = confirm === undefined ? "required" : (await confirm(title, message) ? "approved" : "denied");
 					state.sink?.event({
 						kind: "approval",
 						name: "mode.approval",
 						ok: decision === "approved",
-						attributes: { "flow.approval.decision": decision, "flow.approval.actor": ports.approvalActor, "flow.approval.interactive": ports.hasUI === true },
+						attributes: { "flow.approval.decision": decision, "flow.approval.actor": ports.approvalActor, "flow.approval.interactive": interactive },
 					});
 					return decision;
 				},

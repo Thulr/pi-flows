@@ -5,8 +5,7 @@
 // gate, replay a spent transition) and measure that the aggregate contains it:
 // nothing spawns behind a skipped checkpoint, and a replayed transition is
 // refused instead of double-spawning or double-settling.
-import { readFileSync } from "node:fs";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
