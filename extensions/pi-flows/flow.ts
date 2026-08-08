@@ -106,6 +106,16 @@ interface AdmittedState {
 export type FlowAdmission = { refused: ModeOutput } | { admitted: AdmittedFlow };
 
 /**
+ * Module-private construction token. flow.ts ships in the published package,
+ * so TypeScript visibility alone would not stop a deep import from
+ * constructing an AdmittedFlow with structurally matching state and walking
+ * past every admission gate. The token's symbol identity cannot be forged
+ * from outside this module, so admission stays the only source of the
+ * capability at runtime, not just in the type system.
+ */
+const LIFECYCLE: unique symbol = Symbol("pi-flows.flow.lifecycle");
+
+/**
  * The aggregate root for one bounded delegation (see CONTEXT.md: Flow). Its
  * lifecycle is an explicit progression — **refused → admitted → dispatched →
  * settled** — and the type system enforces the sequence: {@link Flow.admit} is
@@ -212,7 +222,7 @@ export class Flow {
 		// Cost ceiling: bounds the one "uncontrolled recursion" dimension that
 		// iteration and time caps miss. Undefined when the call configured none.
 		const budget = Budget.forFlow(params);
-		return { admitted: new AdmittedFlow({ ports, params, policy, mode, concurrency, runDefaultCwd: prepared.runDefaultCwd, traceStrict, sink, handoffs, handler, budget }) };
+		return { admitted: AdmittedFlow.fromAdmission(LIFECYCLE, { ports, params, policy, mode, concurrency, runDefaultCwd: prepared.runDefaultCwd, traceStrict, sink, handoffs, handler, budget }) };
 	}
 }
 
@@ -226,10 +236,19 @@ export class AdmittedFlow {
 	/** The live details shared with the presence surface, kept for the settle-on-failure path. */
 	#liveDetails: FlowDetails;
 
-	/** Module-private in effect: only {@link Flow.admit} constructs one. */
-	constructor(state: AdmittedState) {
+	private constructor(key: typeof LIFECYCLE, state: AdmittedState) {
+		// TS `private` is erased at runtime; the key keeps construction
+		// runtime-private, so no capability exists without admission passing.
+		if (key !== LIFECYCLE) throw new TypeError("An AdmittedFlow is produced only by Flow.admit: the dispatch capability cannot be constructed directly.");
 		this.#state = state;
 		this.#liveDetails = state.ports.makeDetails(state.mode)([]);
+		// Freezing blocks own-property shadowing of `dispatch`; the #state latch is unaffected.
+		Object.freeze(this);
+	}
+
+	/** Only {@link Flow.admit} holds the token, so only admission reaches the private constructor. */
+	static fromAdmission(key: typeof LIFECYCLE, state: AdmittedState): AdmittedFlow {
+		return new AdmittedFlow(key, state);
 	}
 
 	/**
@@ -288,7 +307,7 @@ export class AdmittedFlow {
 				runChild: ports.runChild,
 				concurrency: state.concurrency,
 			});
-			return new DispatchedFlow(state, output, (details) => { this.#liveDetails = details; });
+			return DispatchedFlow.fromDispatch(LIFECYCLE, state, output, (details) => { this.#liveDetails = details; });
 		} catch (error) {
 			ports.presence.settle(this.#liveDetails);
 			throw error;
@@ -308,10 +327,19 @@ export class DispatchedFlow {
 	readonly #output: ModeOutput;
 	readonly #shareLiveDetails: (details: FlowDetails) => void;
 
-	constructor(state: AdmittedState, output: ModeOutput, shareLiveDetails: (details: FlowDetails) => void) {
+	private constructor(key: typeof LIFECYCLE, state: AdmittedState, output: ModeOutput, shareLiveDetails: (details: FlowDetails) => void) {
+		// Same runtime privacy as AdmittedFlow: TS `private` erases, the key does not.
+		if (key !== LIFECYCLE) throw new TypeError("A DispatchedFlow is produced only by dispatch: the settle capability cannot be constructed directly.");
 		this.#state = state;
 		this.#output = output;
 		this.#shareLiveDetails = shareLiveDetails;
+		// Freezing blocks own-property shadowing of `settle`; the #state latch is unaffected.
+		Object.freeze(this);
+	}
+
+	/** Only {@link AdmittedFlow.dispatch} holds the token, so only a dispatch reaches the private constructor. */
+	static fromDispatch(key: typeof LIFECYCLE, state: AdmittedState, output: ModeOutput, shareLiveDetails: (details: FlowDetails) => void): DispatchedFlow {
+		return new DispatchedFlow(key, state, output, shareLiveDetails);
 	}
 
 	async settle(): Promise<ModeOutput> {
@@ -371,3 +399,12 @@ export class DispatchedFlow {
 		}
 	}
 }
+
+// Frozen against method substitution, like IntegrationValidation: a patched
+// prototype must not be able to turn a spent transition back into a live one.
+Object.freeze(Flow.prototype);
+Object.freeze(Flow);
+Object.freeze(AdmittedFlow.prototype);
+Object.freeze(AdmittedFlow);
+Object.freeze(DispatchedFlow.prototype);
+Object.freeze(DispatchedFlow);

@@ -207,6 +207,18 @@ test("admission hands over the flow budget and concurrency it constructed", asyn
 	assert.equal(deps.approvalActor, "test-operator");
 });
 
+test("the lifecycle capabilities cannot be forged: constructing them outside admission or dispatch throws", async () => {
+	// flow.ts ships in the package, so a deep import could otherwise construct
+	// a structurally matching capability and walk past every admission gate.
+	const { AdmittedFlow, DispatchedFlow } = await import("../extensions/pi-flows/flow.ts");
+	// The constructor is type-private and the erased runtime path still refuses a forged key…
+	assert.throws(() => new (AdmittedFlow as any)(Symbol("forged"), {}), /produced only by Flow\.admit/);
+	assert.throws(() => new (DispatchedFlow as any)(Symbol("forged"), {}, {}, () => undefined), /produced only by dispatch/);
+	// …and so do the token-guarded factories the lifecycle itself constructs through.
+	assert.throws(() => (AdmittedFlow as any).fromAdmission(Symbol("forged"), {}), /produced only by Flow\.admit/);
+	assert.throws(() => (DispatchedFlow as any).fromDispatch(Symbol("forged"), {}, {}, () => undefined), /produced only by dispatch/);
+});
+
 test("a flow dispatches exactly once: replaying the admitted capability is refused", async () => {
 	const h = harness(SPAWNING);
 	const admission = await Flow.admit(h.ports);
