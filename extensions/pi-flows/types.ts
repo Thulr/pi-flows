@@ -1,5 +1,5 @@
-import type { Message } from "@earendil-works/pi-ai";
 import type { Budget, BudgetAuthority } from "./budget.ts";
+import type { ChildMessage } from "./sanitize.ts";
 import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
 import type { HandoffGuard } from "./handoff-types.ts";
 import type { HandoffConsumer } from "./handoff-consumption.ts";
@@ -21,6 +21,7 @@ export type {
 	SpanStage,
 } from "./trace-scope.ts";
 export { encodeAuthorKey } from "./trace-scope.ts";
+export type { ChildMessage, ChildMessageBlock } from "./sanitize.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
 export type { FlowPreset, FlowPresetDiscovery, FlowPresetDiscoveryIssue, FlowPresetSelection, PresetSource } from "./preset-types.ts";
 // Model-selection vocabulary, same arrangement: the terms live in a
@@ -212,7 +213,7 @@ export interface FlowRunResult {
 	/** Redacted task preview for diagnostics. The raw task is passed by temp file, never argv/details. */
 	task: string;
 	exitCode: number;
-	messages: Message[];
+	messages: ChildMessage[];
 	stderr: string;
 	usage: UsageStats;
 	model?: string;

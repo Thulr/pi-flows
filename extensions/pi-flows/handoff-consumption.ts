@@ -241,7 +241,8 @@ export class HandoffConsumer {
 				handoffPolicy: this.guard.resolution.effective,
 				policyAction: prepared.action,
 				compositional: prepared.compositional,
-				contract,
+				// Attribute derivation reads contract DATA; the resolved object is the transition currency.
+				contract: contract?.contract,
 				policy: this.options.policy,
 			}),
 		};

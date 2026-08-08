@@ -9,7 +9,7 @@ import {
 	canonicalHandoff,
 	delegationContractId,
 	prepareIntegrationHandoff,
-	renderDelegationTask,
+	ResolvedDelegationContract,
 } from "../extensions/pi-flows/delegation.ts";
 import { FlowParams } from "../extensions/pi-flows/schema.ts";
 import { emptyUsage, type DelegationContract, type FlowRunResult } from "../extensions/pi-flows/types.ts";
@@ -49,6 +49,9 @@ function result(text: string): FlowRunResult {
 	};
 }
 
+// The transition path accepts only a resolved contract; raw data stays for identity assertions.
+const resolved = ResolvedDelegationContract.resolve(contract).resolved!;
+
 function typedEnvelopeFor(envelopeContract: DelegationContract, data: unknown, overrides: Record<string, unknown> = {}) {
 	return JSON.stringify({
 		schemaVersion: "pi-flows.return-envelope.v1",
@@ -83,19 +86,20 @@ test("contracted prompts carry a stable delegation-contract identity", () => {
 	const id = delegationContractId(contract);
 	assert.equal(id, delegationContractId(structuredClone(contract)));
 	assert.match(id, /^sha256:[a-f0-9]{64}$/);
-	assert.match(renderDelegationTask(undefined, contract), new RegExp(id));
+	assert.match(resolved.renderTask(undefined), new RegExp(id));
+	assert.equal(resolved.id, id, "the resolved identity is the canonical digest");
 });
 
 test("integration handoffs reject missing and stale contract identities", () => {
 	const missing = prepareIntegrationHandoff(result(typedEnvelope({ contractId: undefined })), {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy,
 	});
 	assert.equal(missing.error?.code, "RETURN_CONTRACT_MISMATCH");
 
 	const stale = prepareIntegrationHandoff(result(typedEnvelope({ contractId: "sha256:".concat("0".repeat(64)) })), {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy,
 	});
@@ -104,7 +108,7 @@ test("integration handoffs reject missing and stale contract identities", () => 
 
 test("callers cannot forge a prior-validation receipt", () => {
 	const forged = prepareIntegrationHandoff(result("ordinary prose"), {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy,
 		validation: {},
@@ -117,7 +121,7 @@ test("callers cannot forge a prior-validation receipt", () => {
 test("validation receipts retain an immutable private snapshot", () => {
 	const child = result(typedEnvelope());
 	const validated = prepareIntegrationHandoff(child, {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy,
 		enforceCompletion: false,
@@ -127,7 +131,7 @@ test("validation receipts retain an immutable private snapshot", () => {
 	child.envelope!.status = "failed";
 
 	const reused = prepareIntegrationHandoff(child, {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy,
 		validation: validated.validation,
@@ -141,7 +145,7 @@ test("validation receipts cannot carry permissive content into a stricter captur
 	const secret = "secret=private-value";
 	const child = result(typedEnvelope({ summary: secret }));
 	const permissive = prepareIntegrationHandoff(child, {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy: { recordContent: true, redactSecrets: false },
 	});
@@ -149,7 +153,7 @@ test("validation receipts cannot carry permissive content into a stricter captur
 	assert.match(permissive.handoff?.summary ?? "", /private-value/);
 
 	const restrictive = prepareIntegrationHandoff(child, {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy: { recordContent: false, redactSecrets: true },
 		validation: permissive.validation,
@@ -167,7 +171,7 @@ test("integration handoffs reject digest-mismatched artifacts", async () => {
 		artifactReferences: [{ path: "artifact.txt" }],
 		digests: [{ artifact: "artifact.txt", algorithm: "sha256", value: "0".repeat(64) }],
 	})), {
-		contract,
+		contract: resolved,
 		cwd,
 		policy,
 	});
@@ -178,7 +182,7 @@ test("partial and blocked typed handoffs fail closed unless inclusion is explici
 	for (const status of ["partial", "blocked"] as const) {
 		const rejectedResult = result(typedEnvelope({ status }));
 		const rejected = prepareIntegrationHandoff(rejectedResult, {
-			contract,
+			contract: resolved,
 			cwd: "/tmp",
 			policy,
 		});
@@ -186,7 +190,7 @@ test("partial and blocked typed handoffs fail closed unless inclusion is explici
 		assert.equal(rejectedResult.handoff, undefined);
 
 		const included = prepareIntegrationHandoff(result(typedEnvelope({ status })), {
-			contract,
+			contract: resolved,
 			cwd: "/tmp",
 			policy,
 			incompletePolicy: "include",
@@ -199,7 +203,7 @@ test("partial and blocked typed handoffs fail closed unless inclusion is explici
 
 test("failed typed handoffs remain terminal when incomplete inclusion is explicit", () => {
 	const failed = prepareIntegrationHandoff(result(typedEnvelope({ status: "failed" })), {
-		contract,
+		contract: resolved,
 		cwd: "/tmp",
 		policy,
 		incompletePolicy: "include",

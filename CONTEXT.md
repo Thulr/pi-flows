@@ -67,6 +67,10 @@ _Avoid_: persona, specialist, subagent
 The slot in a mode's topology that an agent fills (generator, critic, worker, adjudicator).
 _Avoid_: position
 
+**Wave**:
+The set of roles a mode spawns concurrently at one step of its topology. A wave is the planned concurrent set; a stage is the recorded span that step becomes in the trace.
+_Avoid_: batch, group
+
 **Task**:
 The bounded unit of work text handed to a child.
 _Avoid_: prompt, job
@@ -99,6 +103,10 @@ _Avoid_: dashboard, active agents (runs execute; agents are profiles)
 **Delegation contract**:
 A machine-checked task definition that binds a child's objective, authority, contract budget, acceptance checks, and required return shape.
 _Avoid_: typed contract, task contract
+
+**Resolved contract**:
+A delegation contract admitted to the transition path: shape-validated, its return schema compiled, and its identity digested, all at construction. Task rendering, contract budgets, and return validation accept only this form.
+_Avoid_: validated contract, compiled contract
 
 **Return requirements**:
 Prompt-enforced instructions that constrain a child's returned shape or evidence without creating a machine-checked delegation contract.
@@ -169,8 +177,20 @@ _Avoid_: run-card (it summarizes a flow, not a run)
 ### Guardrails and selection
 
 **Gate**:
-A deterministic, machine-evaluated pass/fail check that blocks progress — a check command, a workflow phase gate, the delegation justification. Never a human decision.
+A deterministic, machine-evaluated pass/fail check that blocks progress — a check command, a workflow phase gate, the spawn gate. Never a human decision.
 _Avoid_: check, approval
+
+**Spawn gate**:
+The gate that refuses a spawning call before any child starts when the delegation carries no justification. Surfaces that answer without spawning sit outside it.
+_Avoid_: why check, delegation justification (as the gate's name)
+
+**Admissibility**:
+Whether the tool itself would admit a call rather than refuse it before any child spawns. Judged with the same predicates the tool enforces, so a scored rule cannot drift from the enforced one.
+_Avoid_: validity, eligibility
+
+**Mirror**:
+A spawn-free re-derivation of a handler's pre-spawn decision, used to answer admissibility without running the flow. A mirror stays silent wherever the tool would refuse first for a different reason, so a refusal is never mislabeled.
+_Avoid_: simulation, dry run
 
 **Checkpoint**:
 A human approval point in a flow, before spawning or before finalizing. A checkpoint is not a gate.
@@ -179,6 +199,10 @@ _Avoid_: approval gate, human gate
 **Approval receipt**:
 A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes.
 _Avoid_: approval marker, checkpoint receipt
+
+**Approval authorization**:
+The capability to spend an approval receipt, produced only by verifying the receipt against the action about to run and bound to that action. Consuming without verifying is not a call order that exists.
+_Avoid_: verified receipt, consumption token
 
 **Flow budget**:
 A machine-enforced cost or token ceiling shared by every run in one flow.

@@ -1,0 +1,66 @@
+// The behavior-rich Core objects: transitions live on constructed objects, not
+// as free functions a caller can invoke out of order. Each test names the
+// invariant the object enforces by construction.
+import test from "node:test";
+import { strict as assert } from "node:assert";
+import { ApprovalAuthorization, issueApprovalReceipt, type ApprovalBinding } from "../extensions/pi-flows/approval.ts";
+import { ResolvedDelegationContract, delegationContractId } from "../extensions/pi-flows/delegation.ts";
+import type { DelegationContract } from "../extensions/pi-flows/types.ts";
+
+const contract: DelegationContract = {
+	objective: "Return the exact answer.",
+	constraints: [],
+	nonGoals: [],
+	dependencies: [],
+	authority: { may: ["Read files."], mustNot: [], requiresApproval: [] },
+	sideEffectClass: "read-only",
+	budget: { timeoutMs: 5_000, maxCostUsd: 1 },
+	acceptanceChecks: ["Return answer 42."],
+	returnSchema: { type: "object", required: ["answer"], properties: { answer: { type: "number" } } },
+	owner: "tests",
+};
+
+test("a contract that fails admissibility never becomes an object the transitions accept", () => {
+	const bad = ResolvedDelegationContract.resolve({ ...contract, objective: "" });
+	assert.equal(bad.resolved, undefined, "no object exists to render tasks or budgets from");
+	assert.equal(bad.error?.code, "INVALID_DELEGATION_CONTRACT");
+
+	const uncompilable = ResolvedDelegationContract.resolve({ ...contract, returnSchema: { type: "string", pattern: "(" } });
+	assert.equal(uncompilable.resolved, undefined, "an uncompilable returnSchema is refused at the door, not at first use");
+	assert.equal(uncompilable.error?.code, "INVALID_DELEGATION_CONTRACT");
+});
+
+test("a resolved contract carries one identity and one compiled schema for every transition", () => {
+	const resolved = ResolvedDelegationContract.resolve(contract).resolved!;
+	assert.equal(resolved.id, delegationContractId(contract), "the identity is the canonical digest, computed once");
+	assert.match(resolved.renderTask("Do it"), new RegExp(resolved.id), "the rendered protocol names the same identity");
+	assert.equal(resolved.timeoutMs, 5_000, "the dispatch bound reads the same admitted data");
+	assert.equal(resolved.budget()?.snapshot().authority, "contract");
+	assert.equal(resolved.checkReturnData({ answer: 42 }), true);
+	assert.equal(resolved.checkReturnData({ answer: "42" }), false, "return validation uses the schema compiled at construction");
+});
+
+const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => ({
+	action: "workflow.phase:ship",
+	parameters: { agentScope: "user" },
+	requestedBy: "flow:workflow",
+	workflowDigest: "1234567890abcdef",
+	stateVersion: 3,
+	...overrides,
+});
+
+const NOW = Date.parse("2026-08-08T12:00:00.000Z");
+
+test("consumption exists only on a verified authorization, bound to the verified consumer", () => {
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
+	const verified = ApprovalAuthorization.verify(receipt, binding(), { consumer: "workflow.phase:ship", now: NOW });
+	assert.equal(verified.error, undefined);
+
+	const spent = verified.authorization!.consume(NOW);
+	assert.equal(spent.consumedBy, "workflow.phase:ship", "the consumer was fixed at verification; consume takes no consumer argument to disagree with");
+	assert.equal(spent.consumedAt, new Date(NOW).toISOString());
+
+	const replay = ApprovalAuthorization.verify(spent, binding(), { consumer: "workflow.phase:other", now: NOW });
+	assert.equal(replay.error?.code, "APPROVAL_RECEIPT_CONSUMED", "a failed verification yields no authorization at all");
+	assert.equal(replay.authorization, undefined);
+});

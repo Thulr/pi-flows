@@ -1,6 +1,30 @@
 import * as os from "node:os";
-import type { Message } from "@earendil-works/pi-ai";
 import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
+
+/**
+ * One content block pi-flows retains from a child transcript message. Owned
+ * here — the capture-policy module decides what child content is retained —
+ * rather than borrowed from the child's protocol: the runner translates at the
+ * process boundary, and only the fields the views and formatters actually read
+ * survive the crossing. Re-exported through types.ts as kernel vocabulary.
+ */
+export interface ChildMessageBlock {
+	type: string;
+	/** Present on text blocks. */
+	text?: string;
+	/** Present on toolCall blocks. */
+	name?: string;
+	/** Present on toolCall blocks; already redacted per capture policy when stored. */
+	arguments?: unknown;
+}
+
+/** One retained child transcript message, in pi-flows' own vocabulary. */
+export interface ChildMessage {
+	role: string;
+	content: ChildMessageBlock[];
+	/** Present on toolResult messages. */
+	toolName?: string;
+}
 
 const rawFinalAssistantText = new WeakMap<FlowRunResult, string>();
 const validatedReturnEnvelopes = new WeakMap<FlowRunResult, DelegationReturnEnvelope>();
@@ -103,27 +127,27 @@ export function redactValue(value: unknown, policy: CapturePolicy): unknown {
 	return result;
 }
 
-export function storeMessage(message: Message, policy: CapturePolicy): Message {
-	return redactValue(message, policy) as Message;
+export function storeMessage(message: ChildMessage, policy: CapturePolicy): ChildMessage {
+	return redactValue(message, policy) as ChildMessage;
 }
 
 export function appendCapped(existing: string, chunk: string, policy: CapturePolicy, cap = STDERR_CAPTURE_CAP): string {
 	return capBytes(`${existing}${sanitizeText(chunk, policy, cap)}`, cap, "Captured stream");
 }
 
-export function getFinalAssistantText(messages: Message[]): string {
+export function getFinalAssistantText(messages: ChildMessage[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
 		if (message.role !== "assistant") continue;
 		for (const part of message.content) {
-			if (part.type === "text") return part.text;
+			if (part.type === "text" && typeof part.text === "string") return part.text;
 		}
 	}
 	return "";
 }
 
 /** Retain one bounded raw candidate only long enough for typed-envelope validation. */
-export function captureRawFinalAssistantText(result: FlowRunResult, message: Message): void {
+export function captureRawFinalAssistantText(result: FlowRunResult, message: ChildMessage): void {
 	const text = getFinalAssistantText([message]);
 	if (text) rawFinalAssistantText.set(result, capBytes(text, MODEL_VISIBLE_OUTPUT_CAP, "Envelope candidate"));
 }

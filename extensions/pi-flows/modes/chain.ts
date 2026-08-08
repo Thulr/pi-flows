@@ -2,7 +2,7 @@ import { formatFlowError, type DelegationContract, type FlowRunResult, type Mode
 import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, resolvedCwd } from "../validate.ts";
 import { renderTaskTemplate } from "../parse.ts";
-import { createDelegationBudget, renderDelegationTask, validateDelegationContract } from "../delegation.ts";
+import { ResolvedDelegationContract } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
 
 /** One place a chain step's unit key is derived, so its link and its handoff name the same unit. */
@@ -13,10 +13,12 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 	const results: FlowRunResult[] = [];
 	let previous = "";
 	let priorHandoffKey: string | undefined;
+	const stepContracts: Array<ResolvedDelegationContract | undefined> = [];
 	for (const step of params.chain) {
-		const contract = (step.contract ?? params.contract) as DelegationContract | undefined;
-		const error = contract ? validateDelegationContract(contract, policy) : null;
-		if (error) return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("chain")([], error) };
+		const raw = (step.contract ?? params.contract) as DelegationContract | undefined;
+		const resolution = raw ? ResolvedDelegationContract.resolve(raw, policy) : {};
+		if (resolution.error) return { content: [{ type: "text", text: formatFlowError(resolution.error) }], details: makeDetails("chain")([], resolution.error) };
+		stepContracts.push(resolution.resolved);
 	}
 
 	for (let index = 0; index < params.chain.length; index += 1) {
@@ -24,10 +26,10 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 		// The last step's output is the answer, not a handoff: nothing downstream
 		// receives it, so recording a boundary there would invent one.
 		const handsOff = index < params.chain.length - 1;
-		const contract = (step.contract ?? params.contract) as DelegationContract | undefined;
+		const contract = stepContracts[index];
 		const rendered = renderTaskTemplate(step.task, params.task ?? params.contract?.objective, previous);
 		const task = contract
-			? renderDelegationTask(rendered, contract, step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence)
+			? contract.renderTask(rendered, step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence)
 			: appendReturnRequirements(rendered, step.returnContract ?? params.returnContract, step.requireEvidence ?? params.requireEvidence);
 		const result = await runAgentRef(
 			deps,
@@ -38,7 +40,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			results,
 			{
 				limits: contract
-					? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget: createDelegationBudget(contract), contract }
+					? { captureRawOutput: true, timeoutMs: contract.timeoutMs, contractBudget: contract.budget(), contract: contract.contract }
 					: {},
 				// A chain step consumed the previous step's output; the link records
 				// that without pretending the earlier step spawned this one.

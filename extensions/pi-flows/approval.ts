@@ -188,20 +188,58 @@ function shapeIssue(value: unknown): string | null {
 	return null;
 }
 
+/** `ApprovalAuthorization.verify`'s outcome: a refusal, or the sole capability to spend the receipt. */
+export type ApprovalVerification =
+	| { error: FlowError; authorization?: undefined }
+	| { error?: undefined; authorization: ApprovalAuthorization };
+
 /**
- * Independently re-verify a receipt against the action about to run. The binding
- * is recomputed from the live workflow spec and params rather than trusted from
- * the stored receipt, so a receipt only authorizes what it was actually granted
- * for.
- *
- * @param consumer the action about to use this receipt. Every step the approval
- *   gates presents the SAME action, so re-verifying anywhere inside that run is a
- *   resume; a different action is a replay and is refused.
+ * Proof that a stored receipt was verified against the action about to run —
+ * and the only path to spending it. Consuming without verifying is not a call
+ * order a caller can get wrong: `consume` exists only on this object, and this
+ * object exists only as `verify`'s success result, already bound to the
+ * consumer the verification was performed for.
  */
-export function verifyApprovalReceipt(
+export class ApprovalAuthorization {
+	readonly #receipt: ApprovalReceipt;
+	readonly #consumer: string;
+
+	private constructor(receipt: ApprovalReceipt, consumer: string) {
+		this.#receipt = receipt;
+		this.#consumer = consumer;
+	}
+
+	/**
+	 * Independently re-verify a receipt against the action about to run. The binding
+	 * is recomputed from the live workflow spec and params rather than trusted from
+	 * the stored receipt, so a receipt only authorizes what it was actually granted
+	 * for.
+	 *
+	 * @param consumer the action about to use this receipt. Every step the approval
+	 *   gates presents the SAME action, so re-verifying anywhere inside that run is a
+	 *   resume; a different action is a replay and is refused.
+	 */
+	static verify(
+		receipt: unknown,
+		binding: ApprovalBinding,
+		{ consumer, now = Date.now() }: { consumer: string; now?: number },
+	): ApprovalVerification {
+		const error = receiptIssue(receipt, binding, { consumer, now });
+		if (error) return { error };
+		return { authorization: new ApprovalAuthorization(receipt as ApprovalReceipt, consumer) };
+	}
+
+	/** Burn the receipt once its authorized action has begun. Re-consuming by the same action is a resume, not a second use. */
+	consume(now = Date.now()): ApprovalReceipt {
+		if (this.#receipt.consumedAt !== null && this.#receipt.consumedBy === this.#consumer) return this.#receipt;
+		return sealReceipt({ ...this.#receipt, consumedAt: new Date(now).toISOString(), consumedBy: this.#consumer });
+	}
+}
+
+function receiptIssue(
 	receipt: unknown,
 	binding: ApprovalBinding,
-	{ consumer, now = Date.now() }: { consumer: string; now?: number },
+	{ consumer, now }: { consumer: string; now: number },
 ): FlowError | null {
 	const shape = shapeIssue(receipt);
 	if (shape) {
@@ -254,12 +292,6 @@ export function verifyApprovalReceipt(
 		);
 	}
 	return null;
-}
-
-/** Burn a receipt once its authorized action has begun. Re-consuming by the same action is a resume, not a second use. */
-export function consumeApprovalReceipt(receipt: ApprovalReceipt, consumer: string, now = Date.now()): ApprovalReceipt {
-	if (receipt.consumedAt !== null && receipt.consumedBy === consumer) return receipt;
-	return sealReceipt({ ...receipt, consumedAt: new Date(now).toISOString(), consumedBy: consumer });
 }
 
 /**

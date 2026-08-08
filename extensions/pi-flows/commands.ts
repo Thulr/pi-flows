@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import * as fsSync from "node:fs";
+import * as path from "node:path";
 import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, type CapturePolicy } from "./types.ts";
 import { capBytes, sanitizeText } from "./sanitize.ts";
 
@@ -95,4 +97,18 @@ export function runProbeCommand(command: string, cwd: string, timeoutMs: number,
 		finishForAbort: (output) => ({ exitCode: null, output, timedOut: false, spawnFailed: false, aborted: true }),
 		finishForSpawnError: (output) => ({ exitCode: null, output, timedOut: false, spawnFailed: true, aborted: false }),
 	});
+}
+
+/** How a child pi process is invoked: re-run the current entrypoint when it is a real script, else fall back to `pi` on PATH. */
+export function getPiInvocation(args: string[]): { command: string; args: string[] } {
+	const currentScript = process.argv[1];
+	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
+	if (currentScript && !isBunVirtualScript && fsSync.existsSync(currentScript)) {
+		return { command: process.execPath, args: [currentScript, ...args] };
+	}
+
+	const executableName = path.basename(process.execPath).toLowerCase();
+	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(executableName);
+	if (!isGenericRuntime) return { command: process.execPath, args };
+	return { command: "pi", args };
 }

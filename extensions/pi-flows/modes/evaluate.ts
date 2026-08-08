@@ -1,7 +1,7 @@
 import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
-import { createDelegationBudget, renderDelegationTask, validateDelegationContract } from "../delegation.ts";
+import { ResolvedDelegationContract } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
@@ -14,12 +14,13 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const spec = params.evaluate ?? {};
 	const operatorWithTask = spec.operator as (FlowAgentRefInput & { task?: unknown; contract?: DelegationContract }) | undefined;
 	const operatorTask = typeof operatorWithTask?.task === "string" ? operatorWithTask.task : undefined;
-	const contract = (operatorWithTask?.contract ?? params.contract) as DelegationContract | undefined;
-	const contractError = contract ? validateDelegationContract(contract, policy) : null;
-	if (contractError) {
-		return { content: [{ type: "text", text: formatFlowError(contractError) }], details: makeDetails("evaluate")([], contractError) };
+	const rawContract = (operatorWithTask?.contract ?? params.contract) as DelegationContract | undefined;
+	const resolution = rawContract ? ResolvedDelegationContract.resolve(rawContract, policy) : {};
+	if (resolution.error) {
+		return { content: [{ type: "text", text: formatFlowError(resolution.error) }], details: makeDetails("evaluate")([], resolution.error) };
 	}
-	const goal: string | undefined = params.task ?? operatorTask ?? contract?.objective;
+	const contract = resolution.resolved;
+	const goal: string | undefined = params.task ?? operatorTask ?? contract?.contract.objective;
 
 	if (!goal || !goal.trim()) {
 		const error = flowError(
@@ -31,7 +32,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")([], error) };
 	}
 	const contractedGoal = contract
-		? renderDelegationTask(goal, contract, params.returnContract, params.requireEvidence)
+		? contract.renderTask(goal, params.returnContract, params.requireEvidence)
 		: appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 
 	const generatorRef: FlowAgentRefInput = spec.operator ?? { agent: "operator" };
@@ -71,7 +72,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	// attributed to the verdict that caused it.
 	let feedbackKey: string | undefined;
 	let priorArtifactKey: string | undefined;
-	const contractBudget = contract ? createDelegationBudget(contract) : undefined;
+	const contractBudget = contract?.budget();
 
 	for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
 		rounds = iteration;
@@ -116,7 +117,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			results.length + 1,
 			results,
 			{
-				limits: contract ? { captureRawOutput: true, timeoutMs: contract.budget.timeoutMs, contractBudget, contract } : {},
+				limits: contract ? { captureRawOutput: true, timeoutMs: contract.timeoutMs, contractBudget, contract: contract.contract } : {},
 				// A revision's prompt carries the prior artifact and the feedback that
 				// sent it back. Both are declared: reachability through the panel is
 				// not the same as saying what this prompt actually contains.

@@ -6,7 +6,7 @@
 // the persisted state type; the helpers take the two fields they need, so the
 // state shape stays workflow.ts's business.
 import { sanitizeText } from "../sanitize.ts";
-import { consumeApprovalReceipt, WORKFLOW_COMPLETE_STEP, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
+import { WORKFLOW_COMPLETE_STEP, type ApprovalAuthorization, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
 import type { CapturePolicy, ModeDeps } from "../types.ts";
 import { resolveChildModel } from "../runner.ts";
 
@@ -206,11 +206,17 @@ export function approvalBindingFor(phases: any[], index: number, deps: ModeDeps,
 /**
  * Burn the receipt that authorized an action, once that action has begun. The
  * consumer is the ACTION, not the individual step, so a gated run of several
- * phases spends one approval once rather than needing one per phase.
+ * phases spends one approval once rather than needing one per phase. Only a
+ * verified authorization can be spent: the capability is produced by
+ * `ApprovalAuthorization.verify` in this same handler pass, already bound to
+ * the action it was verified for.
  */
-export function consumeAuthorization(receipts: Record<string, ApprovalReceipt>, phases: any[], authorizedBy: number | undefined): void {
-	if (authorizedBy === undefined) return;
-	const approvalId = phases[authorizedBy].id;
-	const receipt = receipts[approvalId];
-	if (receipt) receipts[approvalId] = consumeApprovalReceipt(receipt, approvalActionId(phases[authorizedBy]));
+export function consumeAuthorization(
+	receipts: Record<string, ApprovalReceipt>,
+	phases: any[],
+	authorizedBy: number | undefined,
+	authorization: ApprovalAuthorization | undefined,
+): void {
+	if (authorizedBy === undefined || !authorization) return;
+	receipts[phases[authorizedBy].id] = authorization.consume();
 }

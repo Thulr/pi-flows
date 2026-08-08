@@ -12,13 +12,12 @@ import {
 	MIN_APPROVAL_TTL_MS,
 	approvalBindingDigest,
 	approvalReceiptDigest,
+	ApprovalAuthorization,
 	approvalReceiptSummary,
-	consumeApprovalReceipt,
 	formatApprovalReceipt,
 	issueApprovalReceipt,
 	legacyApprovalReceipt,
 	resolveApprovalTtlMs,
-	verifyApprovalReceipt,
 	type ApprovalBinding,
 } from "../extensions/pi-flows/approval.ts";
 import { normalizeGatedPhase, unbindableGatedRefs } from "../extensions/pi-flows/modes/workflow-approval.ts";
@@ -37,6 +36,10 @@ const NOW = Date.parse("2026-07-27T12:00:00.000Z");
 
 /** Re-stamp a hand-edited receipt so a test reaches the check it is actually about, not the integrity check in front of it. */
 const reseal = (receipt: any) => ({ ...receipt, receiptDigest: approvalReceiptDigest(receipt) });
+
+/** Verify-then-consume in one step — the only consumption path the API offers: `consume` exists solely on a verified authorization. */
+const consumeVia = (receipt: unknown, consumer: string, now: number, b: ApprovalBinding = binding()) =>
+	ApprovalAuthorization.verify(receipt, b, { consumer, now }).authorization!.consume(now);
 
 // --- The receipt contract --------------------------------------------------
 
@@ -86,26 +89,26 @@ test("two approvals of the same binding are distinguishable receipts", () => {
 
 test("verification accepts the exact action it was granted for", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
-	assert.equal(verifyApprovalReceipt(receipt, binding(), { consumer: "ship", now: NOW + 1000 }), null);
+	assert.equal(ApprovalAuthorization.verify(receipt, binding(), { consumer: "ship", now: NOW + 1000 }).error, undefined);
 });
 
 test("verification rejects a changed action as stale", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
 	const changed = binding({ parameters: { agentScope: "project", gatedPhases: [{ id: "ship", agent: "strategist", task: "Ship it" }] } });
-	assert.equal(verifyApprovalReceipt(receipt, changed, { consumer: "ship", now: NOW })?.code, "APPROVAL_RECEIPT_STALE");
+	assert.equal(ApprovalAuthorization.verify(receipt, changed, { consumer: "ship", now: NOW }).error?.code, "APPROVAL_RECEIPT_STALE");
 });
 
 test("verification recomputes the binding rather than trusting the stored digest", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
 	const forged = reseal({ ...receipt, action: "workflow.phase:something-else" });
-	assert.equal(verifyApprovalReceipt(forged, binding({ action: "workflow.phase:something-else" }), { consumer: "ship", now: NOW })?.code, "APPROVAL_RECEIPT_STALE");
+	assert.equal(ApprovalAuthorization.verify(forged, binding({ action: "workflow.phase:something-else" }), { consumer: "ship", now: NOW }).error?.code, "APPROVAL_RECEIPT_STALE");
 });
 
 test("editing a recorded approval fact without re-sealing is caught", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS });
 	for (const [field, value] of [["expiresAt", "2099-01-01T00:00:00.000Z"], ["approvedBy", "someone-else"], ["issuedAt", "2000-01-01T00:00:00.000Z"], ["consumedBy", "another-action"]] as const) {
 		const edited = { ...receipt, [field]: value };
-		const error = verifyApprovalReceipt(edited, binding(), { consumer: "workflow.phase:approve", now: NOW });
+		const error = ApprovalAuthorization.verify(edited, binding(), { consumer: "workflow.phase:approve", now: NOW }).error;
 		assert.equal(error?.code, "APPROVAL_RECEIPT_INVALID", `editing ${field} must not be honoured`);
 		assert.match(error?.cause ?? "", /receiptDigest does not match/);
 	}
@@ -113,24 +116,24 @@ test("editing a recorded approval fact without re-sealing is caught", () => {
 
 test("verification rejects an expired receipt", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS });
-	assert.equal(verifyApprovalReceipt(receipt, binding(), { consumer: "ship", now: NOW + MIN_APPROVAL_TTL_MS }), null, "the boundary instant is still inside the window");
-	const expired = verifyApprovalReceipt(receipt, binding(), { consumer: "ship", now: NOW + MIN_APPROVAL_TTL_MS + 1 });
+	assert.equal(ApprovalAuthorization.verify(receipt, binding(), { consumer: "ship", now: NOW + MIN_APPROVAL_TTL_MS }).error, undefined, "the boundary instant is still inside the window");
+	const expired = ApprovalAuthorization.verify(receipt, binding(), { consumer: "ship", now: NOW + MIN_APPROVAL_TTL_MS + 1 }).error;
 	assert.equal(expired?.code, "APPROVAL_RECEIPT_EXPIRED");
 	assert.match(expired?.fix ?? "", /approvalTtlMs/);
 });
 
 test("a spent receipt cannot authorize a second, different action", () => {
-	const receipt = consumeApprovalReceipt(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }), "ship", NOW);
-	assert.equal(verifyApprovalReceipt(receipt, binding(), { consumer: "ship", now: NOW }), null, "re-entering the same action is a resume, not a replay");
-	const replay = verifyApprovalReceipt(receipt, binding(), { consumer: "publish", now: NOW });
+	const receipt = consumeVia(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }), "ship", NOW);
+	assert.equal(ApprovalAuthorization.verify(receipt, binding(), { consumer: "ship", now: NOW }).error, undefined, "re-entering the same action is a resume, not a replay");
+	const replay = ApprovalAuthorization.verify(receipt, binding(), { consumer: "publish", now: NOW }).error;
 	assert.equal(replay?.code, "APPROVAL_RECEIPT_CONSUMED");
 	assert.match(replay?.cause ?? "", /consumed by "ship"/);
 });
 
 test("consuming twice from the same action is idempotent", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
-	const once = consumeApprovalReceipt(receipt, "ship", NOW);
-	const twice = consumeApprovalReceipt(once, "ship", NOW + 5000);
+	const once = consumeVia(receipt, "ship", NOW);
+	const twice = consumeVia(once, "ship", NOW + 5000);
 	assert.equal(twice.consumedAt, once.consumedAt, "a crash-resume must not restamp the consumption");
 	assert.equal(twice, once);
 });
@@ -147,7 +150,7 @@ test("malformed receipts are refused rather than partially trusted", () => {
 		["unknown validation", { ...receipt, validation: "trusted" }],
 	];
 	for (const [label, value] of cases) {
-		assert.equal(verifyApprovalReceipt(value, binding(), { consumer: "ship", now: NOW })?.code, "APPROVAL_RECEIPT_INVALID", label);
+		assert.equal(ApprovalAuthorization.verify(value, binding(), { consumer: "ship", now: NOW }).error?.code, "APPROVAL_RECEIPT_INVALID", label);
 	}
 });
 
@@ -156,22 +159,22 @@ test("a migrated receipt still binds but claims no approver or window", () => {
 	assert.equal(receipt.validation, "legacy-compatibility");
 	assert.equal(receipt.expiresAt, null);
 	assert.match(receipt.approvedBy, /unknown/);
-	assert.equal(verifyApprovalReceipt(receipt, binding(), { consumer: "ship", now: NOW }), null, "no expiry to outlive");
-	assert.equal(verifyApprovalReceipt(receipt, binding({ action: "workflow.phase:other" }), { consumer: "ship", now: NOW })?.code, "APPROVAL_RECEIPT_STALE");
+	assert.equal(ApprovalAuthorization.verify(receipt, binding(), { consumer: "ship", now: NOW }).error, undefined, "no expiry to outlive");
+	assert.equal(ApprovalAuthorization.verify(receipt, binding({ action: "workflow.phase:other" }), { consumer: "ship", now: NOW }).error?.code, "APPROVAL_RECEIPT_STALE");
 });
 
 test("the expiry window gates starting the action, not finishing one already under way", () => {
 	// A gated run that outlives its window must not abort halfway: the action was
 	// authorized and begun, the binding still matches, and stopping mid-run leaves
 	// the workflow worse off than finishing it.
-	const started = consumeApprovalReceipt(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS }), "workflow.phase:approve", NOW);
+	const started = consumeVia(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS }), "workflow.phase:approve", NOW);
 	const wayLater = NOW + MIN_APPROVAL_TTL_MS * 100;
-	assert.equal(verifyApprovalReceipt(started, binding(), { consumer: "workflow.phase:approve", now: wayLater }), null);
+	assert.equal(ApprovalAuthorization.verify(started, binding(), { consumer: "workflow.phase:approve", now: wayLater }).error, undefined);
 
 	// An unspent receipt past its window is still refused — that is the case the
 	// window exists for.
 	const unspent = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW, ttlMs: MIN_APPROVAL_TTL_MS });
-	assert.equal(verifyApprovalReceipt(unspent, binding(), { consumer: "workflow.phase:approve", now: wayLater })?.code, "APPROVAL_RECEIPT_EXPIRED");
+	assert.equal(ApprovalAuthorization.verify(unspent, binding(), { consumer: "workflow.phase:approve", now: wayLater }).error?.code, "APPROVAL_RECEIPT_EXPIRED");
 });
 
 test("a receipt no path re-verified is reported as unverified, not repeated as fact", () => {
@@ -197,7 +200,7 @@ test("an unreadable receipt degrades to an unverified line instead of throwing",
 
 test("a receipt summary carries identity and status but never the bound parameters", () => {
 	const receipt = issueApprovalReceipt(binding({ parameters: { secret: "launch-code-hunter2" } }), { approvedBy: "justin", now: NOW }); // privacy-scan: allow deliberate receipt-leak fixture
-	const summary = approvalReceiptSummary(consumeApprovalReceipt(receipt, "ship", NOW));
+	const summary = approvalReceiptSummary(consumeVia(receipt, "ship", NOW, binding({ parameters: { secret: "launch-code-hunter2" } }))); // privacy-scan: allow deliberate receipt-leak fixture
 	assert.equal(summary.status, "consumed");
 	assert.equal(summary.consumedBy, "ship");
 	assert.equal(summary.receiptId, receipt.receiptId);

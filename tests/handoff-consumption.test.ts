@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import test from "node:test";
-import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
+import { ResolvedDelegationContract, delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { captureRawFinalAssistantText } from "../extensions/pi-flows/sanitize.ts";
 import { emptyUsage, type CoordinationEvent, type DelegationContract, type FlowRunResult } from "../extensions/pi-flows/types.ts";
@@ -20,6 +20,9 @@ const contract: DelegationContract = {
 	returnSchema: { type: "object" },
 	owner: "parent",
 };
+
+// The transition path accepts only a resolved contract; raw data stays for identity assertions.
+const resolved = ResolvedDelegationContract.resolve(contract).resolved!;
 
 function childResult(text: string): FlowRunResult {
 	return {
@@ -130,7 +133,7 @@ test("incomplete policy defaults fail closed and explicitly includes partial Han
 		defaultCwd: "/tmp",
 	}).consumeResult({
 		result: typedResult({ status: "partial" }),
-		contract,
+		contract: resolved,
 		consumed: false,
 	});
 	assert.equal(rejected.error?.code, "RETURN_ENVELOPE_INCOMPLETE");
@@ -143,7 +146,7 @@ test("incomplete policy defaults fail closed and explicitly includes partial Han
 		defaultCwd: "/tmp",
 	}).consumeResult({
 		result,
-		contract,
+		contract: resolved,
 		consumed: false,
 	});
 	assert.equal(included.error, undefined);
@@ -161,7 +164,7 @@ test("terminal completion validates typed reports without applying integration e
 			defaultCwd: "/tmp",
 		}).consumeResult({
 			result,
-			contract,
+			contract: resolved,
 			consumed: false,
 			completion: "terminal",
 			payload: "source",
@@ -187,7 +190,7 @@ test("deferred integration reuses validated typed state when stored content is o
 
 		const terminal = handoffs.consumeResult({
 			result,
-			contract,
+			contract: resolved,
 			consumed: false,
 			completion: "terminal",
 			payload: "source",
@@ -196,7 +199,7 @@ test("deferred integration reuses validated typed state when stored content is o
 
 		const integrated = handoffs.consumeResult({
 			result,
-			contract,
+			contract: resolved,
 			scope: { key: "iteration-1.generator" },
 			payload: "source",
 		});
@@ -285,7 +288,7 @@ test("a rejected typed result preserves unverified artifact evidence", async () 
 
 	const consumed = handoffs.consumeResult({
 		result: childResult(returned),
-		contract,
+		contract: resolved,
 		scope: { key: "phase-build" },
 	});
 
@@ -321,7 +324,7 @@ test("an accepted typed result emits verified artifact evidence behind its Hando
 
 	const consumed = handoffs.consumeResult({
 		result,
-		contract,
+		contract: resolved,
 		scope: { key: "phase-build" },
 	});
 

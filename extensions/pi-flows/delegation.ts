@@ -1,25 +1,16 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
-import { Compile } from "typebox/compile";
+import { ENVELOPE_VERSION, ResolvedDelegationContract, canonicalSha256, isRecord, nonEmptyString, storedError, stringArray } from "./contract-resolution.ts";
 import { extractLastJsonBlock } from "./protocol.ts";
 import { capModelVisibleText, isFailed, redactValue, resultText, retainValidatedReturnEnvelope, takeRawFinalAssistantText } from "./sanitize.ts";
-import { Budget, flowError, type CapturePolicy, type DelegationContract, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
-import { appendReturnRequirements } from "./validate.ts";
+import { flowError, type CapturePolicy, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 
-const ENVELOPE_VERSION = "pi-flows.return-envelope.v1";
-const SIDE_EFFECT_CLASSES = new Set(["none", "read-only", "reversible", "irreversible"]);
+// Contract identity and admission live in contract-resolution.ts; re-exported
+// here so this module stays the seam downstream consumers import from.
+export { ResolvedDelegationContract, canonicalJsonValue, canonicalSha256, delegationContractId, isRecord, validateDelegationContract } from "./contract-resolution.ts";
+
 const ENVELOPE_STATUSES = new Set(["completed", "partial", "blocked", "failed"]);
-const integrationValidationReceipts = new WeakMap<object, {
-	result: FlowRunResult;
-	contractId: string;
-	cwd: string;
-	policy: CapturePolicy;
-	envelope: DelegationReturnEnvelope;
-	handoff: DelegationHandoffEnvelope;
-}>();
-
-type RecordValue = Record<string, any>;
 
 export interface PersistedHandoffAttestation {
 	schemaVersion: "pi-flows.handoff-attestation.v1";
@@ -28,106 +19,6 @@ export interface PersistedHandoffAttestation {
 	status: DelegationHandoffEnvelope["status"];
 	handoffDigest: string;
 	validation: "typed" | "legacy-compatibility";
-}
-
-export function isRecord(value: unknown): value is RecordValue {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function nonEmptyString(value: unknown): value is string {
-	return typeof value === "string" && value.trim().length > 0;
-}
-
-function stringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every(nonEmptyString);
-}
-
-/** Recursively key-sorted JSON, so a digest identifies content rather than authoring order. Shared with approval receipts so every binding digest in the extension canonicalizes the same way. */
-export function canonicalJsonValue(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(canonicalJsonValue);
-	if (!isRecord(value)) return value;
-	return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJsonValue(value[key])]));
-}
-
-/** One canonical digest for every content identity in the extension, so two digests over the same content always agree. */
-export function canonicalSha256(value: unknown): string {
-	return `sha256:${createHash("sha256").update(JSON.stringify(canonicalJsonValue(value))).digest("hex")}`;
-}
-
-export function delegationContractId(contract: DelegationContract): string {
-	return canonicalSha256(contract);
-}
-
-function contractError(reason: string): FlowError {
-	return flowError(
-		"INVALID_DELEGATION_CONTRACT",
-		"Delegation contract is invalid.",
-		reason,
-		"Provide every required contract field with the documented type before dispatching a child.",
-	);
-}
-
-function rawDelegationContractError(value: unknown): FlowError | null {
-	if (!isRecord(value)) return contractError("`contract` must be an object.");
-	if (!nonEmptyString(value.objective)) return contractError("`contract.objective` must be a non-empty string.");
-	for (const field of ["constraints", "nonGoals", "dependencies", "acceptanceChecks"]) {
-		if (!stringArray(value[field])) return contractError(`\`contract.${field}\` must be an array of non-empty strings.`);
-	}
-	if (!isRecord(value.authority)) return contractError("`contract.authority` must be an object.");
-	for (const field of ["may", "mustNot", "requiresApproval"]) {
-		if (!stringArray(value.authority[field])) return contractError(`\`contract.authority.${field}\` must be an array of non-empty strings.`);
-	}
-	if (!SIDE_EFFECT_CLASSES.has(value.sideEffectClass)) {
-		return contractError("`contract.sideEffectClass` must be none, read-only, reversible, or irreversible.");
-	}
-	if (!isRecord(value.budget)) return contractError("`contract.budget` must be an object.");
-	for (const [key, limit] of Object.entries(value.budget)) {
-		if (!["timeoutMs", "maxCostUsd", "maxTokens", "maxGeneratedTokens"].includes(key) || typeof limit !== "number" || !Number.isFinite(limit) || limit < 0) {
-			return contractError(`\`contract.budget.${key}\` must be a non-negative finite number.`);
-		}
-	}
-	if (!isRecord(value.returnSchema)) return contractError("`contract.returnSchema` must be a JSON Schema object.");
-	try {
-		Compile(value.returnSchema);
-	} catch (error) {
-		return contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`);
-	}
-	if (!nonEmptyString(value.owner)) return contractError("`contract.owner` must be a non-empty string.");
-	return null;
-}
-
-export function validateDelegationContract(
-	value: unknown,
-	policy: CapturePolicy = { recordContent: true, redactSecrets: true },
-): FlowError | null {
-	const error = rawDelegationContractError(value);
-	return error ? storedError(error, policy) : null;
-}
-
-export function renderDelegationTask(
-	task: string | undefined,
-	contract: DelegationContract,
-	returnContract?: string,
-	requireEvidence?: boolean,
-): string {
-	const goal = task?.trim() || contract.objective;
-	const contractId = delegationContractId(contract);
-	return [
-		appendReturnRequirements(goal, returnContract, requireEvidence),
-			"\n## Delegation contract",
-		JSON.stringify(contract, null, 2),
-		"\n## Required return protocol",
-		`Return one JSON object in a fenced \`json\` block using schemaVersion "${ENVELOPE_VERSION}".`,
-		`Set contractId to exactly "${contractId}" so downstream consumers can reject missing or stale returns.`,
-		"Required fields: schemaVersion, contractId, status, summary, evidence, artifactReferences, digests, changedState, unresolvedQuestions, retry, and data.",
-		"`data` must satisfy contract.returnSchema. Evidence items use {claim, source}. Artifact references use {path}. Digests use {artifact, algorithm:\"sha256\", value}.",
-		"Use empty arrays when no evidence, artifacts, digests, changed state, or unresolved questions exist. Do not report success as prose outside the envelope.",
-	].join("\n");
-}
-
-/** The contract budget for one delegation contract. `contract.budget.timeoutMs` is a wall-clock bound, not spend, and is applied at dispatch instead. */
-export function createDelegationBudget(contract: DelegationContract): Budget | undefined {
-	return Budget.forContract(contract.budget);
 }
 
 function envelopeError(reason: string): FlowError {
@@ -203,26 +94,19 @@ function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowE
 
 function validateEnvelopeAgainstContract(
 	envelope: DelegationReturnEnvelope,
-	contract: DelegationContract,
+	contract: ResolvedDelegationContract,
 	cwd: string,
 ): FlowError | null {
-	const expected = delegationContractId(contract);
-	if (envelope.contractId !== expected) {
+	if (envelope.contractId !== contract.id) {
 		const actual = envelope.contractId ?? "(missing)";
 		return flowError(
 			"RETURN_CONTRACT_MISMATCH",
 			"Child return envelope did not match the dispatched contract.",
-			`Expected contractId ${expected}, received ${actual}.`,
+			`Expected contractId ${contract.id}, received ${actual}.`,
 			"Discard the stale or unbound handoff and rerun the child with the current delegation contract.",
 		);
 	}
-	let validator;
-	try {
-		validator = Compile(contract.returnSchema);
-	} catch (error) {
-		return contractError(`\`contract.returnSchema\` could not be compiled: ${error instanceof Error ? error.message : String(error)}`);
-	}
-	if (!validator.Check(envelope.data)) return envelopeError("Envelope `data` does not satisfy contract.returnSchema.");
+	if (!contract.checkReturnData(envelope.data)) return envelopeError("Envelope `data` does not satisfy contract.returnSchema.");
 	return validateDigests(envelope, cwd);
 }
 
@@ -241,15 +125,16 @@ function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolic
 	};
 }
 
-function storedError(error: FlowError, policy: CapturePolicy): FlowError {
-	return { ...error, cause: redactValue(error.cause, policy) as string };
-}
-
 /**
  * Identity is always checked. An envelope naming a different contract, or none,
  * was not produced under the terms this child was dispatched with, and no caller
  * has ever wanted to accept one — making it optional only created call sites
  * that could forget.
+ *
+ * Module-private on purpose: `prepareIntegrationHandoff` is the one transition
+ * through which a child result becomes integrable, so envelope validation
+ * cannot be invoked out of order with the completion policy and attachment it
+ * belongs to.
  *
  * @returns on success, the stored envelope. On rejection, the error — plus
  *   `rejected`, the child's own claims in stored form, when the envelope was at
@@ -258,9 +143,9 @@ function storedError(error: FlowError, policy: CapturePolicy): FlowError {
  *   evidence of what went wrong, and discarding them loses the corruption along
  *   with the trust.
  */
-export function validateReturnEnvelope(
+function validateReturnEnvelope(
 	result: FlowRunResult,
-	contract: DelegationContract,
+	contract: ResolvedDelegationContract,
 	cwd: string,
 	policy: CapturePolicy,
 ): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
@@ -279,10 +164,10 @@ export function canonicalEnvelope(envelope: DelegationReturnEnvelope): string {
 	return JSON.stringify(envelope);
 }
 
-export function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope, contract: DelegationContract): DelegationHandoffEnvelope {
+export function typedHandoff(result: FlowRunResult, envelope: DelegationReturnEnvelope, contract: ResolvedDelegationContract): DelegationHandoffEnvelope {
 	return {
 		schemaVersion: "pi-flows.handoff-envelope.v1",
-		contractId: delegationContractId(contract),
+		contractId: contract.id,
 		compatibility: "typed",
 		status: envelope.status,
 		summary: envelope.summary,
@@ -339,7 +224,7 @@ export function validatePersistedIntegrationHandoff(
 	value: unknown,
 	options: {
 		attestation: unknown;
-		contract?: DelegationContract;
+		contract?: ResolvedDelegationContract;
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
 	},
@@ -371,7 +256,7 @@ export function validatePersistedIntegrationHandoff(
 		if (value.compatibility !== "typed") {
 			return storedError(envelopeError("Persisted contracted workflow phase is not a contract-bound handoff envelope."), options.policy);
 		}
-		const expected = delegationContractId(options.contract);
+		const expected = options.contract.id;
 		if (envelope.contractId !== expected) {
 			return storedError(flowError(
 				"RETURN_CONTRACT_MISMATCH",
@@ -416,10 +301,45 @@ export function createPersistedHandoffAttestation(handoff: DelegationHandoffEnve
 	};
 }
 
+/**
+ * Proof that one child result validated under one contract identity, cwd, and
+ * capture policy. Returned to the consumer as an opaque token and presented
+ * back for deferred consumption; it carries its own cloned envelope and
+ * handoff privately, so a deferred second pass reuses exactly what was
+ * validated instead of re-running filesystem digest checks against files that
+ * may have changed since.
+ */
+class IntegrationValidation {
+	constructor(
+		private readonly result: FlowRunResult,
+		private readonly contractId: string,
+		private readonly cwd: string,
+		private readonly policy: CapturePolicy,
+		private readonly envelope: DelegationReturnEnvelope,
+		private readonly handoff: DelegationHandoffEnvelope,
+	) {}
+
+	reusableFor(result: FlowRunResult, contractId: string, cwd: string, policy: CapturePolicy): boolean {
+		return this.result === result
+			&& this.contractId === contractId
+			&& this.cwd === cwd
+			&& this.policy.recordContent === policy.recordContent
+			&& this.policy.redactSecrets === policy.redactSecrets;
+	}
+
+	validatedEnvelope(): DelegationReturnEnvelope {
+		return structuredClone(this.envelope);
+	}
+
+	validatedHandoff(): DelegationHandoffEnvelope {
+		return structuredClone(this.handoff);
+	}
+}
+
 export function prepareIntegrationHandoff(
 	result: FlowRunResult,
 	options: {
-		contract?: DelegationContract;
+		contract?: ResolvedDelegationContract;
 		cwd: string;
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
@@ -433,32 +353,17 @@ export function prepareIntegrationHandoff(
 	let returned: DelegationReturnEnvelope | undefined;
 	let validation = options.validation;
 	if (options.contract) {
-		const expectedContractId = delegationContractId(options.contract);
-		const received = validation ? integrationValidationReceipts.get(validation) : undefined;
-		const reusable = received?.result === result
-			&& received.contractId === expectedContractId
-			&& received.cwd === options.cwd
-			&& received.policy.recordContent === options.policy.recordContent
-			&& received.policy.redactSecrets === options.policy.redactSecrets
-			? received
-			: undefined;
+		const received = validation instanceof IntegrationValidation ? validation : undefined;
+		const reusable = received?.reusableFor(result, options.contract.id, options.cwd, options.policy) ? received : undefined;
 		if (reusable) {
-			returned = structuredClone(reusable.envelope);
-			handoff = structuredClone(reusable.handoff);
+			returned = reusable.validatedEnvelope();
+			handoff = reusable.validatedHandoff();
 		} else {
 			const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
 			if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };
 			returned = validated.envelope!;
 			handoff = typedHandoff(result, returned, options.contract);
-			validation = {};
-			integrationValidationReceipts.set(validation, {
-				result,
-				contractId: expectedContractId,
-				cwd: options.cwd,
-				policy: { ...options.policy },
-				envelope: structuredClone(returned),
-				handoff: structuredClone(handoff),
-			});
+			validation = new IntegrationValidation(result, options.contract.id, options.cwd, { ...options.policy }, structuredClone(returned), structuredClone(handoff));
 		}
 	} else {
 		handoff = compatibilityHandoff(result, options.policy);

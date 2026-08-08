@@ -1,17 +1,17 @@
 {
   "_comment": "Judgment rows of the domain-model score - the ones no grep settles. Re-record them by running the /domain-driven-design review and editing this file; editing it IS the re-recording, because scripts/domain-score.mjs measures staleness from when this file was last touched relative to the Core modules. A row is reported stale, and drops out of the verified score, when a Core module was touched more recently. Structural rows are not recorded here: they are re-checked from the tree on every run.",
-  "reviewedAt": "2026-07-31",
-  "reviewer": "/domain-driven-design",
+  "reviewedAt": "2026-08-08",
+  "reviewer": "/domain-modeling (audit; verdicts carried from the 2026-07-31 /domain-driven-design review after diffing the six Core modules changed since)",
   "judgment": {
     "small-aggregates": {
       "label": "Aggregates are small (one root + minimal cluster)",
       "verdict": "fail",
-      "note": "There is no aggregate object at all. CONTEXT.md defines Flow as the thing a budget, a root span, and a checkpoint attach to, but no Flow type exists: its invariants are the ordered body of index.ts execute(), and FlowDetails \u2014 the read projection \u2014 is rebuilt from every result on each child update."
+      "note": "There is no aggregate object at all. CONTEXT.md defines Flow as the thing a budget, a root span, and a checkpoint attach to, but no Flow type exists: its invariants are the ordered body of index.ts execute(), and FlowDetails \u2014 the read projection \u2014 is rebuilt from every result on each child update. The accumulation continues: the strict-trace config refusal (strictTraceConfigError) is another ordering rule invoked positionally from execute()."
     },
     "behavior-rich": {
       "label": "Domain objects contain behavior, not just data",
       "verdict": "fail",
-      "note": "Budget now owns its rule. FlowRunResult is still mutated from outside by validateReturnEnvelope and prepareIntegrationHandoff, and DelegationContract and ApprovalReceipt remain data plus free functions that a caller can invoke out of order."
+      "note": "Budget owns its rule. DelegationContract's transitions now live on ResolvedDelegationContract (shape-validate, compile, digest at construction; rendering, contract budgets, and return validation are methods, so none can run against an unvalidated contract), and receipt consumption exists only on ApprovalAuthorization — the capability verify returns, bound to the verified consumer. Still failing on the run result: FlowRunResult is mutated from outside by prepareIntegrationHandoff (result.handoff, result.envelope), and sanitize.ts's two WeakMap side-channels (rawFinalAssistantText, validatedReturnEnvelopes) remain state about a result held beside it — to be absorbed by a Run object alongside the Flow aggregate refactor (#97)."
     },
     "domain-events": {
       "label": "Events/handoffs carry cross-boundary flow",
@@ -21,7 +21,7 @@
     "depth-rich-core": {
       "label": "Depth: the Core Domain is genuinely rich, not CRUD",
       "verdict": "pass",
-      "note": "Contract identity by canonical digest, envelope-to-contract binding, artifact digest verification with realpath escape checks, single-use expiring approval receipts with binding digests, compositional injection, budget authority, and trace health kept separate from execution success and from verified outcome success."
+      "note": "Contract identity by canonical digest, envelope-to-contract binding, artifact digest verification with realpath escape checks, single-use expiring approval receipts with binding digests, compositional injection, budget authority, and trace health kept separate from execution success and from verified outcome success. The admissibility seam adds another: the selection eval scores the same predicates the handlers enforce (validate.ts, validate-workflow.ts), so the scored gate cannot drift from the enforced one."
     },
     "depth-invariants-in-aggregates": {
       "label": "Depth: invariants live inside aggregates, not services",
@@ -31,7 +31,7 @@
     "depth-language-consistency": {
       "label": "Depth: ubiquitous language is consistent across docs, code, and tests",
       "verdict": "pass",
-      "note": "CONTEXT.md carries Avoid lists; code and test names use the glossary's terms ('trace suppression is visible as trace health, not as an agent failure', 'prepared Handoff', containment vs false containment). Three known blemishes. (1) 'contract' is overloaded between DelegationContract and RunModeContract. (2) topology.ts is named for mode topology but holds spec-parameter arithmetic, which is why it sits in Generic while the modes it is named after are Supporting. (3) 'the active child' is standard phrasing at 10 occurrences across README, docs/flow-reference.md, patterns, troubleshooting, privacy-telemetry, examples, tests, and the schema.ts param descriptions, though 'active' is on the Live entry's Avoid list; that sweep needs its own change, because fixing a subset breaks the README / flow-reference / TypeBox-params sync rule in AGENTS.md. Consequently budget.ts deliberately holds both vocabularies: the new API it introduces (stopsLiveRun and its JSDoc) takes the glossary term, while the pre-existing user-visible error cause keeps 'active child' so it stays consistent with the docs until they are swept together. Separately, the exported span attributes flow.budget.limit_* in trace-attributes.ts keep 'limit' as wire format - renaming them would break trace consumers, so they are a deliberate carve-out from the Budget ceiling Avoid list, not drift."
+      "note": "CONTEXT.md carries Avoid lists; code and test names use the glossary's terms ('trace suppression is visible as trace health, not as an agent failure', 'prepared Handoff', containment vs false containment). Three known blemishes. (1) 'contract' is overloaded between DelegationContract and RunModeContract. (2) topology.ts is named for mode topology but holds spec-parameter arithmetic, which is why it sits in Generic while the modes it is named after are Supporting. (3) 'the active child' is standard phrasing at 11 occurrences across docs/reference/flow-reference.md, docs/explanation (patterns, privacy-telemetry), docs/how-to/troubleshooting.md, examples, tests, budget.ts, and the schema.ts param descriptions (the README occurrence left with the Diátaxis reorg), though 'active' is on the Live entry's Avoid list; that sweep needs its own change, because fixing a subset breaks the README / flow-reference / TypeBox-params sync rule in AGENTS.md. Consequently budget.ts deliberately holds both vocabularies: the new API it introduces (stopsLiveRun and its JSDoc) takes the glossary term, while the pre-existing user-visible error cause keeps 'active child' so it stays consistent with the docs until they are swept together. Separately, the exported span attributes flow.budget.limit_* in trace-attributes.ts keep 'limit' as wire format - renaming them would break trace consumers, so they are a deliberate carve-out from the Budget ceiling Avoid list, not drift."
     }
   },
   "foreignImports": {
@@ -51,21 +51,6 @@
       "fleet-panel.ts",
       "inspector.ts"
     ],
-    "debt": [
-      {
-        "module": "types.ts",
-        "imports": [
-          "@earendil-works/pi-ai"
-        ],
-        "note": "FlowRunResult.messages holds pi-ai's Message, so the foreign shape travels through FlowDetails into the trace sink, the views, and the published API surface. Replace with a pi-flows-owned ChildMessage translated in runner.ts/sanitize.ts."
-      },
-      {
-        "module": "sanitize.ts",
-        "imports": [
-          "@earendil-works/pi-ai"
-        ],
-        "note": "storeMessage/getFinalAssistantText/captureRawFinalAssistantText key off pi-ai's Message shape. They are the natural translation point; today they pass it through instead."
-      }
-    ]
+    "debt": []
   }
 }
