@@ -42,14 +42,16 @@ function scored(flowCallArgs: Array<Record<string, unknown>>, testCase: any = re
 }
 
 test("preset calls are scored on their expanded topology, exactly as the tool resolves them", () => {
-	// The bundled code-review preset serializes its shell-capable reviewers
-	// (concurrency:1), so the plain call is admissible…
+	// The bundled code-review preset runs its reviewers under bash-ro (not
+	// write-capable), so the plain call is admissible at its own concurrency…
 	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "Review HEAD.", why: "independent review" }), null);
-	// …but concurrency is a declared override: raising it re-creates exactly
-	// the two-overwatch collision the guard exists for, and the tool refuses
-	// the expanded call. Scoring raw preset args would credit that call.
+	assert.equal(callAdmissibilityFailure({ preset: "code-review", task: "Review HEAD.", why: "independent review", concurrency: 2 }), null);
+	// …and the admissibility comes from the preset's expanded per-task tools,
+	// not from raw args: the same two-overwatch fan-out without the preset's
+	// bash-ro override falls back to overwatch's frontmatter bash and is
+	// refused. Scoring raw preset args could not tell these two apart.
 	assert.equal(
-		callAdmissibilityFailure({ preset: "code-review", task: "Review HEAD.", why: "independent review", concurrency: 2 })?.code,
+		callAdmissibilityFailure({ tasks: [{ agent: "overwatch", task: "standards review" }, { agent: "overwatch", task: "spec review" }], concurrency: 2, why: "independent review" })?.code,
 		"SHARED_WRITE_CWD",
 	);
 	// Shape-visible resolution failures (unknown name, undeclared override

@@ -9,6 +9,7 @@ import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { Run } from "./run.ts";
 import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
+import { BASH_READONLY_ENV, bashReadonlyUnenforceableError, splitBashReadonly } from "./bash-readonly.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
 import { getPiInvocation } from "./commands.ts";
 
@@ -254,14 +255,18 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const args = ["--mode", "json", "-p", "--no-session"];
 	if (childExtensionsDisabled()) args.push("--no-extensions");
 	if (choice.model) args.push("--model", choice.model);
-	// Passed as its own flag rather than as a `model:level` suffix, so a level
-	// still reaches a child that is running the user's default model.
+	// Its own flag rather than a `model:level` suffix, so a level still reaches a child running the user's default model.
 	if (choice.thinking) args.push("--thinking", choice.thinking);
 
 	const tools = parseToolsOverride(options.tools, agent.tools);
+	const bashRo = splitBashReadonly(tools ?? []);
+	if (bashRo.readonly && childExtensionsDisabled()) {
+		options.recordEvent?.({ kind: "validation", name: "dispatch.bash_readonly_unenforceable", ok: false, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": "BASH_READONLY_UNENFORCEABLE" } });
+		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, bashReadonlyUnenforceableError()), { role: capturedRole });
+	}
 	if (tools !== undefined) {
 		if (tools.length === 0) args.push("--no-builtin-tools");
-		else args.push("--tools", tools.join(","));
+		else args.push("--tools", bashRo.argvTools.join(","));
 	}
 
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
@@ -297,7 +302,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			command: invocation.command,
 			args: invocation.args,
 			cwd: path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd),
-			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1) },
+			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1), [BASH_READONLY_ENV]: bashRo.readonly ? "1" : "" }, // "" not an omitted key: the spread must not leak a parent's marker into grandchildren
+
 			timeoutMs,
 			signal: options.signal,
 			onEvent: (event, controls) => {

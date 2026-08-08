@@ -8,7 +8,26 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- A `bash-ro` tools token (`extensions/pi-flows/bash-readonly.ts`): bash under
+  a read-only command allowlist — git inspection, file inspection, and repo
+  verification (`npm test`, `npm run <script>`, `node --test`) — enforced by
+  the pi-flows extension running inside the child via a blocking `tool_call`
+  handler. A `bash-ro` toolset is not write-capable, so it passes the
+  `SHARED_WRITE_CWD` guard; a toolset carrying both `bash` and `bash-ro`
+  resolves to plain `bash`, and when `PI_FLOWS_CHILD_NO_EXTENSIONS` disables
+  the child-side enforcer the spawn is refused with the new
+  `BASH_READONLY_UNENFORCEABLE` error instead of granted an unrestricted
+  shell. This is coordination safety against ad-hoc mutations of a shared
+  checkout, not a sandbox.
+
 ### Changed
+
+- The `code-review` preset's two reviewers now run with
+  `read,grep,find,ls,bash-ro` at `concurrency: 2` — the two axes review
+  concurrently in one checkout instead of serializing. The `scout` preset
+  pins `concurrency: 1` explicitly.
 
 - The flow lifecycle is now owned by a `Flow` aggregate root
   (`extensions/pi-flows/flow.ts`): admission walks every pre-spawn gate in the

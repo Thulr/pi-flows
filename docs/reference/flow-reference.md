@@ -32,7 +32,7 @@ Bundled presets:
 |---|---|---|
 | `scout` | One `recon` run | One read-only evidence pass |
 | `map-codebase` | `orchestrate` with at most four recon subtasks | One decomposed map and synthesis |
-| `code-review` | Two sequential `overwatch` runs, roles `standards` and `spec` | Exactly one pass; typed coverage/findings; `CLEAN`, `FINDINGS`, or `PARTIAL` |
+| `code-review` | Two concurrent read-only (`bash-ro`) `overwatch` runs, roles `standards` and `spec` | Exactly one pass; typed coverage/findings; `CLEAN`, `FINDINGS`, or `PARTIAL` |
 
 `code-review` is deliberately one-shot: it never fixes findings, posts review
 comments, or repeats until clean.
@@ -196,7 +196,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. Prefer `tier` unless the user named a concrete model. |
 | `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent; a `fast`/`deep` tier the roster could not resolve falls through to the agent's own pin. |
 | `thinking` | agent/tier | Flow-wide thinking-level fallback (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), overridable per task/phase/role. Independent of `tier`: sets effort without changing which model runs. Lowered automatically to what the resolved model supports, and a child with no level named anywhere leaves pi's own default alone. |
-| `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
+| `tools` | agent/default | Comma-separated tools, `none`, or `default`. `bash-ro` grants bash under a child-enforced read-only allowlist (see [write isolation](#return-requirements-delegation-contracts-and-write-isolation)); a toolset carrying both `bash` and `bash-ro` resolves to plain `bash`. |
 | `cwd` | parent cwd | Child process working directory. |
 
 ### The model roster
@@ -411,9 +411,22 @@ spawning them. A role is write-capable when its effective tools are pi defaults,
 or include `bash`, `edit`, or `write` — the toolset decides, never the role name
 or prompt, and the refusal names the tools that classified each agent. To
 recover, serialize with `concurrency:1`, use agents whose effective tools
-exclude `bash`/`edit`/`write`, or give each writer a separate worktree/cwd. Set
-`allowSharedWriteCwd:true` only as a last resort, after deciding that concurrent
-writes in one shared checkout are intentional.
+exclude `bash`/`edit`/`write`, swap `bash` for `bash-ro`, or give each writer a
+separate worktree/cwd. Set `allowSharedWriteCwd:true` only as a last resort,
+after deciding that concurrent writes in one shared checkout are intentional.
+
+`bash-ro` is not write-capable: the child is spawned with bash, plus a marker
+(`PI_FLOWS_BASH_READONLY=1`) that makes the pi-flows extension inside that child
+block any bash command outside a read-only allowlist — git inspection
+(`log`/`diff`/`show`/`blame`/`status`/...), file inspection
+(`ls`/`cat`/`grep`/`find`/...), and repo verification (`npm test`,
+`npm run <script>`, `node --test`). This is coordination safety against ad-hoc
+mutations of a shared checkout, not a sandbox: allowed verification commands
+execute repo-authored scripts and may write caches. A toolset carrying both
+`bash` and `bash-ro` is write-capable (plain bash wins), and when
+`PI_FLOWS_CHILD_NO_EXTENSIONS` disables child extensions a `bash-ro` spawn is
+refused with `BASH_READONLY_UNENFORCEABLE` rather than silently granted an
+unrestricted shell.
 
 ## Evaluate mode (generator-evaluator loop)
 

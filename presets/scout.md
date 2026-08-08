@@ -9,5 +9,6 @@ overrides: cwd,tier,thinking,timeoutMs,maxTokens,maxGeneratedTokens
   "tier": "fast",
   "thinking": "low",
   "timeoutMs": 900000,
-  "maxGeneratedTokens": 6000
+  "maxGeneratedTokens": 6000,
+  "concurrency": 1
 }

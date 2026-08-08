@@ -165,7 +165,8 @@ test("code-review retains validated metadata privately when returned content is 
 	const traceFile = path.join(repo, "review.jsonl");
 	const { result } = await runFlow(
 		{ preset: codeReview.name, task: `Review ${base}..${head}.`, recordContent: false, traceFile },
-		{ overwatch: [envelope(0, "standards", [finding]), envelope(1, "spec")] },
+		// Bound by task text, not call order: the preset runs both axes concurrently.
+		{ overwatch: [{ whenTaskIncludes: "Standards review", reply: envelope(0, "standards", [finding]) }, { whenTaskIncludes: "Spec review", reply: envelope(1, "spec") }] },
 		{ cwd: repo },
 	);
 	assert.equal(result.details.presetOutcome, "FINDINGS");
@@ -213,7 +214,8 @@ test("a partial review axis returns PARTIAL carrying its findings, not a handoff
 	});
 	const { result } = await runFlow(
 		{ preset: "code-review", task },
-		{ overwatch: [envelope(0, "standards", "completed", []), envelope(1, "spec", "partial", [finding])] },
+		// Bound by task text, not call order: the preset runs both axes concurrently.
+		{ overwatch: [{ whenTaskIncludes: "Standards review", reply: envelope(0, "standards", "completed", []) }, { whenTaskIncludes: "Spec review", reply: envelope(1, "spec", "partial", [finding]) }] },
 		{ cwd: repo },
 	);
 	assert.equal(result.details.error, undefined, "an axis that could not finish is a PARTIAL verdict, not a flow failure");
@@ -370,7 +372,8 @@ test("a validated axis keeps its findings when the other axis fails validation",
 	});
 	const good = envelope(0, "standards", { axis: "standards", base, head, coverage: [{ path: "a.ts", status: "reviewed", evidence: "a.ts:1" }], findings: [finding] });
 	const malformed = envelope(1, "spec", { axis: "spec", base, head, coverage: "not-an-array", findings: [] });
-	const { result } = await runFlow({ preset: "code-review", task }, { overwatch: [good, malformed] }, { cwd: repo });
+	// Bound by task text, not call order: the preset runs both axes concurrently.
+	const { result } = await runFlow({ preset: "code-review", task }, { overwatch: [{ whenTaskIncludes: "Standards review", reply: good }, { whenTaskIncludes: "Spec review", reply: malformed }] }, { cwd: repo });
 	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
 	assert.match(result.content[0].text, /surviving-axis-claim/, "the validated axis's finding must not be hidden by the other axis's error");
 });

@@ -416,7 +416,8 @@ test("nested preset roles and code-review Git verification honor the preset cwd 
 	});
 	const { result, calls } = await runFlow(
 		{ preset: "code-review", task: reviewTask, cwd: "review-target" },
-		{ overwatch: [envelope(0, "standards"), envelope(1, "spec")] },
+		// Bound by task text, not call order: the preset runs both axes concurrently.
+		{ overwatch: [{ whenTaskIncludes: "Standards review", reply: envelope(0, "standards") }, { whenTaskIncludes: "Spec review", reply: envelope(1, "spec") }] },
 		{ cwd: root },
 	);
 	const canonicalRepo = await realpath(repo);

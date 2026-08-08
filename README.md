@@ -124,7 +124,7 @@ Any mode composes with [flow budgets and tracing](./docs/reference/flow-referenc
 
 ## Safety model
 
-Project-local agents and presets are repo-controlled prompts. Interactive sessions ask before using them; headless (non-UI) runs **fail closed** unless you explicitly pass `confirmProjectAgents:false` after reviewing the files. Read-only agents (`recon`, `analyst`) ship without a shell, so their boundary is enforced by the toolset, not by prompt instructions alone.
+Project-local agents and presets are repo-controlled prompts. Interactive sessions ask before using them; headless (non-UI) runs **fail closed** unless you explicitly pass `confirmProjectAgents:false` after reviewing the files. Read-only agents (`recon`, `analyst`) ship without a shell, so their boundary is enforced by the toolset, not by prompt instructions alone. Roles that need shell-based inspection without write capability use `bash-ro` — bash under a read-only allowlist enforced inside the child (and refused as `BASH_READONLY_UNENFORCEABLE` when it cannot be enforced), which is how the `code-review` preset runs its two reviewers concurrently in one checkout.
 
 Returned content is redacted by default (secret-shaped strings, home paths), and every handoff that crosses from one child to another is capped, stripped of invisible/bidi characters, and scanned for injected instructions — `handoffPolicy` selects `warn`, `quarantine`, or `fail`, and `modeHandoffPolicy` can impose a stricter non-downgradable minimum. See [Handoff injection policy](./docs/reference/flow-reference.md#handoff-injection-policy) and [Privacy & telemetry](./docs/explanation/privacy-telemetry.md).
 

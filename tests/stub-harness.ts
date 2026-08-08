@@ -27,7 +27,7 @@ export function flowTool(api: Record<string, any> = {}) {
 	return tools.get("flow");
 }
 
-export type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[]; cwd: string };
+export type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[]; cwd: string; env: Record<string, string | null> };
 
 export async function freshDir() {
 	return mkdtemp(path.join(tmpdir(), "stub-pi-"));

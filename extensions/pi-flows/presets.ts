@@ -470,8 +470,9 @@ export function formatPresetResult(
 		.filter((item: any) => typeof item?.path === "string" && item.status !== "reviewed")
 		.map((item: any) => `${item.path} (${item.status ?? "unknown"})`);
 	const questions = reviewedEnvelopes.flatMap((envelope) => envelope?.unresolvedQuestions ?? []);
-	// These reviewers are contracted read-only but run with a shell, so state they
-	// admit to changing is exactly what the caller needs to see.
+	// These reviewers run with a bash-ro shell (allowlist-restricted in the
+	// child), so state they admit to changing is still what the caller needs
+	// to see — allowed verification scripts can write caches.
 	const changed = reviewedEnvelopes.flatMap((envelope) => envelope?.changedState ?? []);
 	const gapItems = policy.recordContent
 		? [

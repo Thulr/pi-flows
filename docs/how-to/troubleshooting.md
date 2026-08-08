@@ -513,11 +513,24 @@ it, so retrying with a different agent name and the same tools refuses again.
 The refusal names each agent with the tools that classified it.
 
 Fix: serialize with `concurrency:1` (the guard only applies to concurrent
-writers), use agents whose effective tools exclude `bash`/`edit`/`write`, or
-give each writer a distinct `cwd`/worktree. For review fan-out specifically,
-prefer the `code-review` preset, which already serializes its shell-capable
-reviewers. Pass `allowSharedWriteCwd:true` only as a last resort, when
+writers), use agents whose effective tools exclude `bash`/`edit`/`write`, swap
+`bash` for `bash-ro` (bash under a child-enforced read-only allowlist, which is
+not write-capable), or give each writer a distinct `cwd`/worktree. For review
+fan-out specifically, prefer the `code-review` preset, which runs its reviewers
+under `bash-ro`. Pass `allowSharedWriteCwd:true` only as a last resort, when
 concurrent writes in one checkout are actually intended.
+
+### `BASH_READONLY_UNENFORCEABLE`
+
+Cause: a role's tools included `bash-ro`, but `PI_FLOWS_CHILD_NO_EXTENSIONS` is
+set, so the child would run without the pi-flows extension that enforces the
+read-only allowlist inside it. Spawning anyway would silently grant the child
+unrestricted bash while the parent had already classified it read-only, so the
+spawn is refused before any process starts.
+
+Fix: unset `PI_FLOWS_CHILD_NO_EXTENSIONS`, or change the role's tools — `bash`
+if write-capable classification (and the shared-write guard) is acceptable, or
+`read,grep,find,ls` if the child does not actually need a shell.
 
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`
 
