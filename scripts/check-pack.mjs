@@ -21,7 +21,7 @@ for (const file of files) {
   for (const pattern of forbidden) assert.ok(!pattern.test(file), `pack includes forbidden file: ${file}`);
 }
 
-for (const required of ["extensions/pi-flows/index.ts", "presets/code-review.md", "presets/map-codebase.md", "presets/scout.md", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "AGENTS.md"]) {
+for (const required of ["extensions/pi-flows/index.ts", "presets/code-review.md", "presets/map-codebase.md", "presets/scout.md", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "AGENTS.md", "docs/README.md", "docs/tutorials/quickstart.md", "docs/how-to/troubleshooting.md", "docs/reference/flow-reference.md", "docs/explanation/patterns.md"]) {
   assert.ok(files.includes(required), `pack missing required file: ${required}`);
 }
 

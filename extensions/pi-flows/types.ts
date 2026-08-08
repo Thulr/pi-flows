@@ -85,10 +85,10 @@ export type VerifyPolicy = "note" | "fail" | "revise";
 /**
  * Single source of truth for every error `code` the `flow` tool can return.
  * `FlowErrorCode` is derived from this array, and `tests/pi-flows.test.ts`
- * asserts that `docs/troubleshooting.md` documents every member — so a new code
+ * asserts that `docs/how-to/troubleshooting.md` documents every member — so a new code
  * cannot ship undocumented. When you add a code here, add a matching
  * `` ### `CODE` `` entry (cause + fix) to the "Error codes" catalog in
- * docs/troubleshooting.md.
+ * docs/how-to/troubleshooting.md.
  */
 export const FLOW_ERROR_CODES = [
 	"UNKNOWN_AGENT",

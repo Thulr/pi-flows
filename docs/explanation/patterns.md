@@ -143,4 +143,4 @@ Honest gaps, with rationale:
 - Shinn et al., *Reflexion: Language Agents with Verbal Reinforcement Learning* (2023).
 - Google Cloud Tech, *AI Agent Design Patterns* (ADK workflow agents).
 
-See [Flow reference](./flow-reference.md) for the exact tool interface of each mode.
+See [Flow reference](../reference/flow-reference.md) for the exact tool interface of each mode.

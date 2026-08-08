@@ -118,7 +118,7 @@ in-memory flow updates:
 ### What the fan-out counter counts
 
 The tool row and the fleet panel head a fan-out with `1/3 settled`: the numerator
-counts [**settled**](../CONTEXT.md#delegation-model) runs, not successful ones.
+counts [**settled**](../../CONTEXT.md#delegation-model) runs, not successful ones.
 Once the flow itself has settled the ratio is replaced by the outcome —
 `2 failed` or `3 ok` — because `3/3` reads as a success total. On those two
 surfaces a single-run flow shows neither, since the header would only restate the
@@ -939,7 +939,7 @@ parent preserves that ceiling and asks for direction or materially narrows the
 task or fan-out first.
 
 The full list of `code` values, each with its cause and fix, lives in the
-**[canonical error-code catalog](./troubleshooting.md#error-codes)** in
+**[canonical error-code catalog](../how-to/troubleshooting.md#error-codes)** in
 Troubleshooting. That catalog is the single source of truth and is verified in
 CI to cover every code the tool can return, so it never drifts from the source.
 
