@@ -10,7 +10,7 @@ import { callAdmissibilityFailure, flowCallMatchesExpectation, letRefusalPlayOut
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { validateCaseCorpus } from "../evals/case-contract.mjs";
 
-const reviewCase = SELECTION_CASES.find((testCase: any) => testCase.name === "independent-review-safe-first-call");
+const reviewCase = selectionCaseNamed("independent-review-safe-first-call");
 
 /** A complete public-schema delegation contract; budget ceilings vary per test. */
 function fullContract(budget: Record<string, number>): Record<string, unknown> {
@@ -28,10 +28,15 @@ function fullContract(budget: Record<string, number>): Record<string, unknown> {
 	};
 }
 
-/** Every direct dereference goes through this, so a renamed case fails with a named error, not a TypeError. */
+/** Every direct case dereference goes through this, so a renamed case fails with a named error, not a TypeError. */
+function selectionCaseNamed(name: string): any {
+	const testCase = SELECTION_CASES.find((candidate: any) => candidate.name === name);
+	assert.ok(testCase, `selection case fixture missing — was ${name} renamed?`);
+	return testCase;
+}
+
 function theReviewCase(): any {
-	assert.ok(reviewCase, "selection case fixture missing — was independent-review-safe-first-call renamed?");
-	return reviewCase;
+	return selectionCaseNamed("independent-review-safe-first-call");
 }
 
 // The #82 transcript, replayed against the bundled roster: overwatch and any
@@ -455,3 +460,6 @@ test("the case's dry-run mock passes the same scorer a live run gets", () => {
 	});
 	assert.equal(result.pass, true, result.notes);
 });
+
+// Work-phase topology for the phase-gated workflow case (issue #88) is
+// covered in tests/selection-workflow-topology.test.ts.

@@ -11,6 +11,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callAdmissibilityFailure, scoringDiscovery } from "./select-admissibility.mjs";
+import { isWorkflowWorkPhase } from "../extensions/pi-flows/validate.ts";
 
 export { callAdmissibilityFailure } from "./select-admissibility.mjs";
 
@@ -41,6 +42,16 @@ function values(value) {
 // empty one, never a crash mid-eval.
 function asArray(value) {
 	return Array.isArray(value) ? value : [];
+}
+
+// The workflow phases the handler would actually spawn, per its own imported
+// predicate (agent AND task): an approval-only phase legitimately carries no
+// task, and handleWorkflow refuses an agentless task phase outright
+// (WORKFLOW_INVALID, a code the admissibility vocabulary does not cover) —
+// so neither may count toward a case's work-phase minimum or carry its
+// role-by-role binding (#88).
+function workflowWorkPhases(args) {
+	return asArray(args?.workflow?.phases).filter((phase) => isWorkflowWorkPhase(phase));
 }
 
 // Mirrors resolveFlowPreset: reserved keys plus the caller-control passthrough set
@@ -114,7 +125,10 @@ function primaryAgents(args, mode) {
 	}
 	if (mode === "evaluate") return [args.evaluate?.operator?.agent ?? "operator"].filter(Boolean);
 	if (mode === "orchestrate") return [args.orchestrate?.recon?.agent ?? "recon"].filter(Boolean);
-	if (mode === "workflow") return asArray(args.workflow?.phases).map((phase) => phase?.agent).filter(Boolean);
+	// Work phases only: a schema-valid approval phase may carry a stray agent
+	// field the handler never spawns, and letting it into the allowlist or
+	// knownAgentsOnly would fail a call the tool runs fine.
+	if (mode === "workflow") return workflowWorkPhases(args).map((phase) => phase.agent);
 	if (mode === "worktree") return asArray(args.worktree?.tasks).map((task) => task?.agent).filter(Boolean);
 	if (mode === "debate") return asArray(args.debate?.participants).map((participant) => participant?.agent).filter(Boolean);
 	if (mode === "dossier") return asArray(args.dossier?.sections).map((section) => section?.agent).filter(Boolean);
@@ -127,7 +141,9 @@ function taskCount(args, mode) {
 	// has a length too) must count as zero roles, per this module's totality
 	// contract, or minTasks could be satisfied by a call that cannot run.
 	if (mode === "parallel") return asArray(args.tasks).length;
-	if (mode === "workflow") return asArray(args.workflow?.phases).length;
+	// minTasks over a workflow is a work-phase minimum: counting approval or
+	// agentless phases would satisfy it with a call that spawns no work (#88).
+	if (mode === "workflow") return workflowWorkPhases(args).length;
 	if (mode === "worktree") return asArray(args.worktree?.tasks).length;
 	if (mode === "debate") return asArray(args.debate?.participants).length;
 	if (mode === "dossier") return asArray(args.dossier?.sections).length;
@@ -181,11 +197,11 @@ function perRoleAgentNames(args, mode) {
 // role keeps an entry — a role whose required task is absent or non-string
 // contributes "", which no pattern matches, so a taskless role cannot slip
 // past the binding the way a filtered-out one would. Workflow phases are the
-// exception: an approval-only phase legitimately carries no task, so only
-// task-bearing phases are bound.
+// exception: an approval-only phase legitimately carries no task, so only the
+// handler's work phases are counted and bound.
 function perRoleTaskTexts(args, mode) {
 	if (mode === "workflow") {
-		return asArray(args.workflow?.phases).map((phase) => phase?.task).filter((task) => typeof task === "string");
+		return workflowWorkPhases(args).map((phase) => (typeof phase.task === "string" ? phase.task : ""));
 	}
 	const roleTasks = {
 		parallel: args.tasks,
@@ -266,6 +282,18 @@ function flowCallShapeMismatch(args, shape) {
 	const actualTaskCount = taskCount(args, actualMode);
 	if (shape.minTasks !== undefined && actualTaskCount < shape.minTasks) {
 		return `expected at least ${shape.minTasks} ${actualMode} task(s), saw ${actualTaskCount}`;
+	}
+
+	// The gate itself, not just the work in front of it: a phase-gated case
+	// must be able to require that the workflow actually pauses. Approval
+	// phases are counted by the handler's own kind test (approval.message,
+	// the same discriminator workflowPhasesRefusal enforces at the rider) —
+	// only workflow calls have them, so any other mode counts zero.
+	if (shape.minApprovalPhases !== undefined) {
+		const approvalCount = asArray(args?.workflow?.phases).filter((phase) => Boolean(phase?.approval?.message)).length;
+		if (approvalCount < shape.minApprovalPhases) {
+			return `expected at least ${shape.minApprovalPhases} workflow approval phase(s), saw ${approvalCount}`;
+		}
 	}
 
 	if (shape.taskPattern && !new RegExp(shape.taskPattern, "i").test(taskText(args))) {

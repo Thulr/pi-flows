@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { MAX_WORKFLOW_PHASES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
@@ -10,6 +10,7 @@ import { integrationRunPlan, runIntegrationPlan } from "../integration.ts";
 import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
+import { workflowPhasesRefusal } from "../validate.ts";
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
 const phaseStageKey = (phaseId: string) => `phase-${encodeAuthorKey(phaseId)}`;
@@ -66,21 +67,11 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd } = deps;
 	const spec = params.workflow ?? {};
 	const phases = Array.isArray(spec.phases) ? spec.phases : [];
-	if (phases.length < 1 || phases.length > MAX_WORKFLOW_PHASES) {
-		const error = flowError("WORKFLOW_INVALID", `Workflow mode needs 1..${MAX_WORKFLOW_PHASES} phases.`, "workflow.phases was empty or exceeded the bounded state-machine limit.", `Provide 1..${MAX_WORKFLOW_PHASES} ordered work or approval phases.`);
-		return stateError(deps, [], error);
-	}
-
-	const ids = new Set<string>();
-	for (const phase of phases) {
-		const approval = Boolean(phase?.approval?.message);
-		const work = Boolean(phase?.agent && phase?.task);
-		if (!phase?.id || ids.has(phase.id) || approval === work) {
-			const error = flowError("WORKFLOW_INVALID", "Workflow phases need unique ids and exactly one phase kind.", "Each phase must be either agent+task work or an approval node, but not both; ids must be unique.", "Fix the phase ids and provide either agent+task or approval.message for every phase.");
-			return stateError(deps, [], error);
-		}
-		ids.add(phase.id);
-	}
+	// Shared with the selection eval's admissibility seam: an invalid phase
+	// refuses the call whole before any state write or spawn (#88). The
+	// normalized spec keeps validation unskippable even if activation changes.
+	const phasesRefusal = workflowPhasesRefusal({ workflow: spec });
+	if (phasesRefusal) return stateError(deps, [], phasesRefusal);
 
 	const approvalTtl = resolveApprovalTtlMs(spec.approvalTtlMs);
 	if ("error" in approvalTtl) return stateError(deps, [], approvalTtl.error);

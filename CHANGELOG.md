@@ -31,6 +31,24 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Selection-eval scoring treats `minTasks` over a `workflow` call as a
+  work-phase minimum, counted by the workflow handler's own imported
+  work-phase predicate (agent AND task): approval-only phases carry no task,
+  and an agentless task phase is a call the tool refuses
+  (`WORKFLOW_INVALID`), so neither counts. The admissibility vocabulary now
+  scores `WORKFLOW_INVALID` through the handler's own exported phase
+  validation, so an invalid phase cannot lend its valid siblings to a case's
+  topology, and the agents predicates read work phases only, so a stray
+  agent field on an approval phase cannot fail a call the tool runs. A new
+  `minApprovalPhases` shape predicate counts phases of the handler's
+  approval kind, so a phase-gated case can require the gate itself. The
+  `implicit-phase-gated-work-uses-workflow` case now requires at least two
+  on-topic work phases naming bundled agents (`knownAgentsOnly` — workflow
+  persists state before the runner's roster check, so `UNKNOWN_AGENT` is not
+  admissibility-scored there), closing the topology gap #87's headless-approval
+  admissibility check left open — a workflow assigning one trivial work phase
+  ahead of its approval while the top-level task recites the migration
+  wording no longer passes (#88). Tool behavior is unchanged.
 - Selection-eval scoring (`npm run eval:select`) now checks call admissibility:
   a spawning call whose `why` is missing or blank — one the tool would refuse
   with `WHY_REQUIRED` before any child spawns — no longer scores as a correct

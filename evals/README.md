@@ -636,7 +636,9 @@ concurrency bound (`INVALID_CONCURRENCY`), the fan-out bound
 (`TOO_MANY_TASKS`, more tasks than the cap), the budget gate
 (`BUDGET_EXCEEDED`, a zero flow ceiling — or every first-spawn role's
 contract budget starting exhausted), pre-work mode validation
-(`MONITOR_INVALID`, `GRAPH_CYCLE`, and the shape-invisible preset resolution
+(`MONITOR_INVALID`, `GRAPH_CYCLE`, `WORKFLOW_INVALID` — an invalid workflow
+phase refuses the call whole, so valid siblings cannot lend themselves to a
+case's topology — and the shape-invisible preset resolution
 failures `PRESET_EXPANSION_INVALID`/`PRESET_TASK_REQUIRED`), the pre-spawn
 shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable refs sharing
 one cwd at concurrency above one), the roster rule (`UNKNOWN_AGENT`, no
@@ -679,7 +681,25 @@ the run-wide `taskPattern` concatenation would allow), and `knownAgentsOnly`
 invented sibling the runner would refuse cannot pass as the full requested
 fan-out); corpus preflight validates all of these fields — including
 unknown-key and vacuous-value rejection — so a typo'd predicate fails before
-any model is invoked. The `independent-review-safe-first-call` case reproduces the
+any model is invoked. Over a `workflow` call, `minTasks` and `everyTaskPattern`
+both read the handler's own work phases — its imported predicate requires
+agent AND task, so an approval-only phase (which legitimately carries no task)
+and an agentless task phase (a call the tool refuses with `WORKFLOW_INVALID`,
+a code outside the admissibility vocabulary) count for nothing. `minTasks` is
+therefore a work-phase minimum there:
+`implicit-phase-gated-work-uses-workflow` requires two on-topic work phases —
+two rather than the four the task enumerates, so a model that merges the
+analyze/plan/implement/verify enumeration into fewer phases still passes —
+closing the topology gap the headless `WORKFLOW_APPROVAL_REQUIRED` check left
+open, where one trivial work phase ahead of the approval rode the top-level
+task's migration wording (issue #88). `minApprovalPhases` is the other half
+of that topology: it counts phases of the handler's approval kind
+(`approval.message`), so a phase-gated case can require the gate itself — a
+work-only workflow that never pauses cannot ride the top-level task's
+"approval" wording through the run-wide `taskPattern`. The case also sets `knownAgentsOnly`
+because workflow persists its state file before the runner's roster check, so
+`UNKNOWN_AGENT` is outside the admissibility vocabulary there — the shape
+itself must refuse a work phase naming an invented agent. The `independent-review-safe-first-call` case reproduces the
 issue-#82 transcript with all three: review-of-uncommitted-changes intent must
 pick the `code-review` preset, a serialized or read-only fan-out, or an
 independent-voter panel on the first call, must never set
