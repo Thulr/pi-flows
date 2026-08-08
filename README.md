@@ -1,3 +1,10 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)"
+          srcset="https://raw.githubusercontent.com/Thulr/pi-flows/main/assets/banner-dark.svg">
+  <img alt="pi-flows: delegate pi work to isolated, budgeted children with verification loops and tracing"
+       src="https://raw.githubusercontent.com/Thulr/pi-flows/main/assets/banner-light.svg" width="100%">
+</picture>
+
 # pi-flows
 
 **Use [pi](https://github.com/earendil-works/pi) for the work you want to keep out of your parent session: repo scouting, parallel investigation, implementation plus review, and large-task decomposition.**
@@ -44,6 +51,10 @@ Have a read-only agent find the API routes for billing.
 ```
 
 pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; the [flow reference](./docs/reference/flow-reference.md) shows the exact JSON interface for when you want to verify it or take manual control.)
+
+While children run you get a live tool row, and after the flow settles a durable card keeps the outcome, cost rollup, and configured ceilings in the transcript:
+
+<img alt="The durable flow card in the pi transcript: status, per-run duration bars, cost rollup, and configured ceilings" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-run-card.gif" width="100%">
 
 For common shapes, pi can choose a named [workflow preset](./docs/reference/flow-reference.md#workflow-presets) — `scout`, `map-codebase`, or the one-shot, typed `code-review` — instead of assembling raw mode parameters. And when you ask for a *verified* result, pi reaches for a stronger mode on its own:
 
