@@ -1,12 +1,12 @@
 {
   "_comment": "Judgment rows of the domain-model score - the ones no grep settles. Re-record them by running the /domain-driven-design review and editing this file; editing it IS the re-recording, because scripts/domain-score.mjs measures staleness from when this file was last touched relative to the Core modules. A row is reported stale, and drops out of the verified score, when a Core module was touched more recently. Structural rows are not recorded here: they are re-checked from the tree on every run.",
   "reviewedAt": "2026-08-08",
-  "reviewer": "/domain-modeling (audit for #97: re-derived the three previously failing rows against the new flow.ts/run.ts aggregates; other verdicts carried from the 2026-07-31 /domain-driven-design review)",
+  "reviewer": "/implement for #100 (re-derived small-aggregates against the ResolvedCall change: capture-policy ownership moved into the Flow aggregate; other verdicts carried from the #97 audit and the 2026-07-31 /domain-driven-design review)",
   "judgment": {
     "small-aggregates": {
       "label": "Aggregates are small (one root + minimal cluster)",
       "verdict": "pass",
-      "note": "Flow (flow.ts) is the aggregate root CONTEXT.md promised: one bounded delegation whose lifecycle is the explicit typed progression refused → admitted → dispatched → settled. The root stays small by owning ordering only — every pre-spawn gate is a supplied predicate/approval object walked in the aggregate's declared order, and Budget, the handoff consumer, and the trace sink remain separate objects the root holds references to. Run (run.ts) is the one root over a child result's lifecycle. index.ts execute() is a composition root again: it adapts ctx/ui/liveFlows/session persistence into the aggregate's ports and hands over (#97)."
+      "note": "Flow (flow.ts) is the aggregate root CONTEXT.md promised: one bounded delegation whose lifecycle is the explicit typed progression refused → admitted → dispatched → settled. The root stays small by owning ordering only — every pre-spawn gate is a supplied predicate/approval object walked in the aggregate's declared order, and Budget, the handoff consumer, and the trace sink remain separate objects the root holds references to. Run (run.ts) is the one root over a child result's lifecycle. index.ts execute() is a composition root again: it adapts ctx/ui/liveFlows/session persistence into the aggregate's ports and hands over (#97). The residue #100 named is resolved: the aggregate carries the one ResolvedCall (post-preset params, policy, preset) and hands it to ports as arguments — resolvePreset is pure, the details builder is constructed once from the resolution, preset formatting comes back from preparation — so no port in execute() assigns a local another port reads (tests/flow-capture-ownership.test.ts)."
     },
     "behavior-rich": {
       "label": "Domain objects contain behavior, not just data",

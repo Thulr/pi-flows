@@ -69,7 +69,7 @@ function harness(params: Record<string, unknown>, overrides: Partial<FlowPorts> 
 		agentScope: "user",
 		discovery,
 		runChild: async () => { throw new Error("flow-lifecycle tests stub the handler, not the child seam"); },
-		makeDetails: (mode, agents) => catalog.makeDetails(mode, agents),
+		makeDetails: () => (mode, agents) => catalog.makeDetails(mode, agents),
 		detectMode: (candidate) => {
 			order.push("detectMode");
 			const detected = detectRunMode(candidate);
@@ -82,9 +82,9 @@ function harness(params: Record<string, unknown>, overrides: Partial<FlowPorts> 
 			order.push("approvePresetTrust");
 			return { record: () => order.push("recordPresetApproval") };
 		},
-		preparePresetRun: (candidate) => {
+		preparePresetRun: (call) => {
 			order.push("preparePresetRun");
-			return { params: candidate, runDefaultCwd: ports.cwd };
+			return { params: call.params, runDefaultCwd: ports.cwd };
 		},
 		approveProjectAgents: async () => {
 			order.push("approveProjectAgents");
