@@ -352,6 +352,9 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	if (shape.knownAgentsOnly !== undefined && shape.knownAgentsOnly !== true) {
 		issues.push(`${label}.knownAgentsOnly must be true when present — false is the default and would constrain nothing`);
 	}
+	// Validation is mode-blind; what minTasks counts is per-mode (for workflow
+	// it is the handler's work phases, not raw phase count) and lives with the
+	// scorer in select-scoring.mjs and evals/README.md.
 	if (shape.minTasks !== undefined && (!Number.isInteger(shape.minTasks) || shape.minTasks < 1)) {
 		issues.push(`${label}.minTasks must be a positive integer — anything else makes the comparison vacuous`);
 	}

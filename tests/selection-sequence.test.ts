@@ -28,10 +28,15 @@ function fullContract(budget: Record<string, number>): Record<string, unknown> {
 	};
 }
 
-/** Every direct dereference goes through this, so a renamed case fails with a named error, not a TypeError. */
+/** Every direct case dereference goes through this, so a renamed case fails with a named error, not a TypeError. */
+function selectionCaseNamed(name: string): any {
+	const testCase = SELECTION_CASES.find((candidate: any) => candidate.name === name);
+	assert.ok(testCase, `selection case fixture missing — was ${name} renamed?`);
+	return testCase;
+}
+
 function theReviewCase(): any {
-	assert.ok(reviewCase, "selection case fixture missing — was independent-review-safe-first-call renamed?");
-	return reviewCase;
+	return selectionCaseNamed("independent-review-safe-first-call");
 }
 
 // The #82 transcript, replayed against the bundled roster: overwatch and any
@@ -448,6 +453,121 @@ test("unknown shape keys fail preflight — a typo'd predicate must not be a sil
 
 test("the case's dry-run mock passes the same scorer a live run gets", () => {
 	const testCase = theReviewCase();
+	const result = scoreSelection(testCase, {
+		flowCalls: testCase.mock.flowCalls,
+		flowCallArgs: testCase.mock.flowCallArgs ?? [],
+		answer: testCase.mock.answer,
+	});
+	assert.equal(result.pass, true, result.notes);
+});
+
+// Work-phase topology for the phase-gated workflow case (issue #88): the old
+// shape stopped at {mode, taskPattern}, so any workflow carrying "release
+// migration" in its top-level task satisfied it regardless of what its phases
+// assigned. The literal approval-only exploit was already refused headless by
+// #87's WORKFLOW_APPROVAL_REQUIRED admissibility check, but a single trivial
+// work phase ahead of the approval — or an agentless phase list the tool
+// refuses with WORKFLOW_INVALID, a code outside the admissibility vocabulary
+// — still passed. The shape itself must fail all of these on topology.
+function theWorkflowCase(): any {
+	return selectionCaseNamed("implicit-phase-gated-work-uses-workflow");
+}
+
+test("workflow minTasks is a work-phase minimum: approval-only phases do not count", () => {
+	const phases = [
+		{ id: "analyze", agent: "recon", task: "Analyze the release migration." },
+		{ id: "approve", approval: { message: "Approve the migration plan." } },
+	];
+	const call = { arguments: { why: "gated phases", task: "Release migration", workflow: { phases } } };
+	assert.equal(flowCallMatchesExpectation(call, { mode: "workflow", minTasks: 1 }).pass, true);
+	const two = flowCallMatchesExpectation(call, { mode: "workflow", minTasks: 2 });
+	assert.equal(two.pass, false);
+	assert.match(two.notes, /expected at least 2 workflow task\(s\), saw 1/);
+});
+
+test("an approval-only workflow fails the case on topology, before the admissibility rider", () => {
+	// The shape check must name the missing work phases itself rather than
+	// lean on WORKFLOW_APPROVAL_REQUIRED, which only covers the headless
+	// approval-first arrangement, not the topology gap (#88).
+	const approvalOnly = {
+		why: "gated release migration",
+		task: "Run this release migration as explicit analyze, plan, implement, verify, and approval phases.",
+		workflow: { phases: [{ id: "approve", approval: { message: "Approve migration" } }] },
+	};
+	const result = scoreSelection(theWorkflowCase(), { flowCalls: 1, flowCallArgs: [approvalOnly], stoppedAfterFlowCall: true, answer: "" });
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /expected at least \d+ workflow task\(s\), saw 0/);
+});
+
+test("a single work phase ahead of the approval fails the case — the gap #87 left open", () => {
+	const singleWorkPhase = {
+		why: "gated release migration",
+		task: "Run this release migration as explicit analyze, plan, implement, verify, and approval phases.",
+		workflow: { phases: [
+			{ id: "analyze", agent: "recon", task: "Analyze the release migration." },
+			{ id: "approve", approval: { message: "Approve migration" } },
+		] },
+	};
+	const result = scoreSelection(theWorkflowCase(), { flowCalls: 1, flowCallArgs: [singleWorkPhase], stoppedAfterFlowCall: true, answer: "" });
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /expected at least \d+ workflow task\(s\), saw 1/);
+});
+
+test("a work phase naming an invented agent fails the case via knownAgentsOnly", () => {
+	// Workflow persists state before the runner's roster check, so the
+	// runner's UNKNOWN_AGENT refusal is outside the admissibility vocabulary
+	// here; the case's knownAgentsOnly is what refuses the invented sibling.
+	const inventedAgent = {
+		why: "gated release migration",
+		task: "Run this release migration as explicit analyze, plan, implement, verify, and approval phases.",
+		workflow: { phases: [
+			{ id: "analyze", agent: "recon", task: "Analyze the release migration." },
+			{ id: "verify", agent: "made-up-verifier", task: "Verify the release migration." },
+			{ id: "approve", approval: { message: "Approve migration" } },
+		] },
+	};
+	const result = scoreSelection(theWorkflowCase(), { flowCalls: 1, flowCallArgs: [inventedAgent], stoppedAfterFlowCall: true, answer: "" });
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /made-up-verifier.*not bundled flow agents/);
+});
+
+test("an agentless task phase is not a work phase: the handler would refuse the call", () => {
+	// handleWorkflow requires agent AND task per work phase and refuses this
+	// call with WORKFLOW_INVALID — a code outside the admissibility vocabulary
+	// — so counting these phases would pass a call that cannot run. The
+	// predicate is imported from the extension, so the two cannot drift.
+	const agentless = flowCallMatchesExpectation({ arguments: {
+		why: "gated phases",
+		task: "Release migration",
+		workflow: { phases: [
+			{ id: "analyze", task: "Analyze the release migration." },
+			{ id: "verify", task: "Verify the release migration." },
+			{ id: "approve", approval: { message: "Approve migration" } },
+		] },
+	} }, { mode: "workflow", minTasks: 2 });
+	assert.equal(agentless.pass, false);
+	assert.match(agentless.notes, /expected at least 2 workflow task\(s\), saw 0/);
+});
+
+test("an off-topic work phase cannot ride the migration workflow's top-level task", () => {
+	// Both the count and the run-wide alternation are satisfied; only the
+	// role-by-role binding sees that the second phase assigns unrelated work.
+	const offTopicSibling = {
+		why: "gated release migration",
+		task: "Run this release migration through analyze, verify, and approval phases.",
+		workflow: { phases: [
+			{ id: "analyze", agent: "recon", task: "Analyze the release migration." },
+			{ id: "drift", agent: "operator", task: "Rewrite the README badges." },
+			{ id: "approve", approval: { message: "Approve migration" } },
+		] },
+	};
+	const result = scoreSelection(theWorkflowCase(), { flowCalls: 1, flowCallArgs: [offTopicSibling], stoppedAfterFlowCall: true, answer: "" });
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /role task 2 did not match/);
+});
+
+test("the phase-gated case's dry-run mock passes the same scorer a live run gets", () => {
+	const testCase = theWorkflowCase();
 	const result = scoreSelection(testCase, {
 		flowCalls: testCase.mock.flowCalls,
 		flowCallArgs: testCase.mock.flowCallArgs ?? [],

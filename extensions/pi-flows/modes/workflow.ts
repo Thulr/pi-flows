@@ -10,6 +10,7 @@ import { integrationRunPlan, runIntegrationPlan } from "../integration.ts";
 import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
+import { isWorkflowWorkPhase } from "../validate.ts";
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
 const phaseStageKey = (phaseId: string) => `phase-${encodeAuthorKey(phaseId)}`;
@@ -74,7 +75,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	const ids = new Set<string>();
 	for (const phase of phases) {
 		const approval = Boolean(phase?.approval?.message);
-		const work = Boolean(phase?.agent && phase?.task);
+		const work = isWorkflowWorkPhase(phase);
 		if (!phase?.id || ids.has(phase.id) || approval === work) {
 			const error = flowError("WORKFLOW_INVALID", "Workflow phases need unique ids and exactly one phase kind.", "Each phase must be either agent+task work or an approval node, but not both; ids must be unique.", "Fix the phase ids and provide either agent+task or approval.message for every phase.");
 			return stateError(deps, [], error);

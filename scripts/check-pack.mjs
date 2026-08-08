@@ -84,5 +84,9 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Raised for the preset layer and three bundled workflow definitions, including
 // the machine-checked code-review return schemas. Presets are runtime inputs,
 // not examples, so all three are required above and intentionally packaged.
-assert.ok(pack.unpackedSize < 930_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 940_000 for the exported workflow work-phase predicate the
+// selection eval imports (#88) and its changelog entry; the previous ceiling
+// left ~500 bytes. Same verification: 90 files, none from tests/, scripts/,
+// or evals/.
+assert.ok(pack.unpackedSize < 940_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

@@ -363,9 +363,30 @@ export const SELECTION_CASES = defineCases([
 		task: "Run this release migration as explicit analyze, plan, implement, verify, and approval phases. Persist progress so it can resume after the approval point.",
 		timeoutMs: 180_000,
 		expectFlow: true,
-		expectedFlowCall: { mode: "workflow", taskPattern: "release migration|analyze|verify|approval" },
+		expectedFlowCall: {
+			mode: "workflow",
+			// minTasks counts the handler's work phases only (agent AND task —
+			// approval-only phases carry no task, agentless phases cannot run),
+			// so neither an approval-only workflow nor one trivial work phase
+			// riding "release migration" in the top-level task can pass (#88;
+			// the approval-only variant was already refused headless by #87's
+			// WORKFLOW_APPROVAL_REQUIRED check, the single-phase one was not).
+			// Two, not four: the case proves work phases were actually
+			// assigned without failing a model that merges the requested
+			// analyze/plan/implement/verify enumeration into fewer phases.
+			minTasks: 2,
+			// Workflow persists its state file before the runner's roster
+			// check, so UNKNOWN_AGENT is not admissibility-scored here — the
+			// shape itself must refuse work phases naming invented agents.
+			knownAgentsOnly: true,
+			taskPattern: "release migration|analyze|verify|approval",
+			// Each assigned work phase must itself name the migration subject or
+			// one of the requested phase intents — an off-topic phase cannot ride
+			// the top-level task's wording.
+			everyTaskPattern: "migrat|release|analyz|plan|implement|verif",
+		},
 		answerPattern: "workflow|phase|migration",
-		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Run the release migration through gated phases.", workflow: { phases: [{ id: "analyze", agent: "recon", task: "Analyze migration" }, { id: "approve", approval: { message: "Approve plan" } }] } }], answer: "The workflow paused at approval after analysis." },
+		mock: { flowCalls: 1, flowCallArgs: [{ why: "eval mock justification", task: "Run the release migration through gated phases.", workflow: { phases: [{ id: "analyze", agent: "recon", task: "Analyze migration" }, { id: "verify", agent: "operator", task: "Verify migration" }, { id: "approve", approval: { message: "Approve plan" } }] } }], answer: "The workflow paused at approval after the analyze and verify phases." },
 	},
 	{
 		name: "implicit-isolated-writers-use-worktree",

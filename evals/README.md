@@ -679,7 +679,21 @@ the run-wide `taskPattern` concatenation would allow), and `knownAgentsOnly`
 invented sibling the runner would refuse cannot pass as the full requested
 fan-out); corpus preflight validates all of these fields — including
 unknown-key and vacuous-value rejection — so a typo'd predicate fails before
-any model is invoked. The `independent-review-safe-first-call` case reproduces the
+any model is invoked. Over a `workflow` call, `minTasks` and `everyTaskPattern`
+both read the handler's own work phases — its imported predicate requires
+agent AND task, so an approval-only phase (which legitimately carries no task)
+and an agentless task phase (a call the tool refuses with `WORKFLOW_INVALID`,
+a code outside the admissibility vocabulary) count for nothing. `minTasks` is
+therefore a work-phase minimum there:
+`implicit-phase-gated-work-uses-workflow` requires two on-topic work phases —
+two rather than the four the task enumerates, so a model that merges the
+analyze/plan/implement/verify enumeration into fewer phases still passes —
+closing the topology gap the headless `WORKFLOW_APPROVAL_REQUIRED` check left
+open, where one trivial work phase ahead of the approval rode the top-level
+task's migration wording (issue #88). The case also sets `knownAgentsOnly`
+because workflow persists its state file before the runner's roster check, so
+`UNKNOWN_AGENT` is outside the admissibility vocabulary there — the shape
+itself must refuse a work phase naming an invented agent. The `independent-review-safe-first-call` case reproduces the
 issue-#82 transcript with all three: review-of-uncommitted-changes intent must
 pick the `code-review` preset, a serialized or read-only fan-out, or an
 independent-voter panel on the first call, must never set

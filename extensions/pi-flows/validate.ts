@@ -364,6 +364,17 @@ export function workflowHeadlessApprovalRefusal(params: Record<string, any>): Fl
 }
 
 /**
+ * The workflow handler's own work-phase test: a phase spawns a child only when
+ * it names both an agent and a task, and handleWorkflow refuses any other
+ * non-approval phase (WORKFLOW_INVALID). Exported so the selection eval counts
+ * exactly the phases the tool would run — an agentless task phase must not
+ * satisfy a case's work-phase minimum (#88).
+ */
+export function isWorkflowWorkPhase(phase: any): boolean {
+	return Boolean(phase?.agent && phase?.task);
+}
+
+/**
  * The refs a call would spawn before anything else: the concurrent first
  * waves for fan-out modes, the opening role for sequential ones. The
  * selection eval uses this for the roster rule — a call whose every
