@@ -11,7 +11,7 @@ Not every part of this repo earns the same depth. This split says where to spend
 `scripts/domain-score.mjs` enforces this split — every module below is checked for placement and for which subdomains it may import from — so the classification cannot quietly go stale as modules are added.
 
 **Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
-_Modules_: `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
+_Modules_: `flow.ts`, `run.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
 **Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
 _Modules_: `modes/*`, `presets.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
@@ -22,7 +22,7 @@ _Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands
 **Shared kernel.** `types.ts` — the vocabulary every subdomain imports, re-exported from the concept modules that own each term. A change here ripples everywhere and nothing above owns it, so keep it declarative: a rule that belongs to one concept belongs in that concept's module (see `budget.ts`), not here. `roster-types.ts` is vocabulary of the same kind, held apart only because the kernel may not import the Generic module that derives a roster.
 _Modules_: `types.ts`, `roster-types.ts`, `preset-types.ts`.
 
-**Composition root.** `index.ts` — registers the tool and command and wires every subdomain together, so it alone may import from all of them. That privilege is also why flow-level invariants keep accumulating in its `execute()` body rather than in a Flow root; treat new ordering rules there as a smell.
+**Composition root.** `index.ts` — registers the tool and command and wires every subdomain together, so it alone may import from all of them. Flow-level ordering does not live here: the `Flow` aggregate (`flow.ts`) owns the lifecycle, and `execute()` only adapts pi's context into the aggregate's ports. A new ordering rule belongs in the aggregate; a positional rule reappearing in `execute()` is the smell this split exists to catch.
 _Modules_: `index.ts`.
 
 The enforced direction is narrow on purpose: **Core may not import Supporting**, and the shared kernel may import only Core. Core reaching down into Generic plumbing is fine — commodity is there to be used. Core reaching sideways into the modes or the views is not: it would make the differentiator depend on the recombinations of it.
@@ -34,8 +34,12 @@ Three placements are worth stating outright, because a first pass tends to put t
 ### Delegation model
 
 **Flow**:
-One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it has a mode and a settled outcome of its own, and it is the thing a budget, a root span, and a checkpoint attach to when the call configures them. A flow refused before it spawns anything is still a flow.
+One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it has a mode and a settled outcome of its own, and it is the thing a budget, a root span, and a checkpoint attach to when the call configures them. A flow refused before it spawns anything is still a flow. Its lifecycle is an explicit progression — refused → admitted → dispatched → settled — owned by the aggregate root in `flow.ts`.
 _Avoid_: job, session
+
+**Admission**:
+The ordered walk of every pre-spawn gate that turns a flow call into something dispatchable, owned by the Flow aggregate. Each gate is a supplied predicate or approval object; the order they run in is the aggregate's own. Admission's product is a single-use capability that is the only way to dispatch, so skipping or reordering a gate is not a call sequence that exists. A call that fails admission is a refused flow.
+_Avoid_: validation (that names one kind of gate), pre-flight
 
 **Flow tree**:
 A flow plus any flows its children start. Budget accounting is per flow: every flow in the tree charges only its own budget, so no ceiling spans the tree.
@@ -79,7 +83,7 @@ _Avoid_: prompt, job
 A task produced by orchestrate's decomposition rather than authored upstream. A subtask is a kind of task.
 
 **Run**:
-One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing.
+One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing. The run object (`run.ts`) owns its result's lifecycle: an envelope candidate is retained and consumed exactly once, and an envelope or handoff attaches to a result only through the run's own transitions.
 _Avoid_: execution, invocation
 
 **Live**:

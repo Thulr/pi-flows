@@ -1,0 +1,368 @@
+import * as path from "node:path";
+import { createHandoffConsumer, type HandoffConsumer } from "./handoff-consumption.ts";
+import { isFailed } from "./sanitize.ts";
+import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type TraceSink } from "./trace.ts";
+import {
+	Budget,
+	DEFAULT_CONCURRENCY,
+	MAX_FLOW_DEPTH,
+	flowError,
+	formatFlowError,
+	type AgentScope,
+	type CapturePolicy,
+	type FlowAgent,
+	type FlowDetails,
+	type FlowDiscovery,
+	type FlowError,
+	type FlowMode,
+	type FlowRunResult,
+	type ModeHandler,
+	type ModeOutput,
+	type ModelRoster,
+	type RecordEvent,
+	type RunChild,
+	type RunMode,
+	type Update,
+} from "./types.ts";
+import { currentFlowDepth, spawnJustificationMissing, validateConcurrency } from "./validate.ts";
+
+/** The live-presence surface a flow reports itself to: started at dispatch, updated as runs settle, settled exactly once — even when the handler dies. */
+export interface FlowPresence {
+	start: (mode: FlowMode, details: FlowDetails, redactSecrets: boolean, budget?: Budget) => void;
+	update: (details: FlowDetails) => void;
+	settle: (details: FlowDetails) => void;
+}
+
+/**
+ * Everything the composition root supplies to one flow: the call's data, and
+ * the gates and collaborators the aggregate walks. Each pre-spawn gate is a
+ * supplied predicate/approval object — the aggregate implements none of them —
+ * but the ORDER they run in is the aggregate's own (see {@link Flow.admit}),
+ * so a future edit cannot reorder two gates without editing the lifecycle
+ * itself. Refusal *content* (preset lists, agent catalogs) is view formatting
+ * and stays with the supplier; the refusal *rules* — what a refusal does to
+ * the trace, what it may never reach — live here.
+ */
+export interface FlowPorts {
+	params: Record<string, any>;
+	policy: CapturePolicy;
+	cwd: string;
+	hasUI: boolean;
+	/** Audit label recorded as the approving actor on approvals — an attribution for the trail, not an authenticated identity. */
+	approvalActor: string;
+	agentScope: AgentScope;
+	discovery: FlowDiscovery;
+	roster?: ModelRoster;
+	signal?: AbortSignal;
+	onUpdate?: Update;
+	/** The child-run seam: the production subprocess adapter, or a test fake. */
+	runChild: RunChild;
+	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
+	/** Expand a named preset into ordinary mode params and a tightened capture policy. Absent when the call names none. */
+	resolvePreset?: () => { params: Record<string, any>; policy: CapturePolicy } | { refusal: ModeOutput };
+	/** Which single mode the params activate; the refusal carries the mode-hint content. */
+	detectMode: (params: Record<string, any>) => { mode: RunMode } | { refusal: ModeOutput };
+	/** Project-preset trust. On approval, `record` defers the approval event until the flow's own sink exists. */
+	approvePresetTrust: (params: Record<string, any>, mode: RunMode) => Promise<{ refusal: ModeOutput } | { record: (recordEvent?: RecordEvent) => void }>;
+	/** Preset-owned run preparation. It shells out in preset-named directories, which is why the aggregate never calls it before the trust gate. */
+	preparePresetRun: (params: Record<string, any>, mode: RunMode) => { params: Record<string, any>; runDefaultCwd: string };
+	/** Project-agent trust, recording its decision on the trace. Null when approved or not applicable. */
+	approveProjectAgents: (params: Record<string, any>, recordEvent: RecordEvent | undefined) => Promise<FlowError | null>;
+	/** A human checkpoint (see CONTEXT.md), recorded on the trace like any other approval. Null when it does not gate this moment or was approved. */
+	checkpoint: (params: Record<string, any>, mode: RunMode, when: "spawn" | "finalize", preview: string | undefined, recordEvent: RecordEvent | undefined) => Promise<FlowError | null>;
+	handlerFor: (mode: RunMode) => ModeHandler | undefined;
+	/** Interactive confirmation for mode-level approvals. Absent in headless contexts, where every approval resolves to "required". */
+	confirm?: (title: string, message: string) => Promise<boolean>;
+	presence: FlowPresence;
+	/** Remove progress surfaces superseded by the live row. */
+	clearUi?: () => void;
+	/** Inject cross-run lessons into the top-level task before the handler runs. */
+	resolveTask?: (params: Record<string, any>) => Record<string, any>;
+	/** Record a lesson from the final output. The aggregate calls it only when at least one run happened. */
+	recordLesson?: (params: Record<string, any>, mode: RunMode, text: string) => Promise<void>;
+	/** Preset-owned result formatting, applied after the mode has validated return envelopes. */
+	formatResult?: (output: ModeOutput, runDefaultCwd: string) => void;
+	/** Decorate the root span's summary attributes (preset provenance and outcome). `deliverable` is false when a strict run cannot evidence the verdict it reached. */
+	decorateRootAttributes?: (attributes: Record<string, unknown>, details: FlowDetails, deliverable: boolean) => Record<string, unknown>;
+	/** Append the durable session entry. The aggregate calls it last, so history can never record an outcome the caller was not told. */
+	persist: (details: FlowDetails) => void;
+}
+
+/** Everything admission resolved, carried privately through dispatch and settle. */
+interface AdmittedState {
+	ports: FlowPorts;
+	params: Record<string, any>;
+	policy: CapturePolicy;
+	mode: RunMode;
+	concurrency: number;
+	runDefaultCwd: string;
+	traceStrict: boolean;
+	sink?: TraceSink;
+	handoffs: HandoffConsumer;
+	handler: ModeHandler;
+	budget?: Budget;
+}
+
+export type FlowAdmission = { refused: ModeOutput } | { admitted: AdmittedFlow };
+
+/**
+ * The aggregate root for one bounded delegation (see CONTEXT.md: Flow). Its
+ * lifecycle is an explicit progression — **refused → admitted → dispatched →
+ * settled** — and the type system enforces the sequence: {@link Flow.admit} is
+ * the only source of an {@link AdmittedFlow}, whose `dispatch` is the only
+ * source of a {@link DispatchedFlow}, whose `settle` produces the final
+ * output. Out-of-order transitions are uncompilable, and each transition
+ * spends itself, so a replay is refused at runtime too.
+ */
+export class Flow {
+	/**
+	 * Walk the pre-spawn gates in the aggregate's declared order: preset
+	 * expansion, mode detection, the spawn gate (`why`), delegation depth,
+	 * concurrency bounds, preset trust, preset-owned preparation, strict-trace
+	 * configuration, then — once the trace sink exists — project-agent trust,
+	 * the spawn checkpoint, handler resolution, and budget construction.
+	 *
+	 * A refusal after the sink exists finalizes the trace with
+	 * `flow.child_count: 0` and the refusal code, so a caller carrying a
+	 * traceContext can correlate the refusal to the spans that describe it. A
+	 * refusal before the sink exists reaches the caller with whatever trace its
+	 * gate supplied (a refused project preset records onto the caller's own
+	 * settings) — never with evidence borrowed from a run that did not happen.
+	 */
+	static async admit(ports: FlowPorts): Promise<FlowAdmission> {
+		let params = ports.params;
+		let policy = ports.policy;
+		if (ports.resolvePreset) {
+			const resolved = ports.resolvePreset();
+			if ("refusal" in resolved) return { refused: resolved.refusal };
+			params = resolved.params;
+			policy = resolved.policy;
+		}
+
+		const detected = ports.detectMode(params);
+		if ("refusal" in detected) return { refused: detected.refusal };
+		const mode = detected.mode;
+		const refusalOutput = (error: FlowError): ModeOutput => ({
+			content: [{ type: "text", text: formatFlowError(error) }],
+			details: ports.makeDetails(mode)([], error),
+		});
+		const refuse = (error: FlowError): FlowAdmission => ({ refused: refusalOutput(error) });
+
+		// Structural friction against reflexive delegation: a spawning call must
+		// articulate why isolation beats doing the work in the parent context.
+		if (spawnJustificationMissing(params.why)) {
+			return refuse(flowError(
+				"WHY_REQUIRED",
+				"Flow call refused: `why` is required for any call that spawns agents.",
+				`Mode "${mode}" spawns child agent processes, and the call did not say why delegation beats doing the work directly in the parent context.`,
+				"Pass why:'<one sentence naming the explicit user request, the fan-out one context cannot hold, or the author-independent verification this needs>'. If no such reason exists, do the work directly instead of calling flow.",
+			));
+		}
+
+		const flowDepth = currentFlowDepth();
+		if (flowDepth >= MAX_FLOW_DEPTH) {
+			return refuse(flowError(
+				"FLOW_DEPTH_EXCEEDED",
+				`Flow delegation depth limit reached (${flowDepth}/${MAX_FLOW_DEPTH}).`,
+				"This flow agent is itself running inside a flow subprocess; spawning more children would risk runaway nested delegation.",
+				"Flatten the delegation — do the work in this agent, or restructure so deep nesting is not required. The cap is intentional harness discipline.",
+			));
+		}
+
+		// Fan-out bounding is aggregate policy: validated and resolved once here
+		// for every mode, so no handler re-derives it and no new mode can forget it.
+		const concurrencyError = validateConcurrency(params.concurrency);
+		if (concurrencyError) return refuse(concurrencyError);
+		const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+
+		const trust = await ports.approvePresetTrust(params, mode);
+		if ("refusal" in trust) return { refused: trust.refusal };
+		const prepared = ports.preparePresetRun(params, mode);
+		params = prepared.params;
+
+		// Trace evidence as a gate is opt-in. Ordinary user flows stay
+		// best-effort; an eval or release run asks for strict, and then a run
+		// that cannot prove what it did is a failed run, not a quiet pass.
+		const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
+		const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
+		const traceConfigError = strictTraceConfigError(traceStrict, traceFileParam);
+		if (traceConfigError) return refuse(traceConfigError);
+
+		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+		trust.record(sink?.event);
+		const handoffs = createHandoffConsumer({ params, mode, policy, defaultCwd: prepared.runDefaultCwd, recordEvent: sink?.event });
+		// A refusal from here on has a trace of its own; without the link a caller
+		// carrying a traceContext cannot correlate the refusal to its spans.
+		const refuseTraced = async (error: FlowError): Promise<FlowAdmission> => {
+			const refused = refusalOutput(error);
+			const link = await sink?.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
+			if (link) refused.details.trace = link;
+			return { refused };
+		};
+
+		const projectAgentsError = await ports.approveProjectAgents(params, sink?.event);
+		if (projectAgentsError) return refuseTraced(projectAgentsError);
+
+		const spawnCheckpointError = await ports.checkpoint(params, mode, "spawn", undefined, sink?.event);
+		if (spawnCheckpointError) return refuseTraced(spawnCheckpointError);
+
+		const handler = ports.handlerFor(mode);
+		if (!handler) return refuseTraced(flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state."));
+
+		// Cost ceiling: bounds the one "uncontrolled recursion" dimension that
+		// iteration and time caps miss. Undefined when the call configured none.
+		const budget = Budget.forFlow(params);
+		return { admitted: new AdmittedFlow({ ports, params, policy, mode, concurrency, runDefaultCwd: prepared.runDefaultCwd, traceStrict, sink, handoffs, handler, budget }) };
+	}
+}
+
+/**
+ * The capability admission returns: the only way to dispatch a flow, and
+ * therefore proof that every pre-spawn gate passed in order. Spends itself on
+ * use — a replayed dispatch is refused rather than double-spawning.
+ */
+export class AdmittedFlow {
+	#state: AdmittedState | undefined;
+	/** The live details shared with the presence surface, kept for the settle-on-failure path. */
+	#liveDetails: FlowDetails;
+
+	/** Module-private in effect: only {@link Flow.admit} constructs one. */
+	constructor(state: AdmittedState) {
+		this.#state = state;
+		this.#liveDetails = state.ports.makeDetails(state.mode)([]);
+	}
+
+	/**
+	 * Run the mode handler. The flow becomes live (presence) before the handler
+	 * runs, cross-run lessons are injected into the task at this seam so every
+	 * mode gets them without per-handler wiring, and a handler failure settles
+	 * the flow's presence before it propagates — a dead flow never lingers on
+	 * the fleet as live.
+	 */
+	async dispatch(): Promise<DispatchedFlow> {
+		const state = this.#state;
+		if (!state) throw new Error("A flow dispatches once: this admission capability is already spent.");
+		this.#state = undefined;
+		const { ports, mode, policy } = state;
+
+		ports.presence.start(mode, this.#liveDetails, policy.redactSecrets, state.budget);
+		ports.clearUi?.();
+		const liveUpdate: Update = (partial) => {
+			this.#liveDetails = partial.details;
+			ports.presence.update(this.#liveDetails);
+			ports.onUpdate?.(partial);
+		};
+		const paramsForRun = ports.resolveTask ? ports.resolveTask(state.params) : state.params;
+
+		try {
+			const output = await state.handler({
+				params: paramsForRun,
+				discovery: ports.discovery,
+				policy,
+				handoffs: state.handoffs,
+				agentScope: ports.agentScope,
+				defaultCwd: state.runDefaultCwd,
+				roster: ports.roster,
+				signal: ports.signal,
+				onUpdate: liveUpdate,
+				budget: state.budget,
+				recordSpan: state.sink?.record,
+				recordEvent: state.sink?.event,
+				requestApproval: async (title, message) => {
+					const decision = !ports.hasUI || !ports.confirm ? "required" : (await ports.confirm(title, message) ? "approved" : "denied");
+					state.sink?.event({
+						kind: "approval",
+						name: "mode.approval",
+						ok: decision === "approved",
+						attributes: { "flow.approval.decision": decision, "flow.approval.actor": ports.approvalActor, "flow.approval.interactive": ports.hasUI === true },
+					});
+					return decision;
+				},
+				approvalActor: ports.approvalActor,
+				makeDetails: ports.makeDetails,
+				runChild: ports.runChild,
+				concurrency: state.concurrency,
+			});
+			return new DispatchedFlow(state, output, (details) => { this.#liveDetails = details; });
+		} catch (error) {
+			ports.presence.settle(this.#liveDetails);
+			throw error;
+		}
+	}
+}
+
+/**
+ * A flow whose handler has returned: the only thing that can settle. The
+ * settle sequence is the aggregate's second ordered walk — blocking handoffs,
+ * preset formatting, the reflexion lesson, the finalize checkpoint, trace
+ * finalization, the strict-trace refusal, and durable persistence last, so
+ * the history cannot record a run as ok that the caller was told failed.
+ */
+export class DispatchedFlow {
+	#state: AdmittedState | undefined;
+	readonly #output: ModeOutput;
+	readonly #shareLiveDetails: (details: FlowDetails) => void;
+
+	constructor(state: AdmittedState, output: ModeOutput, shareLiveDetails: (details: FlowDetails) => void) {
+		this.#state = state;
+		this.#output = output;
+		this.#shareLiveDetails = shareLiveDetails;
+	}
+
+	async settle(): Promise<ModeOutput> {
+		const state = this.#state;
+		if (!state) throw new Error("A flow settles once: this dispatch is already settled.");
+		this.#state = undefined;
+		const { ports, mode, params } = state;
+		const output = this.#output;
+		let liveDetails = output.details;
+		const shareLive = (details: FlowDetails) => {
+			liveDetails = details;
+			this.#shareLiveDetails(details);
+			ports.presence.update(details);
+		};
+		try {
+			if (state.handoffs.blockingError && !output.details.error) {
+				output.details.error = state.handoffs.blockingError;
+				output.content = [{ type: "text", text: formatFlowError(state.handoffs.blockingError) }];
+			}
+			ports.formatResult?.(output, state.runDefaultCwd);
+			// A lesson is recorded only when at least one run happened — pre-spawn
+			// refusals (validation errors, approvals) are not lessons about the task.
+			if (output.details.results.length > 0) {
+				await ports.recordLesson?.(params, mode, output.content[0]?.text ?? "");
+			}
+			const finalCheckpointError = await ports.checkpoint(params, mode, "finalize", output.content[0]?.text, state.sink?.event);
+			if (finalCheckpointError) {
+				output.details.error = finalCheckpointError;
+				output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];
+			}
+			shareLive(output.details);
+			if (state.sink) {
+				const ok = !output.details.error && !output.details.results.some((result) => result.exitCode !== -1 && isFailed(result));
+				// A strict run whose own evidence is degraded is about to be refused,
+				// so the root must not claim a verified outcome it never delivered.
+				output.details.trace = await state.sink.finalize({ ok }, (health) => {
+					const attributes = traceSummaryAttributes(mode, params, output);
+					const deliverable = !state.traceStrict || traceHealthStatus(health, true) === "recorded";
+					return ports.decorateRootAttributes ? ports.decorateRootAttributes(attributes, output.details, deliverable) : attributes;
+				});
+			}
+			// Strict runs refuse to report a result they cannot evidence. An
+			// already-failed run keeps its own error: the incomplete trace is a
+			// second problem, not a better explanation of the first.
+			const traceError = strictTraceError(output.details.trace, state.traceStrict);
+			if (traceError && !output.details.error) {
+				output.details.error = traceError;
+				output.content = [{ type: "text", text: `${formatFlowError(traceError)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
+				shareLive(output.details);
+			}
+			// Persisted last, so the durable history cannot record a run as `ok`
+			// that the caller was told failed — and so it carries the trace link.
+			ports.persist(output.details);
+			return output;
+		} finally {
+			ports.presence.settle(liveDetails);
+		}
+	}
+}

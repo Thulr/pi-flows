@@ -26,6 +26,7 @@ import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
 import { makeTraceSink, strictTraceError, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
 import { Budget, type DelegationContract, type FlowErrorCode, type FlowTraceLink, type ModeOutput } from "../extensions/pi-flows/types.ts";
 import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule, type ReplyScript } from "./fault-adapter.ts";
+import { flowLifecycleScenarios } from "./fault-flow-scenarios.ts";
 import { handoffPolicyScenarios } from "./fault-handoff-scenarios.ts";
 
 export const FAULT_SUITE = "fault-injection";
@@ -734,6 +735,7 @@ export function faultScenarios(): FaultScenario[] {
 		retryAfterPartialControlScenario(),
 		benignSlowChildScenario(),
 		evaluateRetryControlScenario(),
+		...flowLifecycleScenarios(),
 		...handoffPolicyScenarios(),
 	];
 }

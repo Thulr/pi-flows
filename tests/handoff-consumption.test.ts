@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import test from "node:test";
 import { ResolvedDelegationContract, delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
-import { captureRawFinalAssistantText } from "../extensions/pi-flows/sanitize.ts";
+import { Run } from "../extensions/pi-flows/run.ts";
 import { emptyUsage, type CoordinationEvent, type DelegationContract, type FlowRunResult } from "../extensions/pi-flows/types.ts";
 import { freshDir } from "./stub-harness.ts";
 
@@ -180,7 +180,7 @@ test("deferred integration reuses validated typed state when stored content is o
 	for (const status of ["completed", "partial"] as const) {
 		const raw = typedResult({ status });
 		const result = childResult("[content omitted: recordContent=false]");
-		captureRawFinalAssistantText(result, raw.messages[0]!);
+		Run.of(result).captureEnvelopeCandidate(raw.messages[0]!);
 		const handoffs = createHandoffConsumer({
 			params: {},
 			mode: "evaluate",

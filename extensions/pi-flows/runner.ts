@@ -6,7 +6,8 @@ import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type ChildMessage, type ChildMessageBlock, type FlowError, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type ModelRoster, type RunChildOptions, type SpanStage, type ThinkingLevel } from "./types.ts";
 import { clampThinking, knownModel, parseModelSpec, rosterAssignment } from "./model-roster.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
-import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
+import { Run } from "./run.ts";
+import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
 import { getPiInvocation } from "./commands.ts";
@@ -303,7 +304,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				if (event.type === "message_end" && event.message) {
 					const message = event.message as Message;
 					if (message.role === "assistant") {
-						if (options.captureRawOutput) captureRawFinalAssistantText(result, toChildMessage(message));
+						if (options.captureRawOutput) Run.of(result).captureEnvelopeCandidate(toChildMessage(message));
 						const turnUsage = emptyUsage();
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
@@ -458,7 +459,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			);
 			result.errorMessage = result.error.message;
 		}
-		if (isFailed(result)) takeRawFinalAssistantText(result);
+		if (isFailed(result)) Run.of(result).discardEnvelopeCandidate();
 		return result;
 	} finally {
 		result.durationMs = Date.now() - started;

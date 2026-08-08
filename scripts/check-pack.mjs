@@ -88,5 +88,9 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // selection eval imports (#88) and its changelog entry; the previous ceiling
 // left ~500 bytes. Same verification: 90 files, none from tests/, scripts/,
 // or evals/.
-assert.ok(pack.unpackedSize < 940_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 975_000 for the Flow aggregate root (flow.ts) and the Run object
+// (run.ts) that took the execute() lifecycle and the child-result lifecycle
+// out of index.ts (#97), plus their changelog entry. Same verification:
+// 95 files, none from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 975_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

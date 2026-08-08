@@ -1,22 +1,22 @@
 {
   "_comment": "Judgment rows of the domain-model score - the ones no grep settles. Re-record them by running the /domain-driven-design review and editing this file; editing it IS the re-recording, because scripts/domain-score.mjs measures staleness from when this file was last touched relative to the Core modules. A row is reported stale, and drops out of the verified score, when a Core module was touched more recently. Structural rows are not recorded here: they are re-checked from the tree on every run.",
   "reviewedAt": "2026-08-08",
-  "reviewer": "/domain-modeling (audit; verdicts carried from the 2026-07-31 /domain-driven-design review after diffing the six Core modules changed since)",
+  "reviewer": "/domain-modeling (audit for #97: re-derived the three previously failing rows against the new flow.ts/run.ts aggregates; other verdicts carried from the 2026-07-31 /domain-driven-design review)",
   "judgment": {
     "small-aggregates": {
       "label": "Aggregates are small (one root + minimal cluster)",
-      "verdict": "fail",
-      "note": "There is no aggregate object at all. CONTEXT.md defines Flow as the thing a budget, a root span, and a checkpoint attach to, but no Flow type exists: its invariants are the ordered body of index.ts execute(), and FlowDetails \u2014 the read projection \u2014 is rebuilt from every result on each child update. The accumulation continues: the strict-trace config refusal (strictTraceConfigError) is another ordering rule invoked positionally from execute()."
+      "verdict": "pass",
+      "note": "Flow (flow.ts) is the aggregate root CONTEXT.md promised: one bounded delegation whose lifecycle is the explicit typed progression refused → admitted → dispatched → settled. The root stays small by owning ordering only — every pre-spawn gate is a supplied predicate/approval object walked in the aggregate's declared order, and Budget, the handoff consumer, and the trace sink remain separate objects the root holds references to. Run (run.ts) is the one root over a child result's lifecycle. index.ts execute() is a composition root again: it adapts ctx/ui/liveFlows/session persistence into the aggregate's ports and hands over (#97)."
     },
     "behavior-rich": {
       "label": "Domain objects contain behavior, not just data",
-      "verdict": "fail",
-      "note": "Budget owns its rule. DelegationContract's transitions now live on ResolvedDelegationContract (shape-validate, compile, digest at construction; rendering, contract budgets, and return validation are methods, so none can run against an unvalidated contract), and receipt consumption exists only on ApprovalAuthorization — the capability verify returns, bound to the verified consumer. The admitted contract is a deep-frozen snapshot and IntegrationValidation's state is ECMAScript-private, so neither a retained input nor a retained token can drift the resolved state (PR #98 review). Still failing on the run result: FlowRunResult is mutated from outside by prepareIntegrationHandoff (result.handoff, result.envelope), and sanitize.ts's two WeakMap side-channels (rawFinalAssistantText, validatedReturnEnvelopes) remain state about a result held beside it — to be absorbed by a Run object alongside the Flow aggregate refactor (#97)."
+      "verdict": "pass",
+      "note": "Budget owns its rule. DelegationContract's transitions live on ResolvedDelegationContract, and receipt consumption exists only on ApprovalAuthorization — the capability verify returns, bound to the verified consumer (PR #98 review). The last residue is gone with #97: FlowRunResult is no longer mutated from outside — Run.acceptReturnEnvelope and Run.acceptHandoff (run.ts) are the only transitions that attach an envelope or handoff to a result, and sanitize.ts's two WeakMap side-channels moved inside Run as ECMAScript-private state with consume-once semantics (the envelope candidate is capped on capture, discarded on failure, and taken exactly once). FlowRunResult itself stays the plain read projection the views render."
     },
     "domain-events": {
       "label": "Events/handoffs carry cross-boundary flow",
       "verdict": "pass",
-      "note": "Handoff is a real transfer object: validated, redacted, policy-checked, provenance-bearing, and refused rather than silently degraded. CoordinationEvent is an immutable past-tense fact vocabulary over seven kinds. Events are export-only by design \u2014 coordination here is synchronous because a flow settles."
+      "note": "Handoff is a real transfer object: validated, redacted, policy-checked, provenance-bearing, and refused rather than silently degraded. CoordinationEvent is an immutable past-tense fact vocabulary over seven kinds. Events are export-only by design — coordination here is synchronous because a flow settles."
     },
     "depth-rich-core": {
       "label": "Depth: the Core Domain is genuinely rich, not CRUD",
@@ -25,8 +25,8 @@
     },
     "depth-invariants-in-aggregates": {
       "label": "Depth: invariants live inside aggregates, not services",
-      "verdict": "fail",
-      "note": "Follows small-aggregates. Flow-level ordering (why, depth, concurrency, strict trace, project-agent trust, checkpoints, budget construction, finalization) is positional in index.ts execute() rather than enforced by a root."
+      "verdict": "pass",
+      "note": "Follows small-aggregates. Flow-level ordering — admission (preset expansion, mode detection, spawn gate, depth, concurrency, preset trust, preset preparation, strict-trace config, project-agent trust, spawn checkpoint, handler resolution, budget construction) and the settle sequence (blocking handoffs → preset formatting → reflexion → finalize checkpoint → trace finalize → strict-trace refusal → persistence last) — is enforced by the Flow aggregate's typed transitions: admission returns the only dispatch capability, dispatch returns the only thing that can settle, and both spend themselves. Rules like 'a refusal after the sink exists finalizes the trace with child_count 0' are internal to the aggregate. Named by tests/flow-lifecycle.test.ts and the checkpoint-skipped-before-spawn / settle-without-dispatch fault-manifest entries."
     },
     "depth-language-consistency": {
       "label": "Depth: ubiquitous language is consistent across docs, code, and tests",

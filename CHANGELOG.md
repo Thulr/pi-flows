@@ -8,7 +8,20 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Changed
+
+- The flow lifecycle is now owned by a `Flow` aggregate root
+  (`extensions/pi-flows/flow.ts`): admission walks every pre-spawn gate in the
+  aggregate's declared order, returns a single-use capability that is the only
+  way to dispatch, and dispatch returns the only thing that can settle — so
+  running the lifecycle out of order is uncompilable, and a replayed
+  transition is refused. A new `Run` object
+  (`extensions/pi-flows/run.ts`) owns the child-result lifecycle: envelopes
+  and handoffs attach to a result only through its transitions, replacing the
+  former sanitize-side WeakMap side-channels. `index.ts` `execute()` is wiring
+  only. The `flow` tool's external contract is unchanged; two flow-lifecycle
+  coordination faults (`checkpoint-skipped-before-spawn`,
+  `settle-without-dispatch`) join the fault-injection manifest (#97).
 
 ## 0.7.0 - 2026-08-08
 

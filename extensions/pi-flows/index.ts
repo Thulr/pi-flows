@@ -3,29 +3,18 @@ import * as path from "node:path";
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
-	Budget,
-	DEFAULT_CONCURRENCY,
-	MAX_FLOW_DEPTH,
 	PI_FLOWS_VERSION,
 	RUN_MODE_NAMES,
 	flowError,
 	formatFlowError,
 	type AgentScope,
 	type CapturePolicy,
-	type FlowAgent,
-	type FlowDetails,
-	type FlowError,
-	type FlowMode,
 	type FlowPreset,
-	type ModelRoster,
-	type RunMode,
-	type Update,
 } from "./types.ts";
-import { capModelVisibleText, isFailed, redactText, resultText, safePath, sanitizeText, scanForInjection, stripControlChars } from "./sanitize.ts";
-import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, spawnJustificationMissing, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
+import { capModelVisibleText, redactText, safePath, scanForInjection, stripControlChars } from "./sanitize.ts";
+import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
 import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
-import { createHandoffConsumer } from "./handoff-consumption.ts";
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
 import { discoverFlowAgents } from "./agents.ts";
@@ -34,9 +23,10 @@ import { resolveChildModel, runFlowAgent } from "./runner.ts";
 import { availableModelsFromRegistry, currentModelRoster } from "./roster-source.ts";
 import { clampThinking, describeModelRoster, parseModelSpec, resolveModelRoster } from "./model-roster.ts";
 import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
-import { formatTraceReport, formatUsage, makeTraceSink, parseTraceJsonl, strictTraceConfigError, strictTraceError, summarizeTraceSpans, traceHealthStatus, traceSummaryAttributes } from "./trace.ts";
+import { formatTraceReport, parseTraceJsonl, summarizeTraceSpans } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { collectBudgetCeilings } from "./budget-disclosure.ts";
+import { Flow } from "./flow.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs, showModelRoster } from "./ui.ts";
 import { FlowRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
@@ -45,7 +35,7 @@ import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
-import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
+import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets, type CodeReviewRange } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
 import { approveProjectPreset, traceProjectPresetRefusal } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
@@ -225,6 +215,7 @@ export default function (pi: ExtensionAPI) {
 			const presetDiscovery = discoverFlowPresets(ctx.cwd, agentScope);
 			const catalog = createAgentCatalog(discovery, agentScope);
 			let activePreset: FlowPreset | undefined;
+			let codeReviewRange: CodeReviewRange | undefined;
 			const requestedPresetTask = typeof params.task === "string" ? params.task : "";
 			// Resolved once per call rather than per child: the registry read is
 			// synchronous and cheap, but a roster that changed mid-flow would let two
@@ -255,236 +246,125 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			// The caller's own trace settings, captured before preset expansion can
+			// add repo-controlled ones: a refused project preset records onto these.
 			const callerTrace = { traceFile: params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE, traceLabel: params.traceLabel, traceContext: params.traceContext };
-			if (params.preset) {
-				const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, policy);
-				if ("error" in resolved) {
-					return presetResolutionErrorOutput(resolved.error, presetDiscovery, makeDetails("list")([], resolved.error), policy);
-				}
-				activePreset = resolved.preset;
-				params = resolved.params as typeof params;
-				policy = presetCapturePolicy(policy, params as Record<string, unknown>);
-				params = { ...params, ...policy };
-				budgetCeilings = collectBudgetCeilings(params);
-			}
 
-			const detected = detectRunMode(params);
-			if ("error" in detected) {
-				return {
-					content: [{ type: "text", text: `${formatFlowError(detected.error)}\n\nAvailable agents:\n${catalog.summary()}` }],
-					details: makeDetails("list")([], detected.error),
-				};
-			}
-
-			const mode: FlowMode = detected.mode;
-			// Structural friction against reflexive delegation: a spawning call must
-			// articulate why isolation beats doing the work in the parent context.
-			if (spawnJustificationMissing(params.why)) {
-				const error = flowError(
-					"WHY_REQUIRED",
-					"Flow call refused: `why` is required for any call that spawns agents.",
-					`Mode "${mode}" spawns child agent processes, and the call did not say why delegation beats doing the work directly in the parent context.`,
-					"Pass why:'<one sentence naming the explicit user request, the fan-out one context cannot hold, or the author-independent verification this needs>'. If no such reason exists, do the work directly instead of calling flow.",
-				);
-				return {
-					content: [{ type: "text", text: formatFlowError(error) }],
-					details: makeDetails(mode)([], error),
-				};
-			}
-
-			const flowDepth = currentFlowDepth();
-			if (flowDepth >= MAX_FLOW_DEPTH) {
-				const error = flowError(
-					"FLOW_DEPTH_EXCEEDED",
-					`Flow delegation depth limit reached (${flowDepth}/${MAX_FLOW_DEPTH}).`,
-					"This flow agent is itself running inside a flow subprocess; spawning more children would risk runaway nested delegation.",
-					"Flatten the delegation — do the work in this agent, or restructure so deep nesting is not required. The cap is intentional harness discipline.",
-				);
-				return {
-					content: [{ type: "text", text: formatFlowError(error) }],
-					details: makeDetails(mode)([], error),
-				};
-			}
-
-			// Fan-out bounding is dispatch-core policy: validated and resolved once here
-			// for every mode, so no handler re-derives it and no new mode can forget it.
-			const concurrencyError = validateConcurrency(params.concurrency);
-			if (concurrencyError) {
-				return {
-					content: [{ type: "text", text: formatFlowError(concurrencyError) }],
-					details: makeDetails(mode)([], concurrencyError),
-				};
-			}
-			const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
-			const presetApproval = await approveProjectPreset(activePreset, agentScope, params.confirmProjectAgents, ctx, policy);
-			if (presetApproval.error) {
-				const details = makeDetails(mode)([], presetApproval.error);
-				const link = await traceProjectPresetRefusal(presetApproval.error, activePreset, callerTrace, mode, policy, ctx.cwd, ctx.hasUI);
-				if (link) details.trace = link;
-				return { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details };
-			}
-			// Preset-owned preparation shells out to git in a preset-named directory, so it waits for the trust gate above.
-			const presetRun = preparePresetDispatch(activePreset, params, requestedPresetTask, mode, ctx.cwd);
-			params = presetRun.params as typeof params;
-
-			// Trace evidence as a gate is opt-in. Ordinary user flows stay
-			// best-effort; an eval or release run asks for strict, and then a run
-			// that cannot prove what it did is a failed run, not a quiet pass.
-			const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
-			const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
-			const traceConfigError = strictTraceConfigError(traceStrict, traceFileParam);
-			if (traceConfigError) {
-				return { content: [{ type: "text", text: formatFlowError(traceConfigError) }], details: makeDetails(mode)([], traceConfigError) };
-			}
-
-			const traceSink = traceFileParam ? makeTraceSink(path.resolve(ctx.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
-			presetApproval.record(traceSink?.event);
-			const handoffs = createHandoffConsumer({
+			// Everything below is adaptation: each port wraps one subdomain surface
+			// in a closure over this call's context. The lifecycle itself — which
+			// gate runs when, what a refusal does to the trace, what settles in what
+			// order — is the Flow aggregate's own (flow.ts), not wiring.
+			const admission = await Flow.admit({
 				params,
-				mode,
 				policy,
-				defaultCwd: presetRun.runDefaultCwd,
-				recordEvent: traceSink?.event,
+				cwd: ctx.cwd,
+				hasUI: ctx.hasUI === true,
+				// Who to credit on an approval receipt. pi does not hand the extension an
+				// authenticated operator identity, so this is an audit label: whatever
+				// PI_FLOWS_APPROVAL_ACTOR names, else the channel that answered the prompt.
+				approvalActor: process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR,
+				agentScope,
+				discovery,
+				roster,
+				signal,
+				onUpdate,
+				runChild: runFlowAgent,
+				makeDetails,
+				resolvePreset: params.preset
+					? () => {
+						const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, policy);
+						if ("error" in resolved) {
+							return { refusal: presetResolutionErrorOutput(resolved.error, presetDiscovery, makeDetails("list")([], resolved.error), policy) };
+						}
+						activePreset = resolved.preset;
+						policy = presetCapturePolicy(policy, resolved.params);
+						const expanded = { ...resolved.params, ...policy };
+						budgetCeilings = collectBudgetCeilings(expanded);
+						return { params: expanded, policy };
+					}
+					: undefined,
+				detectMode: (candidate) => {
+					const detected = detectRunMode(candidate);
+					if ("error" in detected) {
+						return {
+							refusal: {
+								content: [{ type: "text", text: `${formatFlowError(detected.error)}\n\nAvailable agents:\n${catalog.summary()}` }],
+								details: makeDetails("list")([], detected.error),
+							},
+						};
+					}
+					return detected;
+				},
+				approvePresetTrust: async (candidate, mode) => {
+					const presetApproval = await approveProjectPreset(activePreset, agentScope, candidate.confirmProjectAgents, ctx, policy);
+					if (presetApproval.error) {
+						const details = makeDetails(mode)([], presetApproval.error);
+						const link = await traceProjectPresetRefusal(presetApproval.error, activePreset, callerTrace, mode, policy, ctx.cwd, ctx.hasUI);
+						if (link) details.trace = link;
+						return { refusal: { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details } };
+					}
+					return { record: presetApproval.record };
+				},
+				preparePresetRun: (candidate, mode) => {
+					const presetRun = preparePresetDispatch(activePreset, candidate, requestedPresetTask, mode, ctx.cwd);
+					codeReviewRange = presetRun.codeReviewRange;
+					return { params: presetRun.params as Record<string, any>, runDefaultCwd: presetRun.runDefaultCwd };
+				},
+				approveProjectAgents: async (candidate, recordEvent) => {
+					const projectAgents = catalog.projectAgentsFor(candidate);
+					if ((agentScope !== "project" && agentScope !== "all") || !(candidate.confirmProjectAgents ?? true) || projectAgents.length === 0) return null;
+					if (!ctx.hasUI) {
+						recordEvent?.({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "required", "flow.approval.interactive": false } });
+						return flowError(
+							"PROJECT_AGENT_APPROVAL_REQUIRED",
+							"Project-local flow agents require explicit trust in non-UI/headless runs.",
+							`Requested project-local agents: ${projectAgents.map((agent) => agent.name).join(", ")}. These prompts come from ${safePath(discovery.projectAgentsDir)} and are controlled by the repository.`,
+							"Run in an interactive UI to approve, or pass confirmProjectAgents:false only after reviewing the project-local agent files.",
+						);
+					}
+					const ok = await ctx.ui.confirm(
+						"Run project-local flow agents?",
+						`Agents: ${projectAgents.map((agent) => agent.name).join(", ")}\nSource: ${safePath(discovery.projectAgentsDir)}\n\nProject-local agents are repo-controlled prompts. Continue only for trusted repositories.`,
+					);
+					if (!ok) {
+						recordEvent?.({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "denied", "flow.approval.interactive": true } });
+						return flowError(
+							"PROJECT_AGENT_APPROVAL_DENIED",
+							"Canceled: project-local flow agents were not approved.",
+							"The interactive approval prompt was denied.",
+							"Review the project-local agent files and retry if you trust them.",
+						);
+					}
+					recordEvent?.({ kind: "approval", name: "project_agents", attributes: { "flow.approval.decision": "approved", "flow.approval.interactive": true } });
+					return null;
+				},
+				checkpoint: (candidate, mode, when, preview, recordEvent) => checkpointApproval(candidate, ctx, mode, when, preview, recordEvent),
+				handlerFor: (mode) => RUN_MODE_HANDLERS[mode],
+				confirm: ctx.hasUI ? (title, message) => ctx.ui.confirm(title, message) : undefined,
+				presence: {
+					start: (mode, details, redactSecrets, budget) => liveFlows.start(toolCallId, mode, details, redactSecrets, budget),
+					update: (details) => liveFlows.update(toolCallId, details),
+					settle: (details) => liveFlows.settle(toolCallId, details),
+				},
+				clearUi: () => clearFlowUi(ctx),
+				// Reflexion is a flow-wide cross-cutting concern applied at the dispatch
+				// seam: lessons from prior runs are injected into the top-level task
+				// before the handler runs, and a lesson is recorded from the final
+				// output after it — every mode gets both halves without per-handler wiring.
+				resolveTask: (candidate) =>
+					typeof candidate.task === "string" && candidate.task.trim() && reflexionFile(ctx.cwd, candidate)
+						? { ...candidate, task: withReflexion(ctx.cwd, candidate, candidate.task, policy) }
+						: candidate,
+				recordLesson: (candidate, mode, text) => appendReflexion(ctx.cwd, candidate, mode, text, policy),
+				formatResult: (output, runDefaultCwd) => {
+					if (activePreset) formatPresetResult(activePreset, output, policy, runDefaultCwd, codeReviewRange);
+				},
+				decorateRootAttributes: (attributes, details, deliverable) => attachPresetTraceAttributes(attributes, activePreset, details, deliverable),
+				persist: (details) => appendFlowSessionEntry(pi, details),
 			});
-			const refuse = async (error: FlowError) => {
-				const details = makeDetails(mode)([], error);
-				// The refusal's own trace exists; without the link a caller carrying a
-				// traceContext cannot correlate the refusal to the spans that describe it.
-				const link = await traceSink?.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
-				if (link) details.trace = link;
-				return { content: [{ type: "text" as const, text: formatFlowError(error) }], details };
-			};
-
-			const projectAgents = catalog.projectAgentsFor(params);
-			if ((agentScope === "project" || agentScope === "all") && (params.confirmProjectAgents ?? true) && projectAgents.length > 0) {
-				if (!ctx.hasUI) {
-					const error = flowError(
-						"PROJECT_AGENT_APPROVAL_REQUIRED",
-						"Project-local flow agents require explicit trust in non-UI/headless runs.",
-						`Requested project-local agents: ${projectAgents.map((agent) => agent.name).join(", ")}. These prompts come from ${safePath(discovery.projectAgentsDir)} and are controlled by the repository.`,
-						"Run in an interactive UI to approve, or pass confirmProjectAgents:false only after reviewing the project-local agent files.",
-					);
-					traceSink?.event({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "required", "flow.approval.interactive": false } });
-					return refuse(error);
-				}
-
-				const ok = await ctx.ui.confirm(
-					"Run project-local flow agents?",
-					`Agents: ${projectAgents.map((agent) => agent.name).join(", ")}\nSource: ${safePath(discovery.projectAgentsDir)}\n\nProject-local agents are repo-controlled prompts. Continue only for trusted repositories.`,
-				);
-				if (!ok) {
-					const error = flowError(
-						"PROJECT_AGENT_APPROVAL_DENIED",
-						"Canceled: project-local flow agents were not approved.",
-						"The interactive approval prompt was denied.",
-						"Review the project-local agent files and retry if you trust them.",
-					);
-					traceSink?.event({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "denied", "flow.approval.interactive": true } });
-					return refuse(error);
-				}
-				traceSink?.event({ kind: "approval", name: "project_agents", attributes: { "flow.approval.decision": "approved", "flow.approval.interactive": true } });
-			}
-
-			const spawnCheckpointError = await checkpointApproval(params, ctx, mode, "spawn", undefined, traceSink?.event);
-			if (spawnCheckpointError) return refuse(spawnCheckpointError);
-
-			const handler = RUN_MODE_HANDLERS[mode as RunMode];
-			if (!handler) return refuse(flowError("INVALID_MODE", "Unhandled flow mode.", "Execution fell through all mode handlers.", "Open a bug with the tool parameters that triggered this state."));
-
-			// Cost ceiling (bounds the one "uncontrolled recursion" dimension iteration/time
-			// caps miss) and optional trace export (OpenInference JSONL) for the flow tree.
-			// Undefined when the call configured no ceiling: this flow runs uncapped.
-			const budget = Budget.forFlow(params);
-			// Who to credit on an approval receipt. pi does not hand the extension an
-			// authenticated operator identity, so this is an audit label: whatever
-			// PI_FLOWS_APPROVAL_ACTOR names, else the channel that answered the prompt.
-			const approvalActor = process.env.PI_FLOWS_APPROVAL_ACTOR?.trim() || DEFAULT_APPROVAL_ACTOR;
-			let liveDetails = makeDetails(mode)([]);
-			liveFlows.start(toolCallId, mode, liveDetails, policy.redactSecrets, budget);
-			clearFlowUi(ctx);
-			const liveUpdate: Update = (partial) => {
-				liveDetails = partial.details;
-				liveFlows.update(toolCallId, liveDetails);
-				onUpdate?.(partial);
-			};
-
-			// Reflexion is a flow-wide cross-cutting concern applied at the dispatch seam:
-			// lessons from prior runs are injected into the top-level task before the
-			// handler runs, and a lesson is recorded from the final output after it —
-			// every mode gets both halves without per-handler wiring.
-			const paramsForRun =
-				typeof params.task === "string" && params.task.trim() && reflexionFile(ctx.cwd, params)
-					? { ...params, task: withReflexion(ctx.cwd, params, params.task, policy) }
-					: params;
-
-			try {
-				const output = await handler({
-					params: paramsForRun,
-					discovery,
-					policy,
-					handoffs,
-					agentScope,
-					defaultCwd: presetRun.runDefaultCwd,
-					roster,
-					signal,
-					onUpdate: liveUpdate,
-					budget,
-					recordSpan: traceSink?.record,
-					recordEvent: traceSink?.event,
-					requestApproval: async (title, message) => {
-						const decision = !ctx.hasUI ? "required" : (await ctx.ui.confirm(title, message) ? "approved" : "denied");
-						traceSink?.event({
-							kind: "approval",
-							name: "mode.approval",
-							ok: decision === "approved",
-							attributes: { "flow.approval.decision": decision, "flow.approval.actor": approvalActor, "flow.approval.interactive": ctx.hasUI === true },
-						});
-						return decision;
-					},
-					approvalActor,
-					makeDetails,
-					runChild: runFlowAgent,
-					concurrency,
-				});
-				if (handoffs.blockingError && !output.details.error) {
-					output.details.error = handoffs.blockingError;
-					output.content = [{ type: "text", text: formatFlowError(handoffs.blockingError) }];
-				}
-				if (activePreset) formatPresetResult(activePreset, output, policy, presetRun.runDefaultCwd, presetRun.codeReviewRange);
-				// Record the lesson only when at least one run happened — pre-spawn
-				// refusals (validation errors, approvals) are not lessons about the task.
-				if (output.details.results.length > 0) {
-					await appendReflexion(ctx.cwd, params, mode, output.content[0]?.text ?? "", policy);
-				}
-				const finalCheckpointError = await checkpointApproval(params, ctx, mode, "finalize", output.content[0]?.text, traceSink?.event);
-				if (finalCheckpointError) {
-					output.details.error = finalCheckpointError;
-					output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];
-				}
-				liveDetails = output.details;
-				liveFlows.update(toolCallId, liveDetails);
-				if (traceSink) {
-					const ok = !liveDetails.error && !liveDetails.results.some((result) => result.exitCode !== -1 && isFailed(result));
-					// A strict run whose own evidence is degraded is about to be refused, so the root must not claim a verified outcome it never delivered.
-					output.details.trace = await traceSink.finalize({ ok }, (health) => attachPresetTraceAttributes(traceSummaryAttributes(mode, params, output), activePreset, output.details, !traceStrict || traceHealthStatus(health, true) === "recorded"));
-				}
-				// Strict runs refuse to report a result they cannot evidence. An
-				// already-failed run keeps its own error: the incomplete trace is a
-				// second problem, not a better explanation of the first.
-				const traceError = strictTraceError(output.details.trace, traceStrict);
-				if (traceError && !output.details.error) {
-					output.details.error = traceError;
-					output.content = [{ type: "text", text: `${formatFlowError(traceError)}\n\n${output.content[0]?.text ?? ""}`.trimEnd() }];
-					liveDetails = output.details;
-					liveFlows.update(toolCallId, liveDetails);
-				}
-				// Persisted last, so the durable history cannot record a run as `ok`
-				// that the caller was told failed — and so it carries the trace link.
-				appendFlowSessionEntry(pi, liveDetails);
-				return output;
-			} finally {
-				liveFlows.settle(toolCallId, liveDetails);
-			}
+			if ("refused" in admission) return admission.refused;
+			const dispatched = await admission.admitted.dispatch();
+			return dispatched.settle();
 		},
 		renderCall(args, theme, context) {
 			const scope = args.agentScope ?? "user";

@@ -3,7 +3,8 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flowAgentDir, isDirectory, parseFlowFrontmatter } from "./agents.ts";
-import { isFailed, safePath, sanitizeText, takeValidatedReturnEnvelope } from "./sanitize.ts";
+import { Run } from "./run.ts";
+import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
 import { FlowParams, flowParamsSchemaError } from "./schema.ts";
 import {
 	flowError,
@@ -406,7 +407,7 @@ export function formatPresetResult(
 		// One axis failing validation is a flow error, not a verdict — but a finding
 		// the other axis already anchored and had validated is still worth acting on.
 		const anchored = output.details.results
-			.map((result) => takeValidatedReturnEnvelope(result))
+			.map((result) => Run.of(result).takeValidatedReturnEnvelope())
 			.flatMap((envelope) => Array.isArray((envelope?.data as any)?.findings) ? (envelope!.data as any).findings : []);
 		if (policy.recordContent && anchored.length) {
 			const text = `${output.content[0]?.text ?? ""}\n\nFindings a validated review axis already anchored:\n${anchored.map(findingLine).join("\n")}`;
@@ -419,8 +420,8 @@ export function formatPresetResult(
 	// it did read. Its envelope cannot prove coverage, so it never counts toward the
 	// verdict, but dropping its findings would hide the one thing worth acting on.
 	const incomplete = output.details.results.filter((result) => result.exitCode === 0 && result.envelope && !completed.includes(result));
-	const envelopes = completed.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope);
-	const incompleteEnvelopes = incomplete.map((result) => takeValidatedReturnEnvelope(result) ?? result.envelope);
+	const envelopes = completed.map((result) => Run.of(result).takeValidatedReturnEnvelope() ?? result.envelope);
+	const incompleteEnvelopes = incomplete.map((result) => Run.of(result).takeValidatedReturnEnvelope() ?? result.envelope);
 	const incompleteFindings = incompleteEnvelopes
 		.flatMap((envelope) => Array.isArray((envelope?.data as any)?.findings) ? (envelope!.data as any).findings : []);
 	const data = envelopes.map((envelope) => envelope?.data as any);
