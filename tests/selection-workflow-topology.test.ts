@@ -132,6 +132,7 @@ test("an invalid sibling phase cannot lend its valid siblings to the topology", 
 			{ id: "analyze", agent: "recon", task: "Analyze the release migration." },
 			{ id: "verify", agent: "operator", task: "Verify the release migration." },
 			{ id: "plan", task: "Plan migration" },
+			{ id: "approve", approval: { message: "Approve migration" } },
 		] },
 	};
 	assert.equal(callAdmissibilityFailure(invalidSibling)?.code, "WORKFLOW_INVALID");
@@ -149,6 +150,48 @@ test("an invalid sibling phase cannot lend its valid siblings to the topology", 
 		{ id: "verify", agent: "operator", task: "Verify the release migration." },
 	] } };
 	assert.equal(callAdmissibilityFailure(bothKinds)?.code, "WORKFLOW_INVALID");
+});
+
+test("a work-only workflow fails the case: the gate itself is part of the topology", () => {
+	// Two on-topic work phases with bundled agents and NO approval phase:
+	// minTasks, everyTaskPattern, and knownAgentsOnly all hold, and the
+	// run-wide taskPattern is satisfied by the top-level task's own
+	// "approval" wording — only minApprovalPhases sees that this workflow
+	// never pauses or persists a resumable approval point.
+	const workOnly = {
+		why: "gated release migration",
+		task: MIGRATION_TASK,
+		workflow: { phases: [
+			{ id: "analyze", agent: "recon", task: "Analyze the release migration." },
+			{ id: "verify", agent: "operator", task: "Verify the release migration." },
+		] },
+	};
+	assert.equal(callAdmissibilityFailure(workOnly), null);
+	const result = scored([workOnly]);
+	assert.equal(result.pass, false);
+	assert.match(result.notes, /expected at least 1 workflow approval phase\(s\), saw 0/);
+});
+
+test("minApprovalPhases counts the handler's approval kind, in workflow calls only", () => {
+	// A messageless approval object is not an approval phase (the handler's
+	// discriminator is approval.message), and a non-workflow mode has no
+	// approval phases at all — the predicate must not be satisfiable there.
+	const messageless = flowCallMatchesExpectation({ arguments: {
+		why: "gated phases",
+		task: "Release migration",
+		workflow: { phases: [
+			{ id: "analyze", agent: "recon", task: "Analyze the release migration." },
+			{ id: "approve", approval: {} },
+		] },
+	} }, { mode: "workflow", minApprovalPhases: 1 });
+	assert.equal(messageless.pass, false);
+	assert.match(messageless.notes, /expected at least 1 workflow approval phase\(s\), saw 0/);
+	const notWorkflow = flowCallMatchesExpectation({ arguments: {
+		why: "review",
+		tasks: [{ agent: "recon", task: "Review the release migration." }],
+	} }, { minApprovalPhases: 1 });
+	assert.equal(notWorkflow.pass, false);
+	assert.match(notWorkflow.notes, /saw 0/);
 });
 
 test("a stray agent field on an approval phase does not poison the agents predicates", () => {

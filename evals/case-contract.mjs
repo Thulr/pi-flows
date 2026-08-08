@@ -314,7 +314,7 @@ function asList(value) {
 // scorer would silently ignore. firstCall is meaningful only on a top-level
 // expectation — inside anyOf arms and forbidden shapes it would be a silent
 // no-op, so it is unknown there.
-const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly"]);
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly"]);
 
 function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
 	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
@@ -355,8 +355,10 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	// Validation is mode-blind; what minTasks counts is per-mode (for workflow
 	// it is the handler's work phases, not raw phase count) and lives with the
 	// scorer in select-scoring.mjs and evals/README.md.
-	if (shape.minTasks !== undefined && (!Number.isInteger(shape.minTasks) || shape.minTasks < 1)) {
-		issues.push(`${label}.minTasks must be a positive integer — anything else makes the comparison vacuous`);
+	for (const countField of ["minTasks", "minApprovalPhases"]) {
+		if (shape[countField] !== undefined && (!Number.isInteger(shape[countField]) || shape[countField] < 1)) {
+			issues.push(`${label}.${countField} must be a positive integer — anything else makes the comparison vacuous`);
+		}
 	}
 	for (const patternField of ["taskPattern", "everyTaskPattern"]) {
 		if (shape[patternField] === undefined) continue;

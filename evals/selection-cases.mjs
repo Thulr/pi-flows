@@ -379,6 +379,10 @@ export const SELECTION_CASES = defineCases([
 			// check, so UNKNOWN_AGENT is not admissibility-scored here — the
 			// shape itself must refuse work phases naming invented agents.
 			knownAgentsOnly: true,
+			// The gate itself: a work-only workflow never pauses or persists
+			// a resumable approval point, so it is not the phase-gated
+			// topology this task requests, however on-topic its work phases.
+			minApprovalPhases: 1,
 			taskPattern: "release migration|analyze|verify|approval",
 			// Each assigned work phase must itself name the migration subject or
 			// one of the requested phase intents — an off-topic phase cannot ride

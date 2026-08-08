@@ -39,7 +39,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   scores `WORKFLOW_INVALID` through the handler's own exported phase
   validation, so an invalid phase cannot lend its valid siblings to a case's
   topology, and the agents predicates read work phases only, so a stray
-  agent field on an approval phase cannot fail a call the tool runs. The
+  agent field on an approval phase cannot fail a call the tool runs. A new
+  `minApprovalPhases` shape predicate counts phases of the handler's
+  approval kind, so a phase-gated case can require the gate itself. The
   `implicit-phase-gated-work-uses-workflow` case now requires at least two
   on-topic work phases naming bundled agents (`knownAgentsOnly` — workflow
   persists state before the runner's roster check, so `UNKNOWN_AGENT` is not

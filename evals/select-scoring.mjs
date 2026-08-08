@@ -284,6 +284,18 @@ function flowCallShapeMismatch(args, shape) {
 		return `expected at least ${shape.minTasks} ${actualMode} task(s), saw ${actualTaskCount}`;
 	}
 
+	// The gate itself, not just the work in front of it: a phase-gated case
+	// must be able to require that the workflow actually pauses. Approval
+	// phases are counted by the handler's own kind test (approval.message,
+	// the same discriminator workflowPhasesRefusal enforces at the rider) —
+	// only workflow calls have them, so any other mode counts zero.
+	if (shape.minApprovalPhases !== undefined) {
+		const approvalCount = asArray(args?.workflow?.phases).filter((phase) => Boolean(phase?.approval?.message)).length;
+		if (approvalCount < shape.minApprovalPhases) {
+			return `expected at least ${shape.minApprovalPhases} workflow approval phase(s), saw ${approvalCount}`;
+		}
+	}
+
 	if (shape.taskPattern && !new RegExp(shape.taskPattern, "i").test(taskText(args))) {
 		return `task did not match /${shape.taskPattern}/`;
 	}

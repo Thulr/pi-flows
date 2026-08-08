@@ -692,7 +692,11 @@ two rather than the four the task enumerates, so a model that merges the
 analyze/plan/implement/verify enumeration into fewer phases still passes —
 closing the topology gap the headless `WORKFLOW_APPROVAL_REQUIRED` check left
 open, where one trivial work phase ahead of the approval rode the top-level
-task's migration wording (issue #88). The case also sets `knownAgentsOnly`
+task's migration wording (issue #88). `minApprovalPhases` is the other half
+of that topology: it counts phases of the handler's approval kind
+(`approval.message`), so a phase-gated case can require the gate itself — a
+work-only workflow that never pauses cannot ride the top-level task's
+"approval" wording through the run-wide `taskPattern`. The case also sets `knownAgentsOnly`
 because workflow persists its state file before the runner's roster check, so
 `UNKNOWN_AGENT` is outside the admissibility vocabulary there — the shape
 itself must refuse a work phase naming an invented agent. The `independent-review-safe-first-call` case reproduces the
