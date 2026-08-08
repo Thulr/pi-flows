@@ -8,8 +8,19 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.7.0 - 2026-08-08
+
 ### Added
 
+- The README opens with a light/dark SVG banner, and the package manifest's
+  new `pi.image` field points the [pi.dev gallery](https://pi.dev/packages)
+  card at the durable flow-card demo GIF. Banner and GIFs are served from the
+  repository, so the published tarball stays image-free.
+- `docs/reference/package.md` documents the packaging surface for the first
+  time: the `pi` manifest, what ships in the tarball and why, every install
+  method, and the gallery metadata.
 - Named workflow presets now sit above the raw mode/agent matrix. Bundled
   `scout`, `map-codebase`, and `code-review` definitions are discovered from
   package, user, and trust-gated project scopes; `/flows`, `flow list`, config
@@ -31,6 +42,14 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- User docs are reorganized around the [Diátaxis](https://diataxis.fr/)
+  framework: `docs/{tutorials,how-to,reference,explanation}/` with a
+  `docs/README.md` index. Packaged doc paths move accordingly (for example
+  `docs/troubleshooting.md` → `docs/how-to/troubleshooting.md`); heading
+  anchors are unchanged. The README is now a landing page — its former
+  355-line `flow` quick reference lives in `docs/reference/flow-reference.md`,
+  and the situations table and harness rationale in
+  `docs/explanation/patterns.md` (#94).
 - The selection-eval admissibility seam now scores the roster rule for
   `workflow` calls: a workflow whose first work phase names an unknown agent
   is refused (`UNKNOWN_AGENT`) instead of scoring as admissible, closing the
