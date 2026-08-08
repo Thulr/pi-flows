@@ -25,6 +25,7 @@
 // recorded approval facts were changed after the fact by a partial write, a
 // half-applied merge, or a tool that rewrites one field.
 import { createHash, randomUUID } from "node:crypto";
+import { deepFreeze } from "./contract-resolution.ts";
 import { canonicalSha256, isRecord } from "./delegation.ts";
 import { flowError, type ApprovalReceiptSummary, type FlowError } from "./types.ts";
 
@@ -188,20 +189,78 @@ function shapeIssue(value: unknown): string | null {
 	return null;
 }
 
+/** Never leaves this module: makes ApprovalAuthorization construction runtime-private, not merely type-private. */
+const AUTHORIZATION_KEY = Symbol("pi-flows.authorization");
+
+/** `ApprovalAuthorization.verify`'s outcome: a refusal, or the sole capability to spend the receipt. */
+export type ApprovalVerification =
+	| { error: FlowError; authorization?: undefined }
+	| { error?: undefined; authorization: ApprovalAuthorization };
+
 /**
- * Independently re-verify a receipt against the action about to run. The binding
- * is recomputed from the live workflow spec and params rather than trusted from
- * the stored receipt, so a receipt only authorizes what it was actually granted
- * for.
- *
- * @param consumer the action about to use this receipt. Every step the approval
- *   gates presents the SAME action, so re-verifying anywhere inside that run is a
- *   resume; a different action is a replay and is refused.
+ * Proof that a stored receipt was verified against the action about to run —
+ * and the only path to spending it: `consume` exists only on this object, and
+ * this object exists only as `verify`'s success result, already bound to the
+ * verified consumer.
  */
-export function verifyApprovalReceipt(
+export class ApprovalAuthorization {
+	readonly #receipt: ApprovalReceipt;
+	readonly #consumer: string;
+	#consumed: ApprovalReceipt | undefined;
+
+	private constructor(receipt: ApprovalReceipt, consumer: string, key: symbol) {
+		// TS `private` is erased at runtime; the key keeps construction
+		// runtime-private, so no authorization exists without verify passing.
+		if (key !== AUTHORIZATION_KEY) {
+			throw new TypeError("ApprovalAuthorization is constructed only by verify(); direct construction would bypass expiry, binding, and replay checks.");
+		}
+		this.#receipt = receipt;
+		this.#consumer = consumer;
+		// Freezing blocks own-property shadowing of `consume`; the #consumed latch is unaffected.
+		Object.freeze(this);
+	}
+
+	/**
+	 * Independently re-verify a receipt against the action about to run. The binding
+	 * is recomputed from the live workflow spec and params rather than trusted from
+	 * the stored receipt, so a receipt only authorizes what it was actually granted
+	 * for.
+	 *
+	 * @param consumer the action about to use this receipt. Every step the approval
+	 *   gates presents the SAME action, so re-verifying anywhere inside that run is a
+	 *   resume; a different action is a replay and is refused.
+	 */
+	static verify(
+		receipt: unknown,
+		binding: ApprovalBinding,
+		{ consumer, now = Date.now() }: { consumer: string; now?: number },
+	): ApprovalVerification {
+		const error = receiptIssue(receipt, binding, { consumer, now });
+		if (error) return { error };
+		// A frozen clone: consumption seals what verification covered, not what a retained receipt drifted into.
+		return { authorization: new ApprovalAuthorization(deepFreeze(structuredClone(receipt)) as ApprovalReceipt, consumer, AUTHORIZATION_KEY) };
+	}
+
+	/**
+	 * Burn the receipt once its authorized action has begun. Re-consuming is a
+	 * resume, not a second use: the first consumption is latched, so a duplicate
+	 * call returns the identical receipt rather than re-sealing.
+	 */
+	consume(now = Date.now()): ApprovalReceipt {
+		this.#consumed ??= this.#receipt.consumedAt !== null && this.#receipt.consumedBy === this.#consumer
+			? this.#receipt
+			: sealReceipt({ ...this.#receipt, consumedAt: new Date(now).toISOString(), consumedBy: this.#consumer });
+		return this.#consumed;
+	}
+}
+
+Object.freeze(ApprovalAuthorization.prototype);
+Object.freeze(ApprovalAuthorization);
+
+function receiptIssue(
 	receipt: unknown,
 	binding: ApprovalBinding,
-	{ consumer, now = Date.now() }: { consumer: string; now?: number },
+	{ consumer, now }: { consumer: string; now: number },
 ): FlowError | null {
 	const shape = shapeIssue(receipt);
 	if (shape) {
@@ -254,12 +313,6 @@ export function verifyApprovalReceipt(
 		);
 	}
 	return null;
-}
-
-/** Burn a receipt once its authorized action has begun. Re-consuming by the same action is a resume, not a second use. */
-export function consumeApprovalReceipt(receipt: ApprovalReceipt, consumer: string, now = Date.now()): ApprovalReceipt {
-	if (receipt.consumedAt !== null && receipt.consumedBy === consumer) return receipt;
-	return sealReceipt({ ...receipt, consumedAt: new Date(now).toISOString(), consumedBy: consumer });
 }
 
 /**

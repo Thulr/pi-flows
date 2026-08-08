@@ -1,5 +1,5 @@
 import { resolveDelegationContract } from "./contract-resolution.ts";
-import { createDelegationBudget, renderDelegationTask, validateDelegationContract } from "./delegation.ts";
+import { ResolvedDelegationContract } from "./delegation.ts";
 import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner.ts";
 import type {
 	ChildSpanScope,
@@ -13,23 +13,26 @@ import type {
 import { appendReturnRequirements, resolvedCwd } from "./validate.ts";
 
 export interface IntegrationRunPlan extends AgentFanoutItem {
-	contract?: DelegationContract;
+	contract?: ResolvedDelegationContract;
 	cwd: string;
 }
 
-function runLimits(contract?: DelegationContract): AgentRunLimits | undefined {
+function runLimits(contract?: ResolvedDelegationContract): AgentRunLimits | undefined {
 	if (!contract) return undefined;
 	return {
 		captureRawOutput: true,
-		timeoutMs: contract.budget.timeoutMs,
-		contractBudget: createDelegationBudget(contract),
-		contract,
+		timeoutMs: contract.timeoutMs,
+		contractBudget: contract.budget(),
+		// Trace identity reads contract DATA, not the resolved object.
+		contract: contract.contract,
 	};
 }
 
 /**
- * Validate and render one child plan before dispatch. Handoff validation and
- * consumption happen later through ModeDeps.handoffs, after the child settles.
+ * Validate and render one child plan before dispatch. The contract crosses
+ * into the plan only as a ResolvedDelegationContract, so downstream dispatch
+ * and handoff consumption work against a contract that passed admissibility.
+ * Handoff validation/consumption happen later through ModeDeps.handoffs.
  */
 export function integrationRunPlan(
 	deps: ModeDeps,
@@ -43,11 +46,15 @@ export function integrationRunPlan(
 		scope?: ChildSpanScope;
 	} = {},
 ): { plan?: IntegrationRunPlan; error?: FlowError } {
-	const contract = resolveDelegationContract(ref, options.fallbackContract);
-	const error = contract ? validateDelegationContract(contract, deps.policy) : null;
-	if (error) return { error };
+	const rawContract = resolveDelegationContract(ref, options.fallbackContract);
+	let contract: ResolvedDelegationContract | undefined;
+	if (rawContract) {
+		const resolution = ResolvedDelegationContract.resolve(rawContract, deps.policy);
+		if (resolution.error) return { error: resolution.error };
+		contract = resolution.resolved;
+	}
 	const renderedTask = contract
-		? renderDelegationTask(task, contract, options.returnContract, options.requireEvidence)
+		? contract.renderTask(task, options.returnContract, options.requireEvidence)
 		: appendReturnRequirements(task, options.returnContract, options.requireEvidence);
 	return {
 		plan: {

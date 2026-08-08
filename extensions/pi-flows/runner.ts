@@ -1,27 +1,31 @@
-import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type FlowError, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type ModelRoster, type RunChildOptions, type SpanStage, type ThinkingLevel } from "./types.ts";
+import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type ChildMessage, type ChildMessageBlock, type FlowError, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type ModelRoster, type RunChildOptions, type SpanStage, type ThinkingLevel } from "./types.ts";
 import { clampThinking, knownModel, parseModelSpec, rosterAssignment } from "./model-roster.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { appendCapped, capBytes, captureRawFinalAssistantText, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage, takeRawFinalAssistantText } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
+import { getPiInvocation } from "./commands.ts";
 
-export function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && fsSync.existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
-	}
-
-	const executableName = path.basename(process.execPath).toLowerCase();
-	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(executableName);
-	if (!isGenericRuntime) return { command: process.execPath, args };
-	return { command: "pi", args };
+/**
+ * The ACL translation for child transcript messages: project the child
+ * protocol's message into pi-flows' own ChildMessage, keeping only the fields
+ * the domain reads. Everything above this module sees the owned shape.
+ */
+function toChildMessage(message: Message): ChildMessage {
+	const content: ChildMessageBlock[] = Array.isArray(message.content)
+		? message.content.map((part: any): ChildMessageBlock => {
+				if (part?.type === "text" && typeof part.text === "string") return { type: "text", text: part.text };
+				if (part?.type === "toolCall" && typeof part.name === "string") return { type: "toolCall", name: part.name, arguments: part.arguments };
+				return { type: typeof part?.type === "string" ? part.type : "unknown" };
+			})
+		: [];
+	const toolName = (message as { toolName?: unknown }).toolName;
+	return { role: message.role, content, ...(typeof toolName === "string" ? { toolName } : {}) };
 }
 
 // Portable model tiers: agents (and flow calls) declare a capability tier instead
@@ -299,7 +303,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				if (event.type === "message_end" && event.message) {
 					const message = event.message as Message;
 					if (message.role === "assistant") {
-						if (options.captureRawOutput) captureRawFinalAssistantText(result, message);
+						if (options.captureRawOutput) captureRawFinalAssistantText(result, toChildMessage(message));
 						const turnUsage = emptyUsage();
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
@@ -336,12 +340,12 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						if (message.errorMessage && message.stopReason === "error") terminalErrorSeen = true;
 						else if (!message.errorMessage) terminalErrorSeen = false;
 					}
-					result.messages.push(storeMessage(message, policy));
+					result.messages.push(storeMessage(toChildMessage(message), policy));
 					emitUpdate();
 				}
 
 				if (event.type === "tool_result_end" && event.message) {
-					result.messages.push(storeMessage(event.message as Message, policy));
+					result.messages.push(storeMessage(toChildMessage(event.message as Message), policy));
 					emitUpdate();
 				}
 

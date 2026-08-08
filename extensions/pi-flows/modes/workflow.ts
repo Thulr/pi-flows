@@ -5,9 +5,9 @@ import { encodeAuthorKey, flowError, formatFlowError, type DelegationContract, t
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
-import { canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
+import { ResolvedDelegationContract, canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan } from "../integration.ts";
-import { DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, verifyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
+import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
 import { workflowPhasesRefusal } from "../validate.ts";
@@ -127,7 +127,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				// A lapsed or superseded approval reopens here so it can be granted
 				// again in this same pass; headless runs still fail closed below.
 				const binding = approvalBindingFor(phases, phaseIndex, deps, digest);
-				const stale = verifyApprovalReceipt(state.receipts[phase.id], binding, { consumer: binding.action });
+				const stale = ApprovalAuthorization.verify(state.receipts[phase.id], binding, { consumer: binding.action }).error;
 				// Reopening is only safe while none of the gated run has happened. Once
 				// part of it has, a fresh receipt would claim to authorize work that
 				// actually ran under the old parameters — one receipt describing two
@@ -155,9 +155,17 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				}
 			} else {
 			const persisted = state.handoffs[phase.id];
+			// Re-resolve so the persisted handoff is checked against a contract
+			// that passed admissibility, not raw spec data.
+			let phaseContract: ResolvedDelegationContract | undefined;
+			if (phase.contract) {
+				const resolution = ResolvedDelegationContract.resolve(phase.contract, policy);
+				if (resolution.error) return stateError(deps, results, resolution.error, state);
+				phaseContract = resolution.resolved;
+			}
 			const persistedError = validatePersistedIntegrationHandoff(persisted, {
 				attestation: state.attestations[phase.id],
-				contract: phase.contract,
+				contract: phaseContract,
 				policy,
 				incompletePolicy: params.incompleteHandoffPolicy,
 			});
@@ -176,15 +184,17 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		// what would run NOW. On a resume that is the whole point: the receipt was
 		// minted in an earlier process against an earlier spec.
 		const authorizedBy = authorizations.get(phase.id);
+		let authorization: ApprovalAuthorization | undefined;
 		if (authorizedBy !== undefined) {
 			const binding = approvalBindingFor(phases, authorizedBy, deps, digest);
-			const receiptError = verifyApprovalReceipt(state.receipts[phases[authorizedBy].id], binding, { consumer: binding.action });
-			if (receiptError) {
+			const verified = ApprovalAuthorization.verify(state.receipts[phases[authorizedBy].id], binding, { consumer: binding.action });
+			if (verified.error) {
 				state.status = "failed";
 				state.updatedAt = new Date().toISOString();
 				await persistState(stateFile, state);
-				return stateError(deps, results, receiptError, state);
+				return stateError(deps, results, verified.error, state);
 			}
+			authorization = verified.authorization;
 		}
 
 		state.nextPhaseId = phase.id;
@@ -234,7 +244,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			});
 			state.receipts[phase.id] = receipt;
 			state.completedPhaseIds.push(phase.id);
-			consumeAuthorization(state.receipts, phases, authorizedBy);
+			consumeAuthorization(state.receipts, phases, authorizedBy, authorization);
 			state.outputs[phase.id] = `APPROVED (receipt ${receipt.receiptId})`;
 			previous = state.outputs[phase.id];
 			state.updatedAt = new Date().toISOString();
@@ -313,7 +323,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		}
 
 		state.completedPhaseIds.push(phase.id);
-		consumeAuthorization(state.receipts, phases, authorizedBy);
+		consumeAuthorization(state.receipts, phases, authorizedBy, authorization);
 		state.handoffs[phase.id] = run.handoff!;
 		state.attestations[phase.id] = createPersistedHandoffAttestation(run.handoff!);
 		state.outputs[phase.id] = params.recordContent === false ? "[content not recorded]" : output;
@@ -332,14 +342,14 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	const tailApproval = authorizations.get(WORKFLOW_COMPLETE_STEP);
 	if (tailApproval !== undefined) {
 		const tailBinding = approvalBindingFor(phases, tailApproval, deps, digest);
-		const receiptError = verifyApprovalReceipt(state.receipts[phases[tailApproval].id], tailBinding, { consumer: tailBinding.action });
-		if (receiptError) {
+		const tailVerified = ApprovalAuthorization.verify(state.receipts[phases[tailApproval].id], tailBinding, { consumer: tailBinding.action });
+		if (tailVerified.error) {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
-			return stateError(deps, results, receiptError, state);
+			return stateError(deps, results, tailVerified.error, state);
 		}
-		consumeAuthorization(state.receipts, phases, tailApproval);
+		consumeAuthorization(state.receipts, phases, tailApproval, tailVerified.authorization);
 	}
 
 	let finalText = previous;
