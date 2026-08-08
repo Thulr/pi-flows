@@ -5,7 +5,7 @@ on:
     tags: ["v*.*.*"]
 
 permissions:
-  contents: read
+  contents: write # create the GitHub Release for the pushed tag
   id-token: write # OIDC token for npm trusted publishing (also signs provenance)
 
 jobs:
@@ -29,3 +29,20 @@ jobs:
             exit 1
           fi
       - run: npm publish # auth via OIDC trusted publisher; provenance is automatic
+      - name: Create GitHub Release from the CHANGELOG section
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # After npm publish on purpose: a failed publish must not leave a
+        # Release pointing at a version the registry never got.
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v ver="$ver" '
+            /^## /{ if (insec) exit; if ($2 == ver) { insec=1; next } }
+            insec { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if ! grep -q '[^[:space:]]' /tmp/release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $ver; smoke should have caught this."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
