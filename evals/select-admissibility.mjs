@@ -46,7 +46,7 @@ const scoringPresetDiscovery = discoveredPresets;
 /** The modes whose handlers apply the top-level params.contract to their FIRST child (verified per handler: single uses it directly; chain, parallel, vote, debate pass fallbackContract; evaluate's operator falls back to it). Dossier is deliberately absent: its fallback goes to the debrief synthesizer, and its first-spawn section plans carry only their own contracts. */
 const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "debate", "evaluate"]);
 
-/** The modes whose openers run through integrationRunPlan, which resolves (and validates) each ref's own contract: the fallback modes plus graph nodes, dossier sections (modes/dossier.ts:33 — no fallback, own contracts only), and the orchestrate commander (modes/orchestrate.ts:53). route/search/loop openers use runAgentRef with no contract limits, so a role contract there is ignored by the tool and must be ignored here. */
+/** The modes whose openers run through integrationRunPlan, which resolves (and validates) each ref's own contract: the fallback modes plus graph nodes, dossier sections (modes/dossier.ts:33 — no fallback, own contracts only), and the orchestrate commander (modes/orchestrate.ts:53). route/search/loop openers use runAgentRef with no contract limits, so a role contract there is ignored by the tool and must be ignored here. Workflow phases also run through integrationRunPlan, but workflow is deliberately absent: its contract refusals land only after the fresh-state write, while the play-out policy classifies INVALID_DELEGATION_CONTRACT as an entry-guard code that may play out — scoring it here would let a refused workflow call re-run and write state at a model-supplied path. Workflow's first-spawn ref is scored for the roster rule only (#91). */
 const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph", "dossier", "orchestrate"]);
 
 // The tool resolves a preset before any gate runs, so admissibility must be
@@ -80,9 +80,10 @@ function effectiveCallParams(args) {
 // exactly as the tool asks it. Checks run in the dispatch core's order.
 // Returns { code, reason } so callers phrase their own notes and the
 // refused-call budget can group verdicts by refusal code. Refusal codes
-// outside this seam's vocabulary (unknown agents, per-mode bounds such as
-// TOO_FEW_VOTERS) score as admissible; extending the vocabulary means adding
-// the tool's own predicate here.
+// outside this seam's vocabulary (per-mode bounds such as TOO_FEW_VOTERS, or
+// the roster rule for monitor and worktree, whose refusal is not statically
+// certain) score as admissible; extending the vocabulary means adding the
+// tool's own predicate here.
 export function callAdmissibilityFailure(args) {
 	// pi validates the raw call against the public flow schema before execute
 	// ever runs, so a schema-invalid call is refused ahead of every gate below
@@ -164,6 +165,9 @@ export function callAdmissibilityFailure(args) {
 	// and COMBINED: a wave mixing one unknown reviewer with one exhausted one
 	// spawns nothing, even though neither cause alone covers every role. One
 	// startable role means real children run and the call counts as admitted.
+	// For workflow the first-spawn role is its first work phase (#91); that
+	// refusal follows the fresh-state write, so the play-out policy
+	// terminates it (actsBeforeRunner, select.mjs) instead of re-running it.
 	const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
 	const consumedContract = (ref) => {
 		const roleContract = ROLE_CONTRACT_MODES.has(mode) ? ref.contract : undefined;

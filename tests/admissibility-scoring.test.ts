@@ -6,14 +6,15 @@
 // waves mirrored from the mode handlers; each mirror is pinned here against
 // the real handler through the fault adapter, so a handler edit that moves or
 // reshapes a guard fails this file instead of silently drifting the score.
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeFaultAdapter, faultDeps, faultDiscovery } from "./fault-adapter.ts";
 import { RUN_MODE_CONTRACTS } from "../extensions/pi-flows/modes/contract.ts";
-import { preSpawnSharedWriteRefusal, preSpawnSharedWriteWaves } from "../extensions/pi-flows/validate.ts";
+import { runFlowAgent } from "../extensions/pi-flows/runner.ts";
+import { firstSpawnAgentRefs, preSpawnSharedWriteRefusal, preSpawnSharedWriteWaves } from "../extensions/pi-flows/validate.ts";
 import { DEFAULT_CONCURRENCY, type RunMode } from "../extensions/pi-flows/types.ts";
 
 function workspace(): string {
@@ -105,6 +106,38 @@ test("modes whose guard cannot fire before the first spawn contribute no pre-spa
 		assert.deepEqual(preSpawnSharedWriteWaves(params).flat(), [], `no pre-spawn wave expected for ${Object.keys(params).join(",")}`);
 		assert.equal(preSpawnSharedWriteRefusal(faultDiscovery(), "/tmp", params), null);
 	}
+});
+
+test("workflow's roster refusal agrees with the handler: pre-spawn, but after the state write", async () => {
+	// The roster rule lives in the production child-run adapter (runFlowAgent,
+	// runner.ts), which the fault adapter deliberately does not re-state — so
+	// this pin wires the real adapter into the handler. The unknown opener is
+	// refused UNKNOWN_AGENT before any subprocess spawns, keeping the test
+	// offline while pinning the enforced gate, not a re-statement of it.
+	const adapter = makeFaultAdapter({ replies: {} });
+	const cwd = workspace();
+	const handler = RUN_MODE_CONTRACTS.find((contract) => contract.mode === "workflow")?.handler;
+	assert.ok(handler, "workflow must be in the mode table");
+	const params = { task: "migrate", workflow: { phases: [{ id: "a", agent: "made-up", task: "A" }] } };
+	const output = await handler!(faultDeps(params, adapter, cwd, { runChild: runFlowAgent }));
+	assert.equal(output.details.results[0]?.error?.code, "UNKNOWN_AGENT");
+	// …so the derivation feeds the seam exactly that opening role (#91) and
+	// the scored verdict cannot drift from the handler's refusal.
+	assert.deepEqual(firstSpawnAgentRefs(params), [{ agent: "made-up" }]);
+	// But fresh state already exists — at a possibly model-supplied stateFile —
+	// which is why the harness terminates this refusal instead of letting it
+	// play out (actsBeforeRunner, evals/select.mjs).
+	assert.ok(existsSync(path.join(cwd, ".pi", "flow-workflows")), "state must be persisted before the roster refusal");
+	// Approval phases spawn nothing: the first WORK phase is the opening role.
+	assert.deepEqual(
+		firstSpawnAgentRefs({ workflow: { phases: [{ id: "gate", approval: { message: "ok?" } }, { id: "b", agent: "operator", task: "B" }] } }),
+		[{ agent: "operator" }],
+	);
+	// A resume derives nothing: which phase spawns first lives in persisted
+	// state this static mirror cannot read, and an invalid phase list is
+	// refused WORKFLOW_INVALID before any roster check.
+	assert.deepEqual(firstSpawnAgentRefs({ workflow: { resume: true, phases: [{ id: "a", agent: "made-up", task: "A" }] } }), []);
+	assert.deepEqual(firstSpawnAgentRefs({ workflow: { phases: [] } }), []);
 });
 
 test("the predicate is total over malformed model-emitted args — smaller waves, never a throw", () => {

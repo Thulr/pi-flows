@@ -136,21 +136,59 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 	// Sequential openers are covered too: a single-mode call to an invented
 	// agent spawns nothing.
 	assert.equal(callAdmissibilityFailure({ why: "x", agent: "made-up-agent", task: "t" })?.code, "UNKNOWN_AGENT");
-	// Worktree and workflow are deliberately outside the rule: handleWorktree
-	// creates every branch and worktree before any agent resolves, and
-	// handleWorkflow persists fresh state — to a possibly model-supplied
-	// stateFile — first, so unknown-agent refusals there happen after real
-	// state exists. Such calls are admitted and the harness terminates before
-	// that work begins.
+	// Worktree stays deliberately outside the rule: handleWorktree creates
+	// every branch and worktree before any agent resolves, and a dirty source
+	// is refused with its own code before that, so the refusal is not
+	// statically certain. The call is admitted and the harness terminates
+	// before that work begins.
 	assert.equal(callAdmissibilityFailure({
 		why: "x",
 		task: "t",
 		worktree: { tasks: [{ id: "a", agent: "made-up", task: "A" }, { id: "b", agent: "also-made-up", task: "B" }] },
 	}), null);
-	assert.equal(callAdmissibilityFailure({
+	// Workflow's opening role IS scored (#91): the runner refuses its first
+	// work phase's unknown agent before any child spawns. Fresh state is
+	// persisted first — to a possibly model-supplied stateFile — so the
+	// refusal must terminate in the harness, never play out.
+	const inventedWorkflow = {
 		why: "x",
 		task: "t",
 		workflow: { phases: [{ id: "a", agent: "made-up", task: "A" }], stateFile: "package.json" },
+	};
+	assert.equal(callAdmissibilityFailure(inventedWorkflow)?.code, "UNKNOWN_AGENT");
+	assert.equal(letRefusalPlayOut(inventedWorkflow, 1, { expectFlow: true, maxRefusedCalls: 1 }), false);
+	// One known opener admits the call: a later invented phase is a mid-run
+	// concern, and knownAgentsOnly is the shape-layer companion that still
+	// refuses it role by role.
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		workflow: { phases: [{ id: "a", agent: "recon", task: "A" }, { id: "b", agent: "made-up", task: "B" }] },
+	}), null);
+	// An approval opener is refused WORKFLOW_APPROVAL_REQUIRED before any
+	// roster check, exactly as the handler pauses before resolving agents.
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		workflow: { phases: [{ id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "made-up", task: "B" }] },
+	})?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	// A resume derives nothing: which phase spawns first lives in persisted
+	// state the static mirror cannot read, and a fresh subject is refused
+	// WORKFLOW_STATE_INVALID — outside the vocabulary — before any roster
+	// check, so the seam stays silent rather than mislabeled.
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		workflow: { resume: true, phases: [{ id: "a", agent: "made-up", task: "A" }] },
+	}), null);
+	// The same resume silence applies to the headless-approval rule: the
+	// handler refuses WORKFLOW_STATE_INVALID (or skips a completed opener)
+	// before any approval phase is reached, so claiming
+	// WORKFLOW_APPROVAL_REQUIRED would mislabel the refusal.
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		workflow: { resume: true, phases: [{ id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "recon", task: "B" }] },
 	}), null);
 	// Spawn order per mode: orchestrate's commander decomposes before any
 	// recon worker, so an invented recon with the default commander is
@@ -257,6 +295,16 @@ test("contracts count only where the opener consumes them", () => {
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, search: {} }), null);
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", route: { candidates: ["recon", "analyst"], controller: { agent: "controller", contract: zeroBudgetContract } } }), null);
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", search: { generator: { agent: "strategist", contract: zeroBudgetContract } } }), null);
+	// Workflow phases DO consume their own contracts at plan construction, but
+	// that refusal lands only after the fresh-state write, and the play-out
+	// policy treats INVALID_DELEGATION_CONTRACT as an entry-guard code that
+	// may play out — so the seam deliberately scores workflow's opener for the
+	// roster rule only and stays silent on its contract (#91).
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		workflow: { phases: [{ id: "a", agent: "recon", task: "A", contract: zeroBudgetContract }] },
+	}), null);
 	// Graph nodes run through integrationRunPlan, which resolves each ref's
 	// own contract — a first wave of exhausted nodes is a real refusal.
 	assert.equal(callAdmissibilityFailure({

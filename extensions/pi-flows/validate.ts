@@ -1,7 +1,12 @@
 import * as path from "node:path";
-import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, MAX_WORKFLOW_PHASES, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
+import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
 import { safePath } from "./sanitize.ts";
 import { searchTopology } from "./topology.ts";
+import { isWorkflowWorkPhase, workflowPhasesRefusal } from "./validate-workflow.ts";
+
+// The workflow phase predicates live in validate-workflow.ts; re-exported here
+// so this module stays the one seam callers validate a call through.
+export { isWorkflowWorkPhase, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "./validate-workflow.ts";
 
 export function parseToolsOverride(tools: string | undefined, fallback: string[] | undefined): string[] | undefined {
 	if (!tools) return fallback;
@@ -343,75 +348,35 @@ export function preSpawnFanoutRefusal(params: Record<string, any>): FlowError | 
 }
 
 /**
- * handleWorkflow walks its phases in order, and an approval phase reached in
- * a headless run is refused WORKFLOW_APPROVAL_REQUIRED before any child
- * spawns (state is persisted first, so this is pre-spawn, not pre-work). A
- * workflow whose FIRST phase gates on approval therefore never starts a
- * child in the headless selection subject; the eval scores that refusal. The
- * `.message` check mirrors the handler's own approval-phase marker.
- */
-export function workflowHeadlessApprovalRefusal(params: Record<string, any>): FlowError | null {
-	if (params?.workflow === undefined) return null;
-	const phases = params.workflow?.phases;
-	if (!Array.isArray(phases)) return null;
-	if (!phases[0]?.approval?.message) return null;
-	return flowError(
-		"WORKFLOW_APPROVAL_REQUIRED",
-		"Workflow approval phase requires a human decision.",
-		"The workflow opens with an approval phase, and a headless run has no UI to collect the decision, so no child can spawn.",
-		"Run in an interactive UI, or open with a work phase.",
-	);
-}
-
-/**
- * The handler's work-phase test — a phase spawns a child only when it names
- * both an agent and a task. Exported so the selection eval counts exactly
- * the phases the tool would run (#88).
- */
-export function isWorkflowWorkPhase(phase: any): boolean {
-	return Boolean(phase?.agent && phase?.task);
-}
-
-/**
- * handleWorkflow's phase-shape validation, called by the handler itself and
- * scored by the selection eval so the two cannot drift: 1..MAX phases,
- * unique ids, each phase exactly one kind — approval (approval.message) or
- * work (agent AND task). An invalid phase refuses the call WHOLE before any
- * state write, so valid siblings cannot satisfy a case's topology (#88).
- */
-export function workflowPhasesRefusal(params: Record<string, any>): FlowError | null {
-	if (params?.workflow === undefined) return null;
-	const phases = Array.isArray(params.workflow?.phases) ? params.workflow.phases : [];
-	if (phases.length < 1 || phases.length > MAX_WORKFLOW_PHASES) {
-		return flowError("WORKFLOW_INVALID", `Workflow mode needs 1..${MAX_WORKFLOW_PHASES} phases.`, "workflow.phases was empty or exceeded the bounded state-machine limit.", `Provide 1..${MAX_WORKFLOW_PHASES} ordered work or approval phases.`);
-	}
-	const ids = new Set<string>();
-	for (const phase of phases) {
-		const approval = Boolean(phase?.approval?.message);
-		const work = isWorkflowWorkPhase(phase);
-		if (!phase?.id || ids.has(phase.id) || approval === work) {
-			return flowError("WORKFLOW_INVALID", "Workflow phases need unique ids and exactly one phase kind.", "Each phase must be either agent+task work or an approval node, but not both; ids must be unique.", "Fix the phase ids and provide either agent+task or approval.message for every phase.");
-		}
-		ids.add(phase.id);
-	}
-	return null;
-}
-
-/**
  * The refs a call would spawn before anything else: the concurrent first
  * waves for fan-out modes, the opening role for sequential ones. The
  * selection eval uses this for the roster rule — a call whose every
  * first-spawn ref names an unknown agent is refused by the runner
- * (UNKNOWN_AGENT, runner.ts) before any child does work, so the harness can
- * safely let it play out; one known ref among them means real children spawn
- * and the call must count as admitted. Three modes do work before any agent
- * resolves and are excluded outright: monitor runs its command first,
- * worktree creates every branch and worktree first (worktree.ts), and
- * workflow persists fresh state first — to a possibly model-supplied
- * stateFile (workflow.ts) — so unknown-agent refusals there are not
- * before-any-work refusals.
+ * (UNKNOWN_AGENT, runner.ts) before any child spawns, so admitting it would
+ * credit a selection nothing performed; one known ref among them means real
+ * children spawn and the call must count as admitted. Pre-spawn is not
+ * always pre-work: workflow's opening role — its first work phase, since
+ * approval phases spawn nothing — IS derived here because its roster refusal
+ * is statically certain, but handleWorkflow persists fresh state first, to a
+ * possibly model-supplied stateFile (workflow.ts), so the harness's play-out
+ * policy (actsBeforeRunner, evals/select.mjs) terminates that refusal
+ * instead of letting it re-run (#91). A workflow resume derives nothing:
+ * which phase spawns first lives in persisted state this static mirror
+ * cannot read, and a fresh subject is refused WORKFLOW_STATE_INVALID — a
+ * code outside the vocabulary — before any roster check. Two modes stay
+ * excluded outright because their roster refusal is not statically certain:
+ * monitor spawns its reactor only if the probe ever trips the trigger — a
+ * call that never fires completes with zero spawns and no refusal — and
+ * worktree's refusal depends on repository state (a dirty source is refused
+ * with its own code before any agent resolves, worktree.ts).
  */
 export function firstSpawnAgentRefs(params: Record<string, any>): SharedWriteRef[] {
+	if (params?.workflow !== undefined) {
+		// Behind an invalid phase list the tool refuses WORKFLOW_INVALID first,
+		// so the mirror stays silent there (and never walks a hostile shape).
+		if (params.workflow?.resume || workflowPhasesRefusal(params)) return [];
+		return refArray((params.workflow.phases as any[]).filter(isWorkflowWorkPhase).slice(0, 1));
+	}
 	// Evaluate's guard wave is its critic panel, but its generator spawns
 	// first, so it must be resolved ahead of the wave-derived modes — and
 	// search scores all generators before any scorer runs (SEARCH_NO_CANDIDATES
