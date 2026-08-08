@@ -208,6 +208,9 @@ export class ApprovalAuthorization {
 	private constructor(receipt: ApprovalReceipt, consumer: string) {
 		this.#receipt = receipt;
 		this.#consumer = consumer;
+		// Freezing blocks own-property shadowing of `consume` on a retained
+		// authorization; the mutable #consumed latch is private state and unaffected.
+		Object.freeze(this);
 	}
 
 	/**
@@ -243,6 +246,9 @@ export class ApprovalAuthorization {
 		return this.#consumed;
 	}
 }
+
+Object.freeze(ApprovalAuthorization.prototype);
+Object.freeze(ApprovalAuthorization);
 
 function receiptIssue(
 	receipt: unknown,

@@ -157,11 +157,9 @@ test("a token with forged own methods cannot smuggle a completed status past reu
 	});
 	assert.ok(validated.validation);
 	const forgedHandoff = { ...validated.handoff!, status: "completed" };
-	Object.assign(validated.validation!, {
-		validatedHandoff: () => structuredClone(forgedHandoff),
-		validatedEnvelope: () => ({ ...typedEnvelope({ status: "completed" }) }),
-		reusableFor: () => true,
-	});
+	assert.throws(() => {
+		Object.assign(validated.validation!, { validatedHandoff: () => structuredClone(forgedHandoff) });
+	}, TypeError, "the token is frozen, so own-method forgery throws outright");
 
 	const represented = prepareIntegrationHandoff(child, {
 		contract: resolved,
@@ -169,7 +167,7 @@ test("a token with forged own methods cannot smuggle a completed status past reu
 		policy,
 		validation: validated.validation,
 	});
-	assert.equal(represented.error?.code, "RETURN_ENVELOPE_INCOMPLETE", "the real partial snapshot is what reuse returns, and completion policy judges it");
+	assert.equal(represented.error?.code, "RETURN_ENVELOPE_INCOMPLETE", "and reuse never dispatches through the token anyway — the brand-checked private snapshot is what completion policy judges");
 });
 
 test("validation receipts cannot carry permissive content into a stricter capture policy", () => {

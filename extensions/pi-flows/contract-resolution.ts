@@ -125,6 +125,10 @@ export class ResolvedDelegationContract {
 		checkReturnData: (data: unknown) => boolean,
 	) {
 		this.#checkReturnData = checkReturnData;
+		// A retained instance must not be shadowable: an own `checkReturnData`
+		// returning true would accept schema-invalid data while the object still
+		// reads as a resolved contract. Private #state is unaffected by freezing.
+		Object.freeze(this);
 	}
 
 	/** The only way in: a value that fails the admissibility predicate never becomes an object the transitions accept. */
@@ -175,6 +179,13 @@ export class ResolvedDelegationContract {
 		return this.#checkReturnData(data);
 	}
 }
+
+// Instances are frozen at construction; the prototype and constructor are
+// frozen here, so a retained resolved contract's dispatch can be neither
+// shadowed (own property), replaced (prototype patch), nor re-pointed
+// (static patch).
+Object.freeze(ResolvedDelegationContract.prototype);
+Object.freeze(ResolvedDelegationContract);
 
 /** Resolve the contract dispatch will enforce for one child reference. */
 export function resolveDelegationContract(

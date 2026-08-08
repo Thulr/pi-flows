@@ -328,6 +328,9 @@ class IntegrationValidation {
 		this.#policy = policy;
 		this.#envelope = envelope;
 		this.#handoff = handoff;
+		// Frozen so a retained token cannot even be decorated with own methods;
+		// reuse below never dispatches through it regardless.
+		Object.freeze(this);
 	}
 
 	/**
@@ -356,6 +359,9 @@ class IntegrationValidation {
 		return { envelope: structuredClone(received.#envelope), handoff: structuredClone(received.#handoff) };
 	}
 }
+
+Object.freeze(IntegrationValidation.prototype);
+Object.freeze(IntegrationValidation);
 
 export function prepareIntegrationHandoff(
 	result: FlowRunResult,

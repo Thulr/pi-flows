@@ -40,6 +40,17 @@ test("a resolved contract carries one identity and one compiled schema for every
 	assert.equal(resolved.checkReturnData({ answer: "42" }), false, "return validation uses the schema compiled at construction");
 });
 
+test("the resolved wrapper's dispatch can be neither shadowed nor replaced", () => {
+	const resolvedContract = ResolvedDelegationContract.resolve(contract).resolved!;
+	assert.throws(() => {
+		(resolvedContract as { checkReturnData: unknown }).checkReturnData = () => true;
+	}, TypeError, "instances are frozen at construction, so an own always-true validator cannot be attached");
+	assert.throws(() => {
+		(ResolvedDelegationContract.prototype as { checkReturnData: unknown }).checkReturnData = () => true;
+	}, TypeError, "the prototype is frozen, so the shared method cannot be swapped either");
+	assert.equal(resolvedContract.checkReturnData({ answer: "not-a-number" }), false, "validation still answers from the compiled schema");
+});
+
 test("mutating the input contract after resolve changes nothing the object already admitted", () => {
 	const input = structuredClone(contract);
 	const resolvedFromInput = ResolvedDelegationContract.resolve(input).resolved!;
