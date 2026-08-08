@@ -11,9 +11,10 @@
  * allowed verification commands (`npm test`, `npm run <script>`,
  * `node --test`) execute repo-authored code and may write caches.
  *
- * No foreign imports on purpose: the predicate must stay pure and
- * unit-testable, and the foreign-import ledger admits no new module with
- * foreign imports; only the shared error vocabulary is imported.
+ * Only the shared error vocabulary is imported, on purpose: the predicate
+ * must stay pure and unit-testable, and the foreign-import ledger admits no
+ * new module with foreign imports. Spawn plumbing (the `-e` argv that loads
+ * the enforcer) lives with the enforcer in bash-readonly-extension.ts.
  */
 import { flowError, type FlowError } from "./types.ts";
 
@@ -65,17 +66,20 @@ export function bashReadonlySummary(): string {
 const GIT_SUBCOMMANDS = new Set(["log", "diff", "show", "blame", "status", "rev-parse", "ls-files", "ls-tree", "merge-base", "shortlog", "describe", "cat-file", "grep", "name-rev", "branch", "tag", "remote", "reflog"]);
 
 /** git flags that redirect output to files or inject config-named commands. */
-const GIT_FORBIDDEN_FLAGS = ["-c", "-o", "--output", "--output-directory", "--ext-diff"];
+const GIT_FORBIDDEN_FLAGS = ["-c", "-o", "--output", "--output-directory", "--ext-diff", "--open-files-in-pager"];
 
 const GIT_LIST_ONLY: Record<string, (args: string[]) => boolean> = {
 	branch: (args) => args.every((arg) => arg.startsWith("-") && ["--list", "-a", "-r", "-v", "-vv", "--contains"].some((ok) => arg === ok || arg.startsWith("--contains"))),
 	tag: (args) => args.every((arg) => arg === "-l" || arg === "--list" || arg.startsWith("-n")),
 	remote: (args) => args.length === 0 || (args.length === 1 && (args[0] === "-v" || args[0] === "show")),
+	// reflog also takes expire/delete, which mutate reflog state.
+	reflog: (args) => args.every((arg) => arg.startsWith("-")) || args[0] === "show" || args[0] === "exists",
 };
 
 function gitRefusal(args: string[]): string | null {
 	for (const arg of args) {
 		if (GIT_FORBIDDEN_FLAGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`))) return `git flag "${arg}" can write output or inject config`;
+		if (arg.startsWith("-O")) return `git flag "${arg}" launches a pager command`;
 	}
 	const subcommand = args.find((arg) => !arg.startsWith("-"));
 	if (!subcommand || !GIT_SUBCOMMANDS.has(subcommand)) return `git subcommand "${subcommand ?? "(none)"}" is not read-only inspection`;
@@ -86,6 +90,47 @@ function gitRefusal(args: string[]): string | null {
 
 const PLAIN_INSPECTORS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "stat", "file", "pwd", "du", "df", "diff", "sort", "uniq", "cut", "tr", "basename", "dirname", "realpath", "which", "echo", "printf", "date"]);
 
+/**
+ * Inspection-oriented programs whose own flags can still write or execute:
+ * being on the inspector list admits the executable, and these screens refuse
+ * the specific mutating invocations of it. Short flags are matched as cluster
+ * prefixes (`-ofile`, `-ro out`), because getopt accepts attached optargs and
+ * bundling — an exact `=== "-o"` test would admit the attached form.
+ */
+function hasShortFlag(letter: string, longForm: string | null): (args: string[]) => boolean {
+	const cluster = new RegExp(`^-[^-]*${letter}`);
+	return (args) => args.some((arg) => cluster.test(arg) || (longForm !== null && (arg === longForm || arg.startsWith(`${longForm}=`))));
+}
+
+const SORT_WRITES = hasShortFlag("o", "--output");
+const FILE_COMPILES = hasShortFlag("C", null);
+// Leading `-s` only, not the cluster: `date -Iseconds` is a read the cluster
+// regex would misread as carrying `s`.
+const DATE_SETS = (args: string[]) => args.some((arg) => /^-s/.test(arg) || arg === "--set" || arg.startsWith("--set="));
+const UNIQ_OPTARG_FLAGS = new Set(["-f", "-s", "-w"]);
+
+/**
+ * Positional args of uniq, skipping the optargs of -f/-s/-w so `uniq -f 2 a`
+ * reads as one path. A bare `-` counts as a positional: it is the stdin input
+ * operand, so in `uniq - out` the second word is an output file.
+ */
+function uniqPositionals(args: string[]): number {
+	let count = 0;
+	for (let index = 0; index < args.length; index += 1) {
+		if (UNIQ_OPTARG_FLAGS.has(args[index])) index += 1;
+		else if (!args[index].startsWith("-") || args[index] === "-") count += 1;
+	}
+	return count;
+}
+
+const INSPECTOR_SCREENS: Record<string, (args: string[]) => string | null> = {
+	sort: (args) => SORT_WRITES(args) ? "sort -o/--output writes a file" : null,
+	uniq: (args) => uniqPositionals(args) > 1 ? "uniq with a second path writes it" : null,
+	date: (args) => DATE_SETS(args) ? "date -s/--set mutates the clock" : null,
+	file: (args) => FILE_COMPILES(args) ? "file -C compiles a magic file to disk" : null,
+	rg: (args) => args.some((arg) => arg === "--pre" || arg.startsWith("--pre=")) ? "rg --pre launches a preprocessor command" : null,
+};
+
 const FIND_FORBIDDEN = ["-delete", "-exec", "-execdir", "-ok", "-okdir"];
 
 function segmentRefusal(segment: string): string | null {
@@ -95,7 +140,7 @@ function segmentRefusal(segment: string): string | null {
 	if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(command)) return `env-assignment prefix "${command}" is not allowed`;
 	const args = tokens.slice(1);
 	if (command === "git") return gitRefusal(args);
-	if (PLAIN_INSPECTORS.has(command)) return null;
+	if (PLAIN_INSPECTORS.has(command)) return INSPECTOR_SCREENS[command]?.(args) ?? null;
 	if (command === "env") return args.length === 0 ? null : "env may only print the environment, not launch commands";
 	if (command === "find") {
 		const bad = args.find((arg) => FIND_FORBIDDEN.includes(arg) || arg.startsWith("-fprint"));

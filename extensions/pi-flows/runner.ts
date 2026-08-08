@@ -10,6 +10,7 @@ import { Run } from "./run.ts";
 import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
 import { BASH_READONLY_ENV, bashReadonlyUnenforceableError, splitBashReadonly } from "./bash-readonly.ts";
+import { bashReadonlyEnforcerArgs } from "./bash-readonly-extension.ts";
 import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
 import { getPiInvocation } from "./commands.ts";
 
@@ -264,10 +265,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		options.recordEvent?.({ kind: "validation", name: "dispatch.bash_readonly_unenforceable", ok: false, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": "BASH_READONLY_UNENFORCEABLE" } });
 		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, bashReadonlyUnenforceableError()), { role: capturedRole });
 	}
-	if (tools !== undefined) {
-		if (tools.length === 0) args.push("--no-builtin-tools");
-		else args.push("--tools", bashRo.argvTools.join(","));
-	}
+	if (tools?.length === 0) args.push("--no-builtin-tools");
+	else if (tools !== undefined) args.push("--tools", bashRo.argvTools.join(","));
+	if (bashRo.readonly) args.push(...bashReadonlyEnforcerArgs()); // explicit -e: discovery alone can miss the enforcer (see its header)
 
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
 	let wasAborted = false;

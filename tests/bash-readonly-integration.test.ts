@@ -29,6 +29,15 @@ test("bash-ro: child argv carries bash and the env marker, never the raw token",
 	assert.ok(toolsFlag.split(",").includes("bash"), `--tools should include bash: ${toolsFlag}`);
 	assert.ok(!toolsFlag.includes("bash-ro"), `--tools must not leak bash-ro to pi: ${toolsFlag}`);
 	assert.equal(calls[0].env.PI_FLOWS_BASH_READONLY, "1");
+	// The enforcer is loaded explicitly: a checkout parent's children re-run
+	// the pi entrypoint without its -e flags, so discovery alone can miss it.
+	const enforcer = calls[0].args[calls[0].args.indexOf("-e") + 1] ?? "";
+	assert.match(enforcer, /bash-readonly-extension\.ts$/);
+});
+
+test("bash-ro: plain-tools children do not load the enforcer", async () => {
+	const { calls } = await runFlow({ agent: "recon", task: "plain scan", tools: "read,grep,find,ls,bash" }, { recon: "SCANNED" });
+	assert.equal(calls[0].args.includes("-e"), false);
 });
 
 test("bash-ro: a parent's marker is cleared for children whose toolset never asked for it", async () => {

@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BASH_READONLY_ENV, bashReadonlyEnabled, bashReadonlyRefusal, splitBashReadonly } from "../extensions/pi-flows/bash-readonly.ts";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
+import { bashReadonlyEnforcerArgs, registerBashReadonlyGuard } from "../extensions/pi-flows/bash-readonly-extension.ts";
 
 const ALLOWED = [
 	"git log --oneline -5",
@@ -23,6 +24,15 @@ const ALLOWED = [
 	"npm test",
 	"npm run typecheck",
 	"node --test tests/pi-flows.test.ts",
+	"git reflog",
+	"git reflog show HEAD",
+	"sort README.md",
+	"uniq README.md",
+	"uniq -f 2 README.md",
+	"grep -o pattern README.md",
+	"date",
+	"date -Iseconds",
+	"date -u",
 ];
 
 const REFUSED = [
@@ -49,6 +59,21 @@ const REFUSED = [
 	"node scripts/anything.mjs",
 	"npx cowsay",
 	"env sh -c 'rm -rf .'",
+	"git reflog expire --expire=now --all",
+	"git reflog delete HEAD@{0}",
+	"git grep -Ovi pattern",
+	"git grep --open-files-in-pager=vi pattern",
+	"sort -o generated.txt README.md",
+	"sort -ogenerated.txt README.md",
+	"sort -ro generated.txt README.md",
+	"sort --output=generated.txt README.md",
+	"uniq README.md deduped.txt",
+	"uniq -f 2 README.md deduped.txt",
+	"cat README.md | uniq - captured.txt",
+	"date -s 2020-01-01",
+	"date -s2020-01-01",
+	"file -C -m magic",
+	"rg --pre=sh pattern",
 	"",
 	"   ",
 ];
@@ -86,13 +111,13 @@ test("splitBashReadonly maps bash-ro to bash and yields the marker only without 
 	assert.deepEqual(splitBashReadonly([]), { argvTools: [], readonly: false });
 });
 
-function registerWithMarker(marker: string | undefined) {
+function registerWithMarker(marker: string | undefined, register: (pi: any) => void = registerPiFlows) {
 	const previous = process.env[BASH_READONLY_ENV];
 	const handlers: Array<(event: any) => any> = [];
 	try {
 		if (marker === undefined) delete process.env[BASH_READONLY_ENV];
 		else process.env[BASH_READONLY_ENV] = marker;
-		registerPiFlows({
+		register({
 			registerCommand() {},
 			registerShortcut() {},
 			registerTool() {},
@@ -119,4 +144,22 @@ test("the extension registers a blocking tool_call handler only when the marker 
 	assert.match(blocked?.reason ?? "", /bash-ro blocked/);
 	assert.equal(handler({ toolName: "bash", toolCallId: "t2", input: { command: "git log --oneline" } }), undefined);
 	assert.equal(handler({ toolName: "read", toolCallId: "t3", input: { path: "x" } }), undefined);
+});
+
+test("the standalone enforcer extension registers the same guard for -e loading", () => {
+	assert.equal(registerWithMarker(undefined, registerBashReadonlyGuard).length, 0);
+	const handlers = registerWithMarker("1", registerBashReadonlyGuard);
+	assert.equal(handlers.length, 1);
+	assert.equal(handlers[0]({ toolName: "bash", toolCallId: "t1", input: { command: "git push" } })?.block, true);
+	assert.equal(handlers[0]({ toolName: "bash", toolCallId: "t2", input: { command: "git log" } }), undefined);
+	// A non-string command is refused, never passed through unchecked.
+	assert.equal(handlers[0]({ toolName: "bash", toolCallId: "t3", input: {} })?.block, true);
+});
+
+test("the enforcer argv names -e and an existing extension file", async () => {
+	const [flag, entry] = bashReadonlyEnforcerArgs();
+	assert.equal(flag, "-e");
+	assert.match(entry, /bash-readonly-extension\.ts$/);
+	const { access } = await import("node:fs/promises");
+	await access(entry);
 });

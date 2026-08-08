@@ -93,7 +93,8 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // out of index.ts (#97), plus their changelog entry. Same verification:
 // 95 files, none from tests/, scripts/, or evals/.
 // Raised to 990_000 for the bash-ro vocabulary module (bash-readonly.ts) and
-// its reference/troubleshooting/changelog entries. Same verification:
-// 96 files, none from tests/, scripts/, or evals/.
+// its reference/troubleshooting/changelog entries and the standalone
+// enforcer entry (bash-readonly-extension.ts). Same verification:
+// 97 files, none from tests/, scripts/, or evals/.
 assert.ok(pack.unpackedSize < 990_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

@@ -415,8 +415,10 @@ exclude `bash`/`edit`/`write`, swap `bash` for `bash-ro`, or give each writer a
 separate worktree/cwd. Set `allowSharedWriteCwd:true` only as a last resort,
 after deciding that concurrent writes in one shared checkout are intentional.
 
-`bash-ro` is not write-capable: the child is spawned with bash, plus a marker
-(`PI_FLOWS_BASH_READONLY=1`) that makes the pi-flows extension inside that child
+`bash-ro` is not write-capable: the child is spawned with bash, a marker
+(`PI_FLOWS_BASH_READONLY=1`), and an explicitly loaded enforcer extension
+(`-e .../bash-readonly-extension.ts`, so enforcement does not depend on
+pi-flows being discoverable in the child) that together
 block any bash command outside a read-only allowlist — git inspection
 (`log`/`diff`/`show`/`blame`/`status`/...), file inspection
 (`ls`/`cat`/`grep`/`find`/...), and repo verification (`npm test`,

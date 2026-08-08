@@ -1,6 +1,6 @@
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import { getAgentDir, isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import {
 	PI_FLOWS_VERSION,
@@ -16,7 +16,8 @@ import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSub
 import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
-import { BASH_READONLY_ENV, bashReadonlyEnabled, bashReadonlyRefusal, splitBashReadonly } from "./bash-readonly.ts";
+import { bashReadonlyEnabled, bashReadonlyRefusal, splitBashReadonly } from "./bash-readonly.ts";
+import { registerBashReadonlyGuard } from "./bash-readonly-extension.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
 import { resolveChildModel, runFlowAgent } from "./runner.ts";
@@ -114,17 +115,11 @@ export const __test = {
 };
 
 export default function (pi: ExtensionAPI) {
-	// Child-side bash-ro enforcement: the runner sets this marker on a child
-	// whose toolset carried bash-ro, and this same extension — loaded inside
-	// that child — turns the marker into an actual block on non-allowlisted
-	// bash commands. Coordination safety, not a sandbox.
-	if (bashReadonlyEnabled(process.env[BASH_READONLY_ENV])) {
-		pi.on?.("tool_call", (event) => {
-			if (!isToolCallEventType("bash", event)) return undefined;
-			const reason = bashReadonlyRefusal(event.input.command);
-			return reason ? { block: true, reason } : undefined;
-		});
-	}
+	// Child-side bash-ro enforcement: the runner sets the marker on a child
+	// whose toolset carried bash-ro and loads bash-readonly-extension.ts via
+	// -e; registering here too covers a discovered install and hand-set
+	// markers. Coordination safety, not a sandbox.
+	registerBashReadonlyGuard(pi);
 
 	const liveFlows = new FlowRegistry();
 	const fleetPanel = createFleetPanelController(liveFlows);
