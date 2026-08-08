@@ -310,29 +310,40 @@ export function createPersistedHandoffAttestation(handoff: DelegationHandoffEnve
  * may have changed since.
  */
 class IntegrationValidation {
-	constructor(
-		private readonly result: FlowRunResult,
-		private readonly contractId: string,
-		private readonly cwd: string,
-		private readonly policy: CapturePolicy,
-		private readonly envelope: DelegationReturnEnvelope,
-		private readonly handoff: DelegationHandoffEnvelope,
-	) {}
+	// ECMAScript-private, not TypeScript-private: a caller retains this token
+	// across calls, and TS `private` fields would still be ordinary writable
+	// properties at runtime — a mutated snapshot presented back would clone and
+	// integrate without revalidation. `#` fields keep the snapshot unreachable.
+	readonly #result: FlowRunResult;
+	readonly #contractId: string;
+	readonly #cwd: string;
+	readonly #policy: CapturePolicy;
+	readonly #envelope: DelegationReturnEnvelope;
+	readonly #handoff: DelegationHandoffEnvelope;
+
+	constructor(result: FlowRunResult, contractId: string, cwd: string, policy: CapturePolicy, envelope: DelegationReturnEnvelope, handoff: DelegationHandoffEnvelope) {
+		this.#result = result;
+		this.#contractId = contractId;
+		this.#cwd = cwd;
+		this.#policy = policy;
+		this.#envelope = envelope;
+		this.#handoff = handoff;
+	}
 
 	reusableFor(result: FlowRunResult, contractId: string, cwd: string, policy: CapturePolicy): boolean {
-		return this.result === result
-			&& this.contractId === contractId
-			&& this.cwd === cwd
-			&& this.policy.recordContent === policy.recordContent
-			&& this.policy.redactSecrets === policy.redactSecrets;
+		return this.#result === result
+			&& this.#contractId === contractId
+			&& this.#cwd === cwd
+			&& this.#policy.recordContent === policy.recordContent
+			&& this.#policy.redactSecrets === policy.redactSecrets;
 	}
 
 	validatedEnvelope(): DelegationReturnEnvelope {
-		return structuredClone(this.envelope);
+		return structuredClone(this.#envelope);
 	}
 
 	validatedHandoff(): DelegationHandoffEnvelope {
-		return structuredClone(this.handoff);
+		return structuredClone(this.#handoff);
 	}
 }
 

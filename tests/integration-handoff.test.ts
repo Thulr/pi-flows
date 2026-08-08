@@ -127,6 +127,9 @@ test("validation receipts retain an immutable private snapshot", () => {
 		enforceCompletion: false,
 	});
 	assert.ok(validated.validation);
+	// The token exposes no properties at all (ECMAScript-private fields), so a
+	// caller retaining it has nothing to tamper with and re-present.
+	assert.deepEqual(Object.keys(validated.validation!), []);
 	validated.handoff!.status = "failed";
 	child.envelope!.status = "failed";
 

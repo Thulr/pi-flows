@@ -45,6 +45,16 @@ export function storedError(error: FlowError, policy: CapturePolicy): FlowError 
 	return { ...error, cause: redactValue(error.cause, policy) as string };
 }
 
+function deepFreeze<T>(value: T): T {
+	// The isFrozen guard also terminates on cycles, which JSON-sourced params
+	// cannot express but a hostile in-process caller could.
+	if (value && typeof value === "object" && !Object.isFrozen(value)) {
+		Object.freeze(value);
+		for (const nested of Object.values(value)) deepFreeze(nested);
+	}
+	return value;
+}
+
 function contractError(reason: string): FlowError {
 	return flowError(
 		"INVALID_DELEGATION_CONTRACT",
@@ -124,7 +134,11 @@ export class ResolvedDelegationContract {
 	): { resolved?: ResolvedDelegationContract; error?: FlowError } {
 		const error = validateDelegationContract(value, policy);
 		if (error) return { error };
-		const contract = value as DelegationContract;
+		// Snapshot, then freeze: the caller may retain and mutate the input, and
+		// every piece of resolved state — identity, compiled validator, rendered
+		// protocol, budget — must keep describing the contract that was admitted,
+		// not whatever the object drifted into afterwards.
+		const contract = deepFreeze(structuredClone(value)) as DelegationContract;
 		// Proven compilable by the predicate above; compiled exactly once here.
 		const validator = Compile(contract.returnSchema);
 		return { resolved: new ResolvedDelegationContract(contract, canonicalSha256(contract), (data) => validator.Check(data)) };

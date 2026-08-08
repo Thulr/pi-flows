@@ -40,6 +40,19 @@ test("a resolved contract carries one identity and one compiled schema for every
 	assert.equal(resolved.checkReturnData({ answer: "42" }), false, "return validation uses the schema compiled at construction");
 });
 
+test("mutating the input contract after resolve changes nothing the object already admitted", () => {
+	const input = structuredClone(contract);
+	const resolvedFromInput = ResolvedDelegationContract.resolve(input).resolved!;
+	input.objective = "Something else entirely";
+	(input.budget as { timeoutMs?: number }).timeoutMs = 1;
+	assert.equal(resolvedFromInput.id, delegationContractId(contract), "identity keeps describing the admitted contract");
+	assert.equal(resolvedFromInput.timeoutMs, 5_000, "the dispatch bound reads the admitted snapshot");
+	assert.match(resolvedFromInput.renderTask(undefined), /Return the exact answer/, "so does the rendered protocol");
+	assert.throws(() => {
+		(resolvedFromInput.contract as { objective: string }).objective = "drift";
+	}, TypeError, "the admitted snapshot is frozen, so it cannot drift from its own identity");
+});
+
 const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => ({
 	action: "workflow.phase:ship",
 	parameters: { agentScope: "user" },
