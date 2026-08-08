@@ -375,9 +375,10 @@ export const SELECTION_CASES = defineCases([
 			// assigned without failing a model that merges the requested
 			// analyze/plan/implement/verify enumeration into fewer phases.
 			minTasks: 2,
-			// Workflow persists its state file before the runner's roster
-			// check, so UNKNOWN_AGENT is not admissibility-scored here — the
-			// shape itself must refuse work phases naming invented agents.
+			// Admissibility scores the roster rule for a workflow's FIRST work
+			// phase only (#91): one known opener admits the call. knownAgentsOnly
+			// binds every named role, so a later phase naming an invented agent
+			// still fails the shape.
 			knownAgentsOnly: true,
 			// The gate itself: a work-only workflow never pauses or persists
 			// a resumable approval point, so it is not the phase-gated

@@ -31,6 +31,16 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- The selection-eval admissibility seam now scores the roster rule for
+  `workflow` calls: a workflow whose first work phase names an unknown agent
+  is refused (`UNKNOWN_AGENT`) instead of scoring as admissible, closing the
+  parallel/workflow asymmetry #89 papered over with per-case
+  `knownAgentsOnly` (#91). The refusal is derived from the tool's own
+  first-spawn derivation (the first work phase — approval openers and
+  resumes stay outside the rule) and, because `handleWorkflow` persists
+  fresh state before the runner's roster check, the harness terminates the
+  refusal rather than letting it play out. Workflow phase contracts remain
+  deliberately unscored at this seam. Tool behavior is unchanged.
 - Selection-eval scoring treats `minTasks` over a `workflow` call as a
   work-phase minimum, counted by the workflow handler's own imported
   work-phase predicate (agent AND task): approval-only phases carry no task,
@@ -43,9 +53,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `minApprovalPhases` shape predicate counts phases of the handler's
   approval kind, so a phase-gated case can require the gate itself. The
   `implicit-phase-gated-work-uses-workflow` case now requires at least two
-  on-topic work phases naming bundled agents (`knownAgentsOnly` — workflow
-  persists state before the runner's roster check, so `UNKNOWN_AGENT` is not
-  admissibility-scored there), closing the topology gap #87's headless-approval
+  on-topic work phases naming bundled agents (`knownAgentsOnly`, which binds
+  every named role — including phases past the first-work-phase roster rule
+  above), closing the topology gap #87's headless-approval
   admissibility check left open — a workflow assigning one trivial work phase
   ahead of its approval while the top-level task recites the migration
   wording no longer passes (#88). Tool behavior is unchanged.

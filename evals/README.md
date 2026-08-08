@@ -643,7 +643,9 @@ failures `PRESET_EXPANSION_INVALID`/`PRESET_TASK_REQUIRED`), the pre-spawn
 shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable refs sharing
 one cwd at concurrency above one), the roster rule (`UNKNOWN_AGENT`, no
 first-spawn role naming a bundled agent — one known ref means real children
-spawn and the call counts as admitted), the strict-trace gate
+spawn and the call counts as admitted; for `workflow` the first-spawn role is
+its first work phase, and the refusal terminates in the harness rather than
+playing out because fresh state is persisted first — #91), the strict-trace gate
 (`TRACE_INCOMPLETE`, strict tracing with no trace destination), and the
 headless checkpoint gate (`CHECKPOINT_APPROVAL_REQUIRED`, a spawn-gating
 checkpoint in the UI-less subject) are all scored across every spawning mode,
@@ -661,9 +663,11 @@ on its expanded topology via the tool's own `resolveFlowPreset`, so a permitted
 override that un-serializes a preset is scored as the refusal it becomes.
 `tests/admissibility-scoring.test.ts` pins each wave derivation against the real
 handler so the scored gate cannot drift from the enforced one. Refusal codes
-outside that vocabulary (unknown agents, per-mode bounds such as
-`TOO_FEW_VOTERS`) score as admissible until the tool's own predicate for them is
-added to the seam.
+outside that vocabulary (per-mode bounds such as `TOO_FEW_VOTERS`, or the
+roster rule for `monitor` and `worktree`, whose refusal is not statically
+certain — a monitor whose trigger never fires spawns nothing and refuses
+nothing, and a worktree call's refusal code depends on repository state) score
+as admissible until the tool's own predicate for them is added to the seam.
 
 Beyond per-call shape, a case can opt into sequence properties of the whole run:
 `firstCall: true` on an expectation requires the **first** emitted flow call to
@@ -696,10 +700,10 @@ task's migration wording (issue #88). `minApprovalPhases` is the other half
 of that topology: it counts phases of the handler's approval kind
 (`approval.message`), so a phase-gated case can require the gate itself — a
 work-only workflow that never pauses cannot ride the top-level task's
-"approval" wording through the run-wide `taskPattern`. The case also sets `knownAgentsOnly`
-because workflow persists its state file before the runner's roster check, so
-`UNKNOWN_AGENT` is outside the admissibility vocabulary there — the shape
-itself must refuse a work phase naming an invented agent. The `independent-review-safe-first-call` case reproduces the
+"approval" wording through the run-wide `taskPattern`. The case also sets `knownAgentsOnly`:
+admissibility scores the roster rule for a workflow's first work phase only
+(#91), so one known opener admits the call — `knownAgentsOnly` binds every
+named role, refusing a later phase that names an invented agent. The `independent-review-safe-first-call` case reproduces the
 issue-#82 transcript with all three: review-of-uncommitted-changes intent must
 pick the `code-review` preset, a serialized or read-only fan-out, or an
 independent-voter panel on the first call, must never set
