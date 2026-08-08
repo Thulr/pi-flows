@@ -3,7 +3,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { ENVELOPE_VERSION, ResolvedDelegationContract, canonicalSha256, isRecord, nonEmptyString, storedError, stringArray } from "./contract-resolution.ts";
 import { extractLastJsonBlock } from "./protocol.ts";
-import { capModelVisibleText, isFailed, redactValue, resultText, retainValidatedReturnEnvelope, takeRawFinalAssistantText } from "./sanitize.ts";
+import { Run } from "./run.ts";
+import { capModelVisibleText, isFailed, redactValue, resultText } from "./sanitize.ts";
 import { flowError, type CapturePolicy, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 
 // Contract identity/admission live in contract-resolution.ts; re-exported here.
@@ -146,14 +147,14 @@ function validateReturnEnvelope(
 	cwd: string,
 	policy: CapturePolicy,
 ): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
-	const parsed = extractLastJsonBlock(takeRawFinalAssistantText(result) ?? resultText(result));
+	const run = Run.of(result);
+	const parsed = extractLastJsonBlock(run.takeEnvelopeCandidate() ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
 	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd);
 	if (validationError) return { error: storedError(validationError, policy), rejected: storedEnvelope(parsed, policy) };
 	const validated = { ...parsed, usage: result.usage };
-	retainValidatedReturnEnvelope(result, validated);
 	const envelope = storedEnvelope(validated, policy);
-	result.envelope = envelope;
+	run.acceptReturnEnvelope(validated, envelope);
 	return { envelope };
 }
 
@@ -392,7 +393,7 @@ export function prepareIntegrationHandoff(
 		// exactly as a digest mismatch does.
 		return { error: storedError(incompleteEnvelopeError(handoff), options.policy), ...(returned ? { rejected: returned } : {}) };
 	}
-	if (options.attach !== false) result.handoff = handoff;
+	if (options.attach !== false) Run.of(result).acceptHandoff(handoff);
 	return { handoff, ...(validation ? { validation } : {}) };
 }
 

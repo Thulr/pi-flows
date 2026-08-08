@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
+import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type FlowError, type FlowRunResult } from "./types.ts";
 
 /**
  * One content block pi-flows retains from a child transcript message, owned by
@@ -23,9 +23,6 @@ export interface ChildMessage {
 	/** Present on toolResult messages. */
 	toolName?: string;
 }
-
-const rawFinalAssistantText = new WeakMap<FlowRunResult, string>();
-const validatedReturnEnvelopes = new WeakMap<FlowRunResult, DelegationReturnEnvelope>();
 
 export function safePath(candidate: string | null | undefined): string | null {
 	if (!candidate) return null;
@@ -142,31 +139,6 @@ export function getFinalAssistantText(messages: ChildMessage[]): string {
 		}
 	}
 	return "";
-}
-
-/** Retain one bounded raw candidate only long enough for typed-envelope validation. */
-export function captureRawFinalAssistantText(result: FlowRunResult, message: ChildMessage): void {
-	const text = getFinalAssistantText([message]);
-	if (text) rawFinalAssistantText.set(result, capBytes(text, MODEL_VISIBLE_OUTPUT_CAP, "Envelope candidate"));
-}
-
-/** Consume the raw candidate so it cannot leak through returned details or linger after validation. */
-export function takeRawFinalAssistantText(result: FlowRunResult): string | undefined {
-	const text = rawFinalAssistantText.get(result);
-	rawFinalAssistantText.delete(result);
-	return text;
-}
-
-/** Retain validated content privately until a harness-owned formatter derives structural status from it. */
-export function retainValidatedReturnEnvelope(result: FlowRunResult, envelope: DelegationReturnEnvelope): void {
-	validatedReturnEnvelopes.set(result, structuredClone(envelope));
-}
-
-/** Consume private validated content so it cannot enter returned details or linger after status derivation. */
-export function takeValidatedReturnEnvelope(result: FlowRunResult): DelegationReturnEnvelope | undefined {
-	const envelope = validatedReturnEnvelopes.get(result);
-	validatedReturnEnvelopes.delete(result);
-	return envelope === undefined ? undefined : structuredClone(envelope);
 }
 
 export function isFailed(result: FlowRunResult): boolean {
