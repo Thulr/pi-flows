@@ -103,7 +103,7 @@ in-memory flow updates:
   configured cost/token ceiling as a `flow ceiling` or `contract ceiling`.
   `ctrl+o` expands the settled row into full per-run output.
 
-  <img alt="The live flow tool row updating in place while children run" src="../images/flow-live-row.gif" width="100%">
+  <img alt="The live flow tool row updating in place while children run" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-live-row.gif" width="100%">
 - **`F8` toggles the fleet panel**, a non-modal overlay listing every live flow
   at once with the runs beneath each one: per-run state and activity, failures,
   and budget burn-down when `maxCostUsd` is set. A flow stays listed until its
@@ -113,7 +113,7 @@ in-memory flow updates:
   never interrupts children. It hides automatically on terminals narrower than
   80 columns.
 
-  <img alt="The F8 fleet panel overlay listing every live flow with per-run state and budget burn-down" src="../images/flow-fleet-panel.gif" width="100%">
+  <img alt="The F8 fleet panel overlay listing every live flow with per-run state and budget burn-down" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-fleet-panel.gif" width="100%">
 - **`/flows inspect` drills into one child.** Select a queued or running child
   to see its task, status, usage, and recent text/tool activity. Use Up/Down to
   scroll, End to return to the latest activity, and Escape to close the overlay
