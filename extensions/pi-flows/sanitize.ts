@@ -2,11 +2,9 @@ import * as os from "node:os";
 import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
 
 /**
- * One content block pi-flows retains from a child transcript message. Owned
- * here — the capture-policy module decides what child content is retained —
- * rather than borrowed from the child's protocol: the runner translates at the
- * process boundary, and only the fields the views and formatters actually read
- * survive the crossing. Re-exported through types.ts as kernel vocabulary.
+ * One content block pi-flows retains from a child transcript message, owned by
+ * the capture-policy module: the runner translates at the process boundary and
+ * only fields the views read survive. Re-exported through types.ts.
  */
 export interface ChildMessageBlock {
 	type: string;

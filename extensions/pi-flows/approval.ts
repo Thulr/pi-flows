@@ -25,6 +25,7 @@
 // recorded approval facts were changed after the fact by a partial write, a
 // half-applied merge, or a tool that rewrites one field.
 import { createHash, randomUUID } from "node:crypto";
+import { deepFreeze } from "./contract-resolution.ts";
 import { canonicalSha256, isRecord } from "./delegation.ts";
 import { flowError, type ApprovalReceiptSummary, type FlowError } from "./types.ts";
 
@@ -198,10 +199,9 @@ export type ApprovalVerification =
 
 /**
  * Proof that a stored receipt was verified against the action about to run —
- * and the only path to spending it. Consuming without verifying is not a call
- * order a caller can get wrong: `consume` exists only on this object, and this
- * object exists only as `verify`'s success result, already bound to the
- * consumer the verification was performed for.
+ * and the only path to spending it: `consume` exists only on this object, and
+ * this object exists only as `verify`'s success result, already bound to the
+ * verified consumer.
  */
 export class ApprovalAuthorization {
 	readonly #receipt: ApprovalReceipt;
@@ -209,16 +209,14 @@ export class ApprovalAuthorization {
 	#consumed: ApprovalReceipt | undefined;
 
 	private constructor(receipt: ApprovalReceipt, consumer: string, key: symbol) {
-		// TS `private` is erased at runtime; the module-scoped key makes
-		// construction runtime-private, so an authorization cannot exist without
-		// verify having passed — durable receipts stay single-use.
+		// TS `private` is erased at runtime; the key keeps construction
+		// runtime-private, so no authorization exists without verify passing.
 		if (key !== AUTHORIZATION_KEY) {
 			throw new TypeError("ApprovalAuthorization is constructed only by verify(); direct construction would bypass expiry, binding, and replay checks.");
 		}
 		this.#receipt = receipt;
 		this.#consumer = consumer;
-		// Freezing blocks own-property shadowing of `consume` on a retained
-		// authorization; the mutable #consumed latch is private state and unaffected.
+		// Freezing blocks own-property shadowing of `consume`; the #consumed latch is unaffected.
 		Object.freeze(this);
 	}
 
@@ -239,14 +237,14 @@ export class ApprovalAuthorization {
 	): ApprovalVerification {
 		const error = receiptIssue(receipt, binding, { consumer, now });
 		if (error) return { error };
-		return { authorization: new ApprovalAuthorization(receipt as ApprovalReceipt, consumer, AUTHORIZATION_KEY) };
+		// A frozen clone: consumption seals what verification covered, not what a retained receipt drifted into.
+		return { authorization: new ApprovalAuthorization(deepFreeze(structuredClone(receipt)) as ApprovalReceipt, consumer, AUTHORIZATION_KEY) };
 	}
 
 	/**
-	 * Burn the receipt once its authorized action has begun. Re-consuming by the
-	 * same action is a resume, not a second use — including on this same
-	 * authorization: the first consumption is latched, so a second call returns
-	 * the identical receipt rather than re-sealing a new consumption time.
+	 * Burn the receipt once its authorized action has begun. Re-consuming is a
+	 * resume, not a second use: the first consumption is latched, so a duplicate
+	 * call returns the identical receipt rather than re-sealing.
 	 */
 	consume(now = Date.now()): ApprovalReceipt {
 		this.#consumed ??= this.#receipt.consumedAt !== null && this.#receipt.consumedBy === this.#consumer

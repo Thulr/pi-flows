@@ -205,11 +205,9 @@ export function approvalBindingFor(phases: any[], index: number, deps: ModeDeps,
 
 /**
  * Burn the receipt that authorized an action, once that action has begun. The
- * consumer is the ACTION, not the individual step, so a gated run of several
- * phases spends one approval once rather than needing one per phase. Only a
- * verified authorization can be spent: the capability is produced by
- * `ApprovalAuthorization.verify` in this same handler pass, already bound to
- * the action it was verified for.
+ * consumer is the ACTION, not the step, so a gated run spends one approval
+ * once. Only a verified authorization can be spent: the capability comes from
+ * `ApprovalAuthorization.verify` in this same handler pass.
  */
 export function consumeAuthorization(
 	receipts: Record<string, ApprovalReceipt>,

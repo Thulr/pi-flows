@@ -135,7 +135,7 @@ test("consuming twice from the same action is idempotent", () => {
 	const once = consumeVia(receipt, "ship", NOW);
 	const twice = consumeVia(once, "ship", NOW + 5000);
 	assert.equal(twice.consumedAt, once.consumedAt, "a crash-resume must not restamp the consumption");
-	assert.equal(twice, once);
+	assert.deepEqual(twice, once, "an identical record, not the same object: verify snapshots its receipt");
 });
 
 test("malformed receipts are refused rather than partially trusted", () => {

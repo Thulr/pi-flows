@@ -155,9 +155,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				}
 			} else {
 			const persisted = state.handoffs[phase.id];
-			// A resumed contracted phase re-resolves its contract the same way the
-			// original run did, so the persisted handoff is checked against a
-			// contract that provably passed admissibility, not raw spec data.
+			// Re-resolve so the persisted handoff is checked against a contract
+			// that passed admissibility, not raw spec data.
 			let phaseContract: ResolvedDelegationContract | undefined;
 			if (phase.contract) {
 				const resolution = ResolvedDelegationContract.resolve(phase.contract, policy);

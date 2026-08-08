@@ -12,10 +12,9 @@ import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./valida
 import { getPiInvocation } from "./commands.ts";
 
 /**
- * The anti-corruption translation for child transcript messages: project the
- * child protocol's message into pi-flows' own ChildMessage at the process
- * boundary, keeping only the fields the domain reads. Everything above this
- * module sees the owned shape, never the child's.
+ * The ACL translation for child transcript messages: project the child
+ * protocol's message into pi-flows' own ChildMessage, keeping only the fields
+ * the domain reads. Everything above this module sees the owned shape.
  */
 function toChildMessage(message: Message): ChildMessage {
 	const content: ChildMessageBlock[] = Array.isArray(message.content)

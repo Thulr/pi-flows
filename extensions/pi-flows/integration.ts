@@ -23,17 +23,16 @@ function runLimits(contract?: ResolvedDelegationContract): AgentRunLimits | unde
 		captureRawOutput: true,
 		timeoutMs: contract.timeoutMs,
 		contractBudget: contract.budget(),
-		// Trace identity reads contract DATA; the resolved object stays the transition currency.
+		// Trace identity reads contract DATA, not the resolved object.
 		contract: contract.contract,
 	};
 }
 
 /**
  * Validate and render one child plan before dispatch. The contract crosses
- * into the plan only as a ResolvedDelegationContract, so everything dispatch
- * and handoff consumption do with it downstream is against a contract that
- * provably passed admissibility. Handoff validation and consumption happen
- * later through ModeDeps.handoffs, after the child settles.
+ * into the plan only as a ResolvedDelegationContract, so downstream dispatch
+ * and handoff consumption work against a contract that passed admissibility.
+ * Handoff validation/consumption happen later through ModeDeps.handoffs.
  */
 export function integrationRunPlan(
 	deps: ModeDeps,

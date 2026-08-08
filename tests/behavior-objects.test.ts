@@ -101,6 +101,14 @@ test("consumption exists only on a verified authorization, bound to the verified
 	assert.equal(replay.authorization, undefined);
 });
 
+test("consumption seals the receipt verification covered, not later mutations", () => {
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
+	const authorization = ApprovalAuthorization.verify(receipt, binding(), { consumer: "workflow.phase:ship", now: NOW }).authorization!;
+	(receipt as { approvedBy: string }).approvedBy = "someone-else";
+	const spent = authorization.consume(NOW);
+	assert.equal(spent.approvedBy, "justin", "the authorization holds a frozen snapshot from verification time, so the audit record cannot drift");
+});
+
 test("consuming one authorization twice returns the identical receipt, not a re-stamped one", () => {
 	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
 	const authorization = ApprovalAuthorization.verify(receipt, binding(), { consumer: "workflow.phase:ship", now: NOW }).authorization!;

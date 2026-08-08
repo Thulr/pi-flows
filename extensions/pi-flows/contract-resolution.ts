@@ -1,6 +1,5 @@
-// Contract identity and admission. The canonical-digest primitives every
-// content identity in the extension shares live here, beside the contract
-// admissibility predicate and the resolved form it gates. delegation.ts
+// Contract identity and admission: the shared canonical-digest primitives, the
+// admissibility predicate, and the resolved form it gates. delegation.ts
 // re-exports the public names, so downstream imports are unchanged.
 import { createHash } from "node:crypto";
 import { Compile } from "typebox/compile";
@@ -45,7 +44,7 @@ export function storedError(error: FlowError, policy: CapturePolicy): FlowError 
 	return { ...error, cause: redactValue(error.cause, policy) as string };
 }
 
-function deepFreeze<T>(value: T): T {
+export function deepFreeze<T>(value: T): T {
 	// The isFrozen guard also terminates on cycles, which JSON-sourced params
 	// cannot express but a hostile in-process caller could.
 	if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -94,11 +93,9 @@ function rawDelegationContractError(value: unknown): FlowError | null {
 }
 
 /**
- * The contract admissibility predicate: is this value a well-formed delegation
- * contract? Exported for the selection eval's admissibility seam, which scores
- * the same check the tool enforces. The TRANSITION path does not call it
- * directly — it goes through `ResolvedDelegationContract.resolve`, which
- * applies this predicate before any transition becomes reachable.
+ * The contract admissibility predicate, exported for the selection eval's
+ * admissibility seam. The transition path reaches it only through
+ * `ResolvedDelegationContract.resolve`.
  */
 export function validateDelegationContract(
 	value: unknown,
@@ -108,19 +105,16 @@ export function validateDelegationContract(
 	return error ? storedError(error, policy) : null;
 }
 
-/**
- * A delegation contract admitted to the transition path: shape-validated, its
- * returnSchema compiled, and its canonical identity digested — all at
- * construction. Task rendering, contract-budget creation, and return-envelope
- * validation exist only as methods here, so none of them can run against an
- * unvalidated contract, skip a step, or derive a divergent identity.
- */
-// TS `private constructor` is erased at runtime, so a plain-JS caller could
-// otherwise `new` an exported wrapper directly and bypass its factory. The key
-// never leaves this module, making construction runtime-private, not merely
-// type-private.
+// TS `private constructor` is erased at runtime; this key never leaves the
+// module, so construction is runtime-private, not merely type-private.
 const CONSTRUCTION_KEY = Symbol("pi-flows.construction");
 
+/**
+ * A delegation contract admitted to the transition path: shape-validated,
+ * returnSchema compiled, identity digested — all at construction. Rendering,
+ * contract budgets, and return validation exist only as methods here, so none
+ * can run against an unvalidated contract or derive a divergent identity.
+ */
 export class ResolvedDelegationContract {
 	readonly #checkReturnData: (data: unknown) => boolean;
 
@@ -135,9 +129,7 @@ export class ResolvedDelegationContract {
 			throw new TypeError("ResolvedDelegationContract is constructed only by resolve(); direct construction would bypass contract admissibility.");
 		}
 		this.#checkReturnData = checkReturnData;
-		// A retained instance must not be shadowable: an own `checkReturnData`
-		// returning true would accept schema-invalid data while the object still
-		// reads as a resolved contract. Private #state is unaffected by freezing.
+		// Frozen so an own always-true `checkReturnData` cannot be attached; #state is unaffected.
 		Object.freeze(this);
 	}
 
@@ -148,10 +140,9 @@ export class ResolvedDelegationContract {
 	): { resolved?: ResolvedDelegationContract; error?: FlowError } {
 		const error = validateDelegationContract(value, policy);
 		if (error) return { error };
-		// Snapshot, then freeze: the caller may retain and mutate the input, and
-		// every piece of resolved state — identity, compiled validator, rendered
-		// protocol, budget — must keep describing the contract that was admitted,
-		// not whatever the object drifted into afterwards.
+		// Snapshot, then freeze: every piece of resolved state must keep
+		// describing the contract that was admitted, not what a retained,
+		// mutated input drifted into.
 		const contract = deepFreeze(structuredClone(value)) as DelegationContract;
 		// Proven compilable by the predicate above; compiled exactly once here.
 		const validator = Compile(contract.returnSchema);
@@ -190,10 +181,8 @@ export class ResolvedDelegationContract {
 	}
 }
 
-// Instances are frozen at construction; the prototype and constructor are
-// frozen here, so a retained resolved contract's dispatch can be neither
-// shadowed (own property), replaced (prototype patch), nor re-pointed
-// (static patch).
+// With instances frozen at construction, freezing the prototype and
+// constructor closes the remaining dispatch-tampering paths.
 Object.freeze(ResolvedDelegationContract.prototype);
 Object.freeze(ResolvedDelegationContract);
 

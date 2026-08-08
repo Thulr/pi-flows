@@ -6,8 +6,7 @@ import { extractLastJsonBlock } from "./protocol.ts";
 import { capModelVisibleText, isFailed, redactValue, resultText, retainValidatedReturnEnvelope, takeRawFinalAssistantText } from "./sanitize.ts";
 import { flowError, type CapturePolicy, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 
-// Contract identity and admission live in contract-resolution.ts; re-exported
-// here so this module stays the seam downstream consumers import from.
+// Contract identity/admission live in contract-resolution.ts; re-exported here.
 export { ResolvedDelegationContract, canonicalJsonValue, canonicalSha256, delegationContractId, isRecord, validateDelegationContract } from "./contract-resolution.ts";
 
 const ENVELOPE_STATUSES = new Set(["completed", "partial", "blocked", "failed"]);
@@ -131,10 +130,8 @@ function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolic
  * has ever wanted to accept one — making it optional only created call sites
  * that could forget.
  *
- * Module-private on purpose: `prepareIntegrationHandoff` is the one transition
- * through which a child result becomes integrable, so envelope validation
- * cannot be invoked out of order with the completion policy and attachment it
- * belongs to.
+ * Module-private: `prepareIntegrationHandoff` is the one transition through
+ * which a child result becomes integrable.
  *
  * @returns on success, the stored envelope. On rejection, the error — plus
  *   `rejected`, the child's own claims in stored form, when the envelope was at
@@ -303,17 +300,13 @@ export function createPersistedHandoffAttestation(handoff: DelegationHandoffEnve
 
 /**
  * Proof that one child result validated under one contract identity, cwd, and
- * capture policy. Returned to the consumer as an opaque token and presented
- * back for deferred consumption; it carries its own cloned envelope and
- * handoff privately, so a deferred second pass reuses exactly what was
- * validated instead of re-running filesystem digest checks against files that
- * may have changed since.
+ * capture policy — an opaque token presented back for deferred consumption. It
+ * carries its cloned envelope and handoff privately, so a second pass reuses
+ * exactly what was validated instead of re-running filesystem digest checks.
  */
 class IntegrationValidation {
-	// ECMAScript-private, not TypeScript-private: a caller retains this token
-	// across calls, and TS `private` fields would still be ordinary writable
-	// properties at runtime — a mutated snapshot presented back would clone and
-	// integrate without revalidation. `#` fields keep the snapshot unreachable.
+	// ECMAScript-private: TS `private` fields stay writable at runtime, and a
+	// mutated snapshot presented back would integrate without revalidation.
 	readonly #result: FlowRunResult;
 	readonly #contractId: string;
 	readonly #cwd: string;
@@ -328,16 +321,14 @@ class IntegrationValidation {
 		this.#policy = policy;
 		this.#envelope = envelope;
 		this.#handoff = handoff;
-		// Frozen so a retained token cannot even be decorated with own methods;
-		// reuse below never dispatches through it regardless.
+		// Frozen against own-method decoration; reuse never dispatches through it anyway.
 		Object.freeze(this);
 	}
 
 	/**
-	 * Brand-checked, module-dispatched reuse: nothing is ever looked up THROUGH
-	 * the token, so an own-property or prototype patch on a retained token can
-	 * substitute neither the checks nor the snapshots. The `#field in` brand
-	 * subsumes `instanceof` and cannot be forged from outside the class.
+	 * Brand-checked, module-dispatched reuse: nothing is looked up THROUGH the
+	 * token, so a patched token substitutes neither checks nor snapshots; the
+	 * `#field in` brand subsumes `instanceof` and cannot be forged.
 	 */
 	static reuse(
 		token: object | undefined,
@@ -346,8 +337,7 @@ class IntegrationValidation {
 		cwd: string,
 		policy: CapturePolicy,
 	): { envelope: DelegationReturnEnvelope; handoff: DelegationHandoffEnvelope } | undefined {
-		// The typeof guard keeps a primitive-valued token from turning the `in`
-		// brand check into a TypeError; every non-branded value is just "no reuse".
+		// typeof guard: a primitive token is "no reuse", not a TypeError from `in`.
 		if (!token || typeof token !== "object" || !(#envelope in token)) return undefined;
 		const received = token as IntegrationValidation;
 		const reusable = received.#result === result
