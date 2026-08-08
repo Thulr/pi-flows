@@ -44,7 +44,8 @@
   "pi": {
     "extensions": [
       "./extensions/pi-flows/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-run-card.gif"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": ">=0.82.0 <1.0.0",
