@@ -26,7 +26,7 @@ import {
 } from "./types.ts";
 import { currentFlowDepth, spawnJustificationMissing, validateConcurrency } from "./validate.ts";
 
-/** The live-presence surface a flow reports itself to: started at dispatch, updated as runs settle, settled exactly once — even when the handler dies. */
+/** The live-presence surface a flow reports itself to: started at dispatch, updated as runs settle, and settled on every path the aggregate controls — a handler failure settles it before propagating, and `settle()` settles it in its own finally. */
 export interface FlowPresence {
 	start: (mode: FlowMode, details: FlowDetails, redactSecrets: boolean, budget?: Budget) => void;
 	update: (details: FlowDetails) => void;
