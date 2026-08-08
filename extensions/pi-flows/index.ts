@@ -9,7 +9,6 @@ import {
 	formatFlowError,
 	type AgentScope,
 	type CapturePolicy,
-	type FlowPreset,
 } from "./types.ts";
 import { capModelVisibleText, redactText, safePath, scanForInjection, stripControlChars } from "./sanitize.ts";
 import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
@@ -26,7 +25,7 @@ import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
 import { formatTraceReport, parseTraceJsonl, summarizeTraceSpans } from "./trace.ts";
 import { DEFAULT_APPROVAL_ACTOR } from "./approval.ts";
 import { collectBudgetCeilings } from "./budget-disclosure.ts";
-import { Flow } from "./flow.ts";
+import { Flow, type DetailsBuilder, type ResolvedCall } from "./flow.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs, showModelRoster } from "./ui.ts";
 import { FlowRegistry, showFlowInspector } from "./inspector.ts";
 import { createFleetPanelController } from "./fleet-panel.ts";
@@ -35,7 +34,7 @@ import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
 import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
-import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets, type CodeReviewRange } from "./presets.ts";
+import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
 import { approveProjectPreset, traceProjectPresetRefusal } from "./preset-approval.ts";
 // Public API surface: re-export the names the package exposed when the
@@ -214,35 +213,43 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverFlowAgents(ctx.cwd, agentScope);
 			const presetDiscovery = discoverFlowPresets(ctx.cwd, agentScope);
 			const catalog = createAgentCatalog(discovery, agentScope);
-			let activePreset: FlowPreset | undefined;
-			let codeReviewRange: CodeReviewRange | undefined;
 			const requestedPresetTask = typeof params.task === "string" ? params.task : "";
 			// Resolved once per call rather than per child: the registry read is
 			// synchronous and cheap, but a roster that changed mid-flow would let two
 			// children of the same wave disagree about what "deep" meant.
 			const roster = currentModelRoster(ctx);
-			let policy: CapturePolicy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
-			let budgetCeilings = collectBudgetCeilings(params);
-			const makeDetails: typeof catalog.makeDetails = (detailsMode, agents) => {
-				const build = catalog.makeDetails(detailsMode, agents);
-				return (results, error) => {
-					const details = build(results, error);
-					if (budgetCeilings.length) details.budgetCeilings = budgetCeilings;
-					return attachPresetDetails(details, presetDiscovery, activePreset, policy);
+			const callerPolicy: CapturePolicy = { recordContent: params.recordContent ?? true, redactSecrets: params.redactSecrets ?? true };
+			// A pure factory over the resolution it is given: the aggregate calls it
+			// once with the post-preset state, and the pre-admission paths below call
+			// it with the caller's own. Neither copy is shared through a closure.
+			const makeDetails = (call: ResolvedCall): DetailsBuilder => {
+				const budgetCeilings = collectBudgetCeilings(call.params);
+				return (detailsMode, agents) => {
+					const build = catalog.makeDetails(detailsMode, agents);
+					return (results, error) => {
+						const details = build(results, error);
+						if (budgetCeilings.length) details.budgetCeilings = budgetCeilings;
+						return attachPresetDetails(details, presetDiscovery, call.preset, call.policy);
+					};
 				};
 			};
+			// The caller's own unexpanded resolution, and the pre-admission builder
+			// made from it: used by the list/config paths and the preset-resolution
+			// refusal, none of which ever see post-preset state.
+			const callerCall: ResolvedCall = { params, policy: callerPolicy };
+			const callerDetails = makeDetails(callerCall);
 
 			if (params.list) {
 				return {
-					content: [{ type: "text", text: `Workflow presets:\n${summarizePresets(presetDiscovery, policy)}\n\nFlow agents:\n${catalog.summary()}` }],
-					details: makeDetails("list")([]),
+					content: [{ type: "text", text: `Workflow presets:\n${summarizePresets(presetDiscovery, callerPolicy)}\n\nFlow agents:\n${catalog.summary()}` }],
+					details: callerDetails("list")([]),
 				};
 			}
 
 			if (params.showConfig) {
 				return {
-					content: [{ type: "text", text: `${catalog.configSummary(roster)}\n\n${presetConfigSummary(presetDiscovery, policy)}` }],
-					details: makeDetails("config")([]),
+					content: [{ type: "text", text: `${catalog.configSummary(roster)}\n\n${presetConfigSummary(presetDiscovery, callerPolicy)}` }],
+					details: callerDetails("config")([]),
 				};
 			}
 
@@ -251,12 +258,15 @@ export default function (pi: ExtensionAPI) {
 			const callerTrace = { traceFile: params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE, traceLabel: params.traceLabel, traceContext: params.traceContext };
 
 			// Everything below is adaptation: each port wraps one subdomain surface
-			// in a closure over this call's context. The lifecycle itself — which
-			// gate runs when, what a refusal does to the trace, what settles in what
-			// order — is the Flow aggregate's own (flow.ts), not wiring.
+			// as a pure function of what the aggregate hands it — post-preset state
+			// (params, policy, preset) arrives as arguments, never through a shared
+			// closure, so no port here assigns a local another port reads. The
+			// lifecycle itself — which gate runs when, what a refusal does to the
+			// trace, what settles in what order — is the Flow aggregate's own
+			// (flow.ts), not wiring.
 			const admission = await Flow.admit({
-				params,
-				policy,
+				params: callerCall.params,
+				policy: callerCall.policy,
 				cwd: ctx.cwd,
 				hasUI: ctx.hasUI === true,
 				// Who to credit on an approval receipt. pi does not hand the extension an
@@ -272,43 +282,46 @@ export default function (pi: ExtensionAPI) {
 				makeDetails,
 				resolvePreset: params.preset
 					? () => {
-						const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, policy);
+						const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, callerPolicy);
 						if ("error" in resolved) {
-							return { refusal: presetResolutionErrorOutput(resolved.error, presetDiscovery, makeDetails("list")([], resolved.error), policy) };
+							return { refusal: presetResolutionErrorOutput(resolved.error, presetDiscovery, callerDetails("list")([], resolved.error), callerPolicy) };
 						}
-						activePreset = resolved.preset;
-						policy = presetCapturePolicy(policy, resolved.params);
-						const expanded = { ...resolved.params, ...policy };
-						budgetCeilings = collectBudgetCeilings(expanded);
-						return { params: expanded, policy };
+						const presetPolicy = presetCapturePolicy(callerPolicy, resolved.params);
+						return { params: { ...resolved.params, ...presetPolicy }, policy: presetPolicy, preset: resolved.preset };
 					}
 					: undefined,
-				detectMode: (candidate) => {
+				detectMode: (candidate, buildDetails) => {
 					const detected = detectRunMode(candidate);
 					if ("error" in detected) {
 						return {
 							refusal: {
 								content: [{ type: "text", text: `${formatFlowError(detected.error)}\n\nAvailable agents:\n${catalog.summary()}` }],
-								details: makeDetails("list")([], detected.error),
+								details: buildDetails("list")([], detected.error),
 							},
 						};
 					}
 					return detected;
 				},
-				approvePresetTrust: async (candidate, mode) => {
-					const presetApproval = await approveProjectPreset(activePreset, agentScope, candidate.confirmProjectAgents, ctx, policy);
+				approvePresetTrust: async (call, mode, buildDetails) => {
+					const presetApproval = await approveProjectPreset(call.preset, agentScope, call.params.confirmProjectAgents, ctx, call.policy);
 					if (presetApproval.error) {
-						const details = makeDetails(mode)([], presetApproval.error);
-						const link = await traceProjectPresetRefusal(presetApproval.error, activePreset, callerTrace, mode, policy, ctx.cwd, ctx.hasUI);
+						const details = buildDetails(mode)([], presetApproval.error);
+						const link = await traceProjectPresetRefusal(presetApproval.error, call.preset, callerTrace, mode, call.policy, ctx.cwd, ctx.hasUI);
 						if (link) details.trace = link;
 						return { refusal: { content: [{ type: "text", text: formatFlowError(presetApproval.error) }], details } };
 					}
 					return { record: presetApproval.record };
 				},
-				preparePresetRun: (candidate, mode) => {
-					const presetRun = preparePresetDispatch(activePreset, candidate, requestedPresetTask, mode, ctx.cwd);
-					codeReviewRange = presetRun.codeReviewRange;
-					return { params: presetRun.params as Record<string, any>, runDefaultCwd: presetRun.runDefaultCwd };
+				preparePresetRun: (call, mode) => {
+					const preset = call.preset;
+					const presetRun = preparePresetDispatch(preset, call.params, requestedPresetTask, mode, ctx.cwd);
+					return {
+						params: presetRun.params as Record<string, any>,
+						runDefaultCwd: presetRun.runDefaultCwd,
+						formatResult: preset
+							? (output) => formatPresetResult(preset, output, call.policy, presetRun.runDefaultCwd, presetRun.codeReviewRange)
+							: undefined,
+					};
 				},
 				approveProjectAgents: async (candidate, recordEvent) => {
 					const projectAgents = catalog.projectAgentsFor(candidate);
@@ -351,15 +364,12 @@ export default function (pi: ExtensionAPI) {
 				// seam: lessons from prior runs are injected into the top-level task
 				// before the handler runs, and a lesson is recorded from the final
 				// output after it — every mode gets both halves without per-handler wiring.
-				resolveTask: (candidate) =>
+				resolveTask: (candidate, resolvedPolicy) =>
 					typeof candidate.task === "string" && candidate.task.trim() && reflexionFile(ctx.cwd, candidate)
-						? { ...candidate, task: withReflexion(ctx.cwd, candidate, candidate.task, policy) }
+						? { ...candidate, task: withReflexion(ctx.cwd, candidate, candidate.task, resolvedPolicy) }
 						: candidate,
-				recordLesson: (candidate, mode, text) => appendReflexion(ctx.cwd, candidate, mode, text, policy),
-				formatResult: (output, runDefaultCwd) => {
-					if (activePreset) formatPresetResult(activePreset, output, policy, runDefaultCwd, codeReviewRange);
-				},
-				decorateRootAttributes: (attributes, details, deliverable) => attachPresetTraceAttributes(attributes, activePreset, details, deliverable),
+				recordLesson: (candidate, mode, text, resolvedPolicy) => appendReflexion(ctx.cwd, candidate, mode, text, resolvedPolicy),
+				decorateRootAttributes: (attributes, details, deliverable, preset) => attachPresetTraceAttributes(attributes, preset, details, deliverable),
 				persist: (details) => appendFlowSessionEntry(pi, details),
 			});
 			if ("refused" in admission) return admission.refused;

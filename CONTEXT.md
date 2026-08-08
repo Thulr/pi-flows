@@ -41,6 +41,10 @@ _Avoid_: job, session
 The ordered walk of every pre-spawn gate that turns a flow call into something dispatchable, owned by the Flow aggregate. Each gate is a supplied predicate or approval object; the order they run in is the aggregate's own. Admission's product is a single-use capability that is the only way to dispatch, so skipping or reordering a gate is not a call sequence that exists. A call that fails admission is a refused flow.
 _Avoid_: validation (that names one kind of gate), pre-flight
 
+**Resolved call**:
+What one flow call resolved to after preset expansion — the single copy of the post-preset params, capture policy, and preset selection, constructed and carried by the Flow aggregate. Ports that need post-preset state receive the resolved call (or a value derived from it, like the one details builder) as an argument; a port reading resolved state back through a composition-root closure is the smell this term exists to name.
+_Avoid_: expanded params (that names only one field), shared state
+
 **Flow tree**:
 A flow plus any flows its children start. Budget accounting is per flow: every flow in the tree charges only its own budget, so no ceiling spans the tree.
 _Avoid_: flow graph, nested run

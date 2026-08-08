@@ -39,7 +39,7 @@ function flowPorts(params: Record<string, unknown>, adapter: FaultAdapter, cwd: 
 		agentScope: "user",
 		discovery,
 		runChild: adapter.runChild,
-		makeDetails: (mode, agents) => catalog.makeDetails(mode, agents),
+		makeDetails: () => (mode, agents) => catalog.makeDetails(mode, agents),
 		detectMode: (candidate) => {
 			const detected = detectRunMode(candidate);
 			return "error" in detected
@@ -47,7 +47,7 @@ function flowPorts(params: Record<string, unknown>, adapter: FaultAdapter, cwd: 
 				: detected;
 		},
 		approvePresetTrust: async () => ({ record: () => undefined }),
-		preparePresetRun: (candidate) => ({ params: candidate, runDefaultCwd: cwd }),
+		preparePresetRun: (call) => ({ params: call.params, runDefaultCwd: cwd }),
 		approveProjectAgents: async () => null,
 		// The real predicate: headless checkpoints fail closed rather than being skipped.
 		checkpoint: (candidate, mode, when, preview, recordEvent) => checkpointApproval(candidate, { hasUI: false }, mode, when, preview, recordEvent),

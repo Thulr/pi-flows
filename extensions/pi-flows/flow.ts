@@ -10,12 +10,12 @@ import {
 	formatFlowError,
 	type AgentScope,
 	type CapturePolicy,
-	type FlowAgent,
 	type FlowDetails,
 	type FlowDiscovery,
 	type FlowError,
 	type FlowMode,
-	type FlowRunResult,
+	type FlowPreset,
+	type ModeDeps,
 	type ModeHandler,
 	type ModeOutput,
 	type ModelRoster,
@@ -32,6 +32,24 @@ export interface FlowPresence {
 	update: (details: FlowDetails) => void;
 	settle: (details: FlowDetails) => void;
 }
+
+/**
+ * What one flow call resolved to — the single copy of the post-preset params,
+ * capture policy, and preset selection. The aggregate constructs it (from the
+ * call's own values, or from the {@link FlowPorts.resolvePreset} result) and
+ * hands it to every port that needs post-preset state as an argument, so no
+ * port has a reason to read resolved state back through a composition-root
+ * closure.
+ */
+export interface ResolvedCall {
+	params: Record<string, any>;
+	policy: CapturePolicy;
+	/** The preset the call named, once resolved. Absent for raw mode calls. */
+	preset?: FlowPreset;
+}
+
+/** The details-builder shape mode handlers consume. The aggregate constructs exactly one per flow — from the resolved call, via the {@link FlowPorts.makeDetails} factory — and every later consumer receives that one. */
+export type DetailsBuilder = ModeDeps["makeDetails"];
 
 /**
  * Everything the composition root supplies to one flow: the call's data, and
@@ -57,15 +75,16 @@ export interface FlowPorts {
 	onUpdate?: Update;
 	/** The child-run seam: the production subprocess adapter, or a test fake. */
 	runChild: RunChild;
-	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
-	/** Expand a named preset into ordinary mode params and a tightened capture policy. Absent when the call names none. */
-	resolvePreset?: () => { params: Record<string, any>; policy: CapturePolicy } | { refusal: ModeOutput };
-	/** Which single mode the params activate; the refusal carries the mode-hint content. */
-	detectMode: (params: Record<string, any>) => { mode: RunMode } | { refusal: ModeOutput };
-	/** Project-preset trust. On approval, `record` defers the approval event until the flow's own sink exists. */
-	approvePresetTrust: (params: Record<string, any>, mode: RunMode) => Promise<{ refusal: ModeOutput } | { record: (recordEvent?: RecordEvent) => void }>;
-	/** Preset-owned run preparation. It shells out in preset-named directories, which is why the aggregate never calls it before the trust gate. */
-	preparePresetRun: (params: Record<string, any>, mode: RunMode) => { params: Record<string, any>; runDefaultCwd: string };
+	/** Details-builder factory, a pure function of the resolution it is given. The aggregate calls it exactly once, after preset expansion, so every refusal, live row, and handler reads details built from the same resolved state. */
+	makeDetails: (call: ResolvedCall) => DetailsBuilder;
+	/** Expand a named preset into ordinary mode params, a tightened capture policy, and the preset itself. Pure: the returned resolution is the only copy. Absent when the call names none. */
+	resolvePreset?: () => ResolvedCall | { refusal: ModeOutput };
+	/** Which single mode the params activate; the refusal carries the mode-hint content, built with the aggregate-constructed builder. */
+	detectMode: (params: Record<string, any>, makeDetails: DetailsBuilder) => { mode: RunMode } | { refusal: ModeOutput };
+	/** Project-preset trust over the resolved call. On approval, `record` defers the approval event until the flow's own sink exists. */
+	approvePresetTrust: (call: ResolvedCall, mode: RunMode, makeDetails: DetailsBuilder) => Promise<{ refusal: ModeOutput } | { record: (recordEvent?: RecordEvent) => void }>;
+	/** Preset-owned run preparation. It shells out in preset-named directories, which is why the aggregate never calls it before the trust gate. `formatResult` is the preset-owned result formatter, constructed here from the same resolution so settle needs no preset state of its own. */
+	preparePresetRun: (call: ResolvedCall, mode: RunMode) => { params: Record<string, any>; runDefaultCwd: string; formatResult?: (output: ModeOutput) => void };
 	/** Project-agent trust, recording its decision on the trace. Null when approved or not applicable. */
 	approveProjectAgents: (params: Record<string, any>, recordEvent: RecordEvent | undefined) => Promise<FlowError | null>;
 	/** A human checkpoint (see CONTEXT.md), recorded on the trace like any other approval. Null when it does not gate this moment or was approved. */
@@ -76,14 +95,12 @@ export interface FlowPorts {
 	presence: FlowPresence;
 	/** Remove progress surfaces superseded by the live row. */
 	clearUi?: () => void;
-	/** Inject cross-run lessons into the top-level task before the handler runs. */
-	resolveTask?: (params: Record<string, any>) => Record<string, any>;
-	/** Record a lesson from the final output. The aggregate calls it only when at least one run happened. */
-	recordLesson?: (params: Record<string, any>, mode: RunMode, text: string) => Promise<void>;
-	/** Preset-owned result formatting, applied after the mode has validated return envelopes. */
-	formatResult?: (output: ModeOutput, runDefaultCwd: string) => void;
-	/** Decorate the root span's summary attributes (preset provenance and outcome). `deliverable` is false when a strict run cannot evidence the verdict it reached. */
-	decorateRootAttributes?: (attributes: Record<string, unknown>, details: FlowDetails, deliverable: boolean) => Record<string, unknown>;
+	/** Inject cross-run lessons into the top-level task before the handler runs, under the resolved capture policy. */
+	resolveTask?: (params: Record<string, any>, policy: CapturePolicy) => Record<string, any>;
+	/** Record a lesson from the final output under the resolved capture policy. The aggregate calls it only when at least one run happened. */
+	recordLesson?: (params: Record<string, any>, mode: RunMode, text: string, policy: CapturePolicy) => Promise<void>;
+	/** Decorate the root span's summary attributes (preset provenance and outcome). `deliverable` is false when a strict run cannot evidence the verdict it reached; `preset` is the resolved selection the aggregate carried. */
+	decorateRootAttributes?: (attributes: Record<string, unknown>, details: FlowDetails, deliverable: boolean, preset?: FlowPreset) => Record<string, unknown>;
 	/** Append the durable session entry. The aggregate calls it last, so history can never record an outcome the caller was not told. */
 	persist: (details: FlowDetails) => void;
 }
@@ -91,11 +108,14 @@ export interface FlowPorts {
 /** Everything admission resolved, carried privately through dispatch and settle. */
 interface AdmittedState {
 	ports: FlowPorts;
-	params: Record<string, any>;
-	policy: CapturePolicy;
+	call: ResolvedCall;
+	/** The one details builder for this flow, constructed from `call`. */
+	makeDetails: DetailsBuilder;
 	mode: RunMode;
 	concurrency: number;
 	runDefaultCwd: string;
+	/** Preset-owned result formatting, returned by preparation. Absent when the call named no preset (or the preset formats nothing). */
+	formatPresetResult?: (output: ModeOutput) => void;
 	traceStrict: boolean;
 	sink?: TraceSink;
 	handoffs: HandoffConsumer;
@@ -140,27 +160,28 @@ export class Flow {
 	 * settings) — never with evidence borrowed from a run that did not happen.
 	 */
 	static async admit(ports: FlowPorts): Promise<FlowAdmission> {
-		let params = ports.params;
-		let policy = ports.policy;
+		let call: ResolvedCall = { params: ports.params, policy: ports.policy };
 		if (ports.resolvePreset) {
 			const resolved = ports.resolvePreset();
 			if ("refusal" in resolved) return { refused: resolved.refusal };
-			params = resolved.params;
-			policy = resolved.policy;
+			call = resolved;
 		}
+		// The one details builder for this flow, constructed after preset expansion
+		// so nothing downstream can hold details built from pre-preset state.
+		const makeDetails = ports.makeDetails(call);
 
-		const detected = ports.detectMode(params);
+		const detected = ports.detectMode(call.params, makeDetails);
 		if ("refusal" in detected) return { refused: detected.refusal };
 		const mode = detected.mode;
 		const refusalOutput = (error: FlowError): ModeOutput => ({
 			content: [{ type: "text", text: formatFlowError(error) }],
-			details: ports.makeDetails(mode)([], error),
+			details: makeDetails(mode)([], error),
 		});
 		const refuse = (error: FlowError): FlowAdmission => ({ refused: refusalOutput(error) });
 
 		// Structural friction against reflexive delegation: a spawning call must
 		// articulate why isolation beats doing the work in the parent context.
-		if (spawnJustificationMissing(params.why)) {
+		if (spawnJustificationMissing(call.params.why)) {
 			return refuse(flowError(
 				"WHY_REQUIRED",
 				"Flow call refused: `why` is required for any call that spawns agents.",
@@ -181,26 +202,26 @@ export class Flow {
 
 		// Fan-out bounding is aggregate policy: validated and resolved once here
 		// for every mode, so no handler re-derives it and no new mode can forget it.
-		const concurrencyError = validateConcurrency(params.concurrency);
+		const concurrencyError = validateConcurrency(call.params.concurrency);
 		if (concurrencyError) return refuse(concurrencyError);
-		const concurrency = params.concurrency ?? DEFAULT_CONCURRENCY;
+		const concurrency = call.params.concurrency ?? DEFAULT_CONCURRENCY;
 
-		const trust = await ports.approvePresetTrust(params, mode);
+		const trust = await ports.approvePresetTrust(call, mode, makeDetails);
 		if ("refusal" in trust) return { refused: trust.refusal };
-		const prepared = ports.preparePresetRun(params, mode);
-		params = prepared.params;
+		const prepared = ports.preparePresetRun(call, mode);
+		call = { ...call, params: prepared.params };
 
 		// Trace evidence as a gate is opt-in. Ordinary user flows stay
 		// best-effort; an eval or release run asks for strict, and then a run
 		// that cannot prove what it did is a failed run, not a quiet pass.
-		const traceStrict = params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
-		const traceFileParam = params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
+		const traceStrict = call.params.traceStrict ?? /^(1|true|yes)$/i.test(process.env.PI_FLOWS_TRACE_STRICT?.trim() ?? "");
+		const traceFileParam = call.params.traceFile ?? process.env.PI_FLOWS_TRACE_FILE;
 		const traceConfigError = strictTraceConfigError(traceStrict, traceFileParam);
 		if (traceConfigError) return refuse(traceConfigError);
 
-		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, policy, params.traceLabel, params.traceContext) : undefined;
+		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, call.policy, call.params.traceLabel, call.params.traceContext) : undefined;
 		trust.record(sink?.event);
-		const handoffs = createHandoffConsumer({ params, mode, policy, defaultCwd: prepared.runDefaultCwd, recordEvent: sink?.event });
+		const handoffs = createHandoffConsumer({ params: call.params, mode, policy: call.policy, defaultCwd: prepared.runDefaultCwd, recordEvent: sink?.event });
 		// A refusal from here on has a trace of its own; without the link a caller
 		// carrying a traceContext cannot correlate the refusal to its spans.
 		const refuseTraced = async (error: FlowError): Promise<FlowAdmission> => {
@@ -210,10 +231,10 @@ export class Flow {
 			return { refused };
 		};
 
-		const projectAgentsError = await ports.approveProjectAgents(params, sink?.event);
+		const projectAgentsError = await ports.approveProjectAgents(call.params, sink?.event);
 		if (projectAgentsError) return refuseTraced(projectAgentsError);
 
-		const spawnCheckpointError = await ports.checkpoint(params, mode, "spawn", undefined, sink?.event);
+		const spawnCheckpointError = await ports.checkpoint(call.params, mode, "spawn", undefined, sink?.event);
 		if (spawnCheckpointError) return refuseTraced(spawnCheckpointError);
 
 		const handler = ports.handlerFor(mode);
@@ -221,8 +242,8 @@ export class Flow {
 
 		// Cost ceiling: bounds the one "uncontrolled recursion" dimension that
 		// iteration and time caps miss. Undefined when the call configured none.
-		const budget = Budget.forFlow(params);
-		return { admitted: AdmittedFlow.fromAdmission(LIFECYCLE, { ports, params, policy, mode, concurrency, runDefaultCwd: prepared.runDefaultCwd, traceStrict, sink, handoffs, handler, budget }) };
+		const budget = Budget.forFlow(call.params);
+		return { admitted: AdmittedFlow.fromAdmission(LIFECYCLE, { ports, call, makeDetails, mode, concurrency, runDefaultCwd: prepared.runDefaultCwd, formatPresetResult: prepared.formatResult, traceStrict, sink, handoffs, handler, budget }) };
 	}
 }
 
@@ -241,7 +262,7 @@ export class AdmittedFlow {
 		// runtime-private, so no capability exists without admission passing.
 		if (key !== LIFECYCLE) throw new TypeError("An AdmittedFlow is produced only by Flow.admit: the dispatch capability cannot be constructed directly.");
 		this.#state = state;
-		this.#liveDetails = state.ports.makeDetails(state.mode)([]);
+		this.#liveDetails = state.makeDetails(state.mode)([]);
 		// Freezing blocks own-property shadowing of `dispatch`; the #state latch is unaffected.
 		Object.freeze(this);
 	}
@@ -262,7 +283,8 @@ export class AdmittedFlow {
 		const state = this.#state;
 		if (!state) throw new Error("A flow dispatches once: this admission capability is already spent.");
 		this.#state = undefined;
-		const { ports, mode, policy } = state;
+		const { ports, mode } = state;
+		const { policy } = state.call;
 
 		ports.presence.start(mode, this.#liveDetails, policy.redactSecrets, state.budget);
 		ports.clearUi?.();
@@ -271,7 +293,7 @@ export class AdmittedFlow {
 			ports.presence.update(this.#liveDetails);
 			ports.onUpdate?.(partial);
 		};
-		const paramsForRun = ports.resolveTask ? ports.resolveTask(state.params) : state.params;
+		const paramsForRun = ports.resolveTask ? ports.resolveTask(state.call.params, policy) : state.call.params;
 
 		try {
 			const output = await state.handler({
@@ -303,7 +325,7 @@ export class AdmittedFlow {
 					return decision;
 				},
 				approvalActor: ports.approvalActor,
-				makeDetails: ports.makeDetails,
+				makeDetails: state.makeDetails,
 				runChild: ports.runChild,
 				concurrency: state.concurrency,
 			});
@@ -346,7 +368,8 @@ export class DispatchedFlow {
 		const state = this.#state;
 		if (!state) throw new Error("A flow settles once: this dispatch is already settled.");
 		this.#state = undefined;
-		const { ports, mode, params } = state;
+		const { ports, mode } = state;
+		const { params, policy } = state.call;
 		const output = this.#output;
 		let liveDetails = output.details;
 		const shareLive = (details: FlowDetails) => {
@@ -359,11 +382,11 @@ export class DispatchedFlow {
 				output.details.error = state.handoffs.blockingError;
 				output.content = [{ type: "text", text: formatFlowError(state.handoffs.blockingError) }];
 			}
-			ports.formatResult?.(output, state.runDefaultCwd);
+			state.formatPresetResult?.(output);
 			// A lesson is recorded only when at least one run happened — pre-spawn
 			// refusals (validation errors, approvals) are not lessons about the task.
 			if (output.details.results.length > 0) {
-				await ports.recordLesson?.(params, mode, output.content[0]?.text ?? "");
+				await ports.recordLesson?.(params, mode, output.content[0]?.text ?? "", policy);
 			}
 			const finalCheckpointError = await ports.checkpoint(params, mode, "finalize", output.content[0]?.text, state.sink?.event);
 			if (finalCheckpointError) {
@@ -378,7 +401,7 @@ export class DispatchedFlow {
 				output.details.trace = await state.sink.finalize({ ok }, (health) => {
 					const attributes = traceSummaryAttributes(mode, params, output);
 					const deliverable = !state.traceStrict || traceHealthStatus(health, true) === "recorded";
-					return ports.decorateRootAttributes ? ports.decorateRootAttributes(attributes, output.details, deliverable) : attributes;
+					return ports.decorateRootAttributes ? ports.decorateRootAttributes(attributes, output.details, deliverable, state.call.preset) : attributes;
 				});
 			}
 			// Strict runs refuse to report a result they cannot evidence. An
