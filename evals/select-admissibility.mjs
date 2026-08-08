@@ -9,7 +9,7 @@
 // a bare-node script such as eval:review or eval:pareto.
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency, workflowHeadlessApprovalRefusal } from "../extensions/pi-flows/validate.ts";
+import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../extensions/pi-flows/validate.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
@@ -137,6 +137,13 @@ export function callAdmissibilityFailure(args) {
 	// probe ever runs; a call it refuses MONITOR_INVALID spawns nothing.
 	const monitorInvalid = monitorInvalidRefusal(effective ?? {});
 	if (monitorInvalid) return { code: monitorInvalid.code, reason: monitorInvalid.message.replace(/\.$/, "") };
+	// handleWorkflow validates phase shape before touching state or spawning
+	// — 1..MAX phases, unique ids, each phase exactly one kind (agent+task
+	// work or approval) — and an invalid phase refuses the call WHOLE
+	// (WORKFLOW_INVALID), so a topology whose valid siblings would satisfy a
+	// case must not score as one the tool runs (#88).
+	const workflowPhases = workflowPhasesRefusal(effective ?? {});
+	if (workflowPhases) return { code: workflowPhases.code, reason: workflowPhases.message.replace(/\.$/, "") };
 	// A workflow opening with an approval phase is refused in the headless
 	// subject before any child spawns (state is persisted first, so the
 	// play-out branch still terminates it via the stateful-mode rule).

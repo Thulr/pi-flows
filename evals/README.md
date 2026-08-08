@@ -636,7 +636,9 @@ concurrency bound (`INVALID_CONCURRENCY`), the fan-out bound
 (`TOO_MANY_TASKS`, more tasks than the cap), the budget gate
 (`BUDGET_EXCEEDED`, a zero flow ceiling — or every first-spawn role's
 contract budget starting exhausted), pre-work mode validation
-(`MONITOR_INVALID`, `GRAPH_CYCLE`, and the shape-invisible preset resolution
+(`MONITOR_INVALID`, `GRAPH_CYCLE`, `WORKFLOW_INVALID` — an invalid workflow
+phase refuses the call whole, so valid siblings cannot lend themselves to a
+case's topology — and the shape-invisible preset resolution
 failures `PRESET_EXPANSION_INVALID`/`PRESET_TASK_REQUIRED`), the pre-spawn
 shared-write guard (`SHARED_WRITE_CWD`, two or more write-capable refs sharing
 one cwd at concurrency above one), the roster rule (`UNKNOWN_AGENT`, no

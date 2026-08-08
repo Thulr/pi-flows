@@ -125,7 +125,10 @@ function primaryAgents(args, mode) {
 	}
 	if (mode === "evaluate") return [args.evaluate?.operator?.agent ?? "operator"].filter(Boolean);
 	if (mode === "orchestrate") return [args.orchestrate?.recon?.agent ?? "recon"].filter(Boolean);
-	if (mode === "workflow") return asArray(args.workflow?.phases).map((phase) => phase?.agent).filter(Boolean);
+	// Work phases only: a schema-valid approval phase may carry a stray agent
+	// field the handler never spawns, and letting it into the allowlist or
+	// knownAgentsOnly would fail a call the tool runs fine.
+	if (mode === "workflow") return workflowWorkPhases(args).map((phase) => phase.agent);
 	if (mode === "worktree") return asArray(args.worktree?.tasks).map((task) => task?.agent).filter(Boolean);
 	if (mode === "debate") return asArray(args.debate?.participants).map((participant) => participant?.agent).filter(Boolean);
 	if (mode === "dossier") return asArray(args.dossier?.sections).map((section) => section?.agent).filter(Boolean);

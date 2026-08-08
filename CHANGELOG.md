@@ -35,7 +35,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   work-phase minimum, counted by the workflow handler's own imported
   work-phase predicate (agent AND task): approval-only phases carry no task,
   and an agentless task phase is a call the tool refuses
-  (`WORKFLOW_INVALID`), so neither counts. The
+  (`WORKFLOW_INVALID`), so neither counts. The admissibility vocabulary now
+  scores `WORKFLOW_INVALID` through the handler's own exported phase
+  validation, so an invalid phase cannot lend its valid siblings to a case's
+  topology, and the agents predicates read work phases only, so a stray
+  agent field on an approval phase cannot fail a call the tool runs. The
   `implicit-phase-gated-work-uses-workflow` case now requires at least two
   on-topic work phases naming bundled agents (`knownAgentsOnly` — workflow
   persists state before the runner's roster check, so `UNKNOWN_AGENT` is not
