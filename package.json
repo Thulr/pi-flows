@@ -28,7 +28,11 @@
     "presets/*.md",
     "extensions/pi-flows/**/*.ts",
     "extensions/pi-flows/**/*.mjs",
-    "docs/*.md",
+    "docs/README.md",
+    "docs/tutorials/*.md",
+    "docs/how-to/*.md",
+    "docs/reference/*.md",
+    "docs/explanation/*.md",
     "examples/**",
     "README.md",
     "LICENSE",
@@ -40,7 +44,8 @@
   "pi": {
     "extensions": [
       "./extensions/pi-flows/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-run-card.gif"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": ">=0.82.0 <1.0.0",

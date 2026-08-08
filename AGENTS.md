@@ -12,7 +12,7 @@ Read this before editing the repo.
 - Trace tests: `tests/trace-topology.test.ts` (span roles, stage nesting, dependency links), `tests/trace-evidence.test.ts` (identity attributes, capture policy, handoff accounting, budget authority), `tests/trace-gate.test.ts` (reading a trace back: structural validation and the strict gate)
 - Fault injection: `tests/fault-adapter.ts` (deterministic, model-free faults over the `runChild` seam) + `tests/fault-scenarios.ts` (the scenario manifest and its four check families) + `tests/fault-portfolio.ts` (containment/false-containment rates over the attack- and control-opportunity denominators) + `tests/fault-injection.test.ts`. Add a coordination fault as a manifest entry, not as a bespoke test
 - Eval calibration: `evals/calibration.mjs` (report assembly + gate rules) over `calibration-key.mjs` (validity key), `calibration-coverage.mjs` (splits, per-dimension coverage), `calibration-stats.mjs` (confusion matrices, rates, bounds), `review-agreement.mjs` (blinded human labels, adjudication, agreement)
-- User docs: `README.md`, `docs/*.md`, `examples/README.md`
+- User docs: `README.md`, `docs/README.md` (the Diátaxis index) plus `docs/{tutorials,how-to,reference,explanation}/*.md`, `examples/README.md`
 
 ## Required checks
 
@@ -39,7 +39,7 @@ npm run pack:dry-run
 - Do not pass raw user task text in child process argv.
 - Redact secret-shaped content and home paths from returned content/details by default.
 - Do not commit internal research notes or generated audit/eval artifacts (`docs/research/`, `audit-artifacts/`, `.thulr/`, generated eval traces).
-- Keep `README.md`, `docs/flow-reference.md`, TypeBox params, and tests in sync when changing the `flow` contract.
+- Keep `README.md`, `docs/reference/flow-reference.md`, TypeBox params, and tests in sync when changing the `flow` contract.
 - Keep `CHANGELOG.md`, `package.json`, `PI_FLOWS_VERSION` in `extensions/pi-flows/types.ts`, and the release tag in agreement for release-facing changes — the publish workflow fails when the `vX.Y.Z` tag does not match `package.json`.
 - Do not package `audit-artifacts/`, `tests/`, `scripts/`, or local temp files.
 - Write commits as [Conventional Commits](./CONTRIBUTING.md#commit-messages) (`type(scope): summary`).

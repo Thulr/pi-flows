@@ -389,14 +389,14 @@ test("nested flow calls are refused past the depth cap without spawning", async 
 });
 
 test("every FlowErrorCode is documented in the troubleshooting catalog (no undocumented codes)", async () => {
-  const doc = await readFile(new URL("../docs/troubleshooting.md", import.meta.url), "utf8");
+  const doc = await readFile(new URL("../docs/how-to/troubleshooting.md", import.meta.url), "utf8");
 
   // Forward: every code in the source has a `### `CODE`` entry in the catalog.
   const undocumented = FLOW_ERROR_CODES.filter((code) => !doc.includes(`### \`${code}\``));
   assert.deepEqual(
     undocumented,
     [],
-    `error codes missing a docs/troubleshooting.md entry: ${undocumented.join(", ")}`,
+    `error codes missing a docs/how-to/troubleshooting.md entry: ${undocumented.join(", ")}`,
   );
 
   // Reverse: every code-shaped catalog heading is a real FlowErrorCode (catches doc typos).
@@ -406,7 +406,7 @@ test("every FlowErrorCode is documented in the troubleshooting catalog (no undoc
   assert.deepEqual(
     unknown,
     [],
-    `docs/troubleshooting.md documents codes that are not in FlowErrorCode: ${unknown.join(", ")}`,
+    `docs/how-to/troubleshooting.md documents codes that are not in FlowErrorCode: ${unknown.join(", ")}`,
   );
 });
 

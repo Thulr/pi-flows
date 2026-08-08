@@ -791,7 +791,7 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 ### Added
 
 - Custom agents are now a documented public extension point:
-  [`docs/custom-agents.md`](./docs/custom-agents.md) covers the agent markdown
+  [`docs/how-to/custom-agents.md`](./docs/how-to/custom-agents.md) covers the agent markdown
   format (frontmatter contract + system prompt body), the
   package/user/project directories, shadowing precedence and its
   `AGENT_NAME_SHADOWED` diagnostic, `tier` vs `model` portability, and the

@@ -29,7 +29,7 @@ Then confirm it is on your PATH:
 npm run preflight   # or: pi --version
 ```
 
-See the [README Install section](../README.md#install) for the full prerequisite
+See the [README Install section](../../README.md#install) for the full prerequisite
 list (Node `>=24`, npm `>=11`, pi `>=0.82.0`).
 
 ### pi is older than the minimum supported version
@@ -542,7 +542,7 @@ Cause: a delegation `contract` is missing a required field, contains a malformed
 authority/budget/side-effect value, or has a `returnSchema` that cannot compile.
 
 Fix: provide the complete delegation contract documented in
-[Flow reference](./flow-reference.md#return-requirements-delegation-contracts-and-write-isolation).
+[Flow reference](../reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation).
 Delegation-contract validation happens before the affected single, chain, or evaluate child
 is dispatched.
 

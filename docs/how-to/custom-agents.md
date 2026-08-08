@@ -49,12 +49,12 @@ Have sql-reviewer check the migrations in db/migrate added this week.
 | `description` | yes | Shown in `flow list:true` and `/flows` — this is what the parent model reads when choosing an agent, so make it say what the agent is *for*. |
 | `tools` | no | Comma-separated pi tool list, e.g. `read,grep,find,ls`. `none` runs with no built-in tools. Omit for pi defaults — which include `bash`, `edit`, and `write`, making the agent **write-capable** and subject to the `SHARED_WRITE_CWD` fan-out guard. |
 | `model` | no | Pin an exact model id. Prefer `tier` so the agent stays portable across providers. |
-| `tier` | no | `capable` (default — the model the user's session is running), `fast` (the cheapest model their install can run), or `deep` (the most capable, for the hardest reasoning/critique work). Resolved against the [model roster](./flow-reference.md#the-model-roster), derived from the models the user actually has — so an agent stays portable with zero configuration. Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier`. A flow-call `tier: capable` always resolves, forcing the session's model even on a `fast`/`deep` agent. |
+| `tier` | no | `capable` (default — the model the user's session is running), `fast` (the cheapest model their install can run), or `deep` (the most capable, for the hardest reasoning/critique work). Resolved against the [model roster](../reference/flow-reference.md#the-model-roster), derived from the models the user actually has — so an agent stays portable with zero configuration. Resolution order: flow-call `model` > flow-call `tier` > agent `model` pin > agent `tier`. A flow-call `tier: capable` always resolves, forcing the session's model even on a `fast`/`deep` agent. |
 | `thinking` | no | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — how hard this agent thinks, independent of which model it runs. Omit it to take the tier's level, which for `capable` means inheriting whatever level the parent session is on; set it when the agent's effort should be fixed regardless (bundled `strategist` pins `high`, `recon` pins `low`). Lowered automatically to what the resolved model supports. An unrecognized level is ignored with an `AGENT_THINKING_INVALID` warning. |
 
 A file missing `name` or `description` is skipped with an `AGENT_FRONTMATTER_INVALID` warning in `/flows status` — it does not break discovery of the other agents.
 
-Everything below the frontmatter is the agent's system prompt. Write it for a child that starts with zero context: state the task, the output shape, and that the parent only sees the final summary. The bundled [`agents/*.md`](../agents/) are working examples of the style.
+Everything below the frontmatter is the agent's system prompt. Write it for a child that starts with zero context: state the task, the output shape, and that the parent only sees the final summary. The bundled [`agents/*.md`](../../agents/) are working examples of the style.
 
 ## Verify what's loaded
 
@@ -67,6 +67,6 @@ Everything below the frontmatter is the agent's system prompt. Write it for a ch
 
 ## Project agents and trust
 
-Project agents (`.pi/flow-agents/`) are **repo-controlled prompts**: cloning a repository must not silently hand it a delegation surface. So they only load under an explicit `agentScope` of `"project"` or `"all"`, interactive sessions ask for confirmation before running them, and headless runs **fail closed** with `PROJECT_AGENT_APPROVAL_REQUIRED` unless `confirmProjectAgents:false` is passed after reviewing the files. Details in the [README safety model](../README.md#safety-model) and [troubleshooting](./troubleshooting.md).
+Project agents (`.pi/flow-agents/`) are **repo-controlled prompts**: cloning a repository must not silently hand it a delegation surface. So they only load under an explicit `agentScope` of `"project"` or `"all"`, interactive sessions ask for confirmation before running them, and headless runs **fail closed** with `PROJECT_AGENT_APPROVAL_REQUIRED` unless `confirmProjectAgents:false` is passed after reviewing the files. Details in the [README safety model](../../README.md#safety-model) and [troubleshooting](./troubleshooting.md).
 
 Use `user` agents for your personal toolkit, and `project` agents for prompts a team should version and review together.

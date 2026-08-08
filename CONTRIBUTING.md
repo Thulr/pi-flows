@@ -83,11 +83,11 @@ Tests must not require a live model/provider. Use fake/no-run paths for contract
 If a user-visible behavior changes, update:
 
 - `CHANGELOG.md`
-- `docs/flow-reference.md`
-- `docs/troubleshooting.md` if an error changes
+- `docs/reference/flow-reference.md`
+- `docs/how-to/troubleshooting.md` if an error changes
 - `examples/README.md` if an invocation shape changes
 
-See [docs/release.md](./docs/release.md).
+See [docs/how-to/release.md](./docs/how-to/release.md).
 
 ## Review expectations
 

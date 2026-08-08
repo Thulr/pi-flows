@@ -1,7 +1,7 @@
 # Release checklist
 
 Releases publish to npm from CI: pushing a `vX.Y.Z` tag runs
-[`.github/workflows/publish.yml`](../.github/workflows/publish.yml), which runs
+[`.github/workflows/publish.yml`](../../.github/workflows/publish.yml), which runs
 `npm run check` and then `npm publish` (with provenance). Publishing to npm is
 what lists pi-flows in the [pi.dev gallery](https://pi.dev/packages).
 
@@ -66,7 +66,7 @@ permission, and provenance is generated automatically.
    Use flow with {"showConfig":true}
    ```
 
-6. Commit with a [Conventional Commit](../CONTRIBUTING.md#commit-messages), open
+6. Commit with a [Conventional Commit](../../CONTRIBUTING.md#commit-messages), open
    a PR, and merge to `main`.
 7. Check out the clean merge commit, repeat the release evaluation in step 4
    against that exact commit, and generate the release record described below.

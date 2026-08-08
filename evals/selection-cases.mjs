@@ -317,7 +317,7 @@ export const SELECTION_CASES = defineCases([
 	},
 	{
 		name: "implicit-parallel-doc-check-uses-parallel",
-		task: "Have separate read-only agents inspect README.md and docs/flow-reference.md in parallel for human checkpoint behavior, then merge one compact answer.",
+		task: "Have separate read-only agents inspect README.md and docs/reference/flow-reference.md in parallel for human checkpoint behavior, then merge one compact answer.",
 		expectFlow: true,
 		expectedFlowCall: { mode: "parallel", agents: ["recon", "analyst"], minTasks: 2, taskPattern: "README|flow-reference|checkpoint" },
 		answerPattern: "checkpoint|approval|headless",
@@ -326,14 +326,14 @@ export const SELECTION_CASES = defineCases([
 			flowCallArgs: [{ why: "eval mock justification",
 				tasks: [
 					{ agent: "recon", task: "Inspect README.md for human checkpoint behavior." },
-					{ agent: "recon", task: "Inspect docs/flow-reference.md for human checkpoint behavior." },
+					{ agent: "recon", task: "Inspect docs/reference/flow-reference.md for human checkpoint behavior." },
 				],
 			}],
 			answer: "Human checkpoints ask for approval and fail closed in headless contexts.",
 		},
 		sourceExpectations: [
 			{ format: "text", path: "README.md", patterns: ["Human checkpoints", "Headless runs fail closed"] },
-			{ format: "text", path: "docs/flow-reference.md", patterns: ["Human checkpoints", "headless[\\s\\S]*fail closed"] },
+			{ format: "text", path: "docs/reference/flow-reference.md", patterns: ["Human checkpoints", "headless[\\s\\S]*fail closed"] },
 		],
 	},
 	{

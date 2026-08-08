@@ -9,7 +9,7 @@ This quickstart verifies pi-flows without requiring a model call.
   step 2 fails without it. If you don't have `pi`, install it from the
   [pi project](https://github.com/earendil-works/pi) (the binary ships in
   `@earendil-works/pi-coding-agent`); see the
-  [README Install section](../README.md#install) for details.
+  [README Install section](../../README.md#install) for details.
 
 ## 1. Install dependencies
 
@@ -26,7 +26,7 @@ pi -e ./extensions/pi-flows/index.ts
 ```
 
 If this fails with `pi: command not found`, see
-[Troubleshooting → `pi: command not found`](./troubleshooting.md#pi-command-not-found).
+[Troubleshooting → `pi: command not found`](../how-to/troubleshooting.md#pi-command-not-found).
 
 ## 3. Run no-model smoke checks in pi
 
@@ -61,4 +61,4 @@ Scout the codebase and find the extension entrypoint.
 
 pi delegates this to `recon` (a read-only scout) and hands back the findings. Want to be explicit instead? Name the agent — *"use recon to find the extension entrypoint"* — or pass the exact call `{"agent":"recon","task":"...","why":"..."}` (`why` is the required one-sentence delegation justification).
 
-If your provider credentials are not configured, use the no-model checks above first and then see [Troubleshooting](./troubleshooting.md).
+If your provider credentials are not configured, use the no-model checks above first and then see [Troubleshooting](../how-to/troubleshooting.md).
