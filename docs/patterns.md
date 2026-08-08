@@ -4,6 +4,42 @@ pi-flows' modes are not ad-hoc — each is a named agent-design pattern with a t
 
 The patterns come from a companion agent-design knowledge base (the **ai-wiki**) and the primary literature it distills: Anthropic's *Building Effective Agents* (Dec 2024), Andrew Ng's four core patterns, Augment Code's 2026 pattern catalog, the Reflexion paper (Shinn et al. 2023), and Google ADK's workflow agents.
 
+## When a flow helps you
+
+Use pi-flows when the next step would otherwise make your parent pi session noisy, expensive, or hard to trust:
+
+| Your situation | What you ask pi | What pi-flows gives back |
+|---|---|---|
+| You need to understand a code path before touching it. | "Have a read-only agent find the billing routes." | A compact, cited recon report from an agent that cannot mutate the repo or run shell commands. |
+| You want one bounded review of a PR or branch. | "Review HEAD against main and issue #25 exactly once." | Two `overwatch` runs in named `standards` and `spec` roles, typed file coverage, and a harness-derived `CLEAN`, `FINDINGS`, or `PARTIAL` outcome. |
+| You have several independent areas to inspect. | "Check frontend auth and backend auth in parallel." | Separate child runs with capped fan-out instead of one context stuffed with every file. |
+| You want an implementation checked before you accept it. | "Add `/health` with a test, and accept it only after `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
+| You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
+| A release or migration has named gates and an approval point. | "Analyze, plan, verify, then pause for approval before rollout." | Persisted phase state, deterministic gates, and a resumable human approval node. |
+| Several independent writers need to land one verified result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
+| A consequential decision has credible opposing options. | "Have advocates test both queue designs against the constraints, then adjudicate." | Bounded rebuttal rounds and an independent decision record. |
+| Several sources disagree or leave evidence gaps. | "Reconcile the runbook, deployed config, incident report, and ticket." | Source-specific extraction followed by cited synthesis that preserves conflicts and unknowns. |
+| A transient condition must be captured before diagnosis. | "Poll health up to six times; on `DEGRADED`, hand the event to an analyst." | A bounded deterministic probe, typed trigger, and one reactor agent. |
+| You care what the delegation cost. | "Run this with a $0.25 cap and save a trace." | Cumulative cost/token ceilings plus OpenInference-shaped JSONL traces and `/flows report`. |
+
+Do not use pi-flows as the default path for small tasks. Simple answers, obvious
+shell commands, tiny edits, and quick single-file lookups are usually cheaper and
+clearer in the parent session.
+
+## Why a harness, not a prompt folder
+
+pi-flows is a small harness, not just a folder of agent prompts. The distinction matters when you want delegation to be repeatable and auditable.
+
+- **Native isolation over prompt promises.** `recon` and `analyst` run with read-only tools and no shell, so exploration cannot accidentally edit files. Concurrent write-capable agents cannot share one checkout unless you explicitly opt in.
+- **Verification is a first-class mode.** `evaluate` runs builder and critic in separate child contexts, can require `npm test` or another `checkCommand`, and revises under a hard iteration cap. This is stronger than asking one agent to "double-check itself."
+- **Multiple proven patterns share one interface.** From `single`, `parallel`, and `evaluate` through explicit `workflow`, isolated `worktree`, adjudicated `debate`, evidence `dossier`, and bounded `monitor`, every mode uses the same `flow` tool. Start with the least coordination the task needs.
+- **Delegation is bounded.** Count, concurrency, timeout, nesting depth, total tokens, and total USD spend are capped by the harness. A runaway fan-out returns `BUDGET_EXCEEDED` instead of quietly burning through the rest of the task.
+- **Handoffs are treated as an attack surface.** Content passed from one child to another is capped, redacted, stripped of invisible/bidi characters, and scanned for instruction-override markers before reuse.
+- **You can inspect what happened.** Structured errors include cause and fix fields, traces are plain JSONL, and `/flows report` separates execution success from verified outcome success while summarizing cost, token use, budget hits, route choices, and voting warnings.
+- **It stays inside pi.** You install it as a pi package, use your existing pi provider setup, and talk to pi in plain English. The JSON in these docs is the tool interface behind the scenes, not something you must write for normal use.
+
+You probably do **not** need pi-flows if you only want a single custom prompt, a long-lived autonomous swarm, or peer-to-peer agents that talk to each other. pi-flows deliberately uses a star topology: parent delegates bounded work, children return compact results, parent decides.
+
 ## Mode → pattern
 
 | Mode | Pattern | Canonical source |

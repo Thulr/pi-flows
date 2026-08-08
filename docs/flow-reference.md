@@ -34,6 +34,9 @@ Bundled presets:
 | `map-codebase` | `orchestrate` with at most four recon subtasks | One decomposed map and synthesis |
 | `code-review` | Two sequential `overwatch` runs, roles `standards` and `spec` | Exactly one pass; typed coverage/findings; `CLEAN`, `FINDINGS`, or `PARTIAL` |
 
+`code-review` is deliberately one-shot: it never fixes findings, posts review
+comments, or repeats until clean.
+
 Preset discovery uses the same precedence as agents: bundled `presets/*.md`,
 user `~/.pi/agent/flow-presets/*.md`, then project
 `.pi/flow-presets/*.md`. Project presets require `agentScope:"project"` or
@@ -48,6 +51,10 @@ overrides: cwd,timeoutMs,maxGeneratedTokens
 ---
 {"agent":"recon","task":"{task}","timeoutMs":900000,"maxGeneratedTokens":4000}
 ```
+
+A preset declares which top-level parameters callers may override (`overrides` in
+its frontmatter); undeclared or workflow-shape overrides fail with
+`PRESET_OVERRIDE_INVALID`.
 
 A template may set `recordContent`/`redactSecrets` to tighten capture, but never
 to loosen it. The effective policy is the stricter of the caller's and the
@@ -192,15 +199,29 @@ if no justification can be stated, the task belongs in the parent context.
 
 `tier` and `thinking` resolve against a roster derived from pi's model registry — the models this install has configured auth for — rather than from a list pi-flows maintains. `fast` takes the cheapest usable model (preferring the parent's own provider) at `low`; `capable` names the model this session is running (not pi's configured default, which a fresh child would otherwise load) at the session's current thinking level; `deep` takes the most capable model, preferring one that supports extended thinking, at `max`. When the default model is already the best available, `deep` differs by thinking level instead of pinning a redundant `--model`.
 
-Inspect it with `/flows models` or `flow showConfig:true` — every rung states the model, the level, and the reason it was chosen. Override a tier from `/flows models`, or in `~/.pi/agent/pi-flows.json`:
+Inspect it with `/flows models` or `flow showConfig:true` — every rung states the model, the level, and the reason it was chosen:
+
+```text
+modelTier.fast: anthropic/claude-haiku-4-5, thinking low — cheapest model this install can run on anthropic
+modelTier.capable: anthropic/claude-opus-5, thinking high — the model this session is running, at its current thinking level (high)
+modelTier.deep: anthropic/claude-opus-5, thinking max — the model this session is running is already the most capable available, so deep differs by thinking level (max), not by model
+```
+
+Override a tier from `/flows models`, or in `~/.pi/agent/pi-flows.json`:
 
 ```json
-{ "models": { "fast": "anthropic/claude-haiku-4-5:low", "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" } } }
+{
+  "models": {
+    "fast": "anthropic/claude-haiku-4-5:low",
+    "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" },
+    "capable": { "model": null, "thinking": "high" }
+  }
+}
 ```
 
 `"model": null` (shorthand `"default"`) runs that tier with no `--model`, so the child loads pi's configured default — distinct from omitting `model`, which keeps the derived one, and from `capable`, which names this session's model. A level set alongside it cannot be pre-checked against that model, since pi does not expose its configured default to an extension. Config that fails to parse is reported as a `modelRoster.issue` line beside the roster, so an override that never took effect is visible rather than silent.
 
-A trusted project may override in `.pi/pi-flows.json`; an untrusted project's file is ignored, since choosing the model also chooses which vendor sees the task. `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` still work but are outranked by the config file. Full order, narrowest first: call `model` > call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project config (trusted) > user config > env > derived roster > pi default.
+A trusted project may override in `.pi/pi-flows.json` — found by walking up from the working directory (searching for the file itself, so an unrelated nested `.pi` does not shadow it), like project agents, so it applies when you start pi in a subdirectory. An untrusted project's file is ignored, since choosing the model also chooses which vendor sees the task. A project override narrows a tier field by field — a project that sets only `thinking` keeps your model pin — and `/flows models` warns before saving a tier the project already claims, since project config outranks your user file. `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` still work but are outranked by the config file. Full order, narrowest first: call `model` > call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project config (trusted) > user config > env > derived roster > pi default.
 
 A flow budget bounds one flow call. It does not cross the process boundary: the outer
 ceiling never sees a nested flow's spend, and that nested flow is bounded only by the
@@ -499,6 +520,25 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 
 If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
 
+Composed with return requirements and a revising verifier:
+
+```json
+{
+  "task": "Document how auth works across the codebase",
+  "returnContract": "Return sections for login, token refresh, session storage, and gaps.",
+  "requireEvidence": true,
+  "orchestrate": {
+    "recon": { "agent": "recon" },
+    "verify": { "agent": "overwatch" },
+    "verifyPolicy": "revise",
+    "maxSubtasks": 5
+  },
+  "why": "a broad cross-codebase map is more reading than one context should serialize"
+}
+```
+
+Workers receive the goal, the return requirements, and their assigned subtask; the `overwatch` verifier checks the merged answer against the goal, and `verifyPolicy:"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
+
 ## Graph mode (static DAG)
 
 `graph` runs a bounded static DAG. Nodes run once all `dependsOn` nodes have
@@ -766,7 +806,10 @@ original constraints rather than majority or rhetoric.
 
 At least two advocates must produce usable arguments in every round. Debate is
 deliberately expensive; use it for high-consequence choices with real opposing
-cases, not quick preferences or questions one fact already settles.
+cases, not quick preferences or questions one fact already settles. It is not an
+automatic route: in the paired Codex baselines, direct execution matched
+debate's decision quality, and the hard-case token rerun used 16.56× the tokens
+and 6.58× the estimated subject spend.
 
 ## Dossier mode (evidence map/reduce)
 

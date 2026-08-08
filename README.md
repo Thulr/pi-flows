@@ -4,6 +4,10 @@
 
 pi-flows adds a `flow` tool that runs separate, disposable pi subprocesses and returns compact findings to the parent session. Instead of asking one long-running chat to explore, edit, review, remember every file it opened, and stay within budget, you can send bounded work to children running purpose-built agents and keep the parent focused on the decision.
 
+[![npm](https://img.shields.io/npm/v/pi-flows)](https://www.npmjs.com/package/pi-flows)
+[![CI](https://img.shields.io/github/actions/workflow/status/Thulr/pi-flows/ci.yml?branch=main&label=CI)](https://github.com/Thulr/pi-flows/actions/workflows/ci.yml)
+[![license](https://img.shields.io/github/license/Thulr/pi-flows)](./LICENSE)
+
 ## When it helps you
 
 Use pi-flows when the next step would otherwise make your parent pi session noisy, expensive, or hard to trust:
@@ -12,15 +16,12 @@ Use pi-flows when the next step would otherwise make your parent pi session nois
 |---|---|---|
 | You need to understand a code path before touching it. | "Have a read-only agent find the billing routes." | A compact, cited recon report from an agent that cannot mutate the repo or run shell commands. |
 | You want one bounded review of a PR or branch. | "Review HEAD against main and issue #25 exactly once." | Two `overwatch` runs in named `standards` and `spec` roles, typed file coverage, and a harness-derived `CLEAN`, `FINDINGS`, or `PARTIAL` outcome. |
-| You have several independent areas to inspect. | "Check frontend auth and backend auth in parallel." | Separate child runs with capped fan-out instead of one context stuffed with every file. |
 | You want an implementation checked before you accept it. | "Add `/health` with a test, and accept it only after `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
 | You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
-| A release or migration has named gates and an approval point. | "Analyze, plan, verify, then pause for approval before rollout." | Persisted phase state, deterministic gates, and a resumable human approval node. |
 | Several independent writers need to land one verified result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
-| A consequential decision has credible opposing options. | "Have advocates test both queue designs against the constraints, then adjudicate." | Bounded rebuttal rounds and an independent decision record. |
-| Several sources disagree or leave evidence gaps. | "Reconcile the runbook, deployed config, incident report, and ticket." | Source-specific extraction followed by cited synthesis that preserves conflicts and unknowns. |
-| A transient condition must be captured before diagnosis. | "Poll health up to six times; on `DEGRADED`, hand the event to an analyst." | A bounded deterministic probe, typed trigger, and one reactor agent. |
 | You care what the delegation cost. | "Run this with a $0.25 cap and save a trace." | Cumulative cost/token ceilings plus OpenInference-shaped JSONL traces and `/flows report`. |
+
+The full situations table — parallel inspection, gated migrations, debate, dossier, and monitor — is in [Patterns](./docs/patterns.md#when-a-flow-helps-you), along with why a harness beats a folder of agent prompts.
 
 Do not use pi-flows as the default path for small tasks. Simple answers, obvious
 shell commands, tiny edits, and quick single-file lookups are usually cheaper and
@@ -34,20 +35,6 @@ reasoning, deterministic gates, or bounded multi-step control materially changes
 correctness. The [flow reference](./docs/flow-reference.md#activation-thresholds)
 spells out the threshold for each advanced mode.
 
-## Why this instead of another delegation extension
-
-pi-flows is a small harness, not just a folder of agent prompts. The distinction matters when you want delegation to be repeatable and auditable.
-
-- **Native isolation over prompt promises.** `recon` and `analyst` run with read-only tools and no shell, so exploration cannot accidentally edit files. Concurrent write-capable agents cannot share one checkout unless you explicitly opt in.
-- **Verification is a first-class mode.** `evaluate` runs builder and critic in separate child contexts, can require `npm test` or another `checkCommand`, and revises under a hard iteration cap. This is stronger than asking one agent to "double-check itself."
-- **Multiple proven patterns share one interface.** From `single`, `parallel`, and `evaluate` through explicit `workflow`, isolated `worktree`, adjudicated `debate`, evidence `dossier`, and bounded `monitor`, every mode uses the same `flow` tool. Start with the least coordination the task needs. See [Patterns](./docs/patterns.md).
-- **Delegation is bounded.** Count, concurrency, timeout, nesting depth, total tokens, and total USD spend are capped by the harness. A runaway fan-out returns `BUDGET_EXCEEDED` instead of quietly burning through the rest of the task.
-- **Handoffs are treated as an attack surface.** Content passed from one child to another is capped, redacted, stripped of invisible/bidi characters, and scanned for instruction-override markers before reuse.
-- **You can inspect what happened.** Structured errors include cause and fix fields, traces are plain JSONL, and `/flows report` separates execution success from verified outcome success while summarizing cost, token use, budget hits, route choices, and voting warnings.
-- **It stays inside pi.** You install it as a pi package, use your existing pi provider setup, and talk to pi in plain English. The JSON in these docs is the tool interface behind the scenes, not something you must write for normal use.
-
-You probably do **not** need pi-flows if you only want a single custom prompt, a long-lived autonomous swarm, or peer-to-peer agents that talk to each other. pi-flows deliberately uses a star topology: parent delegates bounded work, children return compact results, parent decides.
-
 ## What it looks like
 
 You talk to pi in plain English — it reads the `flow` tool and writes the call for you. Load the extension, then just ask:
@@ -56,56 +43,21 @@ You talk to pi in plain English — it reads the `flow` tool and writes the call
 Have a read-only agent find the API routes for billing.
 ```
 
-pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; these docs show the exact JSON interface for when you want to verify it or take manual control.)
+pi delegates that to `recon`, which runs in its own subprocess and hands back just the findings. You never hand-write JSON — pi fills in the agent and the mode. (The call here is `{"agent":"recon","task":"Find the API routes for billing","why":"user asked for a delegated read-only scout"}`; the [flow reference](./docs/flow-reference.md) shows the exact JSON interface for when you want to verify it or take manual control.)
 
-For common shapes, pi can choose a named workflow preset instead of assembling
-raw mode parameters. The bundled presets are `scout`, `map-codebase`, and
-`code-review`:
-
-```json
-{
-  "preset": "code-review",
-  "task": "Review HEAD against main and issue #25 exactly once",
-  "why": "the change needs author-independent standards and spec review"
-}
-```
-
-`code-review` is deliberately one-shot. It never fixes findings, posts GitHub
-comments, or repeats until clean. Both reviewers use the `overwatch` agent, but
-the UI and trace retain their distinct `standards` and `spec` roles. Before
-dispatch, the harness resolves ranges written as `base..head` or
-`HEAD against main` to immutable commit IDs; an unresolved or substituted range
-can produce only `PARTIAL`, never `CLEAN`.
-
-Ask for a *verified* result and pi reaches for a stronger mode on its own:
+For common shapes, pi can choose a named [workflow preset](./docs/flow-reference.md#workflow-presets) — `scout`, `map-codebase`, or the one-shot, typed `code-review` — instead of assembling raw mode parameters. And when you ask for a *verified* result, pi reaches for a stronger mode on its own:
 
 ```text
 Add a /health endpoint that returns 200 and a JSON status, with a test — accept it only after `npm test` passes.
 ```
 
-pi runs this as an evaluate loop — the `operator` builds the change, a separate `redteam` critic judges the result, and `npm test` must exit `0`, revising until both pass or it hits `maxIterations`. The call behind it:
-
-```json
-{
-  "task": "Add a /health endpoint that returns 200 and a JSON status, with a test",
-  "evaluate": { "checkCommand": "npm test", "maxIterations": 3 },
-  "why": "the result needs an author-independent critic plus a deterministic gate"
-}
-```
+pi runs this as an [evaluate loop](./docs/flow-reference.md#evaluate-mode-generator-evaluator-loop): the `operator` builds the change, a separate `redteam` critic judges the result, and `npm test` must exit `0`, revising until both pass or it hits `maxIterations`.
 
 → [Quickstart](./docs/quickstart.md)
 
 ## Install
 
-pi-flows runs inside the [pi](https://github.com/earendil-works/pi) coding agent, so you install it as a pi package — no clone required.
-
-**Prerequisites:** Node.js `>=24`, npm `>=11`, and the pi CLI `>=0.82.0` on your `PATH`. Don't have pi? It ships in `@earendil-works/pi-coding-agent`:
-
-```bash
-npm i -g @earendil-works/pi-coding-agent
-```
-
-Install it with the `pi` CLI — from npm for the published release, or from GitHub to track `main`:
+**Prerequisites:** Node.js `>=24`, npm `>=11`, and the [pi](https://github.com/earendil-works/pi) CLI `>=0.82.0` on your `PATH` (it ships in `@earendil-works/pi-coding-agent`: `npm i -g @earendil-works/pi-coding-agent`).
 
 ```bash
 # From npm (recommended) — the published release
@@ -125,472 +77,60 @@ Reload pi with `/reload` (or restart it), then verify — `/flows version` is a 
 list the available flow agents
 ```
 
-Success looks like all nine bundled agents in the `flow list` output — `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`. If pi isn't found, see [Troubleshooting → `pi: command not found`](./docs/troubleshooting.md#pi-command-not-found). → [Quickstart](./docs/quickstart.md)
+Success looks like all nine bundled agents in the `flow list` output — `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`. If pi isn't found, see [Troubleshooting → `pi: command not found`](./docs/troubleshooting.md#pi-command-not-found).
 
-## Run from a clone (development)
-
-To hack on pi-flows or try unreleased `main`, work from a checkout:
-
-```bash
-git clone https://github.com/Thulr/pi-flows
-cd pi-flows
-npm ci
-npm run preflight   # verify the pi CLI is on PATH and meets the version floor
-pi -e ./extensions/pi-flows/index.ts   # load the local extension in pi
-```
-
-Inside pi, smoke-test with no model call:
-
-```text
-/flows help
-/flows status
-Use flow with {"list":true}
-Use flow with {"showConfig":true}
-```
-
-Or install your working copy as a package with `pi install -l ..`. Project-local
-package paths are resolved from `.pi/`, so `..` names the checkout root. See
-[Development](#development) for the build/test loop and
-[Contributing](./CONTRIBUTING.md).
+To hack on pi-flows or try unreleased `main`, work from a checkout: `git clone https://github.com/Thulr/pi-flows && cd pi-flows && npm ci`, then load the local extension with `pi -e ./extensions/pi-flows/index.ts` (or install your working copy as a project-local package with `pi install -l ..`). Smoke-test without a model call: `/flows help`, `/flows status`, `Use flow with {"list":true}`, `Use flow with {"showConfig":true}`. See [Development](#development).
 
 ## What it adds
 
-- `flow` tool: runs isolated pi subprocesses for single, parallel, chain, evaluate (generator-evaluator), vote, route, orchestrate, graph, loop, search, workflow, worktree, debate, dossier, and monitor delegation.
-- `/flows` command: lists workflow presets and flow agents and shows help/status/version output.
-- Live TUI monitoring: the `flow` call and compact views disclose every generated cost/token ceiling and name its authority (**flow** or **contract**) before work starts; the live tool row then updates in place while children run (per-run state, current activity, progress, cost rollup). `F8` toggles a non-modal fleet panel showing every live flow and the runs beneath it, with budget burn-down, and `/flows inspect` drills into one child's activity feed. Fan-out headers count **settled** runs (`1/3 settled` — see the [glossary](./CONTEXT.md#delegation-model)) and switch to the verdict (`2 failed`, `3 ok`) once nothing is outstanding. A durable flow card keeps the configured ceilings in the transcript after each flow, including after session reloads. None of these views interrupt children when closed.
-- Bundled agents in [`agents/`](./agents/): `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`.
-- Bundled workflow presets in [`presets/`](./presets/): `scout`, `map-codebase`, and the bounded, typed `code-review`.
-- Your own presets, no code required — one Markdown file (frontmatter + JSON flow-parameter template) per preset. User presets live in `~/.pi/agent/flow-presets/*.md`; project presets in `.pi/flow-presets/*.md`, under the same trust gate and shadowing precedence as agents.
-- Your own agents, no code required — one markdown file (frontmatter + system prompt) per agent. User agents live in `~/.pi/agent/flow-agents/*.md`; project agents in `.pi/flow-agents/*.md` (loaded with `agentScope: "project"` or `"all"`, and trust-gated). Project shadows user shadows bundled, with a visible diagnostic. See [Custom agents](./docs/custom-agents.md).
+- The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`, plus machine-checked [delegation contracts](./docs/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation) and validated return envelopes.
+- The `/flows` command and [live TUI monitoring](./docs/flow-reference.md#live-tui-monitoring): a live tool row, the `F8` fleet panel, `/flows inspect`, and a durable flow card — every configured cost/token ceiling is disclosed with its authority before work starts.
+- Nine bundled agents in [`agents/`](./agents/) and three workflow presets in [`presets/`](./presets/).
+- Your own agents and presets, no code required — one markdown file each, user- or project-scoped, trust-gated and shadowed with visible diagnostics. See [Custom agents](./docs/custom-agents.md).
+
+## Modes at a glance
+
+Exactly one mode per call. `{"list": true}` and `{"showConfig": true}` answer without spawning a child; every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution.
+
+| Mode | What it runs |
+|---|---|
+| [Presets](./docs/flow-reference.md#workflow-presets) | `scout`, `map-codebase`, `code-review` — intent-level templates expanded before ordinary mode validation. |
+| [Single / parallel / chain](./docs/flow-reference.md#modes) | One agent; capped independent fan-out; a fixed pipeline fed by sanitized `{previous}` handoffs. |
+| [Evaluate](./docs/flow-reference.md#evaluate-mode-generator-evaluator-loop) | Generator-evaluator loop with an optional deterministic `checkCommand` gate and critic panel. |
+| [Vote](./docs/flow-reference.md#vote-mode-parallelization--voting) | The same task across independent voters, merged by an optional aggregator. |
+| [Route](./docs/flow-reference.md#route-mode-classify--dispatch) | A classifier picks one candidate agent — or falls back instead of forcing a guess. |
+| [Orchestrate](./docs/flow-reference.md#orchestrate-mode-decompose--fan-out--synthesize) | Decompose → parallel workers → synthesis, with an optional verifier. |
+| [Graph](./docs/flow-reference.md#graph-mode-static-dag) | A bounded static DAG run wave by wave with `{node.id}` handoffs. |
+| [Loop](./docs/flow-reference.md#loop-mode-generic-bounded-loop) | Repeat a body agent until `LOOP: DONE`, a judge's `VERDICT: PASS`, or the iteration cap. |
+| [Search](./docs/flow-reference.md#search-mode-bounded-beam-search) | Bounded beam search: generate candidates, score `0..100`, keep the beam, debrief the winner. |
+| [Workflow](./docs/flow-reference.md#workflow-mode-gated-resumable-phases) | Gated, resumable phases with persisted state and single-use [approval receipts](./docs/flow-reference.md#approval-receipts). |
+| [Worktree](./docs/flow-reference.md#worktree-mode-isolated-writers-and-integration) | Isolated writer worktrees merged onto a durable, verified integration branch. |
+| [Debate](./docs/flow-reference.md#debate-mode-advocates-and-adjudicator) | Independent advocates, bounded rebuttal, separate adjudication. |
+| [Dossier](./docs/flow-reference.md#dossier-mode-evidence-mapreduce) | Per-source evidence extraction synthesized without smoothing conflicts away. |
+| [Monitor](./docs/flow-reference.md#monitor-mode-bounded-trigger-and-react) | A bounded deterministic probe whose typed trigger hands one reactor the event. |
+
+Any mode composes with [flow budgets and tracing](./docs/flow-reference.md#trace-export-observability) (`maxCostUsd`, `maxTokens`, `maxGeneratedTokens`, `traceFile`) and [human checkpoints and Reflexion](./docs/flow-reference.md#human-checkpoints-and-reflexion).
 
 ## Safety model
 
-Project-local agents and presets are repo-controlled prompts/workflow parameters. In interactive pi sessions, pi-flows asks before using them. In headless (non-UI) runs, pi-flows **fails closed by default** unless you explicitly pass `confirmProjectAgents:false` after reviewing the files.
+Project-local agents and presets are repo-controlled prompts. Interactive sessions ask before using them; headless (non-UI) runs **fail closed** unless you explicitly pass `confirmProjectAgents:false` after reviewing the files. Read-only agents (`recon`, `analyst`) ship without a shell, so their boundary is enforced by the toolset, not by prompt instructions alone.
 
-pi-flows also redacts secret-shaped content and home paths from returned content/details by default. A **handoff** is the prepared value that crosses from one role to another after applicable validation, redaction, and policy handling (`{previous}` in chain, the evaluate artifact, vote ballots, routing metadata, orchestrate findings). Handoffs are an indirect prompt-injection surface. A flow-scoped guard strips invisible/bidi characters, scans instruction-override markers, and detects attacks assembled from individually benign fragments across several boundaries. `handoffPolicy` selects `warn` (compatibility default), `quarantine` (withhold the payload), or `fail` (stop before the recipient spawns); `modeHandoffPolicy` can impose a stricter non-downgradable minimum for high-consequence modes. See [Flow reference](./docs/flow-reference.md#handoff-injection-policy) and [Privacy & telemetry](./docs/privacy-telemetry.md).
+Returned content is redacted by default (secret-shaped strings, home paths), and every handoff that crosses from one child to another is capped, stripped of invisible/bidi characters, and scanned for injected instructions — `handoffPolicy` selects `warn`, `quarantine`, or `fail`, and `modeHandoffPolicy` can impose a stricter non-downgradable minimum. See [Handoff injection policy](./docs/flow-reference.md#handoff-injection-policy) and [Privacy & telemetry](./docs/privacy-telemetry.md).
 
-Cost is bounded as well as count and time: pass `maxCostUsd`, `maxTokens`, or `maxGeneratedTokens` to cap cumulative spend across every child in the flow (`BUDGET_EXCEEDED` once reached). Delegation contracts can independently impose the same ceiling types. Because pi constructs tool calls from natural language, every configured ceiling is shown in the pre-run call and compact Flow views with its `flow` or `contract` authority; omitted ceilings remain uncapped and are not invented or displayed. Concurrent fan-out also refuses multiple write-capable agents in the same `cwd` (`SHARED_WRITE_CWD`); recover by serializing with `concurrency:1`, using non-mutating toolsets, or isolating writers in separate worktrees — `allowSharedWriteCwd:true` is a last resort for intentionally shared writes. Read-only agents (`recon`, `analyst`) ship **without** a shell, so their read-only boundary is enforced by the toolset, not by prompt instructions alone.
+Delegation is bounded on count, concurrency, time, and nesting depth, and on spend: `maxCostUsd` / `maxTokens` / `maxGeneratedTokens` cap the whole flow (`BUDGET_EXCEEDED` once reached), with every configured ceiling disclosed before work starts. Concurrent write-capable agents may not share one `cwd` (`SHARED_WRITE_CWD`) unless explicitly allowed.
 
-## `flow` tool quick reference
+[Human checkpoints](./docs/flow-reference.md#human-checkpoints-and-reflexion) add an explicit approval point to any mode: `checkpoint.before:"spawn"` asks before any child runs, `"finalize"` before the final result returns. Headless runs fail closed.
 
-You don't type these objects — you describe what you want and pi builds the call. This is the exact tool interface behind those requests: skim it to see what pi will run, or to take manual control (pin a specific agent, model, or budget). Each block is the JSON pi passes to the `flow` tool.
+## Documentation
 
-Every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution (missing it returns `WHY_REQUIRED` before any child spawns).
+The docs follow the [Diátaxis](https://diataxis.fr/) framework:
 
-### Presets
+- **Tutorials** — [Quickstart](./docs/quickstart.md): install, load, and run your first delegated task.
+- **How-to guides** — [Custom agents](./docs/custom-agents.md) · [Troubleshooting](./docs/troubleshooting.md) · [Release runbook](./docs/release.md) · [Examples cookbook](./examples/README.md)
+- **Reference** — [Flow reference](./docs/flow-reference.md): every mode, parameter, and structured error.
+- **Explanation** — [Patterns](./docs/patterns.md) · [Privacy & telemetry](./docs/privacy-telemetry.md)
 
-```json
-{ "preset": "scout", "task": "Find the billing routes", "why": "user requested a delegated scout" }
-```
-
-Preset templates expand before ordinary mode validation, so all existing
-budgets, trust checks, return-envelope validation, traces, and UI apply to the
-resulting mode. A preset declares which top-level parameters callers may
-override; undeclared workflow-shape overrides fail with
-`PRESET_OVERRIDE_INVALID`.
-
-### List
-
-```json
-{ "list": true }
-```
-
-### Show effective config
-
-```json
-{ "showConfig": true }
-```
-
-### Single
-
-```json
-{ "agent": "recon", "task": "Find the API routes for billing", "why": "user asked for a delegated read-only scout" }
-```
-
-For machine-checked handoffs, use a delegation `contract` instead of (or alongside)
-prose `task`. Delegation contracts work in single/chain/evaluate and on integration-mode
-tasks, nodes, phases, writers, voters, advocates, evidence sections, and final
-debrief/integrator roles:
-
-```json
-{
-  "agent": "recon",
-  "contract": {
-    "objective": "Find the configured sample identifier.",
-    "constraints": ["Read only."],
-    "nonGoals": ["Do not edit configuration."],
-    "dependencies": ["settings.txt"],
-    "authority": { "may": ["Read files."], "mustNot": ["Write files."], "requiresApproval": [] },
-    "sideEffectClass": "read-only",
-    "budget": { "timeoutMs": 30000, "maxGeneratedTokens": 2000 },
-    "acceptanceChecks": ["Return the exact value and source path."],
-    "returnSchema": {
-      "type": "object",
-      "required": ["answer"],
-      "properties": { "answer": { "type": "string" } }
-    },
-    "owner": "parent"
-  },
-  "why": "user asked for a delegated read-only scout with a validated handoff"
-}
-```
-
-The child returns a validated `pi-flows.return-envelope.v1` containing a stable
-`contractId`, status,
-evidence, artifact references/digests, changed state, unresolved questions,
-retry information, schema-checked `data`, and runtime usage when available.
-Missing/stale identity, schema, artifact, or digest failures stop before downstream
-dispatch, synthesis, persistence, or merge. Existing prose results remain
-supported through an explicit `pi-flows.handoff-envelope.v1` compatibility
-envelope with source provenance. Contracted `partial`/`blocked` handoffs fail closed
-unless `incompleteHandoffPolicy:"include"` records an explicit policy decision.
-Contract budgets tighten child timeouts and enforce cost/token limits separately
-from flow budgets.
-See [Return requirements, delegation contracts, and write isolation](./docs/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation).
-
-### Parallel
-
-```json
-{
-  "tasks": [
-    { "agent": "recon", "task": "Find frontend auth code" },
-    { "agent": "recon", "task": "Find backend auth code" }
-  ],
-  "concurrency": 2,
-  "why": "frontend and backend auth are independent areas one context should not serialize"
-}
-```
-
-Defaults: `concurrency=4` (per-call). `maxParallelTasks` is a fixed hard cap of `8`, not a per-call input.
-
-### Chain
-
-```json
-{
-  "task": "Add Redis caching to the session store",
-  "chain": [
-    { "agent": "recon", "task": "Research this task: {task}" },
-    { "agent": "strategist", "task": "Plan using this context:\n\n{previous}" }
-  ],
-  "why": "research and planning benefit from a fresh planning context fed a bounded handoff"
-}
-```
-
-Chain `{previous}` handoffs are capped, redacted, and scanned for injection before they become the next prompt. Set `"handoffPolicy":"quarantine"` to continue without carrying flagged text, or `"fail"` to refuse the next child before spawn.
-
-### Evaluate (generator-evaluator loop)
-
-```json
-{
-  "task": "Add a /health endpoint that returns 200 and a JSON status, with a test",
-  "evaluate": {
-    "operator": { "agent": "operator" },
-    "redteam": { "agent": "redteam" },
-    "checkCommand": "npm test",
-    "maxIterations": 3
-  },
-  "why": "the result needs an author-independent critic plus a deterministic gate"
-}
-```
-
-The `operator` builds against `task`; a separate `redteam` judges the artifact (not the builder's trace) and returns `VERDICT: PASS` or `VERDICT: REVISE` with critique. On `REVISE` the operator is re-shown its prior artifact plus the critique and revises in place. The loop revises until it passes or hits `maxIterations` (default 3, cap 8).
-
-Two optional reliability levers: **`checkCommand`** is a deterministic gate (a shell command that must exit `0` — level-1 code assertions alongside the LLM critic; non-zero is an automatic `REVISE`), and **`redteam` may be an array** of critics (a decomposed panel — e.g. one per dimension; `PASS` requires all of them). See [Flow reference](./docs/flow-reference.md#evaluate-mode-generator-evaluator-loop).
-
-### Vote (parallelization / voting)
-
-```json
-{
-  "task": "Is /^(a+)+$/ vulnerable to catastrophic backtracking?",
-  "vote": { "voters": [{ "agent": "recon" }, { "agent": "overwatch" }], "debrief": { "agent": "debrief" } },
-  "why": "independent votes suppress a single model's non-deterministic error"
-}
-```
-
-Runs the same task across ≥2 voters (use different models to break correlated errors) and synthesizes one answer via the optional `debrief` aggregator. When voters share the same agent/model, pi-flows adds complementary stances so ballots are not identical prompt replays. Without an aggregator, all answers are returned.
-
-### Route (classify → dispatch)
-
-```json
-{ "task": "The billing webhook returns 500s in prod", "route": { "candidates": ["recon", "strategist", "overwatch"], "fallback": "recon" }, "why": "the right agent for this request is not obvious up front" }
-```
-
-The `controller` picks one candidate (`ROUTE: <agent>`) and runs it — or emits `ROUTE: none` when nothing fits, falling back instead of forcing a guess.
-
-### Orchestrate (decompose → fan out → synthesize)
-
-```json
-{
-  "task": "Document how auth works across the codebase",
-  "returnContract": "Return sections for login, token refresh, session storage, and gaps.",
-  "requireEvidence": true,
-  "orchestrate": {
-    "recon": { "agent": "recon" },
-    "verify": { "agent": "overwatch" },
-    "verifyPolicy": "revise",
-    "maxSubtasks": 5
-  },
-  "why": "a broad cross-codebase map is more reading than one context should serialize"
-}
-```
-
-The `commander` splits the task into a JSON list of subtasks, `recon` workers run them in parallel with the overall goal or delegation contract plus their assigned subtask, and the `debrief` agent merges the findings. An optional `verify` critic checks the merged answer against the goal in the same call. `verifyPolicy:"note"` keeps the verdict advisory, `"fail"` hard-fails on `REVISE`, and `"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
-
-### Graph (static DAG)
-
-```json
-{
-  "task": "Map auth",
-  "graph": {
-    "nodes": [
-      { "id": "frontend", "agent": "recon", "task": "Find frontend auth for {task}" },
-      { "id": "backend", "agent": "recon", "task": "Find backend auth for {task}" },
-      { "id": "summary", "agent": "strategist", "dependsOn": ["frontend", "backend"], "task": "Plan from:\n{node.frontend}\n{node.backend}" }
-    ],
-    "debrief": { "agent": "debrief" }
-  },
-  "why": "independent areas fan out while the summary depends on both"
-}
-```
-
-Ready nodes run by dependency wave, with the same caps, redaction, trace, and write-collision guards as other modes.
-
-### Loop (bounded repeat-until-stop)
-
-```json
-{
-  "task": "Draft release notes",
-  "loop": { "body": { "agent": "operator" }, "judge": { "agent": "redteam" }, "maxIterations": 3 },
-  "why": "drafting needs bounded revision with an independent judge and stop condition"
-}
-```
-
-The body repeats until it emits `LOOP: DONE`, or the optional judge emits `VERDICT: PASS`.
-
-### Search (bounded beam search)
-
-```json
-{
-  "task": "Pick a cache strategy",
-  "search": { "generator": { "agent": "strategist" }, "scorer": { "agent": "redteam", "tools": "none" }, "debrief": { "agent": "debrief" }, "candidates": 3, "beamWidth": 1, "maxRounds": 2 },
-  "why": "candidate designs need independent generation and scoring"
-}
-```
-
-`search` generates candidate paths, scores each with `SCORE: 0..100`, keeps the best beam, and debriefs the winner. The default scorer is `redteam` with tools disabled so parallel scoring stays read-only.
-
-### Workflow (gated, resumable phases)
-
-```json
-{
-  "task": "Ship the cache migration",
-  "workflow": {
-    "stateFile": ".pi/flow-workflows/cache-migration.json",
-    "phases": [
-      { "id": "plan", "agent": "strategist", "task": "Produce an evidence-backed rollout plan for {task}" },
-      { "id": "approve", "approval": { "message": "Approve the rollout plan?" } },
-      { "id": "apply", "agent": "operator", "task": "Implement the approved plan:\n{phase.plan}", "checkCommand": "npm test" }
-    ],
-    "debrief": { "agent": "debrief" }
-  },
-  "why": "the migration needs gated phases with a resumable human approval"
-}
-```
-
-Each work phase persists its redacted output and validated handoff envelope
-before the next phase. Approval nodes prompt in the interactive UI and pause
-safely in headless runs; repeat the same call with `workflow.resume:true` to
-continue after each sanitized envelope is verified against its content-free
-validation attestation and current delegation-contract identity. Existing version-1 state
-files migrate to legacy compatibility envelopes automatically.
-
-A granted approval becomes a single-use approval receipt rather than a bare `APPROVED`
-marker. The receipt binds the exact action it authorizes — the gated phases and
-their effective parameters, including `agentScope` — along with who approved it
-and when it expires (`workflow.approvalTtlMs`, 24h by default). Every step the approval
-gates re-verifies it against the live spec before running, and it is spent once
-by the action, so a resume cannot inherit consent for something the approval
-never covered.
-Receipt identity and status reach `details.approvals`, the final answer, and the
-trace; the approved parameters stay inside the binding digest. See
-[docs/flow-reference.md](docs/flow-reference.md#approval-receipts).
-
-### Worktree (isolated writers and integration)
-
-```json
-{
-  "task": "Fix frontend and backend auth, then verify the integrated result",
-  "worktree": {
-    "tasks": [
-      { "id": "frontend", "agent": "operator", "task": "Fix frontend auth only" },
-      { "id": "backend", "agent": "operator", "task": "Fix backend auth only" }
-    ],
-    "integrator": { "agent": "operator" },
-    "checkCommand": "npm test"
-  },
-  "why": "two concurrent writers need isolated worktrees and a verified integration branch"
-}
-```
-
-`worktree` requires a git repo and at least two write tasks where isolation or
-integration reconciliation is part of correctness. Two ordinary small file edits
-should stay in the parent session. The mode leaves the source checkout untouched,
-removes temporary worktrees, and returns a durable `pi-flow/<run>/integration`
-branch for explicit review or merge.
-
-### Debate (advocates and adjudicator)
-
-```json
-{
-  "task": "Choose queue migration A or B against the constraints in decision.md",
-  "debate": {
-    "participants": [{ "agent": "strategist" }, { "agent": "analyst" }],
-    "adjudicator": { "agent": "overwatch" },
-    "rounds": 2
-  },
-  "why": "user asked for opposing advocates and independent adjudication"
-}
-```
-
-Use `debate` when independent advocates, rebuttal, and adjudication are explicitly
-requested. It is not an automatic route today: paired Codex baselines found no
-stable quality lift over direct execution; the hard-case token rerun used 16.56x
-the tokens and 6.58x the estimated subject spend. Advocates open independently,
-rebut the prior round, and a separate adjudicator chooses against the original
-constraints.
-
-### Dossier (evidence map/reduce)
-
-```json
-{
-  "task": "Explain the deployment incident and preserve source conflicts",
-  "dossier": {
-    "sections": [
-      { "agent": "recon", "task": "Extract evidence from runbook.md only" },
-      { "agent": "recon", "task": "Extract evidence from config.yaml only" },
-      { "agent": "analyst", "task": "Extract evidence from incident.md only" }
-    ],
-    "debrief": { "agent": "debrief" }
-  },
-  "why": "three sources must be cited and reconciled without smoothing conflicts away"
-}
-```
-
-At least two source- or claim-specific sections must succeed. The synthesizer
-returns claims, citations, conflicts, confidence, unresolved gaps, and the next
-evidence needed instead of smoothing disagreement into false consensus.
-
-### Monitor (bounded trigger and react)
-
-```json
-{
-  "task": "Diagnose the first degraded health event",
-  "monitor": {
-    "command": "./health-check",
-    "trigger": "match",
-    "pattern": "DEGRADED",
-    "intervalMs": 5000,
-    "maxChecks": 6,
-    "reactor": { "agent": "analyst" }
-  },
-  "why": "a bounded probe must fire before a fresh context diagnoses the event"
-}
-```
-
-`monitor` polls only within one bounded flow call; it is not a daemon, scheduler,
-or background automation system. When the trigger fires, one reactor receives the
-captured observation as untrusted evidence. If the bound is reached first, the
-call returns `MONITOR_NOT_TRIGGERED` with the last observations.
-
-### Flow budget and tracing
-
-Any mode accepts a flow budget and a trace sink:
-
-```json
-{ "task": "...", "orchestrate": {}, "why": "...", "maxCostUsd": 0.50, "traceFile": "flow-trace.jsonl", "traceLabel": "release-gate" }
-```
-
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form a flow budget that caps total spend across every child in the flow (`BUDGET_EXCEEDED` once reached). Cost and generated-output ceilings stop the active child at a completed model-response boundary; the legacy total-token ceiling prevents subsequent child spawns after the completed response. The ceiling does not cross the process boundary: a child that starts its own flow is bounded only by the ceilings that call sets, and is uncapped if it sets none. A delegation contract may independently impose a contract budget, including a tighter timeout. `traceFile` (or `PI_FLOWS_TRACE_FILE`) appends OpenInference-shaped JSON spans — JSONL any OpenTelemetry backend, or a coding agent, can read. Children nest under the wave, round, iteration, or phase that scheduled them, dependencies are recorded as links rather than fake parentage, and the boundaries that are not child runs at all (approvals, state transitions, retries, budget refusals, validation results, handoffs, artifacts) get their own attributable event spans. Root spans keep elapsed time, accumulated worker time, and known critical-path latency separate. Reports label child completion as execution success and only claim verified outcome success when `evaluate` or an explicit orchestrate verifier supplied a verdict. Eval harnesses also set `traceContext` so `details.trace` and eval artifacts link stable run/case/trial/arm ids to the exact runtime trace and root span without weakening redaction. Tracing is best-effort by default and never fails a flow; `traceStrict:true` makes evidence a gate for evaluation and release runs, failing with `TRACE_INCOMPLETE` when spans were dropped or nothing was exported. Summarize local traces with `/flows report flow-trace.jsonl` or `npm run trace:report -- flow-trace.jsonl` from a checkout.
-
-`BUDGET_EXCEEDED` is terminal for an unchanged call. The parent must not
-automatically replay the same Flow. It preserves the configured ceiling unless
-the user explicitly approves changing it, then asks for direction or materially
-narrows the task or fan-out before another Flow.
-
-### Human checkpoints and Reflexion
-
-```json
-{ "task": "...", "evaluate": {}, "checkpoint": { "before": "spawn" } }
-{ "task": "...", "loop": { "body": { "agent": "operator" } }, "reflexion": { "enabled": true } }
-```
-
-`checkpoint.before:"spawn"` asks for approval before any child runs; `"finalize"` asks before returning the final result. Headless runs fail closed. `reflexion.enabled:true` opts into local cross-run lessons in `.pi/flow-reflections.jsonl`.
-
-## Agent definition format
-
-Create markdown files with YAML frontmatter:
-
-```md
----
-name: my-agent
-description: What this agent does
-tools: read,grep,find,ls
-tier: capable
-thinking: low
----
-
-System prompt for the delegated agent.
-```
-
-`tier` picks capability and `thinking` picks effort. They are independent: a child can run a cheaper model at ordinary effort, or your best model thinking as hard as it can, or any mix. `tools: none` disables built-in tools; omitting `tools` uses pi defaults. Invalid agent files, and an unrecognized `thinking` level, are reported in `/flows status` and `flow showConfig:true`.
-
-### The model roster
-
-Tiers stay portable — no vendor model is hard-coded anywhere in pi-flows. Instead, each tier resolves against a **roster** derived from the models your install can actually run, read from pi's own model registry:
-
-- `fast` — the cheapest model you have that can still hold a delegated task, at `low` thinking. Prefers your own provider, so a scout doesn't silently move work to a second vendor.
-- `capable` — the model your session is actually running, at the thinking level it is currently on. A plain delegated child behaves like the session that delegated it. It is **named explicitly** on the child, not inherited: a child starts fresh, so leaving the model unstated would load pi's *configured* default, which differs the moment you start with `--model` or switch models mid-session.
-- `deep` — the most capable model you have, preferring one that supports extended thinking, at `max`.
-
-This works with no configuration. If your default model is already the best one available, `deep` says so and differs by thinking level rather than pinning a redundant `--model`. Run `/flows models` or `flow showConfig:true` to see what each tier resolves to right now, and why:
-
-```
-modelTier.fast: anthropic/claude-haiku-4-5, thinking low — cheapest model this install can run on anthropic
-modelTier.capable: anthropic/claude-opus-5, thinking high — the model this session is running, at its current thinking level (high)
-modelTier.deep: anthropic/claude-opus-5, thinking max — the model this session is running is already the most capable available, so deep differs by thinking level (max), not by model
-```
-
-To pin a tier yourself, run `/flows models` and pick one, or edit `~/.pi/agent/pi-flows.json` directly:
-
-```json
-{
-  "models": {
-    "fast": "anthropic/claude-haiku-4-5:low",
-    "deep": { "model": "anthropic/claude-opus-5", "thinking": "max" },
-    "capable": { "model": null, "thinking": "high" }
-  }
-}
-```
-
-`"model": null` (or the shorthand `"default"`) means *run with no `--model`*, so the child loads pi's configured default. That is a different statement from omitting `model`, which keeps whatever the roster derived — and different again from `capable`, which names the model this session is actually running. A tier you never mention stays derived. Because pi does not expose its configured default to an extension, a level set alongside `"model": null` cannot be checked against that model in advance; pi lowers it on the way in.
-
-A trusted project may override this in `.pi/pi-flows.json` — found by walking up from the working directory (searching for the file itself, so an unrelated nested `.pi` does not shadow it), like project agents, so it applies when you start pi in a subdirectory. `/flows models` warns before saving a tier the project already claims, since project config outranks your user file. An untrusted project's file is ignored, because a repo-controlled file choosing the model also chooses which vendor sees the task. A project override narrows a tier field by field, so a project that sets only `thinking` keeps your model pin. The older `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` environment variables still work and are still honored, but the config file wins over them.
-
-Full resolution order, narrowest first: flow-call `model` > flow-call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project `pi-flows.json` (when trusted) > user `pi-flows.json` > `PI_FLOWS_*_MODEL` > derived roster > your pi default. A thinking level above what the resolved model supports is lowered automatically, and the reported value is the level the child was asked to run at *after* that lowering.
-
-One case cannot be checked in advance: a tier explicitly set to `"model": null`, or any child that names no model, runs pi's configured default — which pi does not expose to an extension. The level is passed through unchanged and pi may lower it internally, so the trace marks those spans `flow.thinking_level_verified: false`. Treat that value as requested effort rather than effective effort.
-
-## Documentation ladder
-
-- [Quickstart](./docs/quickstart.md)
-- [Flow reference](./docs/flow-reference.md)
-- [Patterns](./docs/patterns.md)
-- [Troubleshooting](./docs/troubleshooting.md)
-- [Privacy & telemetry](./docs/privacy-telemetry.md)
-- [Examples](./examples/README.md)
-- [Contributing](./CONTRIBUTING.md)
-- [Agent instructions](./AGENTS.md)
-- [Changelog](./CHANGELOG.md)
+Contributor surfaces: [Contributing](./CONTRIBUTING.md) · [Agent instructions](./AGENTS.md) · [Domain glossary](./CONTEXT.md) · [Changelog](./CHANGELOG.md)
 
 ## Development
 
@@ -599,12 +139,5 @@ npm ci
 npm run check
 ```
 
-Useful individual checks:
-
-```bash
-npm run typecheck
-npm test
-npm run score:domain
-npm run validate:agents
-npm run pack:dry-run
-```
+See [Contributing](./CONTRIBUTING.md) for the individual checks, the commit
+conventions, and PR evidence expectations.
