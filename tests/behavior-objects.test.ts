@@ -40,6 +40,18 @@ test("a resolved contract carries one identity and one compiled schema for every
 	assert.equal(resolved.checkReturnData({ answer: "42" }), false, "return validation uses the schema compiled at construction");
 });
 
+test("neither wrapper can be constructed directly at runtime", () => {
+	// TS `private constructor` is erased in emitted JavaScript; the runtime
+	// construction key is what actually keeps the factory the only way in.
+	type Newable = new (...args: unknown[]) => unknown;
+	assert.throws(() => {
+		new (ResolvedDelegationContract as unknown as Newable)(contract, "sha256:forged", () => true);
+	}, TypeError, "a resolved contract cannot exist without passing admissibility");
+	assert.throws(() => {
+		new (ApprovalAuthorization as unknown as Newable)(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }), "workflow.phase:ship");
+	}, TypeError, "an authorization cannot exist without verify having passed");
+});
+
 test("the resolved wrapper's dispatch can be neither shadowed nor replaced", () => {
 	const resolvedContract = ResolvedDelegationContract.resolve(contract).resolved!;
 	assert.throws(() => {

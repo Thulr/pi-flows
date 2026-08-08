@@ -115,6 +115,12 @@ export function validateDelegationContract(
  * validation exist only as methods here, so none of them can run against an
  * unvalidated contract, skip a step, or derive a divergent identity.
  */
+// TS `private constructor` is erased at runtime, so a plain-JS caller could
+// otherwise `new` an exported wrapper directly and bypass its factory. The key
+// never leaves this module, making construction runtime-private, not merely
+// type-private.
+const CONSTRUCTION_KEY = Symbol("pi-flows.construction");
+
 export class ResolvedDelegationContract {
 	readonly #checkReturnData: (data: unknown) => boolean;
 
@@ -123,7 +129,11 @@ export class ResolvedDelegationContract {
 		/** The canonical contract identity every return envelope must name. */
 		readonly id: string,
 		checkReturnData: (data: unknown) => boolean,
+		key: symbol,
 	) {
+		if (key !== CONSTRUCTION_KEY) {
+			throw new TypeError("ResolvedDelegationContract is constructed only by resolve(); direct construction would bypass contract admissibility.");
+		}
 		this.#checkReturnData = checkReturnData;
 		// A retained instance must not be shadowable: an own `checkReturnData`
 		// returning true would accept schema-invalid data while the object still
@@ -145,7 +155,7 @@ export class ResolvedDelegationContract {
 		const contract = deepFreeze(structuredClone(value)) as DelegationContract;
 		// Proven compilable by the predicate above; compiled exactly once here.
 		const validator = Compile(contract.returnSchema);
-		return { resolved: new ResolvedDelegationContract(contract, canonicalSha256(contract), (data) => validator.Check(data)) };
+		return { resolved: new ResolvedDelegationContract(contract, canonicalSha256(contract), (data) => validator.Check(data), CONSTRUCTION_KEY) };
 	}
 
 	/** Render the child task with the contract terms and the return protocol bound to this contract's identity. */

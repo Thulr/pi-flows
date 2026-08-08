@@ -188,6 +188,9 @@ function shapeIssue(value: unknown): string | null {
 	return null;
 }
 
+/** Never leaves this module: makes ApprovalAuthorization construction runtime-private, not merely type-private. */
+const AUTHORIZATION_KEY = Symbol("pi-flows.authorization");
+
 /** `ApprovalAuthorization.verify`'s outcome: a refusal, or the sole capability to spend the receipt. */
 export type ApprovalVerification =
 	| { error: FlowError; authorization?: undefined }
@@ -205,7 +208,13 @@ export class ApprovalAuthorization {
 	readonly #consumer: string;
 	#consumed: ApprovalReceipt | undefined;
 
-	private constructor(receipt: ApprovalReceipt, consumer: string) {
+	private constructor(receipt: ApprovalReceipt, consumer: string, key: symbol) {
+		// TS `private` is erased at runtime; the module-scoped key makes
+		// construction runtime-private, so an authorization cannot exist without
+		// verify having passed — durable receipts stay single-use.
+		if (key !== AUTHORIZATION_KEY) {
+			throw new TypeError("ApprovalAuthorization is constructed only by verify(); direct construction would bypass expiry, binding, and replay checks.");
+		}
 		this.#receipt = receipt;
 		this.#consumer = consumer;
 		// Freezing blocks own-property shadowing of `consume` on a retained
@@ -230,7 +239,7 @@ export class ApprovalAuthorization {
 	): ApprovalVerification {
 		const error = receiptIssue(receipt, binding, { consumer, now });
 		if (error) return { error };
-		return { authorization: new ApprovalAuthorization(receipt as ApprovalReceipt, consumer) };
+		return { authorization: new ApprovalAuthorization(receipt as ApprovalReceipt, consumer, AUTHORIZATION_KEY) };
 	}
 
 	/**
