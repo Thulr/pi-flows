@@ -62,17 +62,22 @@ Or install your working copy as a package with `pi install -l ..` — project-lo
 
 ### Verify an install
 
-Inside pi, no model call required:
+Inside pi, these extension commands need no model call and no provider credentials:
 
 ```text
 /flows version
-/flows help
+/flows
 /flows status
+```
+
+Success looks like all nine bundled agents in the `/flows` listing. With a provider configured, you can also exercise the `flow` tool surface itself — pi turns these prompts into calls that answer without spawning a child:
+
+```text
 Use flow with {"list":true}
 Use flow with {"showConfig":true}
 ```
 
-Success looks like all nine bundled agents in the `flow list` output. If `pi` itself is missing, see [Troubleshooting → `pi: command not found`](../how-to/troubleshooting.md#pi-command-not-found).
+If `pi` itself is missing, see [Troubleshooting → `pi: command not found`](../how-to/troubleshooting.md#pi-command-not-found).
 
 ## Gallery metadata
 

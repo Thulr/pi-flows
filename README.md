@@ -90,7 +90,7 @@ list the available flow agents
 
 Success looks like all nine bundled agents in the `flow list` output — `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, and `debrief`. If pi isn't found, see [Troubleshooting → `pi: command not found`](./docs/how-to/troubleshooting.md#pi-command-not-found).
 
-To hack on pi-flows or try unreleased `main`, work from a checkout: `git clone https://github.com/Thulr/pi-flows && cd pi-flows && npm ci`, then load the local extension with `pi -e ./extensions/pi-flows/index.ts` (or install your working copy as a project-local package with `pi install -l ..`). Smoke-test without a model call: `/flows help`, `/flows status`, `Use flow with {"list":true}`, `Use flow with {"showConfig":true}`. Details in the [package reference](./docs/reference/package.md); see [Development](#development) for the check loop.
+To hack on pi-flows or try unreleased `main`, work from a checkout: `git clone https://github.com/Thulr/pi-flows && cd pi-flows && npm ci`, then load the local extension with `pi -e ./extensions/pi-flows/index.ts` (or install your working copy as a project-local package with `pi install -l ..`). Smoke-test with the extension commands `/flows help` and `/flows status` (no model call needed), then — with a provider configured — ask pi to `Use flow with {"list":true}` or `{"showConfig":true}`. Details in the [package reference](./docs/reference/package.md); see [Development](#development) for the check loop.
 
 ## What it adds
 
