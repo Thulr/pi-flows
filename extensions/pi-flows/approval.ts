@@ -203,6 +203,7 @@ export type ApprovalVerification =
 export class ApprovalAuthorization {
 	readonly #receipt: ApprovalReceipt;
 	readonly #consumer: string;
+	#consumed: ApprovalReceipt | undefined;
 
 	private constructor(receipt: ApprovalReceipt, consumer: string) {
 		this.#receipt = receipt;
@@ -229,10 +230,17 @@ export class ApprovalAuthorization {
 		return { authorization: new ApprovalAuthorization(receipt as ApprovalReceipt, consumer) };
 	}
 
-	/** Burn the receipt once its authorized action has begun. Re-consuming by the same action is a resume, not a second use. */
+	/**
+	 * Burn the receipt once its authorized action has begun. Re-consuming by the
+	 * same action is a resume, not a second use — including on this same
+	 * authorization: the first consumption is latched, so a second call returns
+	 * the identical receipt rather than re-sealing a new consumption time.
+	 */
 	consume(now = Date.now()): ApprovalReceipt {
-		if (this.#receipt.consumedAt !== null && this.#receipt.consumedBy === this.#consumer) return this.#receipt;
-		return sealReceipt({ ...this.#receipt, consumedAt: new Date(now).toISOString(), consumedBy: this.#consumer });
+		this.#consumed ??= this.#receipt.consumedAt !== null && this.#receipt.consumedBy === this.#consumer
+			? this.#receipt
+			: sealReceipt({ ...this.#receipt, consumedAt: new Date(now).toISOString(), consumedBy: this.#consumer });
+		return this.#consumed;
 	}
 }
 

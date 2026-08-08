@@ -330,20 +330,30 @@ class IntegrationValidation {
 		this.#handoff = handoff;
 	}
 
-	reusableFor(result: FlowRunResult, contractId: string, cwd: string, policy: CapturePolicy): boolean {
-		return this.#result === result
-			&& this.#contractId === contractId
-			&& this.#cwd === cwd
-			&& this.#policy.recordContent === policy.recordContent
-			&& this.#policy.redactSecrets === policy.redactSecrets;
-	}
-
-	validatedEnvelope(): DelegationReturnEnvelope {
-		return structuredClone(this.#envelope);
-	}
-
-	validatedHandoff(): DelegationHandoffEnvelope {
-		return structuredClone(this.#handoff);
+	/**
+	 * Brand-checked, module-dispatched reuse: nothing is ever looked up THROUGH
+	 * the token, so an own-property or prototype patch on a retained token can
+	 * substitute neither the checks nor the snapshots. The `#field in` brand
+	 * subsumes `instanceof` and cannot be forged from outside the class.
+	 */
+	static reuse(
+		token: object | undefined,
+		result: FlowRunResult,
+		contractId: string,
+		cwd: string,
+		policy: CapturePolicy,
+	): { envelope: DelegationReturnEnvelope; handoff: DelegationHandoffEnvelope } | undefined {
+		// The typeof guard keeps a primitive-valued token from turning the `in`
+		// brand check into a TypeError; every non-branded value is just "no reuse".
+		if (!token || typeof token !== "object" || !(#envelope in token)) return undefined;
+		const received = token as IntegrationValidation;
+		const reusable = received.#result === result
+			&& received.#contractId === contractId
+			&& received.#cwd === cwd
+			&& received.#policy.recordContent === policy.recordContent
+			&& received.#policy.redactSecrets === policy.redactSecrets;
+		if (!reusable) return undefined;
+		return { envelope: structuredClone(received.#envelope), handoff: structuredClone(received.#handoff) };
 	}
 }
 
@@ -364,11 +374,10 @@ export function prepareIntegrationHandoff(
 	let returned: DelegationReturnEnvelope | undefined;
 	let validation = options.validation;
 	if (options.contract) {
-		const received = validation instanceof IntegrationValidation ? validation : undefined;
-		const reusable = received?.reusableFor(result, options.contract.id, options.cwd, options.policy) ? received : undefined;
-		if (reusable) {
-			returned = reusable.validatedEnvelope();
-			handoff = reusable.validatedHandoff();
+		const reused = IntegrationValidation.reuse(validation, result, options.contract.id, options.cwd, options.policy);
+		if (reused) {
+			returned = reused.envelope;
+			handoff = reused.handoff;
 		} else {
 			const validated = validateReturnEnvelope(result, options.contract, options.cwd, options.policy);
 			if (validated.error) return { error: validated.error, ...(validated.rejected ? { rejected: validated.rejected } : {}) };

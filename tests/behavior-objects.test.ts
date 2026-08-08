@@ -77,3 +77,12 @@ test("consumption exists only on a verified authorization, bound to the verified
 	assert.equal(replay.error?.code, "APPROVAL_RECEIPT_CONSUMED", "a failed verification yields no authorization at all");
 	assert.equal(replay.authorization, undefined);
 });
+
+test("consuming one authorization twice returns the identical receipt, not a re-stamped one", () => {
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
+	const authorization = ApprovalAuthorization.verify(receipt, binding(), { consumer: "workflow.phase:ship", now: NOW }).authorization!;
+	const first = authorization.consume(NOW);
+	const second = authorization.consume(NOW + 5_000);
+	assert.equal(second, first, "the first consumption is latched; a duplicate call is a resume");
+	assert.equal(second.consumedAt, first.consumedAt, "the consumption time and digest are never rewritten");
+});

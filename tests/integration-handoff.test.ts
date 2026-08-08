@@ -144,6 +144,34 @@ test("validation receipts retain an immutable private snapshot", () => {
 	assert.equal(reused.handoff?.status, "completed");
 });
 
+test("a token with forged own methods cannot smuggle a completed status past reuse", () => {
+	// Reuse is brand-checked and module-dispatched: nothing is looked up through
+	// the token, so an own `validatedHandoff` (which would shadow any instance
+	// method) is simply never invoked.
+	const child = result(typedEnvelope({ status: "partial" }));
+	const validated = prepareIntegrationHandoff(child, {
+		contract: resolved,
+		cwd: "/tmp",
+		policy,
+		enforceCompletion: false,
+	});
+	assert.ok(validated.validation);
+	const forgedHandoff = { ...validated.handoff!, status: "completed" };
+	Object.assign(validated.validation!, {
+		validatedHandoff: () => structuredClone(forgedHandoff),
+		validatedEnvelope: () => ({ ...typedEnvelope({ status: "completed" }) }),
+		reusableFor: () => true,
+	});
+
+	const represented = prepareIntegrationHandoff(child, {
+		contract: resolved,
+		cwd: "/tmp",
+		policy,
+		validation: validated.validation,
+	});
+	assert.equal(represented.error?.code, "RETURN_ENVELOPE_INCOMPLETE", "the real partial snapshot is what reuse returns, and completion policy judges it");
+});
+
 test("validation receipts cannot carry permissive content into a stricter capture policy", () => {
 	const secret = "secret=private-value";
 	const child = result(typedEnvelope({ summary: secret }));
