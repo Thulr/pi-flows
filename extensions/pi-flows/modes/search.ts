@@ -3,7 +3,54 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { appendReturnRequirements, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { searchTopology } from "../topology.ts";
+import { searchTopology, successfulRuns } from "../topology.ts";
+import { maxRunDuration, plannedRefs, runDuration, type ModePlan } from "./plan.ts";
+
+/**
+ * Search's plan: the generator wave (the opening — every generator scores
+ * before any scorer runs), the scorer wave, then the debrief. Both fan-out
+ * waves are guarded exactly as the handler checks them, with the handler's
+ * defaults — a garbage ref falls back to the default role rather than
+ * emitting a non-ref, which is verdict-neutral for the guard and keeps the
+ * default names on the requested-agents surface. No wave carries contract
+ * budgets.
+ */
+export function planSearch(params: any): ModePlan {
+	if (!params.search) return { waves: [], opening: [] };
+	const spec = params.search ?? {};
+	const generator = plannedRefs([spec.generator])[0] ?? { agent: "strategist" };
+	const scorer = plannedRefs([spec.scorer])[0] ?? { agent: "redteam", tools: "none" };
+	const debrief = plannedRefs([spec.debrief])[0] ?? { agent: "debrief" };
+	const { candidateCount } = searchTopology(spec);
+	const generators = Array.from({ length: candidateCount }, () => generator);
+	return {
+		waves: [
+			{ refs: generators, guarded: true },
+			{ refs: Array.from({ length: candidateCount }, () => scorer), guarded: true },
+			{ refs: [debrief], guarded: false },
+		],
+		opening: generators,
+	};
+}
+
+/** Per round, the slowest generator plus the slowest scorer; then the debrief tail. Underivable when the results do not fill the declared waves. */
+export function criticalPathSearch(params: any, results: FlowRunResult[]): number | undefined {
+	const { candidateCount: candidates, rounds } = searchTopology(params.search);
+	let offset = 0;
+	let path = 0;
+	for (let round = 0; round < rounds; round += 1) {
+		const generated = results.slice(offset, offset + candidates);
+		if (generated.length !== candidates) return undefined;
+		path += maxRunDuration(generated);
+		offset += candidates;
+		const scoredCount = successfulRuns(generated).length;
+		const scored = results.slice(offset, offset + scoredCount);
+		if (scoredCount === 0 || scored.length !== scoredCount) return undefined;
+		path += maxRunDuration(scored);
+		offset += scoredCount;
+	}
+	return results.length === offset + 1 ? path + runDuration(results[offset]) : undefined;
+}
 
 /** One place each search unit key is derived, so a later dependency link names a unit that exists. */
 const generatorKey = (roundKeyValue: string, index: number) => `${roundKeyValue}.gen-${index + 1}`;

@@ -1,9 +1,68 @@
 import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { validateSharedWriteCwd } from "../validate.ts";
+import { graphDependsOn, validGraphNodes, validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { plannedRefs, runDuration, type ModePlan, type PlannedWave } from "./plan.ts";
+
+/**
+ * Graph's plan: the dependency-free first wave (the only wave the handler
+ * guard-checks before any spawn, and the only opening that is statically
+ * certain), the dependent nodes (their wave grouping is settled at runtime by
+ * completion order), and the optional debrief. A structurally invalid graph
+ * is refused GRAPH_INVALID before the guard, so its nodes stay declared for
+ * the requested-agents and disclosure readers while nothing is guarded and no
+ * opening is certain. Nodes carry only their own contracts; the debrief
+ * resolves against the call's fallback.
+ */
+export function planGraph(params: any): ModePlan {
+	if (!params.graph) return { waves: [], opening: [] };
+	const spec = params.graph ?? {};
+	const debrief = plannedRefs([spec.debrief]);
+	const debriefWave: PlannedWave[] = debrief.length > 0 ? [{ refs: debrief, guarded: false, contracts: "resolved" }] : [];
+	const nodes = validGraphNodes(params);
+	if (!nodes) {
+		return { waves: [{ refs: plannedRefs(spec.nodes), guarded: false, contracts: "own" }, ...debriefWave], opening: [] };
+	}
+	const first = plannedRefs(nodes.filter((node) => graphDependsOn(node).length === 0));
+	const later = plannedRefs(nodes.filter((node) => graphDependsOn(node).length > 0));
+	return {
+		waves: [
+			{ refs: first, guarded: true, contracts: "own" },
+			...(later.length > 0 ? [{ refs: later, guarded: false, contracts: "own" as const }] : []),
+			...debriefWave,
+		],
+		opening: first,
+	};
+}
+
+/**
+ * Longest dependency chain through the DAG, replaying the handler's wave
+ * schedule over the settled runs; underivable when the results do not cover
+ * the nodes.
+ */
+export function criticalPathGraph(params: any, results: FlowRunResult[]): number | undefined {
+	const nodes = Array.isArray(params.graph?.nodes) ? params.graph.nodes : [];
+	if (nodes.length === 0 || results.length < nodes.length) return undefined;
+	const remaining = new Map<string, any>(nodes.map((node: any) => [node.id, node]));
+	const completed = new Set<string>();
+	const pathById = new Map<string, number>();
+	let resultIndex = 0;
+	while (remaining.size > 0 && resultIndex < Math.min(nodes.length, results.length)) {
+		const ready = [...remaining.values()].filter((node) => (node.dependsOn ?? []).every((dependency: string) => completed.has(dependency)));
+		if (ready.length === 0) return undefined;
+		for (const node of ready) {
+			const dependencyPath = Math.max(0, ...(node.dependsOn ?? []).map((dependency: string) => pathById.get(dependency) ?? 0));
+			pathById.set(node.id, dependencyPath + runDuration(results[resultIndex]));
+			resultIndex += 1;
+			remaining.delete(node.id);
+		}
+		for (const node of ready) completed.add(node.id);
+	}
+	const nodePath = Math.max(0, ...pathById.values());
+	return nodePath + results.slice(resultIndex).reduce((sum, result) => sum + runDuration(result), 0);
+}
 
 export function renderGraphTask(template: string, task: string | undefined, outputs: Map<string, string>): string {
 	let rendered = template.replace(/\{task\}/g, task ?? "");

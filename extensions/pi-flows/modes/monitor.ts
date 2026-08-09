@@ -3,6 +3,29 @@ import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../commands.ts";
+import { plannedRefs, type ModePlan } from "./plan.ts";
+
+/**
+ * Monitor's plan: the reactor role with the handler's analyst default, never
+ * guarded and never an opening — the reactor spawns only if the probe ever
+ * trips the trigger, so no spawn is statically certain and a completed watch
+ * may hold zero runs. The reactor dispatches with no contract limits.
+ */
+export function planMonitor(params: any): ModePlan {
+	if (!params.monitor) return { waves: [], opening: [] };
+	const spec = params.monitor ?? {};
+	const reactor = plannedRefs([spec.reactor?.agent ? spec.reactor : { agent: "analyst" }]);
+	return { waves: [{ refs: reactor, guarded: false }], opening: [] };
+}
+
+/**
+ * Declared unavailable: probe checks are unmeasured wall-clock waits around
+ * at most one reactor run, so no duration arithmetic reflects the path. This
+ * is the per-mode declaration of what used to be a silent fall-through.
+ */
+export function criticalPathMonitor(): number | undefined {
+	return undefined;
+}
 
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
 	if (!Number.isFinite(value)) return fallback;

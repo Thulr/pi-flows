@@ -9,6 +9,33 @@ import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.ts";
+
+/**
+ * Worktree's plan: the concurrent writer wave — never guarded, because each
+ * writer gets its own worktree by construction — then the integrator. No
+ * opening is statically certain: a dirty source repository is refused with
+ * its own code before any agent resolves. Writers carry only their own
+ * contracts; the integrator resolves against the call's fallback.
+ */
+export function planWorktree(params: any): ModePlan {
+	if (!params.worktree) return { waves: [], opening: [] };
+	const spec = params.worktree ?? {};
+	const integrator = plannedRefs([spec.integrator?.agent ? spec.integrator : { agent: "operator" }]);
+	return {
+		waves: [
+			{ refs: plannedRefs(spec.tasks), guarded: false, contracts: "own" },
+			...(integrator.length > 0 ? [{ refs: integrator, guarded: false, contracts: "resolved" as const }] : []),
+		],
+		opening: [],
+	};
+}
+
+/** A concurrent writer wave, then the integration tail. */
+export function criticalPathWorktree(params: any, results: FlowRunResult[]): number | undefined {
+	const workerCount = Array.isArray(params.worktree?.tasks) ? params.worktree.tasks.length : 0;
+	return workerCount > 0 ? fanoutThenTailCriticalPath(results, workerCount) : undefined;
+}
 
 interface GitResult {
 	ok: boolean;

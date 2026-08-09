@@ -3,6 +3,31 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { appendReturnRequirements, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentRef } from "../runner.ts";
+import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
+
+/**
+ * Loop's plan: the body role (the opening — empty when no body agent is
+ * named, and the handler refuses INVALID_MODE), then the optional judge.
+ * Iterations repeat these roles sequentially, so nothing is guarded and no
+ * wave carries contract budgets.
+ */
+export function planLoop(params: any): ModePlan {
+	if (!params.loop) return { waves: [], opening: [] };
+	const body = plannedRefs([params.loop?.body]);
+	const judge = plannedRefs([params.loop?.judge]);
+	return {
+		waves: [
+			{ refs: body, guarded: false },
+			...(judge.length > 0 ? [{ refs: judge, guarded: false }] : []),
+		],
+		opening: body,
+	};
+}
+
+/** Body and judge alternate one at a time: sequential. */
+export function criticalPathLoop(_params: any, results: FlowRunResult[]): number | undefined {
+	return sumRunDurations(results);
+}
 
 /** One place each loop unit key is derived, so the judge's dependency link names the body that actually ran. */
 const bodyKey = (stageKey: string) => `${stageKey}.body`;

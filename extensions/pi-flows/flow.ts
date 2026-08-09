@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { createHandoffConsumer, type HandoffConsumer } from "./handoff-consumption.ts";
 import { isFailed } from "./sanitize.ts";
-import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type TraceSink } from "./trace.ts";
+import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type CriticalPathResolver, type TraceSink } from "./trace.ts";
 import {
 	Budget,
 	DEFAULT_CONCURRENCY,
@@ -103,6 +103,8 @@ export interface FlowPorts {
 	recordLesson?: (params: Record<string, any>, mode: RunMode, text: string, policy: CapturePolicy) => Promise<void>;
 	/** Decorate the root span's summary attributes (preset provenance and outcome). `deliverable` is false when a strict run cannot evidence the verdict it reached; `preset` is the resolved selection the aggregate carried. */
 	decorateRootAttributes?: (attributes: Record<string, unknown>, details: FlowDetails, deliverable: boolean, preset?: FlowPreset) => Record<string, unknown>;
+	/** The mode table's critical-path resolver, supplied from the composition root where the table is reachable — the aggregate passes it through to trace summaries and never reads mode topology itself. Absent (barebones tests), the metric reports unavailable. */
+	criticalPath?: CriticalPathResolver;
 	/** Append the durable session entry. The aggregate calls it last, so history can never record an outcome the caller was not told. */
 	persist: (details: FlowDetails) => void;
 }
@@ -359,7 +361,7 @@ export class AdmittedFlow {
 			// settle's success-path finalize is untouched because a throwing
 			// handler never constructs the DispatchedFlow that would run it.
 			try {
-				await state.sink?.finalize({ ok: false }, traceSummaryAttributes(mode, state.call.params, { content: [], details: this.#liveDetails }));
+				await state.sink?.finalize({ ok: false }, traceSummaryAttributes(mode, state.call.params, { content: [], details: this.#liveDetails }, ports.criticalPath));
 			} catch {
 				// Deliberate: the handler's error is the flow's failure, and a
 				// failing sink must not replace it on the way out.
@@ -433,7 +435,7 @@ export class DispatchedFlow {
 				// A strict run whose own evidence is degraded is about to be refused,
 				// so the root must not claim a verified outcome it never delivered.
 				output.details.trace = await state.sink.finalize({ ok }, (health) => {
-					const attributes = traceSummaryAttributes(mode, params, output);
+					const attributes = traceSummaryAttributes(mode, params, output, ports.criticalPath);
 					const deliverable = !state.traceStrict || traceHealthStatus(health, true) === "recorded";
 					return ports.decorateRootAttributes ? ports.decorateRootAttributes(attributes, output.details, deliverable, state.call.preset) : attributes;
 				});

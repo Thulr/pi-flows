@@ -4,6 +4,23 @@ import { appendReturnRequirements, resolvedCwd } from "../validate.ts";
 import { renderTaskTemplate } from "../parse.ts";
 import { ResolvedDelegationContract } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
+import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
+
+/**
+ * Chain's plan: one single-ref wave per step, in step order, none guarded —
+ * steps never run concurrently, so the shared-write guard has nothing to see.
+ * The opening is the first step (empty when it names no agent).
+ */
+export function planChain(params: any): ModePlan {
+	if (!Array.isArray(params.chain) || params.chain.length === 0) return { waves: [], opening: [] };
+	const waves = params.chain.map((step: unknown) => ({ refs: plannedRefs([step]), guarded: false, contracts: "resolved" as const }));
+	return { waves, opening: waves[0]!.refs };
+}
+
+/** Strictly sequential: every step is on the path. */
+export function criticalPathChain(_params: any, results: FlowRunResult[]): number | undefined {
+	return sumRunDurations(results);
+}
 
 /** One place a chain step's unit key is derived, so its link and its handoff name the same unit. */
 const stepKey = (index: number) => `step-${index + 1}`;

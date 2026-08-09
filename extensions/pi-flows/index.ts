@@ -35,7 +35,7 @@ import { createFleetPanelController } from "./fleet-panel.ts";
 import { flowCallLines, renderFlowResultRow } from "./ui-live-row.ts";
 import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
-import { activeRunModes, renderRunModeLabel } from "./modes/contract.ts";
+import { activeRunModes, criticalPathForMode, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
 import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
@@ -388,6 +388,10 @@ export default function (pi: ExtensionAPI) {
 						: candidate,
 				recordLesson: (candidate, mode, text, resolvedPolicy) => appendReflexion(ctx.cwd, candidate, mode, text, resolvedPolicy),
 				decorateRootAttributes: (attributes, details, deliverable, preset) => attachPresetTraceAttributes(attributes, preset, details, deliverable),
+				// The mode table's critical-path resolver: Core trace summaries
+				// receive it as an argument, because mode topology is Supporting
+				// and Core may not import it.
+				criticalPath: criticalPathForMode,
 				persist: (details) => appendFlowSessionEntry(pi, details),
 			});
 			if ("described" in admission) return admission.described;

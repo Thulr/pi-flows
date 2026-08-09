@@ -10,7 +10,37 @@ import { integrationRunPlan, runIntegrationPlan } from "../integration.ts";
 import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
-import { workflowPhasesRefusal } from "../validate.ts";
+import { isWorkflowWorkPhase, workflowPhasesRefusal } from "../validate.ts";
+import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
+
+/**
+ * Workflow's plan: one wave per phase in phase order (approval phases plan no
+ * refs — they spawn nothing — though a phase-declared agent stays on the
+ * requested-agents surface), then the optional debrief. Nothing is guarded:
+ * phases run one at a time. The opening is the first WORK phase, and only
+ * when it is statically certain — a resume reads persisted state this plan
+ * cannot, and an invalid phase list is refused WORKFLOW_INVALID before any
+ * roster check. Phases carry only their own contracts; the debrief resolves
+ * against the call's fallback.
+ */
+export function planWorkflow(params: any): ModePlan {
+	if (!params.workflow) return { waves: [], opening: [] };
+	const spec = params.workflow ?? {};
+	const phases = Array.isArray(spec.phases) ? spec.phases : [];
+	const debrief = plannedRefs([spec.debrief]);
+	return {
+		waves: [
+			...phases.map((phase: unknown) => ({ refs: plannedRefs([phase]), guarded: false, contracts: "own" as const })),
+			...(debrief.length > 0 ? [{ refs: debrief, guarded: false, contracts: "resolved" as const }] : []),
+		],
+		opening: spec.resume || workflowPhasesRefusal(params) ? [] : plannedRefs(phases.filter(isWorkflowWorkPhase).slice(0, 1)),
+	};
+}
+
+/** Phases run one at a time: sequential. */
+export function criticalPathWorkflow(_params: any, results: FlowRunResult[]): number | undefined {
+	return sumRunDurations(results);
+}
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
 const phaseStageKey = (phaseId: string) => `phase-${encodeAuthorKey(phaseId)}`;

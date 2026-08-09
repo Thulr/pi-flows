@@ -1,9 +1,37 @@
-import { flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.ts";
+
+/**
+ * Dossier's plan: the concurrent evidence-section wave, then the synthesizer
+ * with the handler's debrief default. The section wave is guarded unless it
+ * is over the cap, where the schema refuses before the guard. Sections carry
+ * only their own contracts — the call's fallback goes to the synthesizer.
+ */
+export function planDossier(params: any): ModePlan {
+	if (!params.dossier) return { waves: [], opening: [] };
+	const spec = params.dossier ?? {};
+	const sections = plannedRefs(spec.sections);
+	const guarded = !(Array.isArray(spec.sections) && spec.sections.length > MAX_PARALLEL_TASKS);
+	const debrief = plannedRefs([spec.debrief?.agent ? spec.debrief : { agent: "debrief" }]);
+	return {
+		waves: [
+			{ refs: sections, guarded, contracts: "own" },
+			...(debrief.length > 0 ? [{ refs: debrief, guarded: false, contracts: "resolved" as const }] : []),
+		],
+		opening: guarded ? sections : [],
+	};
+}
+
+/** A concurrent extraction wave, then the synthesis tail. */
+export function criticalPathDossier(params: any, results: FlowRunResult[]): number | undefined {
+	const sectionCount = Array.isArray(params.dossier?.sections) ? params.dossier.sections.length : 0;
+	return sectionCount > 0 ? fanoutThenTailCriticalPath(results, sectionCount) : undefined;
+}
 
 /** One place a section's unit key is derived, so the synthesizer's dependency links name the sections it read. */
 const sectionKey = (index: number) => `section-${index + 1}`;

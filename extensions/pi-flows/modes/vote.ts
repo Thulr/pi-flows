@@ -1,9 +1,53 @@
-import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan, type PlannedWave } from "./plan.ts";
+
+/**
+ * Vote's plan: the voter wave (explicit list, or one agent replicated `count`
+ * times exactly as the handler replicates it), then the optional debrief
+ * aggregator. The wave is unguarded wherever an earlier refusal shadows the
+ * guard — an over-cap list or count is refused TOO_MANY_TASKS (or at the
+ * schema layer) first, and a non-numeric count never replicates, so a hostile
+ * count never allocates. When explicit voters are present the handler ignores
+ * `vote.agent`, but the requested-agents surface has always listed it, so it
+ * stays declared as a non-spawning mention.
+ */
+export function planVote(params: any): ModePlan {
+	if (!params.vote) return { waves: [], opening: [] };
+	const spec = params.vote ?? {};
+	const waves: PlannedWave[] = [];
+	const explicit = Array.isArray(spec.voters) && spec.voters.length > 0;
+	if (explicit) {
+		waves.push({ refs: plannedRefs(spec.voters), guarded: spec.voters.length <= MAX_PARALLEL_TASKS, contracts: "resolved" });
+	}
+	if (typeof spec.agent === "string" && spec.agent) {
+		if (explicit) {
+			waves.push({ refs: [{ agent: spec.agent }], guarded: false });
+		} else {
+			const count = spec.count === undefined ? 3 : Number.isFinite(spec.count) ? Math.floor(spec.count) : null;
+			const replicable = count !== null && count <= MAX_PARALLEL_TASKS;
+			waves.push({
+				refs: replicable ? Array.from({ length: Math.max(count, 0) }, () => ({ agent: spec.agent as string })) : [{ agent: spec.agent }],
+				guarded: replicable,
+				contracts: "resolved",
+			});
+		}
+	}
+	const debrief = plannedRefs([spec.debrief]);
+	if (debrief.length > 0) waves.push({ refs: debrief, guarded: false, contracts: "resolved" });
+	const [first] = waves;
+	return { waves, opening: first?.guarded ? first.refs : [] };
+}
+
+/** A concurrent ballot wave, then the aggregator tail. */
+export function criticalPathVote(params: any, results: FlowRunResult[]): number | undefined {
+	const voterCount = Array.isArray(params.vote?.voters) && params.vote.voters.length > 0 ? params.vote.voters.length : Math.floor(params.vote?.count ?? 3);
+	return voterCount > 0 ? fanoutThenTailCriticalPath(results, voterCount) : undefined;
+}
 
 const VOTER_STANCES = [
 	"Primary solver: answer the task directly and state the strongest evidence for your conclusion.",

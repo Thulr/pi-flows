@@ -1,9 +1,31 @@
-import type { ModeDeps, ModeOutput } from "../types.ts";
+import type { FlowRunResult, ModeDeps, ModeOutput } from "../types.ts";
 import { formatFlowError } from "../types.ts";
 import { isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, resolvedCwd } from "../validate.ts";
 import { ResolvedDelegationContract } from "../delegation.ts";
 import { runAgentRef } from "../runner.ts";
+import { sumRunDurations, type ModePlan } from "./plan.ts";
+
+/**
+ * Single's plan: the one named role, never guarded (one ref cannot collide).
+ * The planned ref deliberately carries only the agent name — params.cwd and
+ * params.tools are handler concerns the pre-spawn readers have never read.
+ * The opening requires a task or contract, matching the mode's activation:
+ * an agent with nothing to run spawns nothing.
+ */
+export function planSingle(params: any): ModePlan {
+	if (!params.agent) return { waves: [], opening: [] };
+	const refs = [{ agent: params.agent as string }];
+	return {
+		waves: [{ refs, guarded: false, contracts: "resolved" }],
+		opening: params.task || params.contract ? refs : [],
+	};
+}
+
+/** One child after another is a sum — for single, the one child's own duration. */
+export function criticalPathSingle(_params: any, results: FlowRunResult[]): number | undefined {
+	return sumRunDurations(results);
+}
 
 export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, policy, makeDetails, defaultCwd } = deps;

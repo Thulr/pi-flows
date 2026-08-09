@@ -5,6 +5,41 @@ import { ResolvedDelegationContract } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
+import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
+
+/**
+ * Evaluate's plan: the generator wave first (it spawns before any critic and
+ * is never guard-checked), then the critic panel — normalized exactly as the
+ * handler normalizes it, including the one-redteam default when the panel is
+ * empty or unusable. An over-cap explicit panel is schema-refused before the
+ * guard, so its wave stays declared but unguarded, listing every named critic.
+ */
+export function planEvaluate(params: any): ModePlan {
+	if (!params.evaluate) return { waves: [], opening: [] };
+	const spec = params.evaluate ?? {};
+	const operator = plannedRefs([spec.operator ?? { agent: "operator" }]);
+	const criticList = Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }];
+	const guarded = !(Array.isArray(spec.redteam) && spec.redteam.length > MAX_PARALLEL_TASKS);
+	const panel = plannedRefs(criticList).slice(0, MAX_PARALLEL_TASKS);
+	const critics = guarded ? (panel.length > 0 ? panel : [{ agent: "redteam" }]) : plannedRefs(criticList);
+	return {
+		waves: [
+			{ refs: operator, guarded: false, contracts: "resolved" },
+			{ refs: critics, guarded },
+		],
+		opening: operator,
+	};
+}
+
+/**
+ * Sequential generator→critic iterations sum; a deterministic gate's own
+ * runtime is unmeasured and a multi-critic panel overlaps, so both make the
+ * path underivable.
+ */
+export function criticalPathEvaluate(params: any, results: FlowRunResult[]): number | undefined {
+	if (typeof params.evaluate?.checkCommand === "string" && params.evaluate.checkCommand.trim()) return undefined;
+	return !Array.isArray(params.evaluate?.redteam) || params.evaluate.redteam.length <= 1 ? sumRunDurations(results) : undefined;
+}
 
 /** One place the generator's unit key is derived, so each critic's dependency link names the draft it judged. */
 const generatorKey = (stageKey: string) => `${stageKey}.generator`;

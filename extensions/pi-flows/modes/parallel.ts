@@ -1,9 +1,29 @@
-import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowRunResult, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { runAgentFanout } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { maxRunDuration, plannedRefs, type ModePlan } from "./plan.ts";
+
+/**
+ * Parallel's plan: one concurrent wave of every task, guarded — unless the
+ * fan-out is over the cap, where the handler refuses TOO_MANY_TASKS before its
+ * guard, so the wave stays declared (requested agents, disclosure) while the
+ * admissibility mirror stays silent behind the earlier refusal and no opening
+ * is certain.
+ */
+export function planParallel(params: any): ModePlan {
+	if (!Array.isArray(params.tasks) || params.tasks.length === 0) return { waves: [], opening: [] };
+	const refs = plannedRefs(params.tasks);
+	const guarded = params.tasks.length <= MAX_PARALLEL_TASKS;
+	return { waves: [{ refs, guarded, contracts: "resolved" }], opening: guarded ? refs : [] };
+}
+
+/** One wave, fully concurrent: the slowest task bounds the flow. */
+export function criticalPathParallel(_params: any, results: FlowRunResult[]): number | undefined {
+	return maxRunDuration(results);
+}
 
 export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;

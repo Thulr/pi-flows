@@ -5,6 +5,43 @@ import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictPr
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { incompleteHandoffSummary, integrationControlText } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { plannedRefs, type ModePlan } from "./plan.ts";
+
+/**
+ * Orchestrate's plan: commander (the opening — it decomposes the goal before
+ * any recon worker runs), the recon worker role, the optional verifier, and
+ * the debrief synthesizer. Nothing is guarded: the handler's shared-write
+ * check fires only after the commander's decomposition, which is a mid-run
+ * concern the pre-spawn mirror must not claim. Commander, recon, and verify
+ * carry only their own contracts; the debrief resolves against the call's
+ * fallback.
+ */
+export function planOrchestrate(params: any): ModePlan {
+	if (!params.orchestrate) return { waves: [], opening: [] };
+	const spec = params.orchestrate ?? {};
+	const commander = plannedRefs([spec.commander ?? { agent: "commander" }]);
+	const recon = plannedRefs([spec.recon ?? { agent: "recon" }]);
+	const verify = plannedRefs([spec.verify]);
+	const debrief = plannedRefs([spec.debrief ?? { agent: "debrief" }]);
+	return {
+		waves: [
+			{ refs: commander, guarded: false, contracts: "own" },
+			{ refs: recon, guarded: false, contracts: "own" },
+			...(verify.length > 0 ? [{ refs: verify, guarded: false, contracts: "own" as const }] : []),
+			{ refs: debrief, guarded: false, contracts: "resolved" },
+		],
+		opening: commander,
+	};
+}
+
+/**
+ * Declared unavailable: the verify/revise loop makes wave boundaries
+ * runtime-dependent, so no pre-declared arithmetic covers them. This is the
+ * per-mode declaration of what used to be a silent fall-through.
+ */
+export function criticalPathOrchestrate(): number | undefined {
+	return undefined;
+}
 
 /** One place each orchestrate unit key is derived, so a dependency link cannot name a unit that was never registered. */
 const DECOMPOSE_KEY = "decompose";

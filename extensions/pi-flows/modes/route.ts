@@ -3,6 +3,35 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { appendReturnRequirements } from "../validate.ts";
 import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
 import { runAgentRef } from "../runner.ts";
+import { plannedRefs, sumRunDurations, type ModePlan, type PlannedWave } from "./plan.ts";
+
+/**
+ * Route's plan: the controller, then the candidate step — every name the
+ * controller may choose from (one of them runs), then the fallback if named.
+ * Nothing is guarded (two sequential single-ref spawns cannot collide) and no
+ * wave carries contract budgets: the route opener dispatches with no contract
+ * limits.
+ */
+export function planRoute(params: any): ModePlan {
+	if (!params.route) return { waves: [], opening: [] };
+	const spec = params.route ?? {};
+	const controller = plannedRefs([spec.controller ?? { agent: "controller" }]);
+	const candidates = (Array.isArray(spec.candidates) ? spec.candidates : [])
+		.filter((name: unknown): name is string => typeof name === "string")
+		.map((name: string) => ({ agent: name }));
+	const fallback = typeof spec.fallback === "string" ? [{ agent: spec.fallback }] : [];
+	const waves: PlannedWave[] = [
+		{ refs: controller, guarded: false },
+		...(candidates.length > 0 ? [{ refs: candidates, guarded: false }] : []),
+		...(fallback.length > 0 ? [{ refs: fallback, guarded: false }] : []),
+	];
+	return { waves, opening: controller };
+}
+
+/** Router, then exactly one selected candidate: sequential. */
+export function criticalPathRoute(_params: any, results: FlowRunResult[]): number | undefined {
+	return sumRunDurations(results);
+}
 
 /** One place each route unit key is derived, so the selected run's dependency link names the router that chose it. */
 const ROUTER_KEY = "router";

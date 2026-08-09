@@ -1,10 +1,45 @@
-import { flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentFanout, runAgentRef } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
 import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { maxRunDuration, plannedRefs, runDuration, type ModePlan } from "./plan.ts";
+
+/**
+ * Debate's plan: the advocate wave (repeated per round at runtime; the roles
+ * are declared once), then the adjudicator with the handler's analyst
+ * default. The advocate wave is guarded unless the panel is over the cap,
+ * where the schema refuses before the guard — the wave stays declared while
+ * the admissibility mirror stays silent and no opening is certain.
+ */
+export function planDebate(params: any): ModePlan {
+	if (!params.debate) return { waves: [], opening: [] };
+	const spec = params.debate ?? {};
+	const participants = plannedRefs(spec.participants);
+	const guarded = !(Array.isArray(spec.participants) && spec.participants.length > MAX_PARALLEL_TASKS);
+	const adjudicator = plannedRefs([spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" }]);
+	return {
+		waves: [
+			{ refs: participants, guarded, contracts: "resolved" },
+			...(adjudicator.length > 0 ? [{ refs: adjudicator, guarded: false, contracts: "resolved" as const }] : []),
+		],
+		opening: guarded ? participants : [],
+	};
+}
+
+/** Per round, the slowest advocate; then the adjudicator tail. Underivable when the results do not fill the declared rounds. */
+export function criticalPathDebate(params: any, results: FlowRunResult[]): number | undefined {
+	const participantCount = Array.isArray(params.debate?.participants) ? params.debate.participants.length : 0;
+	const rounds = debateRounds(params.debate);
+	if (participantCount < 2 || results.length !== participantCount * rounds + 1) return undefined;
+	let path = runDuration(results.at(-1));
+	for (let round = 0; round < rounds; round += 1) {
+		path += maxRunDuration(results.slice(round * participantCount, (round + 1) * participantCount));
+	}
+	return path;
+}
 
 /** One place every advocate key is derived, so a round's dependency links cannot drift from the spans they name. */
 function advocateKey(round: number, index: number): string {
