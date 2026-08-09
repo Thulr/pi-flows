@@ -1,8 +1,8 @@
 /**
  * The code-review-v1 result unit: freezing a review request to immutable
  * commit identities before dispatch, and formatting the settled output —
- * verdict derivation over Git-verified typed envelopes, finding salvage from
- * partial, failed, and schema-rejected axes. Split from presets.ts the way
+ * verdict derivation over Git-verified typed envelopes, and surfacing findings
+ * from partial, failed, and schema-rejected axes. Split from presets.ts the way
  * validate.ts fronts validate-workflow.ts: presets.ts remains the discovery
  * and expansion facade and re-exports this module's public names.
  */
@@ -99,7 +99,7 @@ export function preparePresetRun(
 	return { params: { ...params, tasks }, codeReviewRange };
 }
 
-/** The findings array a review envelope carries, or none — the one shape every salvage path extracts. */
+/** The findings array a review envelope carries, or none — the one shape every surfacing path extracts. */
 function envelopeFindings(envelope: { data: unknown } | undefined): any[] {
 	const findings = (envelope?.data as any)?.findings;
 	return Array.isArray(findings) ? findings : [];
@@ -132,10 +132,10 @@ export function formatPresetResult(
 		const anchored = output.details.results
 			.map((result) => Run.of(result).takeValidatedReturnEnvelope())
 			.flatMap(envelopeFindings);
-		// A shape-valid envelope the strict schema rejected still carries the
-		// child's own claims. Surfacing them as unvalidated — the way incomplete
-		// coverage is surfaced — keeps a schema miss from zeroing out the spend,
-		// while never letting them count toward a verdict.
+		// A rejected envelope that failed nothing but the strict schema still
+		// carries the child's own claims. Surfacing them as Unvalidated claims —
+		// the way incomplete coverage is surfaced — keeps a schema miss from
+		// zeroing out the spend, while never letting them count toward a verdict.
 		const rejected = output.details.results
 			.map((result) => Run.of(result).takeRejectedReturnEnvelope())
 			.flatMap(envelopeFindings);

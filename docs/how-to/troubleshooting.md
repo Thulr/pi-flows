@@ -587,10 +587,15 @@ to the user, and retry only with a material change to the child's return
 instructions or `contract.returnSchema`. The requirement the child must meet:
 return one `pi-flows.return-envelope.v1` JSON object with every required
 field, keep artifact paths inside the child `cwd`, and make `data` satisfy the
-declared JSON Schema. The handoff is not passed downstream until it validates;
-where the rejected envelope was at least structurally valid, its unvalidated
-claims are still surfaced (e.g. by the code-review formatter) so the spend is
-not lost with the validation.
+declared JSON Schema. The handoff is not passed downstream until it validates.
+Where the rejected envelope was attributable to the dispatched contract, its
+artifact references stayed inside the child `cwd`, and any digests it declared
+matched — so nothing but the schema missed — its
+unvalidated claims are still surfaced (e.g. by the code-review formatter) so the
+spend is not lost with the validation. An envelope with a stale identity, or one
+whose artifact references escaped the child `cwd` or failed digest verification,
+is untrustworthy rather than merely unchecked: its claims are never surfaced,
+and an integrity failure is reported as such even when the schema also missed.
 
 ### `RETURN_CONTRACT_MISMATCH`
 
@@ -614,10 +619,16 @@ status. A `failed` handoff is always terminal and must be retried.
 ### `RETURN_DIGEST_MISMATCH`
 
 Cause: a return envelope declared a SHA-256 digest that did not match the
-referenced artifact's bytes.
+referenced artifact's bytes. Reported even when the envelope's `data` also
+failed `contract.returnSchema` — integrity is checked before conformance, so an
+envelope failing both is reported as the integrity failure rather than as
+`RETURN_ENVELOPE_INVALID`.
 
 Fix: treat the artifact and envelope as untrusted, regenerate them together,
-then retry. Do not copy the failed handoff into a downstream child.
+then retry. Do not copy the failed handoff into a downstream child. Unlike a
+plain schema miss, this envelope's claims are never surfaced as unvalidated
+claims: a digest that does not match its artifact makes the whole envelope
+untrustworthy, not merely unchecked.
 
 ### `HANDOFF_POLICY_VIOLATION`
 

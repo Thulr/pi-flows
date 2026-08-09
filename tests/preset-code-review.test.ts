@@ -339,10 +339,12 @@ test("a three-dot review request freezes at the merge base so the manifest is th
 	assert.equal(endpointReviewed.details.presetOutcome, "PARTIAL", "src/b.ts also differs between the endpoints, so that coverage is incomplete");
 });
 
-test("only a schema-missed envelope is retained for salvage; stale identities are discarded", async () => {
-	// A finding is only worth surfacing unvalidated when it was produced under
-	// the right contract: a stale contractId or an integrity failure is a wrong
-	// or untrustworthy envelope, not a merely-unvalidated one.
+test("claims are surfaceable only when attribution and integrity both hold", async () => {
+	// Attribution, then integrity, then conformance — and only the last failure
+	// leaves surfaceable claims. A stale contractId is a wrong envelope; an artifact that
+	// escaped the child cwd or no longer matches its digest is an untrustworthy
+	// one. Neither becomes surfaceable because the schema happened to miss too,
+	// which is exactly what checking conformance first would have allowed.
 	const contract = {
 		objective: "Review the change.",
 		constraints: [],
@@ -357,14 +359,14 @@ test("only a schema-missed envelope is retained for salvage; stale identities ar
 	};
 	const resolved = ResolvedDelegationContract.resolve(contract).resolved!;
 	const policy = { recordContent: true, redactSecrets: true };
-	const envelope = (contractId: string, data: unknown) => JSON.stringify({
+	const envelope = (contractId: string, data: unknown, artifacts: { artifactReferences?: unknown[]; digests?: unknown[] } = {}) => JSON.stringify({
 		schemaVersion: "pi-flows.return-envelope.v1",
 		contractId,
 		status: "completed",
 		summary: "done",
 		evidence: [],
-		artifactReferences: [],
-		digests: [],
+		artifactReferences: artifacts.artifactReferences ?? [],
+		digests: artifacts.digests ?? [],
 		changedState: [],
 		unresolvedQuestions: [],
 		retry: { retryable: false },
@@ -380,16 +382,44 @@ test("only a schema-missed envelope is retained for salvage; stale identities ar
 		usage: emptyUsage(),
 	});
 
-	const schemaMiss = run(envelope(resolved.id, { axis: "spec", findings: [{ claim: "salvageable" }] }));
+	const schemaMiss = run(envelope(resolved.id, { axis: "spec", findings: [{ claim: "surfaceable" }] }));
 	const missed = prepareIntegrationHandoff(schemaMiss, { contract: resolved, cwd: process.cwd(), policy });
 	assert.equal(missed.error?.code, "RETURN_ENVELOPE_INVALID");
-	assert.ok(Run.of(schemaMiss).takeRejectedReturnEnvelope(), "a strict-schema miss under the right contract is retained for salvage");
+	assert.ok(Run.of(schemaMiss).takeRejectedReturnEnvelope(), "a strict-schema miss under the right contract is retained, its claims surfaceable");
 
 	const stale = run(envelope(`sha256:${"0".repeat(64)}`, { axis: "spec", findings: [{ claim: "stale" }] }));
 	const mismatched = prepareIntegrationHandoff(stale, { contract: resolved, cwd: process.cwd(), policy });
 	assert.equal(mismatched.error?.code, "RETURN_CONTRACT_MISMATCH");
 	assert.ok(mismatched.rejected, "the stale envelope's claims stay available as trace evidence");
-	assert.equal(Run.of(stale).takeRejectedReturnEnvelope(), undefined, "but a stale identity must not be retained as salvageable findings");
+	assert.equal(Run.of(stale).takeRejectedReturnEnvelope(), undefined, "but a stale identity must never have its claims surfaced");
+
+	// Both of the following also miss the schema. Before integrity was checked
+	// first, the schema miss short-circuited and carried them out as surfaceable.
+	const escaped = run(envelope(resolved.id, { axis: "spec", findings: [{ claim: "escaped" }] }, { artifactReferences: [{ path: "../outside.txt" }] }));
+	const uncontained = prepareIntegrationHandoff(escaped, { contract: resolved, cwd: process.cwd(), policy });
+	assert.equal(uncontained.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.match(uncontained.error?.cause ?? "", /(escapes|resolves outside) the child cwd/, "containment is the reported diagnosis, not the schema miss it arrived with");
+	assert.equal(Run.of(escaped).takeRejectedReturnEnvelope(), undefined, "an artifact escaping the cwd never leaves surfaceable claims");
+
+	const dir = await mkdtemp(path.join(tmpdir(), "pi-flow-surfaceable-"));
+	await writeFile(path.join(dir, "report.txt"), "actual contents\n");
+	const forged = run(envelope(resolved.id, { axis: "spec", findings: [{ claim: "forged" }] }, {
+		artifactReferences: [{ path: "report.txt" }],
+		digests: [{ artifact: "report.txt", algorithm: "sha256", value: "f".repeat(64) }],
+	}));
+	const untrusted = prepareIntegrationHandoff(forged, { contract: resolved, cwd: dir, policy });
+	assert.equal(untrusted.error?.code, "RETURN_DIGEST_MISMATCH", "an integrity failure outranks the schema miss it arrived with");
+	assert.equal(Run.of(forged).takeRejectedReturnEnvelope(), undefined, "a digest mismatch never leaves surfaceable claims");
+
+	// A digest whose target was never declared: guarded in validateDigests, and
+	// reachable only now that integrity precedes conformance.
+	const undeclared = run(envelope(resolved.id, { axis: "spec", findings: [{ claim: "undeclared" }] }, {
+		digests: [{ artifact: "report.txt", algorithm: "sha256", value: "a".repeat(64) }],
+	}));
+	const unbacked = prepareIntegrationHandoff(undeclared, { contract: resolved, cwd: dir, policy });
+	assert.equal(unbacked.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.match(unbacked.error?.cause ?? "", /not declared in artifactReferences/, "the undeclared digest target is the reported diagnosis");
+	assert.equal(Run.of(undeclared).takeRejectedReturnEnvelope(), undefined, "a digest with no declared artifact never leaves surfaceable claims");
 });
 
 test("a validated axis keeps its findings when the other axis fails validation", async () => {
