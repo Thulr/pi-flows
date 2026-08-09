@@ -22,6 +22,9 @@ test("fail policy does not reject a terminal graph node with no debrief", async 
 	assert.match(text, /Security documentation quotes/);
 	const trace = parseTraceJsonl(await readFile(`${stubDir}/trace.jsonl`, "utf8"));
 	assert.equal(trace.spans.some((span) => span.attributes?.["flow.event_kind"] === "handoff"), false);
+	// An uncontracted prose report carries no envelope validation to attest, so
+	// the terminal consumption records nothing at all.
+	assert.equal(trace.spans.some((span) => span.attributes?.["flow.event_kind"] === "validation"), false);
 });
 
 for (const fixture of [

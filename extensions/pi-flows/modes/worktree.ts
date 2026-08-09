@@ -276,7 +276,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Integrator could not resolve merge conflicts from "${worker.branch}".`, resultText(resolved) || unmerged.stdout, "Inspect the retained integration and worker branches, resolve the conflicts, and verify before merging.");
 				return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			}
-			const conflictHandoff = deps.handoffs.consumeResult({ plan: conflictPlan.plan!, result: resolved, consumed: false });
+			const conflictHandoff = deps.handoffs.consumeResult({ plan: conflictPlan.plan!, result: resolved, completion: "terminal", enforceCompletion: true });
 			if (conflictHandoff.error) return modeError(deps, results, conflictHandoff.error, `\n\nIntegration branch: \`${integrationBranch}\``);
 			const committed = commitChanges(integrationCwd, `pi-flow: resolve ${worker.id} integration conflicts`);
 			if (!committed.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not commit resolved integration conflicts.", committed.error ?? "git commit failed", "Inspect the retained integration branch and commit the resolved merge."));
@@ -331,7 +331,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			const error = flowError("WORKTREE_INTEGRATION_FAILED", "Integration review agent failed.", resultText(reviewed), "Inspect the retained integration branch and run review/verification manually.");
 			return modeError(deps, results, error, `\n\nIntegration branch: \`${integrationBranch}\``);
 		}
-		const reviewHandoff = deps.handoffs.consumeResult({ plan: reviewPlan.plan!, result: reviewed, consumed: false });
+		const reviewHandoff = deps.handoffs.consumeResult({ plan: reviewPlan.plan!, result: reviewed, completion: "terminal", enforceCompletion: true });
 		if (reviewHandoff.error) return modeError(deps, results, reviewHandoff.error, `\n\nIntegration branch: \`${integrationBranch}\``);
 		const reviewCommit = commitChanges(integrationCwd, "pi-flow: integration review fixes");
 		if (!reviewCommit.ok) return modeError(deps, results, flowError("WORKTREE_INTEGRATION_FAILED", "Could not commit integration review fixes.", reviewCommit.error ?? "git commit failed", "Inspect and commit the retained integration branch."));

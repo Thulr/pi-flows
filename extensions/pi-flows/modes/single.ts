@@ -34,7 +34,7 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 			result,
 			contract,
 			cwd: resolvedCwd(defaultCwd, params.cwd),
-			consumed: false,
+			scope: { key: "single" },
 			completion: "terminal",
 			payload: "source",
 		});

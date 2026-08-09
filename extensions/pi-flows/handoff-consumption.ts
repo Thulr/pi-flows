@@ -33,10 +33,27 @@ export interface ConsumeResultOptions {
 	contract?: Parameters<typeof prepareIntegrationHandoff>[1]["contract"];
 	cwd?: string;
 	incompletePolicy?: IncompleteHandoffPolicy;
-	/** Terminal reports validate their contract and artifacts without integration-status eligibility. */
+	/**
+	 * Whether another role consumes this result. `"integrate"` (the default) is
+	 * the role boundary: the injection guard is enforced, warnings aggregate,
+	 * a dependency key is minted, and the evidence is a handoff event. A
+	 * `"terminal"` report crosses to the parent, not to a role — none of that
+	 * applies — but its contract validation still happened, so it is recorded
+	 * under the validation vocabulary (`envelope.validated` / `envelope.rejected`)
+	 * instead of `handoff.*`. Recording is unconditional either way: a rejected
+	 * envelope is trace evidence of what the spend produced (CONTEXT.md).
+	 */
 	completion?: "integrate" | "terminal";
+	/**
+	 * Status eligibility override, forwarded to `prepareIntegrationHandoff`.
+	 * Defaults by completion: an integrating consumption refuses partial and
+	 * blocked envelopes; a terminal report validates without that eligibility.
+	 * The modes' final contracted outputs still fail closed on incomplete
+	 * envelopes — that refusal is their documented contract — so those call
+	 * sites pass `true` even though the consumption is terminal.
+	 */
+	enforceCompletion?: boolean;
 	scope?: ChildSpanScope;
-	consumed?: boolean;
 	noticeLabel?: string;
 	/**
 	 * Preserve the producer's original representation for consumers whose
@@ -92,23 +109,27 @@ export class HandoffConsumer {
 		const scope = options.scope ?? options.plan?.scope;
 		const payload = options.payload ?? "handoff";
 		const cwd = options.cwd ?? options.plan?.cwd ?? this.options.defaultCwd;
+		const terminal = options.completion === "terminal";
 		const accepted = prepareIntegrationHandoff(options.result, {
 			contract,
 			cwd,
 			policy: this.options.policy,
 			incompletePolicy: options.incompletePolicy ?? this.options.params.incompleteHandoffPolicy ?? "fail",
 			attach: payload === "handoff",
-			enforceCompletion: options.completion !== "terminal",
+			enforceCompletion: options.enforceCompletion ?? !terminal,
 			validation: this.validatedResults.get(options.result),
 		});
 		if (accepted.error) {
-			if (options.consumed !== false) {
-				this.recordRejected({ ...options, contract, scope }, accepted.error, accepted.rejected);
-			}
+			this.recordRejected({ ...options, contract, scope }, accepted.error, accepted.rejected);
 			return { text: "", warnings: [], action: "fail", error: accepted.error };
 		}
 		if (accepted.validation) this.validatedResults.set(options.result, accepted.validation);
-		if (options.consumed === false) {
+		if (terminal) {
+			// No role boundary: prepare without guard enforcement or warning
+			// aggregation, and mint no dependency key. The contract validation
+			// that just succeeded is still attested — only contract-bearing
+			// reports carry one; plain prose has nothing to attest.
+			if (contract) this.recordValidated(accepted.handoff!, scope);
 			const prepared = this.prepareResult(options.result, contract, payload);
 			const text = options.noticeLabel ? withInjectionNotice(prepared, options.noticeLabel) : prepared.text;
 			return { text, warnings: prepared.warnings, action: prepared.action };
@@ -134,9 +155,9 @@ export class HandoffConsumer {
 	consumeResults(options: ConsumeResultOptions[]): HandoffConsumptions {
 		const items: HandoffConsumption[] = [];
 		for (const item of options) {
-			const consumed = this.consumeResult(item);
-			items.push(consumed);
-			if (consumed.error) return { items, error: consumed.error };
+			const consumption = this.consumeResult(item);
+			items.push(consumption);
+			if (consumption.error) return { items, error: consumption.error };
 		}
 		return { items };
 	}
@@ -259,6 +280,51 @@ export class HandoffConsumer {
 		);
 	}
 
+	/**
+	 * A validated terminal report. Not a handoff — no role consumes it — so the
+	 * evidence is the validation outcome itself, in the same span slot and with
+	 * the same artifact events an integrating consumption would leave, under
+	 * names that never claim a boundary was crossed.
+	 */
+	private recordValidated(
+		handoff: NonNullable<ReturnType<typeof prepareIntegrationHandoff>["handoff"]>,
+		scope: ChildSpanScope | undefined,
+	): void {
+		if (!this.options.recordEvent) return;
+		const eventScope = scope?.key
+			? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${scope.key}.handoff`, dependsOn: [scope.key] }
+			: scope;
+		this.options.recordEvent({
+			kind: "validation",
+			name: "envelope.validated",
+			ok: true,
+			scope: eventScope,
+			attributes: {
+				"flow.handoff.from_agent": handoff.provenance.agent,
+				"flow.handoff.contract_id": handoff.contractId ?? "(legacy)",
+				"flow.handoff.status": handoff.status,
+				"flow.handoff.artifact_count": handoff.artifactReferences.length,
+				"flow.handoff.digest_count": handoff.digests.length,
+			},
+		});
+		this.recordArtifacts(
+			{
+				agent: handoff.provenance.agent,
+				contractId: handoff.contractId,
+				digests: handoff.digests,
+			},
+			handoff.artifactReferences.map((reference) => reference.path),
+			scope,
+			true,
+		);
+	}
+
+	/**
+	 * Recording is unconditional: a rejected envelope is retained as trace
+	 * evidence of what the spend produced whether or not any role would have
+	 * consumed it. Only the name follows the boundary — an integrating
+	 * consumption rejected a handoff; a terminal report rejected an envelope.
+	 */
 	private recordRejected(
 		options: ConsumeResultOptions,
 		rejection: FlowError,
@@ -270,7 +336,7 @@ export class HandoffConsumer {
 			: options.scope;
 		this.options.recordEvent({
 			kind: "validation",
-			name: "handoff.rejected",
+			name: options.completion === "terminal" ? "envelope.rejected" : "handoff.rejected",
 			ok: false,
 			scope,
 			attributes: {

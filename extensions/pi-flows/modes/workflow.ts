@@ -291,7 +291,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		}
 		const consumed = Boolean(spec.debrief?.agent)
 			|| phases.slice(phaseIndex + 1).some((candidate: any) => candidate?.agent && candidate?.task);
-		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: run, consumed });
+		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: run, completion: consumed ? "integrate" : "terminal", enforceCompletion: true });
 		if (handoff.error) {
 			state.status = "failed";
 			state.updatedAt = new Date().toISOString();
@@ -382,7 +382,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			await persistState(stateFile, state);
 			return { content: [{ type: "text", text: sanitizeText(`Flow workflow debrief failed.\n\n${resultText(debriefed)}`, policy) }], details: workflowDetails(deps, results, state) };
 		}
-		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, consumed: false });
+		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, completion: "terminal", enforceCompletion: true });
 		if (handoff.error) {
 			state.status = "failed";
 			delete state.nextPhaseId;

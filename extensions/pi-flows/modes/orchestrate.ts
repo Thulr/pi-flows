@@ -179,7 +179,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	if (isFailed(synthesized)) {
 		return { content: [{ type: "text", text: sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed.\n\n${resultText(synthesized)}`, policy) }], details: makeDetails("orchestrate")(results) };
 	}
-	let synthesisHandoff = deps.handoffs.consumeResult({ plan: synthesisPlan.plan!, result: synthesized, consumed: Boolean(verifyRef) });
+	let synthesisHandoff = deps.handoffs.consumeResult({ plan: synthesisPlan.plan!, result: synthesized, completion: verifyRef ? "integrate" : "terminal", enforceCompletion: true });
 	if (synthesisHandoff.error) return { content: [{ type: "text", text: formatFlowError(synthesisHandoff.error) }], details: makeDetails("orchestrate")(results, synthesisHandoff.error) };
 
 	let verifyNote = "";
@@ -228,7 +228,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					details: makeDetailsWithError(error),
 				};
 			}
-			const verifyHandoff = deps.handoffs.consumeResult({ plan: verifyPlan.plan!, result: verified, consumed: false });
+			const verifyHandoff = deps.handoffs.consumeResult({ plan: verifyPlan.plan!, result: verified, completion: "terminal", enforceCompletion: true });
 			if (verifyHandoff.error) return { content: [{ type: "text", text: formatFlowError(verifyHandoff.error) }], details: makeDetails("orchestrate")(results, verifyHandoff.error) };
 
 			verifyVerdict = parseVerdict(integrationControlText(verified));

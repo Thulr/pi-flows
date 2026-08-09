@@ -53,9 +53,10 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 		{ key: "tasks", name: "parallel tasks" },
 	);
 	// Validated, but no boundary: these outputs go into the response the caller
-	// reads, and parallel spawns nothing that consumes them.
+	// reads, and parallel spawns nothing that consumes them. Incomplete envelopes
+	// still fail closed — terminal recording changes the evidence, not the gate.
 	const handoffs = deps.handoffs.consumeResults(results.flatMap((result, index) =>
-		isFailed(result) ? [] : [{ plan: plans[index], result, consumed: false }],
+		isFailed(result) ? [] : [{ plan: plans[index], result, completion: "terminal" as const, enforceCompletion: true }],
 	));
 	if (handoffs.error) {
 		return { content: [{ type: "text", text: formatFlowError(handoffs.error) }], details: makeDetails("parallel")(results, handoffs.error) };

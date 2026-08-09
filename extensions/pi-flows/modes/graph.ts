@@ -100,7 +100,8 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			const handoff = deps.handoffs.consumeResult({
 				plan: waveItems[index],
 				result,
-				consumed,
+				completion: consumed ? "integrate" : "terminal",
+				enforceCompletion: true,
 				noticeLabel: `graph node ${node.id} output`,
 			});
 			if (handoff.error) {
@@ -148,7 +149,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		const debriefed = await runIntegrationPlan(deps, planned.plan!, "graph", results.length + 1, results);
 		results.push(debriefed);
 		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
-		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, consumed: false });
+		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, completion: "terminal", enforceCompletion: true });
 		if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("graph")(results, handoff.error) };
 		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
 	}

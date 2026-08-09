@@ -138,7 +138,6 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			contract,
 			cwd: resolvedCwd(defaultCwd, generatorRef.cwd),
 			scope: { stage, key: generatorKey(stage.key) },
-			consumed: false,
 			completion: "terminal",
 			payload: "source",
 		});

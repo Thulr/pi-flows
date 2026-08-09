@@ -118,7 +118,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	);
 	const aggregatorRef: FlowAgentRefInput | undefined = spec.debrief?.agent ? spec.debrief : undefined;
 	const voterEntries = voterResults.flatMap((result, index) =>
-		isFailed(result) ? [] : [{ result, plan: voterPlans[index], consumed: Boolean(aggregatorRef) }],
+		isFailed(result) ? [] : [{ result, plan: voterPlans[index], completion: aggregatorRef ? "integrate" as const : "terminal" as const, enforceCompletion: true }],
 	);
 	const voterHandoffs = deps.handoffs.consumeResults(voterEntries);
 	if (voterHandoffs.error) {
@@ -173,7 +173,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		if (isFailed(aggregated)) {
 			return { content: [{ type: "text", text: sanitizeText(`Flow vote: aggregator "${aggregatorRef.agent}" failed.\n\n${resultText(aggregated)}`, policy) }], details: makeDetails("vote")(results) };
 		}
-		const aggregatorHandoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: aggregated, consumed: false });
+		const aggregatorHandoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: aggregated, completion: "terminal", enforceCompletion: true });
 		if (aggregatorHandoff.error) return { content: [{ type: "text", text: formatFlowError(aggregatorHandoff.error) }], details: makeDetails("vote")(results, aggregatorHandoff.error) };
 		return {
 			content: [{ type: "text", text: capModelVisibleText(`${diversityWarning}${ballotWarningNote}Flow vote: ${succeeded.length}/${voterResults.length} voters succeeded; aggregated by ${aggregatorRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(aggregated), policy)}`) }],

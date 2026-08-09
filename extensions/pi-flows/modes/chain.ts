@@ -64,7 +64,6 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 			contract,
 			cwd: resolvedCwd(defaultCwd, step.cwd),
 			scope: { key: stepKey(index) },
-			consumed: handsOff,
 			completion: handsOff ? "integrate" : "terminal",
 			noticeLabel: `chain step ${index + 1} ${contract ? "envelope" : "output"}`,
 			payload: "source",

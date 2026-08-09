@@ -106,7 +106,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const decision = await runIntegrationPlan(deps, planned.plan!, "debate", allResults.length + 1, allResults);
 	allResults.push(decision);
 	if (isFailed(decision)) return { content: [{ type: "text", text: sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(decision)}`, policy) }], details: deps.makeDetails("debate")(allResults) };
-	const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: decision, consumed: false });
+	const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: decision, completion: "terminal", enforceCompletion: true });
 	if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: deps.makeDetails("debate")(allResults, handoff.error) };
 
 	return {

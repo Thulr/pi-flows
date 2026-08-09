@@ -55,7 +55,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		const bodyHandoff = deps.handoffs.consumeResult({
 			result: body,
 			scope: { stage, key: bodyKey(stage.key) },
-			consumed: bodyConsumed,
+			completion: bodyConsumed ? "integrate" : "terminal",
 			noticeLabel: `loop iteration ${iteration} output`,
 			payload: "source",
 		});
@@ -89,7 +89,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		const critiqueHandoff = deps.handoffs.consumeResult({
 			result: judged,
 			scope: { stage, key: `${stage.key}.judge` },
-			consumed: critiqueConsumed,
+			completion: critiqueConsumed ? "integrate" : "terminal",
 			noticeLabel: `loop judge iteration ${iteration}`,
 			payload: "source",
 		});
