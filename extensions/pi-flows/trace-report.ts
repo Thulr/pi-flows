@@ -44,6 +44,13 @@ export interface TraceReportBucket {
 	incompleteTraces: number;
 	/** Runs whose shape is corrupt: more than one root candidate, so every metric is derived from a guess. */
 	structurallyInvalidTraces: number;
+	/**
+	 * Dependency links the writer recorded as unresolved: a dependsOn key that
+	 * never named a registered unit. Counted apart from corruption because the
+	 * trace is sound evidence OF the handler bug — the runtime gate and this
+	 * read-back agree the export is whole while the bug stays visible.
+	 */
+	danglingLinks: number;
 	coordinationEvents: number;
 	stageSpans: number;
 }
@@ -83,6 +90,7 @@ export function emptyTraceBucket(): TraceReportBucket {
 		malformedSpans: 0,
 		incompleteTraces: 0,
 		structurallyInvalidTraces: 0,
+		danglingLinks: 0,
 		coordinationEvents: 0,
 		stageSpans: 0,
 	};
@@ -231,6 +239,7 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 				Boolean(root),
 			) !== "recorded" ? 1 : 0,
 			structurallyInvalidTraces: structure.invalid ? 1 : 0,
+			danglingLinks: structure.danglingLinks,
 			coordinationEvents: eventSpans.length,
 			stageSpans: stageSpans.length,
 		};
@@ -266,6 +275,11 @@ export function formatTpso(bucket: TraceReportBucket): string {
  * on. A report of zero runs is not: an empty or trace_id-less file has nothing
  * incomplete in it precisely because it has nothing in it, and a release gate
  * that accepted that would pass on an artifact nobody wrote.
+ *
+ * Dangling links deliberately do not fail this gate. They are the writer's own
+ * record that a handler declared a dependency nothing registered — evidence of
+ * a bug, whole and auditable, which is exactly what completeness asks for. The
+ * count stays visible in the report so the bug cannot hide behind the pass.
  */
 export function traceReportIsComplete(report: TraceReport): boolean {
 	return report.traces > 0 && report.incompleteTraces === 0 && report.parseErrors === 0 && report.malformedSpans === 0;
@@ -287,7 +301,7 @@ export function formatTraceReport(report: TraceReport): string {
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
-		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} structurally invalid` : ""}`,
+		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} structurally invalid` : ""}${report.danglingLinks ? `; ${report.danglingLinks} dangling link${report.danglingLinks === 1 ? "" : "s"} (dependencies recorded as never resolved — a handler bug, not lost evidence)` : ""}`,
 		`Topology: ${report.stageSpans} stage span${report.stageSpans === 1 ? "" : "s"}, ${report.coordinationEvents} coordination event${report.coordinationEvents === 1 ? "" : "s"}`,
 	];
 	if (report.parseErrors) lines.push(`Parse errors: ${report.parseErrors}`);

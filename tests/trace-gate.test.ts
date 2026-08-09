@@ -744,3 +744,33 @@ test("an author id cannot claim a key the framework derives", async () => {
 	assert.equal(attr(sink, "flow.depends_on_span_ids"), realHandoff.span_id);
 	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });
+
+test("a dependsOn key that never resolved is an honest record both gates agree on", async () => {
+	// Mode handlers pass dependsOn keys as plain strings, so a key naming a unit
+	// that never registered reaches the real sink. Dropping its id silently made
+	// the writer emit the very shape the reader refuses as erasure: runtime health
+	// said recorded while read-back called the same file structurally invalid.
+	const dir = await freshDir();
+	const sink = makeTraceSink(path.join(dir, TRACE), "parallel", { recordContent: false, redactSecrets: true });
+	const child = {
+		agent: "recon", agentSource: "package" as const, task: "t", exitCode: 0, messages: [], stderr: "",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 }, durationMs: 5,
+	};
+	sink.record(child, { scope: { key: "alpha" } });
+	sink.record(child, { scope: { key: "beta", dependsOn: ["alpha", "ghost"] } });
+	const link = await sink.finalize({ ok: true });
+	assert.equal(link.health, "recorded", "the runtime gate sees a fully exported trace");
+
+	const spans = await readSpans(dir);
+	const beta = unit(spans, "beta")!;
+	assert.equal(attr(beta, "flow.depends_on_count"), 2);
+	assert.equal(String(attr(beta, "flow.depends_on_span_ids")).split(",").length, 1);
+	assert.equal(attr(beta, "flow.depends_on_unresolved"), "ghost", "the writer names the key it could not resolve");
+
+	const report = summarizeTraceSpans(spans, 0, TRACE);
+	assert.equal(report.structurallyInvalidTraces, 0, "an honest record of a handler bug is not corruption");
+	assert.equal(report.incompleteTraces, 0);
+	assert.equal(report.danglingLinks, 1, "the dangling link stays visible as its own category");
+	assert.equal(traceReportIsComplete(report), true, "read-back agrees with the runtime verdict");
+	assert.match(formatTraceReport(report), /1 dangling link/);
+});

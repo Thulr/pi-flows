@@ -74,12 +74,13 @@ const ATTRIBUTE_CAP = 1024;
  * report parses to check the attribution chain, and a truncated one would read as
  * a broken chain — a valid run failing the gate because its ids were long.
  *
- * All four share the bound deliberately. A key capped on one side and intact on
+ * All five share the bound deliberately. A key capped on one side and intact on
  * the other cannot be matched to itself, so capping them differently would break
- * exactly the comparison they exist for.
+ * exactly the comparison they exist for. The unresolved list is part of that
+ * comparison: its entries are declared keys, matched against the declared list.
  */
 const STRUCTURAL_CAP = 8 * 1024;
-const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids"]);
+const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids", "flow.depends_on_unresolved"]);
 
 /**
  * Emit redacted OpenInference-shaped spans to JSONL: a root span, one span per
@@ -211,8 +212,28 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			if (stored.split(",").filter(Boolean).length < dependsOn.length) attributes["flow.depends_on_truncated"] = true;
 			// A dependency may name a unit or a whole stage ("this debrief consumed
 			// round 2"), so both namespaces are searched, units first.
-			const resolved = dependsOn.map((key) => spanIdByKey.get(key) ?? stageSpanIdByKey.get(key)).filter((value): value is string => Boolean(value));
+			const resolved: string[] = [];
+			const unresolved: string[] = [];
+			for (const key of dependsOn) {
+				const id = spanIdByKey.get(key) ?? stageSpanIdByKey.get(key);
+				if (id) resolved.push(id);
+				else unresolved.push(key);
+			}
 			if (resolved.length) attributes["flow.depends_on_span_ids"] = resolved.join(",");
+			// A key that resolves to nothing is a real case: handlers pass dependsOn
+			// keys as plain strings, so a key naming a unit that never registered
+			// reaches this point. Dropping its id silently wrote the very shape the
+			// reader refuses as erasure — the run healthy at runtime, structurally
+			// invalid on read-back. Naming the unresolved keys keeps the arithmetic
+			// whole (count = resolved + unresolved), so the row reads as an honest
+			// record of a handler bug instead of as a corrupted file.
+			if (unresolved.length) {
+				// Stored, measured, and flagged under the same rules as the declared
+				// list above, so the two lists stay matchable to each other.
+				const storedUnresolved = storedStructural(unresolved.map(encodeUnitKey).join(","));
+				attributes["flow.depends_on_unresolved"] = storedUnresolved;
+				if (storedUnresolved.split(",").filter(Boolean).length < unresolved.length) attributes["flow.depends_on_unresolved_truncated"] = true;
+			}
 		}
 		if (scope?.key) attributes["flow.unit_key"] = encodeUnitKey(scope.key);
 		return { parentSpanId, attributes };
