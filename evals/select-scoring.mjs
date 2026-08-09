@@ -11,7 +11,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callAdmissibilityFailure, scoringDiscovery } from "./select-admissibility.mjs";
-import { isWorkflowWorkPhase } from "../extensions/pi-flows/validate.ts";
+import { effectiveTools, firstSpawnAgentRefs, isWorkflowWorkPhase } from "../extensions/pi-flows/validate.ts";
 
 export { callAdmissibilityFailure } from "./select-admissibility.mjs";
 
@@ -327,6 +327,27 @@ function flowCallShapeMismatch(args, shape) {
 		const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
 		const unknown = perRoleAgentNames(args, actualMode).filter((name) => !known.has(name));
 		if (unknown.length > 0) return `role agent(s) ${[...new Set(unknown)].join(", ")} are not bundled flow agents`;
+	}
+
+	// A task that requires running commands is not delegated by roles that
+	// cannot run any: a shell-less fan-out reads as a SHARED_WRITE_CWD recovery
+	// (it is admissible) while assigning work its agents cannot do. Effective
+	// tools are resolved by the tool's own predicate — a per-role override else
+	// the agent's frontmatter — so `bash-ro` counts and pi defaults (which
+	// include bash) count, while an unknown agent resolves to nothing and fails.
+	if (shape.everyRoleShellCapable) {
+		const refs = firstSpawnAgentRefs(args ?? {});
+		const shell = (ref) => {
+			const tools = effectiveTools(scoringDiscovery, ref);
+			if (tools === null) return false;
+			if (tools === undefined) return true;
+			return tools.some((tool) => ["bash", "bash-ro"].includes(tool.toLowerCase()));
+		};
+		if (refs.length === 0) return "no first-spawn role to check for shell access";
+		const shellLess = refs.filter((ref) => !shell(ref));
+		if (shellLess.length > 0) {
+			return `role(s) ${[...new Set(shellLess.map((ref) => ref.agent ?? "(unnamed)"))].join(", ")} have no shell in their effective tools, so they cannot run the requested commands`;
+		}
 	}
 
 	// A disjunction of allowed sub-shapes on top of the shared fields above.

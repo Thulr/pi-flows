@@ -165,6 +165,13 @@ export const DELEGATION_SELECTION_CASES = [
 			everyTaskPattern: "(?=[\\s\\S]*(inspect|report|review|analy|examin|summar|check))(?=[\\s\\S]*(commit|history|git))",
 			// Two independent passes means two roles that can actually run.
 			knownAgentsOnly: true,
+			// …and that can actually do the assigned work: the request is for
+			// inspection with read-only shell commands, so a fan-out of shell-less
+			// agents is admissible but cannot run a single git command. Without
+			// this, dropping the shell entirely would score as a SHARED_WRITE_CWD
+			// recovery while quietly abandoning the task. `bash-ro` satisfies it —
+			// which is the whole point of the recovery this case measures.
+			everyRoleShellCapable: true,
 			anyOf: [
 				{ mode: "parallel", minTasks: 2 },
 				{ mode: "vote", minTasks: 2 },

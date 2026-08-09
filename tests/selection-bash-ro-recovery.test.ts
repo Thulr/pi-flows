@@ -6,7 +6,7 @@
 // allowSharedWriteCwd:true escape hatch for work the request calls read-only.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callAdmissibilityFailure, scoreSelection } from "../evals/select.mjs";
+import { callAdmissibilityFailure, flowCallMatchesExpectation, scoreSelection } from "../evals/select.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { validateCaseCorpus } from "../evals/case-contract.mjs";
 
@@ -52,20 +52,35 @@ test("refuse-then-bash-ro is the scored recovery: it passes within the one-refus
 });
 
 test("the already-scored recoveries still pass alongside bash-ro", () => {
+	// Serialized shell reviewers, and an independent-voter panel that keeps the
+	// shell — both change the topology rather than the work.
 	const serialized = { ...PLAIN_BASH_FANOUT, concurrency: 1 };
-	const readOnlyAgents = {
-		why: WHY,
-		tasks: [{ agent: "recon", task: READONLY_TASKS[0] }, { agent: "analyst", task: READONLY_TASKS[1] }],
-	};
 	const voters = {
 		why: WHY,
-		task: "Inspect the git commit history on this branch and report the riskiest commit.",
-		vote: { agent: "recon", count: 2 },
+		task: READONLY_TASKS[0],
+		vote: { voters: [{ agent: "overwatch", tools: "read,grep,find,ls,bash-ro" }, { agent: "overwatch", tools: "read,grep,find,ls,bash-ro" }] },
 	};
-	for (const call of [serialized, readOnlyAgents, voters]) {
+	for (const call of [serialized, voters]) {
 		const result = scored([PLAIN_BASH_FANOUT, call]);
 		assert.equal(result.pass, true, `expected a pass for ${JSON.stringify(call).slice(0, 120)}: ${result.notes}`);
 	}
+});
+
+test("dropping the shell is not a recovery — the roles could not run the requested commands", () => {
+	// Admissible (recon/analyst are not write-capable) but shell-less: the task
+	// asks for inspection with read-only shell commands, so crediting this
+	// would score abandoning the work as a SHARED_WRITE_CWD recovery.
+	const shellLess = {
+		why: WHY,
+		tasks: [{ agent: "recon", task: READONLY_TASKS[0] }, { agent: "analyst", task: READONLY_TASKS[1] }],
+	};
+	assert.equal(callAdmissibilityFailure(shellLess), null, "the shell-less fan-out is admissible — only the case shape rejects it");
+	assert.equal(scored([PLAIN_BASH_FANOUT, shellLess]).pass, false);
+	// Asked of the call itself, the note names the cause — the run-level note
+	// reports the first call's mismatch, which would hide it.
+	const match = flowCallMatchesExpectation({ arguments: shellLess }, recoveryCase().expectedFlowCall);
+	assert.equal(match.pass, false);
+	assert.match(match.notes, /no shell in their effective tools/);
 });
 
 test("an unchanged retry after the refusal exceeds the budget", () => {

@@ -315,7 +315,7 @@ function asList(value) {
 // scorer would silently ignore. firstCall is meaningful only on a top-level
 // expectation — inside anyOf arms and forbidden shapes it would be a silent
 // no-op, so it is unknown there.
-const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly"]);
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly", "everyRoleShellCapable"]);
 
 function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
 	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
@@ -350,8 +350,10 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	if (shape.firstCall !== undefined && typeof shape.firstCall !== "boolean") {
 		issues.push(`${label}.firstCall must be a boolean`);
 	}
-	if (shape.knownAgentsOnly !== undefined && shape.knownAgentsOnly !== true) {
-		issues.push(`${label}.knownAgentsOnly must be true when present — false is the default and would constrain nothing`);
+	for (const flagField of ["knownAgentsOnly", "everyRoleShellCapable"]) {
+		if (shape[flagField] !== undefined && shape[flagField] !== true) {
+			issues.push(`${label}.${flagField} must be true when present — false is the default and would constrain nothing`);
+		}
 	}
 	// Validation is mode-blind; what minTasks counts is per-mode (for workflow
 	// it is the handler's work phases, not raw phase count) and lives with the

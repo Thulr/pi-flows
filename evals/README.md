@@ -717,11 +717,16 @@ inspection of one checkout gets the obvious plain-`bash` fan-out refused, and
 the budgeted refusal buys exactly one retry that must actually change the
 topology — swapping `bash` for `bash-ro` (bash under the child-enforced
 read-only allowlist, so not write-capable) is admitted at full concurrency,
-alongside serialization, non-shell agents, and a voter panel, while
+alongside serialization and a shell-keeping voter panel, while
 `allowSharedWriteCwd:true` stays forbidden for work the request calls
-read-only. Its `sourceExpectations` pin the tool guidance those recoveries come
-from, so weakening that text fails preflight instead of the pass quietly
-meaning less. The new mode thresholds are
+read-only. It also sets `everyRoleShellCapable`: the task asks for inspection
+with read-only shell commands, and dropping the shell entirely is admissible —
+so without that predicate, abandoning the work would score as a recovery.
+Effective tools are resolved by the tool's own `effectiveTools` (a per-role
+override else the agent's frontmatter), so `bash-ro` satisfies it and an
+unknown agent does not. Its `sourceExpectations` pin the tool guidance those
+recoveries come from, so weakening that text fails preflight instead of the
+pass quietly meaning less. The new mode thresholds are
 paired explicitly:
 one typo is not `workflow`, one branch lookup or ordinary two-file fix is not
 `worktree`, an unrequested constrained decision is not `debate`, one source is not
