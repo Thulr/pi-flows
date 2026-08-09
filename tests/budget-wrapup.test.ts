@@ -265,6 +265,21 @@ test("a child already latched by its contract still broadcasts the shared flow t
 	sibling.child.release();
 });
 
+test("an errored turn's metered usage still broadcasts the threshold it crossed", () => {
+	// The hard stop is healthy-only, but the charge is not: a provider-error
+	// turn moves shared ceilings all the same, and the live sibling it
+	// endangers deserves the steer either way.
+	const shared = Budget.forFlow({ maxGeneratedTokens: 10 })!;
+	const erroring = armed([shared]);
+	const sibling = armed([shared]);
+	erroring.child.chargeTurn(turn(0, 0, 8), false); // errored turn, usage metered: 80%
+	assert.equal(sibling.notices.length, 1, "the sibling is steered by usage an errored turn charged");
+	const settled: any = { exitCode: -1 };
+	assert.equal(erroring.child.settle(settled), false, "an errored turn still never latches the hard stop itself");
+	erroring.child.release();
+	sibling.child.release();
+});
+
 test("a spent flow total-token spawn gate does not suppress the steer for a live-stop ceiling", () => {
 	// A flow maxTokens ceiling only gates later spawns — children legitimately
 	// keep running under it. When the generated ceiling then enters its window,

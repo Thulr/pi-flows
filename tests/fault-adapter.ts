@@ -93,6 +93,8 @@ export interface ScriptedReply {
 	turns?: number;
 	/** How the child answers a delivered wrap-up notice: one further charged turn whose text becomes the final body. Absent means the notice is never honored (or never received). */
 	wrapUpReply?: string;
+	/** The scripted turns end in a terminal provider error: their metered usage is still charged, but the child fails with CHILD_PROVIDER_ERROR instead of settling. */
+	turnErrored?: boolean;
 }
 
 export type ReplyScript = string | ScriptedReply | Array<string | ScriptedReply>;
@@ -308,11 +310,19 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 			// that is the undelivered/ignored-notice fault.
 			let turnsCharged = 0;
 			for (let turn = 0; turn < Math.max(1, scripted.turns ?? 1) && !decision.terminate && !(notice !== undefined && scripted.wrapUpReply !== undefined); turn++) {
-				decision = childBudgets.chargeTurn(turnUsage(), true);
+				decision = childBudgets.chargeTurn(turnUsage(), scripted.turnErrored !== true);
 				turnsCharged++;
 			}
 			result.usage = { ...result.usage, input: spend.input * turnsCharged, output: spend.output * turnsCharged, cost: spend.cost * turnsCharged, turns: turnsCharged };
-			if (notice !== undefined && scripted.wrapUpReply !== undefined && !decision.terminate) {
+			// The errored child's metered spend was charged above; it fails with
+			// the provider error instead of settling, exactly as the real runner
+			// reports a terminal errored turn.
+			if (scripted.turnErrored === true) {
+				result.exitCode = 1;
+				result.stopReason = "error";
+				result.error = flowError("CHILD_PROVIDER_ERROR", `Flow agent "${agent}" hit a terminal provider error.`, "The scripted turn ended in a terminal provider error.", "Narrow the task or pick a larger-context model, then retry.", true);
+				result.errorMessage = result.error.message;
+			} else if (notice !== undefined && scripted.wrapUpReply !== undefined && !decision.terminate) {
 				childBudgets.confirmDelivery(notice);
 				body = scripted.wrapUpReply;
 				result.messages.push({ role: "assistant", content: [{ type: "text", text: body }] } as any);

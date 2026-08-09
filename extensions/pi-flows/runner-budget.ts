@@ -164,9 +164,8 @@ export class ChildBudgets {
 	 */
 	chargeTurn(turnUsage: UsageStats, healthy: boolean): { terminate?: boolean } {
 		for (const budget of this.budgets) budget.charge(turnUsage);
-		if (!healthy) return {};
 		let terminate = false;
-		if (!this.budgetStop) {
+		if (healthy && !this.budgetStop) {
 			const unenforceable = turnUsage.costKnown === false ? this.budgets.find((budget) => budget.enforcesCost) : undefined;
 			// Which ceilings bite mid-stream depends on the budget's authority;
 			// the budget decides, this module only asks. See Budget.stopsLiveRun.
@@ -182,9 +181,12 @@ export class ChildBudgets {
 		}
 		// Broadcast EVERY governing budget inside the wrap-up window, whatever
 		// this child's own state — even a turn that just latched this child's
-		// stop: a child stopped by its contract still carries the flow ceiling
-		// its siblings share, and skipping the broadcast here would steer them
-		// one turn late. Per-child dedup lives in latchWrapUp (a stopping child
+		// stop, and even an errored turn (the hard stop above is healthy-only,
+		// but an errored turn's metered usage moves shared ceilings all the
+		// same, and the sibling it endangers deserves the steer either way).
+		// A child stopped by its contract still carries the flow ceiling its
+		// siblings share, and skipping the broadcast here would steer them one
+		// turn late. Per-child dedup lives in latchWrapUp (a stopping child
 		// never self-steers); the exhausted case is screened inside
 		// steerLiveChildren.
 		for (const budget of this.budgets) {

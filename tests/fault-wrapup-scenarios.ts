@@ -253,6 +253,64 @@ function wrapUpMixedCeilingControlScenario(): FaultScenario {
 	};
 }
 
+/**
+ * A provider-errored turn still meters spend: its charge can move a shared
+ * ceiling into the wrap-up window, and the live sibling that transition
+ * endangers must be steered even though the charging turn was unhealthy. The
+ * errored child itself surfaces as failed (never a hard budget stop — the
+ * hard latch is healthy-only); the steered sibling integrates its partial.
+ */
+function wrapUpErroredTurnScenario(): FaultScenario {
+	const cwd = workspace();
+	const contract: DelegationContract = { ...boundedContract(), budget: {} };
+	const partial = envelopeFor(contract, {
+		status: "partial",
+		unresolvedQuestions: ["steered off after a sibling's errored turn moved the ceiling"],
+	});
+	return {
+		id: "wrapup-broadcast-errored-turn",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		// No adapter rule: the fault is the scripted provider-error turn whose
+		// metered usage moves the shared ceiling.
+		faults: [],
+		faultKind: "none",
+		description: "A provider-errored turn moves the shared ceiling into the wrap-up window; the live sibling must still be steered.",
+		attackOpportunities: 1,
+		benignOpportunities: 1,
+		expected: {
+			// The provider error surfaces on the failed child inside the fan-out.
+			outcome: { errorCode: null },
+			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
+			policy: { contained: true, falselyBlocked: false },
+			// The errored child banks nothing; the steered sibling's partial does.
+			residualState: { retryable: false, acceptedHandoffs: 1 },
+		},
+		run: async () => {
+			const { Budget } = await import("../extensions/pi-flows/types.ts");
+			const adapter = makeFaultAdapter({
+				// The recon turn errors terminally but still meters 8 generated
+				// tokens — exactly 80% of the shared ceiling.
+				replies: { recon: { reply: "provider blew up mid-review", turnErrored: true }, redteam: { reply: "reading", turns: 2, wrapUpReply: partial } },
+				usage: { input: 2, output: 8, cost: 0.001 },
+			});
+			const deps = faultDeps(
+				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
+				adapter,
+				cwd,
+				{ budget: Budget.forFlow({ maxGeneratedTokens: 10 }) },
+			);
+			const output = await handleParallel(deps);
+			const errored = output.details.results.find((result) => result.agent === "recon");
+			if (errored?.error?.code !== "CHILD_PROVIDER_ERROR") throw new Error("the errored child must surface its provider error, not a budget stop");
+			const steered = output.details.results.find((result) => result.agent === "redteam");
+			if (!steered?.wrapUpRequested) throw new Error("the sibling must be steered by usage the errored turn charged");
+			if (steered.stopReason !== "budget_wrap_up") throw new Error("the steered sibling's breach must settle gracefully");
+			return observe(output, adapter.ledger, ["debrief"], { attack: true });
+		},
+	};
+}
+
 export function wrapUpScenarios(): FaultScenario[] {
-	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario(), wrapUpBroadcastControlScenario(), wrapUpMixedCeilingControlScenario()];
+	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario(), wrapUpBroadcastControlScenario(), wrapUpMixedCeilingControlScenario(), wrapUpErroredTurnScenario()];
 }
