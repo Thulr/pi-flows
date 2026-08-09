@@ -186,9 +186,9 @@ test("single: a validated terminal envelope leaves one validation event and its 
 
 	// The evidence is attributable: the attestation links to the child that
 	// produced the envelope, and the artifact links to the attestation.
-	assert.equal(attr(validations[0], "flow.unit_key"), "single.handoff");
+	assert.equal(attr(validations[0], "flow.unit_key"), "single.validation");
 	assert.equal(attr(validations[0], "flow.depends_on"), "single");
-	assert.equal(attr(artifacts[0], "flow.depends_on"), "single.handoff");
+	assert.equal(attr(artifacts[0], "flow.depends_on"), "single.validation");
 });
 
 test("single: a digest mismatch leaves the rejection and the artifact claim that proves the corruption", async () => {
@@ -231,7 +231,7 @@ test("parallel: every contracted task leaves exactly one validation event, accep
 	// Fan-out placement carries through: each attestation names its task's unit.
 	assert.deepEqual(
 		events(accepted.spans, "validation").map((span) => attr(span, "flow.unit_key")).sort(),
-		["tasks.1.handoff", "tasks.2.handoff"],
+		["tasks.1.validation", "tasks.2.validation"],
 	);
 
 	const rejected = await (async () => {
@@ -262,7 +262,7 @@ test("graph: a terminal node's contract validation is evidence; an integrated no
 	assert.deepEqual(names(events(terminal.spans, "validation")), ["envelope.validated"]);
 	assert.deepEqual(names(events(terminal.spans, "artifact")), ["artifact.referenced"]);
 	assert.equal(events(terminal.spans, "handoff").length, 0);
-	assert.equal(attr(events(terminal.spans, "validation")[0], "flow.unit_key"), "answer.handoff");
+	assert.equal(attr(events(terminal.spans, "validation")[0], "flow.unit_key"), "answer.validation");
 
 	const corrupted = await (async () => {
 		const cwd = await freshDir();
@@ -356,3 +356,53 @@ test("a terminal prose consumption without a contract records nothing", async ()
 	assert.equal(events(spans, "handoff").length, 0);
 });
 
+
+test("validate-then-integrate keeps the validation and handoff slots uniquely addressable", async () => {
+	// The regression this pins: a result inspected as terminal and later
+	// consumed by another role (evaluate's pre-validation, orchestrate's revise
+	// loop) used to register both events at `<unit>.handoff`; the sink retains
+	// the first span per key, so the real boundary's dependency key resolved to
+	// the terminal attestation instead of the handoff that carried the content.
+	const cwd = await freshDir();
+	await writeFile(path.join(cwd, "note.txt"), "verified\n");
+	const sink = makeTraceSink(path.join(cwd, TRACE), "evaluate", { recordContent: true, redactSecrets: true });
+	const handoffs = createHandoffConsumer({
+		params: {},
+		mode: "evaluate",
+		policy: { recordContent: true, redactSecrets: true },
+		defaultCwd: cwd,
+		recordEvent: sink.event,
+	});
+	const result: FlowRunResult = {
+		agent: "recon",
+		agentSource: "package",
+		task: "write the note",
+		exitCode: 0,
+		messages: [{ role: "assistant", content: [{ type: "text", text: envelope("note.txt", sha256("verified\n")) }] } as any],
+		stderr: "",
+		usage: emptyUsage(),
+	};
+	sink.record(result, { scope: { key: "gen" } });
+	const resolved = ResolvedDelegationContract.resolve(contract).resolved!;
+	const terminal = handoffs.consumeResult({ result, contract: resolved, cwd, scope: { key: "gen" }, completion: "terminal", payload: "source" });
+	assert.equal(terminal.error, undefined);
+	const integrated = handoffs.consumeResult({ result, contract: resolved, cwd, scope: { key: "gen" } });
+	assert.equal(integrated.error, undefined);
+	assert.equal(integrated.dependencyKey, "gen.handoff");
+	sink.event({ kind: "state", name: "consumer.read", scope: { key: "reader", dependsOn: ["gen.handoff"] } });
+	await sink.finalize({ ok: true });
+	const { spans, parseErrors } = parseTraceJsonl(await readFile(path.join(cwd, TRACE), "utf8"));
+	assert.equal(parseErrors, 0);
+	// Distinct slots, distinct artifact families.
+	const unitKeys = spans.map((span) => attr(span, "flow.unit_key")).filter(Boolean);
+	assert.ok(unitKeys.includes("gen.validation") && unitKeys.includes("gen.handoff"), `slots collided: ${unitKeys.join(",")}`);
+	assert.ok(unitKeys.includes("gen.validation.artifact-1") && unitKeys.includes("gen.artifact-1"), `artifact families collided: ${unitKeys.join(",")}`);
+	// Dependency attribution: the reader resolves to the handoff event's span,
+	// not the terminal attestation's.
+	const handoffRow = spans.find((span) => attr(span, "flow.unit_key") === "gen.handoff");
+	const validationRow = spans.find((span) => attr(span, "flow.unit_key") === "gen.validation");
+	const reader = spans.find((span) => attr(span, "flow.unit_key") === "reader");
+	assert.ok(handoffRow?.span_id && validationRow?.span_id && reader);
+	assert.equal(attr(reader, "flow.depends_on_span_ids"), handoffRow.span_id);
+	assert.notEqual(attr(reader, "flow.depends_on_span_ids"), validationRow.span_id);
+});

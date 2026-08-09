@@ -291,8 +291,15 @@ export class HandoffConsumer {
 		scope: ChildSpanScope | undefined,
 	): void {
 		if (!this.options.recordEvent) return;
-		const eventScope = scope?.key
-			? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${scope.key}.handoff`, dependsOn: [scope.key] }
+		// A validation-specific slot, not `<unit>.handoff`: a result inspected as
+		// terminal may later cross a role boundary (evaluate validates before its
+		// critics; orchestrate's revise loop re-consumes the verifier), and the
+		// sink retains the first span registered per key — so sharing the handoff
+		// slot would make the later handoff's dependency key resolve to this
+		// attestation instead of the boundary that carried the content.
+		const slot = scope?.key ? `${scope.key}.validation` : undefined;
+		const eventScope = scope?.key && slot
+			? { ...(scope.stage ? { stage: scope.stage } : {}), key: slot, dependsOn: [scope.key] }
 			: scope;
 		this.options.recordEvent({
 			kind: "validation",
@@ -314,8 +321,9 @@ export class HandoffConsumer {
 				digests: handoff.digests,
 			},
 			handoff.artifactReferences.map((reference) => reference.path),
-			scope,
+			scope?.key && slot ? { ...scope, key: slot } : scope,
 			true,
+			slot,
 		);
 	}
 
@@ -331,12 +339,18 @@ export class HandoffConsumer {
 		rejected: ReturnType<typeof prepareIntegrationHandoff>["rejected"],
 	): void {
 		if (!this.options.recordEvent) return;
-		const scope = options.scope?.key
-			? { ...(options.scope.stage ? { stage: options.scope.stage } : {}), key: `${options.scope.key}.handoff`, dependsOn: [options.scope.key] }
+		// Terminal rejections live in the validation slot for the same reason
+		// terminal attestations do; integrating rejections keep the handoff slot
+		// the boundary they refused would have occupied.
+		const terminal = options.completion === "terminal";
+		const suffix = terminal ? "validation" : "handoff";
+		const slot = options.scope?.key ? `${options.scope.key}.${suffix}` : undefined;
+		const scope = options.scope?.key && slot
+			? { ...(options.scope.stage ? { stage: options.scope.stage } : {}), key: slot, dependsOn: [options.scope.key] }
 			: options.scope;
 		this.options.recordEvent({
 			kind: "validation",
-			name: options.completion === "terminal" ? "envelope.rejected" : "handoff.rejected",
+			name: terminal ? "envelope.rejected" : "handoff.rejected",
 			ok: false,
 			scope,
 			attributes: {
@@ -355,12 +369,14 @@ export class HandoffConsumer {
 				digests: rejected.digests,
 			},
 			rejected.artifactReferences.map((reference) => reference.path),
-			options.scope,
+			terminal && options.scope?.key && slot ? { ...options.scope, key: slot } : options.scope,
 			false,
+			terminal ? slot : undefined,
 		);
 	}
 
-	private recordArtifacts(source: ArtifactSource, paths: string[], scope: ChildSpanScope | undefined, verified: boolean): void {
+	/** `slot` names the evidence event the artifacts hang off — `<unit>.handoff` for a crossed boundary (the default), the validation slot for a terminal attestation. */
+	private recordArtifacts(source: ArtifactSource, paths: string[], scope: ChildSpanScope | undefined, verified: boolean, slot?: string): void {
 		if (!this.options.recordEvent) return;
 		for (const [index, path] of paths.entries()) {
 			const unit = scope?.key;
@@ -369,7 +385,7 @@ export class HandoffConsumer {
 				name: verified ? "artifact.referenced" : "artifact.rejected",
 				ok: verified,
 				scope: scope && unit
-					? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${unit}.artifact-${index + 1}`, dependsOn: [`${unit}.handoff`] }
+					? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${unit}.artifact-${index + 1}`, dependsOn: [slot ?? `${unit}.handoff`] }
 					: scope,
 				attributes: artifactAttributes(source, path, this.options.policy, verified),
 			});
