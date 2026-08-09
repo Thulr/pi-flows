@@ -177,11 +177,15 @@ export const DELEGATION_SELECTION_CASES = [
 			flowCalls: 2,
 			flowCallArgs: [
 				// The refused first attempt: shell-capable reviewers in one checkout.
+				// The plain-bash toolset is pinned per role rather than inherited
+				// from an agent's frontmatter, so the pair the mock scores stays
+				// write-capable — and this case keeps exercising the refusal it
+				// recovers from — however the bundled roster's tools change.
 				{
 					why: "two independent read-only passes over the branch history",
 					tasks: [
-						{ agent: "overwatch", task: "Inspect the git commit history on this branch and report the riskiest commit." },
-						{ agent: "overwatch", task: "Independently inspect the git commit history on this branch and report the riskiest commit." },
+						{ agent: "overwatch", tools: "read,grep,find,ls,bash", task: "Inspect the git commit history on this branch and report the riskiest commit." },
+						{ agent: "overwatch", tools: "read,grep,find,ls,bash", task: "Independently inspect the git commit history on this branch and report the riskiest commit." },
 					],
 				},
 				// The recovery this case exists to score: same topology, read-only shell.
