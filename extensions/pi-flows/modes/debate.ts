@@ -1,10 +1,9 @@
-import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { runWave } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
-import { validateSharedWriteCwd } from "../validate.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { maxRunDuration, plannedRefs, runDuration, type ModePlan } from "./plan.ts";
 
 /**
@@ -47,23 +46,20 @@ function advocateKey(round: number, index: number): string {
 }
 
 export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd } = deps;
+	const settle = modeSettle(deps);
+	const { params, policy } = deps;
 	const spec = params.debate ?? {};
 	const participants: FlowAgentRefInput[] = Array.isArray(spec.participants) ? spec.participants : [];
 	if (participants.length < 2) {
 		const error = flowError("DEBATE_TOO_FEW_PARTICIPANTS", "Debate mode needs at least two advocates.", "A single answer has no independent opposition or rebuttal surface.", "Provide two or more participants, or use single/evaluate for one proposal plus critique.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("debate")([], error) };
+		return settle.refuse(error);
 	}
 	if (!params.task?.trim()) {
 		const error = flowError("INVALID_MODE", "Debate mode requires a task.", "The advocates and adjudicator need the same decision question and constraints.", 'Add a top-level task, e.g. {"task":"choose A or B under ...","debate":{...}}.');
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("debate")([], error) };
+		return settle.refuse(error);
 	}
-	const { concurrency } = deps;
-	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, participants, params.allowSharedWriteCwd, concurrency);
-	if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: deps.makeDetails("debate")([], sharedWriteError) };
 
 	const rounds = debateRounds(spec);
-	const allResults: FlowRunResult[] = [];
 	let priorArguments: string[] = [];
 	// A failed advocate contributes a "[advocate failed]" placeholder, not an
 	// argument, so the next round and the adjudicator read nothing of its work.
@@ -94,18 +90,22 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 				// round, not one opponent.
 				scope: { key: advocateKey(round, index), ...(consumedAdvocateKeys.length ? { dependsOn: consumedAdvocateKeys } : {}) },
 			});
-			if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
+			if (planned.error) return settle.refuse(planned.error);
 			items.push(planned.plan!);
 		}
-		const roundResults = await runAgentFanout(deps, "debate", items, concurrency, allResults, (settled, total) => `Flow debate: round ${round}/${rounds}, ${settled}/${total} advocates settled`, { key: `round-${round}`, name: `round ${round}` });
-		allResults.push(...roundResults);
+		const roundWave = await runWave(deps, settle, items, {
+			statusText: (settled, total) => `Flow debate: round ${round}/${rounds}, ${settled}/${total} advocates settled`,
+			stage: { key: `round-${round}`, name: `round ${round}` },
+		});
+		if (roundWave.status === "refused") return roundWave.output;
+		const roundResults = roundWave.results;
 		const roundEntries = roundResults.flatMap((result, index) =>
 			isFailed(result) ? [] : [{ result, plan: items[index] }],
 		);
 		const handoffs = deps.handoffs.consumeResults(roundEntries);
-		if (handoffs.error) return { content: [{ type: "text", text: formatFlowError(handoffs.error) }], details: deps.makeDetails("debate")(allResults, handoffs.error) };
+		if (handoffs.error) return settle.refuse(handoffs.error);
 		if (successfulRuns(roundResults).length < 2) {
-			return { content: [{ type: "text", text: "Flow debate stopped: fewer than two advocates produced usable arguments." }], details: deps.makeDetails("debate")(allResults) };
+			return settle.complete("Flow debate stopped: fewer than two advocates produced usable arguments.");
 		}
 		let consumedIndex = 0;
 		priorArguments = roundResults.map((result) => {
@@ -137,15 +137,10 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		requireEvidence: params.requireEvidence,
 		scope: { key: "adjudicator", dependsOn: consumedAdvocateKeys },
 	});
-	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("debate")(allResults, planned.error) };
-	const decision = await runIntegrationPlan(deps, planned.plan!, "debate", allResults.length + 1, allResults);
-	allResults.push(decision);
-	if (isFailed(decision)) return { content: [{ type: "text", text: sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(decision)}`, policy) }], details: deps.makeDetails("debate")(allResults) };
-	const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: decision, completion: "terminal", enforceCompletion: true });
-	if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: deps.makeDetails("debate")(allResults, handoff.error) };
+	if (planned.error) return settle.refuse(planned.error);
+	const dispatched = await dispatchIntegrationPlan(deps, planned.plan!, settle, { completion: "terminal", enforceCompletion: true });
+	if (dispatched.status === "failed") return settle.complete(sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(dispatched.result)}`, policy));
+	if (dispatched.status === "refused") return dispatched.output;
 
-	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow debate: ${participants.length} advocates, ${rounds} round(s), adjudicated by ${adjudicator.agent}.${incompleteHandoffSummary(allResults)}${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(decision), policy)}`) }],
-		details: deps.makeDetails("debate")(allResults),
-	};
+	return settle.complete(capModelVisibleText(`Flow debate: ${participants.length} advocates, ${rounds} round(s), adjudicated by ${adjudicator.agent}.${incompleteHandoffSummary([...settle.results])}${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(dispatched.result), policy)}`));
 }

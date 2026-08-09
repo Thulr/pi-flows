@@ -1,10 +1,11 @@
-import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
 import { ResolvedDelegationContract } from "../delegation.ts";
 import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
-import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { runWave } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
+import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
 
 /**
@@ -45,15 +46,14 @@ export function criticalPathEvaluate(params: any, results: FlowRunResult[]): num
 const generatorKey = (stageKey: string) => `${stageKey}.generator`;
 
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd, signal, onUpdate, makeDetails } = deps;
+	const settle = modeSettle(deps);
+	const { params, discovery, policy, defaultCwd, signal, onUpdate, makeDetails } = deps;
 	const spec = params.evaluate ?? {};
 	const operatorWithTask = spec.operator as (FlowAgentRefInput & { task?: unknown; contract?: DelegationContract }) | undefined;
 	const operatorTask = typeof operatorWithTask?.task === "string" ? operatorWithTask.task : undefined;
 	const rawContract = (operatorWithTask?.contract ?? params.contract) as DelegationContract | undefined;
 	const resolution = rawContract ? ResolvedDelegationContract.resolve(rawContract, policy) : {};
-	if (resolution.error) {
-		return { content: [{ type: "text", text: formatFlowError(resolution.error) }], details: makeDetails("evaluate")([], resolution.error) };
-	}
+	if (resolution.error) return settle.refuse(resolution.error);
 	const contract = resolution.resolved;
 	const goal: string | undefined = params.task ?? operatorTask ?? contract?.contract.objective;
 
@@ -64,7 +64,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			"evaluate mode needs a top-level `task` describing the goal, or a delegation contract whose objective the generator must satisfy and the evaluator must judge.",
 			'Add a `task` string, e.g. { "task": "Add a /health endpoint with a test", "evaluate": {} }.',
 		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")([], error) };
+		return settle.refuse(error);
 	}
 	const contractedGoal = contract
 		? contract.renderTask(goal, params.returnContract, params.requireEvidence)
@@ -81,17 +81,20 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const passContract: string | undefined = spec.passContract;
 	const checkCommand: string | undefined = typeof spec.checkCommand === "string" && spec.checkCommand.trim() ? spec.checkCommand.trim() : undefined;
 	const { concurrency } = deps;
+	// The critic panel's guard runs here, before the FIRST spawn of the flow —
+	// the generator — which is earlier than the critic fan-out it protects, whose
+	// runWave gate is the enforced backstop. Deleting this early check would let
+	// a write-capable panel refuse only after the generator had spent.
+	// planEvaluate declares the wave guarded pre-spawn, and
+	// tests/admissibility-scoring.test.ts pins the mirror to this position.
 	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, evaluatorRefs, params.allowSharedWriteCwd, concurrency);
-	if (sharedWriteError) {
-		return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: makeDetails("evaluate")([], sharedWriteError) };
-	}
+	if (sharedWriteError) return settle.refuse(sharedWriteError);
 	const checkTimeoutMs = Math.min(normalizeTimeout(params.timeoutMs), DEFAULT_CHECK_COMMAND_TIMEOUT_MS);
 
-	const results: FlowRunResult[] = [];
 	const emitLive = (inFlight?: FlowRunResult) => {
 		onUpdate?.({
-			content: [{ type: "text", text: `Flow evaluate: ${results.length} step(s) settled` }],
-			details: makeDetails("evaluate")([...results, ...(inFlight ? [inFlight] : [])]),
+			content: [{ type: "text", text: `Flow evaluate: ${settle.results.length} step(s) settled` }],
+			details: makeDetails(settle.mode)([...settle.results, ...(inFlight ? [inFlight] : [])]),
 		});
 	};
 
@@ -144,40 +147,36 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 						"\n## Reviewer feedback on that attempt (address every point)",
 						critique,
 					].join("\n");
-		const generated = await runAgentRef(
-			deps,
-			generatorRef,
-			generatorTask,
-			"evaluate",
-			results.length + 1,
-			results,
-			{
-				limits: contract ? { captureRawOutput: true, timeoutMs: contract.timeoutMs, contractBudget, contract: contract.contract } : {},
-				// A revision's prompt carries the prior artifact and the feedback that
-				// sent it back. Both are declared: reachability through the panel is
-				// not the same as saying what this prompt actually contains.
-				scope: { stage, key: generatorKey(stage.key), ...(consumed.length ? { dependsOn: consumed } : {}) },
-			},
-		);
-		results.push(generated);
-		lastGenerator = generated;
-		emitLive();
-		if (isFailed(generated)) {
-			return {
-				content: [{ type: "text", text: sanitizeText(`Flow evaluate stopped: generator "${generatorRef.agent}" failed at iteration ${iteration}:\n\n${resultText(generated)}`, policy) }],
-				details: makeDetails("evaluate")(results),
-			};
-		}
-		const validatedArtifact = deps.handoffs.consumeResult({
-			result: generated,
-			contract,
-			cwd: resolvedCwd(defaultCwd, generatorRef.cwd),
-			scope: { stage, key: generatorKey(stage.key) },
+		// The iteration prompt already embeds the contract sections rendered into
+		// contractedGoal above, so the plan dispatches it verbatim (prerendered);
+		// limits and the shared contract budget still come from the resolved
+		// contract, replacing the hand-copied limits object.
+		const planned = integrationRunPlan(deps, generatorRef, generatorTask, {
+			resolvedContract: contract,
+			contractBudget,
+			prerendered: true,
+			// A revision's prompt carries the prior artifact and the feedback that
+			// sent it back. Both are declared: reachability through the panel is
+			// not the same as saying what this prompt actually contains.
+			scope: { stage, key: generatorKey(stage.key), ...(consumed.length ? { dependsOn: consumed } : {}) },
+		});
+		if (planned.error) return settle.refuse(planned.error);
+		const dispatched = await dispatchIntegrationPlan(deps, planned.plan!, settle, {
 			completion: "terminal",
 			payload: "source",
+			// Consume-time scope: the pre-validation event hangs off the generator's
+			// own key, without the run scope's revision links — the run consumed the
+			// prior artifact and feedback; its validation did not.
+			scope: { stage, key: generatorKey(stage.key) },
 		});
-		if (validatedArtifact.error) return { content: [{ type: "text", text: formatFlowError(validatedArtifact.error) }], details: makeDetails("evaluate")(results, validatedArtifact.error) };
-		let artifact = validatedArtifact.text;
+		emitLive();
+		if (dispatched.status === "failed") {
+			return settle.complete(sanitizeText(`Flow evaluate stopped: generator "${generatorRef.agent}" failed at iteration ${iteration}:\n\n${resultText(dispatched.result)}`, policy));
+		}
+		if (dispatched.status === "refused") return dispatched.output;
+		const generated = dispatched.result;
+		lastGenerator = generated;
+		let artifact = dispatched.handoff.text;
 		// The critics judge this text, not the generator's raw output: it has been
 		// validated, capped, and injection-scanned on the way here. Emitted only
 		// once a consumer is known — a failed check on the final iteration ends the
@@ -209,7 +208,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 					`The deterministic gate command could not be started: ${check.output}.`,
 					"Verify the command exists and is runnable from the cwd. A non-runnable check is a config error, not a REVISE signal.",
 				);
-				return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("evaluate")(results, error) };
+				return settle.refuse(error);
 			}
 			lastCheckOk = check.ok;
 			deps.recordEvent?.({
@@ -233,13 +232,13 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				// invent one. The same applies to the artifact that revision revises.
 				if (iteration < maxIterations) {
 					const artifactError = consumeArtifactHandoff();
-					if (artifactError) return { content: [{ type: "text", text: formatFlowError(artifactError) }], details: makeDetails("evaluate")(results, artifactError) };
+					if (artifactError) return settle.refuse(artifactError);
 					const checkHandoff = deps.handoffs.consumeText({
 						fromAgent: `checkCommand:${checkCommand}`,
 						text: checkRaw,
 						scope: { stage, key: `${stage.key}.check` },
 					});
-					if (checkHandoff.error) return { content: [{ type: "text", text: formatFlowError(checkHandoff.error) }], details: makeDetails("evaluate")(results, checkHandoff.error) };
+					if (checkHandoff.error) return settle.refuse(checkHandoff.error);
 					critique = checkHandoff.text;
 					feedbackKey = checkHandoff.dependencyKey;
 				} else {
@@ -252,7 +251,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 
 		// The critics below read the artifact, so the boundary is real from here on.
 		const artifactError = consumeArtifactHandoff();
-		if (artifactError) return { content: [{ type: "text", text: formatFlowError(artifactError) }], details: makeDetails("evaluate")(results, artifactError) };
+		if (artifactError) return settle.refuse(artifactError);
 
 		// 3. Critic panel (level-2 / LLM-as-judge) judges the ARTIFACT — not the
 		// generator's reasoning trace. PASS requires every critic to pass.
@@ -270,23 +269,18 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			.filter(Boolean)
 			.join("\n");
 
-		const critics = await runAgentFanout(
+		const criticWave = await runWave(
 			deps,
-			"evaluate",
-			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, dependsOn: [priorArtifactKey!] } })),
-			concurrency,
-			results,
-			(settled) => `Flow evaluate: ${results.length + settled} step(s) settled`,
-			stage,
+			settle,
+			evaluatorRefs.map((ref, index) => ({ ref, task: evaluatorTask, scope: { key: `${stage.key}.critic-${index + 1}`, ...(priorArtifactKey ? { dependsOn: [priorArtifactKey] } : {}) } })),
+			{ statusText: (settled) => `Flow evaluate: ${settle.results.length + settled} step(s) settled`, stage },
 		);
-		results.push(...critics);
+		if (criticWave.status === "refused") return criticWave.output;
+		const critics = criticWave.results;
 		emitLive();
 		const failedCritic = critics.find((critic) => isFailed(critic));
 		if (failedCritic) {
-			return {
-				content: [{ type: "text", text: sanitizeText(`Flow evaluate stopped: critic "${failedCritic.agent}" failed at iteration ${iteration}:\n\n${resultText(failedCritic)}`, policy) }],
-				details: makeDetails("evaluate")(results),
-			};
+			return settle.complete(sanitizeText(`Flow evaluate stopped: critic "${failedCritic.agent}" failed at iteration ${iteration}:\n\n${resultText(failedCritic)}`, policy));
 		}
 
 		const verdicts = critics.map((critic) => ({ agent: critic.agent, pass: parseVerdict(resultText(critic)) === "pass", text: resultText(critic) }));
@@ -323,7 +317,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				text: critiqueRaw,
 				scope: { stage, key: `${stage.key}.feedback`, dependsOn: [`${stage.key}.panel`] },
 			});
-			if (critiqueHandoff.error) return { content: [{ type: "text", text: formatFlowError(critiqueHandoff.error) }], details: makeDetails("evaluate")(results, critiqueHandoff.error) };
+			if (critiqueHandoff.error) return settle.refuse(critiqueHandoff.error);
 			critique = critiqueHandoff.text;
 			feedbackKey = critiqueHandoff.dependencyKey;
 		} else {
@@ -339,8 +333,5 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		: `Flow evaluate: did not pass within ${maxIterations} iteration${maxIterations === 1 ? "" : "s"}${gate} — returning the last attempt with the final critique.`;
 	const warningNote = deps.handoffs.warningSummary();
 	const body = passed ? finalArtifact : `## Last attempt\n\n${finalArtifact}\n\n## Final critique\n\n${critique}`;
-	return {
-		content: [{ type: "text", text: capModelVisibleText(`${header}${warningNote}\n\n${body}`) }],
-		details: makeDetails("evaluate")(results),
-	};
+	return settle.complete(capModelVisibleText(`${header}${warningNote}\n\n${body}`));
 }

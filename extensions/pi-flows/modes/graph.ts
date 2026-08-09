@@ -1,9 +1,9 @@
-import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { graphDependsOn, validGraphNodes, validateSharedWriteCwd } from "../validate.ts";
-import { runAgentFanout, runAgentRef } from "../runner.ts";
+import { graphDependsOn, validGraphNodes } from "../validate.ts";
+import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { plannedRefs, runDuration, type ModePlan, type PlannedWave } from "./plan.ts";
 
 /**
@@ -71,41 +71,37 @@ export function renderGraphTask(template: string, task: string | undefined, outp
 }
 
 export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd, makeDetails } = deps;
+	const settle = modeSettle(deps);
+	const { params, policy } = deps;
 	const spec = params.graph ?? {};
 	const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
 	const hasDebrief = Boolean(spec.debrief?.agent);
 	const nodeHasConsumer = (id: string) => hasDebrief
 		|| nodes.some((candidate: any) => (candidate.dependsOn ?? []).includes(id));
 	if (nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) {
-		const error = flowError(
+		return settle.refuse(flowError(
 			"GRAPH_INVALID",
 			"Graph mode needs 1..16 nodes.",
 			"graph.nodes must be a non-empty static DAG of agent nodes, bounded so graph mode cannot become unbounded orchestration.",
 			`Provide between 1 and ${MAX_GRAPH_NODES} graph nodes.`,
-		);
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")([], error) };
+		));
 	}
 
 	const ids = new Set<string>();
 	for (const node of nodes) {
 		if (!node?.id || !node.agent || !node.task || ids.has(node.id)) {
-			const error = flowError("GRAPH_INVALID", "Graph nodes require unique id, agent, and task fields.", "A graph node was missing a required field or reused an id.", "Give every graph node a unique id plus agent and task.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")([], error) };
+			return settle.refuse(flowError("GRAPH_INVALID", "Graph nodes require unique id, agent, and task fields.", "A graph node was missing a required field or reused an id.", "Give every graph node a unique id plus agent and task."));
 		}
 		ids.add(node.id);
 	}
 	for (const node of nodes) {
 		for (const dep of node.dependsOn ?? []) {
 			if (!ids.has(dep)) {
-				const error = flowError("GRAPH_INVALID", `Graph node "${node.id}" depends on unknown node "${dep}".`, "Every dependsOn entry must reference another graph node id.", "Fix dependsOn ids or add the missing node.");
-				return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")([], error) };
+				return settle.refuse(flowError("GRAPH_INVALID", `Graph node "${node.id}" depends on unknown node "${dep}".`, "Every dependsOn entry must reference another graph node id.", "Fix dependsOn ids or add the missing node."));
 			}
 		}
 	}
 
-	const { concurrency } = deps;
-	const results: FlowRunResult[] = [];
 	const outputs = new Map<string, string>();
 	const outputKeys = new Map<string, string>();
 	const completed = new Set<string>();
@@ -116,12 +112,9 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 	while (remaining.size > 0) {
 		const ready = [...remaining.values()].filter((node) => (node.dependsOn ?? []).every((dep: string) => completed.has(dep)));
 		if (ready.length === 0) {
-			const error = flowError("GRAPH_CYCLE", "Graph has a cycle or unsatisfied dependency.", "No remaining graph node is runnable even though some nodes are incomplete.", "Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("graph")(results, error) };
+			return settle.refuse(flowError("GRAPH_CYCLE", "Graph has a cycle or unsatisfied dependency.", "No remaining graph node is runnable even though some nodes are incomplete.", "Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node."));
 		}
 		wave += 1;
-		const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, ready, params.allowSharedWriteCwd, concurrency);
-		if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: makeDetails("graph")(results, sharedWriteError) };
 
 		const waveItems: IntegrationRunPlan[] = [];
 		for (const node of ready) {
@@ -137,20 +130,15 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 					return key ? [key] : [];
 				}) },
 			});
-			if (planned.error) {
-				return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
-			}
+			if (planned.error) return settle.refuse(planned.error);
 			waveItems.push(planned.plan!);
 		}
-		const waveRunResults = await runAgentFanout(
-			deps,
-			"graph",
-			waveItems,
-			concurrency,
-			results,
-			(settled) => `Flow graph: ${completed.size + settled}/${nodes.length} nodes settled`,
-			{ key: `wave-${wave}`, name: `wave ${wave}` },
-		);
+		const dispatched = await runWave(deps, settle, waveItems, {
+			statusText: (settled) => `Flow graph: ${completed.size + settled}/${nodes.length} nodes settled`,
+			stage: { key: `wave-${wave}`, name: `wave ${wave}` },
+		});
+		if (dispatched.status === "refused") return dispatched.output;
+		const waveRunResults = dispatched.results;
 		const preparedOutputs = new Map<FlowRunResult, ReturnType<typeof deps.handoffs.consumeResult>>();
 		for (const [index, result] of waveRunResults.entries()) {
 			if (isFailed(result)) continue;
@@ -163,18 +151,14 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				enforceCompletion: true,
 				noticeLabel: `graph node ${node.id} output`,
 			});
-			if (handoff.error) {
-				results.push(...waveRunResults);
-				return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("graph")(results, handoff.error) };
-			}
+			if (handoff.error) return settle.refuse(handoff.error);
 			preparedOutputs.set(result, handoff);
 		}
 		const waveResults = waveRunResults.map((result, index) => ({ node: ready[index], result }));
 		for (const { node, result } of waveResults) {
-			results.push(result);
 			remaining.delete(node.id);
 			if (isFailed(result)) {
-				return { content: [{ type: "text", text: sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy) }], details: makeDetails("graph")(results) };
+				return settle.complete(sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy));
 			}
 			outputs.set(node.id, preparedOutputs.get(result)?.text ?? "");
 			const dependencyKey = preparedOutputs.get(result)?.dependencyKey;
@@ -204,14 +188,12 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 				return key ? [key] : [];
 			}) },
 		});
-		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: makeDetails("graph")(results, planned.error) };
-		const debriefed = await runIntegrationPlan(deps, planned.plan!, "graph", results.length + 1, results);
-		results.push(debriefed);
-		if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed)}`, policy) }], details: makeDetails("graph")(results) };
-		const handoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, completion: "terminal", enforceCompletion: true });
-		if (handoff.error) return { content: [{ type: "text", text: formatFlowError(handoff.error) }], details: makeDetails("graph")(results, handoff.error) };
-		return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.${incompleteHandoffSummary(results)}\n\n${sanitizeText(resultText(debriefed), policy)}`) }], details: makeDetails("graph")(results) };
+		if (planned.error) return settle.refuse(planned.error);
+		const debriefed = await dispatchIntegrationPlan(deps, planned.plan!, settle, { completion: "terminal", enforceCompletion: true });
+		if (debriefed.status === "failed") return settle.complete(sanitizeText(`Flow graph: debrief "${debriefRef.agent}" failed.\n\n${resultText(debriefed.result)}`, policy));
+		if (debriefed.status === "refused") return debriefed.output;
+		return settle.complete(capModelVisibleText(`Flow graph: ${nodes.length} nodes completed; synthesized by ${debriefRef.agent}.${incompleteHandoffSummary([...settle.results])}\n\n${sanitizeText(resultText(debriefed.result), policy)}`));
 	}
 
-	return { content: [{ type: "text", text: capModelVisibleText(`Flow graph: ${nodes.length} nodes completed.${incompleteHandoffSummary(results)}\n\n${terminalOutputs}`) }], details: makeDetails("graph")(results) };
+	return settle.complete(capModelVisibleText(`Flow graph: ${nodes.length} nodes completed.${incompleteHandoffSummary([...settle.results])}\n\n${terminalOutputs}`));
 }

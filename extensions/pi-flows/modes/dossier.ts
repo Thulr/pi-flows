@@ -1,9 +1,8 @@
-import { MAX_PARALLEL_TASKS, flowError, formatFlowError, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { runAgentFanout, runAgentRef } from "../runner.ts";
-import { validateSharedWriteCwd } from "../validate.ts";
+import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { integrationRunPlan, runIntegrationPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
@@ -37,16 +36,13 @@ export function criticalPathDossier(params: any, results: FlowRunResult[]): numb
 const sectionKey = (index: number) => `section-${index + 1}`;
 
 export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd } = deps;
+	const settle = modeSettle(deps);
+	const { params, policy } = deps;
 	const spec = params.dossier ?? {};
 	const sections = Array.isArray(spec.sections) ? spec.sections : [];
 	if (sections.length < 2) {
-		const error = flowError("DOSSIER_TOO_FEW_SECTIONS", "Dossier mode needs at least two evidence sections.", "A dossier is a map/reduce pattern; one assignment has no cross-source evidence or conflict surface.", "Provide two or more source- or claim-specific sections, or use single recon/analyst for one source.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("dossier")([], error) };
+		return settle.refuse(flowError("DOSSIER_TOO_FEW_SECTIONS", "Dossier mode needs at least two evidence sections.", "A dossier is a map/reduce pattern; one assignment has no cross-source evidence or conflict surface.", "Provide two or more source- or claim-specific sections, or use single recon/analyst for one source."));
 	}
-	const { concurrency } = deps;
-	const sharedWriteError = validateSharedWriteCwd(discovery, defaultCwd, sections, params.allowSharedWriteCwd, concurrency);
-	if (sharedWriteError) return { content: [{ type: "text", text: formatFlowError(sharedWriteError) }], details: deps.makeDetails("dossier")([], sharedWriteError) };
 
 	const sectionItems: IntegrationRunPlan[] = [];
 	for (const [index, section] of sections.entries()) {
@@ -64,19 +60,20 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 			placeholderTask: section.task,
 			scope: { key: sectionKey(index) },
 		});
-		if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")([], planned.error) };
+		if (planned.error) return settle.refuse(planned.error);
 		sectionItems.push(planned.plan!);
 	}
-	const results: FlowRunResult[] = await runAgentFanout(deps, "dossier", sectionItems, concurrency, [], (settled, total) => `Flow dossier: ${settled}/${total} evidence sections extracted`, { key: "sections", name: "evidence sections" });
-	const sectionEntries = results.flatMap((result, index) =>
+	const wave = await runWave(deps, settle, sectionItems, { statusText: (settled, total) => `Flow dossier: ${settled}/${total} evidence sections extracted`, stage: { key: "sections", name: "evidence sections" } });
+	if (wave.status === "refused") return wave.output;
+	const sectionResults = wave.results;
+	const sectionEntries = sectionResults.flatMap((result, index) =>
 		isFailed(result) ? [] : [{ result, plan: sectionItems[index], index }],
 	);
 	const sectionHandoffs = deps.handoffs.consumeResults(sectionEntries);
-	if (sectionHandoffs.error) return { content: [{ type: "text", text: formatFlowError(sectionHandoffs.error) }], details: deps.makeDetails("dossier")(results, sectionHandoffs.error) };
-	const successful = results.filter((result) => !isFailed(result));
+	if (sectionHandoffs.error) return settle.refuse(sectionHandoffs.error);
+	const successful = sectionResults.filter((result) => !isFailed(result));
 	if (successful.length < 2) {
-		const error = flowError("DOSSIER_TOO_FEW_SECTIONS", "Fewer than two evidence extractors produced usable results.", `Only ${successful.length}/${sections.length} sections succeeded, so cross-source reconciliation would be misleading.`, "Fix the failed evidence assignments and rerun; use single mode if only one source is required.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("dossier")(results, error) };
+		return settle.refuse(flowError("DOSSIER_TOO_FEW_SECTIONS", "Fewer than two evidence extractors produced usable results.", `Only ${successful.length}/${sections.length} sections succeeded, so cross-source reconciliation would be misleading.`, "Fix the failed evidence assignments and rerun; use single mode if only one source is required."));
 	}
 
 	const evidence = sectionEntries
@@ -100,15 +97,10 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		// output would misreport what the answer actually rests on.
 		scope: { key: "debrief", dependsOn: sectionHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) },
 	});
-	if (planned.error) return { content: [{ type: "text", text: formatFlowError(planned.error) }], details: deps.makeDetails("dossier")(results, planned.error) };
-	const debriefed = await runIntegrationPlan(deps, planned.plan!, "dossier", results.length + 1, results);
-	results.push(debriefed);
-	if (isFailed(debriefed)) return { content: [{ type: "text", text: sanitizeText(`Flow dossier: synthesizer failed.\n\n${resultText(debriefed)}`, policy) }], details: deps.makeDetails("dossier")(results) };
-	const debriefHandoff = deps.handoffs.consumeResult({ plan: planned.plan!, result: debriefed, completion: "terminal", enforceCompletion: true });
-	if (debriefHandoff.error) return { content: [{ type: "text", text: formatFlowError(debriefHandoff.error) }], details: deps.makeDetails("dossier")(results, debriefHandoff.error) };
+	if (planned.error) return settle.refuse(planned.error);
+	const debriefed = await dispatchIntegrationPlan(deps, planned.plan!, settle, { completion: "terminal", enforceCompletion: true });
+	if (debriefed.status === "failed") return settle.complete(sanitizeText(`Flow dossier: synthesizer failed.\n\n${resultText(debriefed.result)}`, policy));
+	if (debriefed.status === "refused") return debriefed.output;
 
-	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow dossier: ${successful.length}/${sections.length} evidence sections synthesized.${incompleteHandoffSummary(results)}${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(debriefed), policy)}`) }],
-		details: deps.makeDetails("dossier")(results),
-	};
+	return settle.complete(capModelVisibleText(`Flow dossier: ${successful.length}/${sections.length} evidence sections synthesized.${incompleteHandoffSummary([...settle.results])}${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(debriefed.result), policy)}`));
 }
