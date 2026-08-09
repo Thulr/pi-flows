@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -74,5 +74,32 @@ test("the sandbox denies writes into the checkout but allows reads and out-of-tr
 	} finally {
 		await rm(checkout, { recursive: true, force: true });
 		await rm(scratch, { recursive: true, force: true });
+	}
+});
+
+test("a cwd set to a subdirectory still denies writes across the whole worktree", { skip: readonlySandboxAvailable() ? false : "sandbox-exec unavailable" }, async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "sb-repo-"));
+	try {
+		await run("git", ["-C", root, "init", "-q"]);
+		await writeFile(path.join(root, "README.md"), "root\n");
+		const sub = path.join(root, "src");
+		await mkdir(sub);
+		await writeFile(path.join(sub, "a.ts"), "code\n");
+		// cwd is the subdirectory, but the deny boundary must be the worktree root.
+		const wrapped = (await wrapWithReadonlySandbox("/bin/bash", ["-c", ""], sub))!;
+		const exec = async (script: string) => {
+			try {
+				await run(wrapped.command, [...wrapped.args.slice(0, 2), "/bin/bash", "-c", script]);
+				return 0;
+			} catch (error: any) {
+				return error.code ?? 1;
+			}
+		};
+		assert.notEqual(await exec(`echo pwned > ${path.join(root, "README.md")}`), 0, "write to a sibling of cwd (repo root) must be denied");
+		assert.equal((await readFile(path.join(root, "README.md"), "utf8")).trim(), "root");
+		assert.notEqual(await exec(`echo pwned > ${path.join(sub, "a.ts")}`), 0, "write inside cwd must be denied too");
+		await rm(wrapped.dir, { recursive: true, force: true });
+	} finally {
+		await rm(root, { recursive: true, force: true });
 	}
 });

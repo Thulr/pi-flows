@@ -438,10 +438,13 @@ after deciding that concurrent writes in one shared checkout are intentional.
   `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1`, which refuses
   (`BASH_READONLY_UNENFORCEABLE`) instead of falling back.
 
-Every bash-ro child additionally runs with repository-configured git helpers
-neutralized (`diff.external`, pager, fsmonitor, hooks disabled via
-`GIT_CONFIG_*`), so a plain `git diff`/`git show` cannot launch a configured
-external program regardless of the command string.
+Every bash-ro child additionally runs with several repository-configured git
+helpers neutralized via `GIT_CONFIG_*` — pager, a command-valued `fsmonitor`,
+and hooks. `diff.external` and textconv drivers are deliberately *not* forced
+off (an empty `diff.external` makes git abort every diff), so a configured
+external-diff/textconv program can still launch on a plain `git diff`/`git
+show`; on the sandbox path its checkout writes are denied at the kernel, and on
+the fallback path it is a documented residual (see the limitations below).
 
 When the sandbox enforces, verification commands that write *into* the checkout
 (a build cache, `*.tsbuildinfo`) will fail — that is the same shared-checkout

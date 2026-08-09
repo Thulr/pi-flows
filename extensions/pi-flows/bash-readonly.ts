@@ -38,14 +38,18 @@ export function bashReadonlyEnabled(value: string | undefined): boolean {
 export function splitBashReadonly(tools: string[]): { argvTools: string[]; readonly: boolean } {
 	const normalized = tools.map((tool) => tool.toLowerCase());
 	const hasReadonly = normalized.includes(BASH_READONLY_TOOL);
-	const hasBash = normalized.includes("bash");
+	// Any other mutating tool (plain bash, edit, write) makes the toolset
+	// write-capable, so it is not read-only and must not be sandboxed — the
+	// process-wide sandbox would break the explicitly granted edit/write. This
+	// mirrors canMutateWorkspace so the two never disagree.
+	const hasMutating = normalized.some((tool) => tool === "bash" || tool === "edit" || tool === "write");
 	if (!hasReadonly) return { argvTools: tools, readonly: false };
 	const argvTools: string[] = [];
 	for (const tool of tools) {
 		const mapped = tool.toLowerCase() === BASH_READONLY_TOOL ? "bash" : tool;
 		if (!argvTools.some((existing) => existing.toLowerCase() === mapped.toLowerCase())) argvTools.push(mapped);
 	}
-	return { argvTools, readonly: !hasBash };
+	return { argvTools, readonly: !hasMutating };
 }
 
 /**
@@ -162,7 +166,7 @@ function isLongAbbrev(arg: string, full: string): boolean {
 }
 // sort writes with -o/--output (abbrev) and runs a program with --compress-program (abbrev).
 const SORT_WRITES = (args: string[]) => hasShortFlag("o", "--output")(args) || args.some((arg) => isLongAbbrev(arg, "output") || isLongAbbrev(arg, "compress-program"));
-const FILE_COMPILES = hasShortFlag("C", null);
+const FILE_COMPILES = hasShortFlag("C", "--compile");
 // Leading `-s` only, not the cluster: `date -Iseconds` is a read the cluster
 // regex would misread as carrying `s`.
 const DATE_SETS = (args: string[]) => args.some((arg) => /^-s/.test(arg) || arg === "--set" || arg.startsWith("--set="));

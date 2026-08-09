@@ -85,6 +85,7 @@ const REFUSED = [
 	"date -s 2020-01-01",
 	"date -s2020-01-01",
 	"file -C -m magic",
+	"file --compile -m magic",
 	"rg --pre=sh pattern",
 	"git diff --out\\put=escaped.patch",
 	"git diff \"--output=quoted.patch\" HEAD~1",
@@ -155,6 +156,10 @@ test("splitBashReadonly maps bash-ro to bash and yields the marker only without 
 	assert.deepEqual(splitBashReadonly(["bash", "bash-ro"]), { argvTools: ["bash"], readonly: false });
 	assert.deepEqual(splitBashReadonly(["read", "grep"]), { argvTools: ["read", "grep"], readonly: false });
 	assert.deepEqual(splitBashReadonly([]), { argvTools: [], readonly: false });
+	// A write-capable tool alongside bash-ro is NOT read-only — it must not be
+	// sandboxed (that would break the granted edit/write), matching canMutateWorkspace.
+	assert.equal(splitBashReadonly(["edit", "bash-ro"]).readonly, false);
+	assert.equal(splitBashReadonly(["write", "bash-ro"]).readonly, false);
 });
 
 function registerWithMarker(marker: string | undefined, register: (pi: any) => void = registerPiFlows) {

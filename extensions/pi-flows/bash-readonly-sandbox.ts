@@ -79,15 +79,31 @@ export function buildReadonlyProfile(realCwd: string, extraDenies: string[] = []
 
 const runGit = promisify(execFile);
 
-/** Absolute, realpath-resolved git dir + common dir for a checkout, for denial; empty when not a git repo. */
-async function gitMetadataDirs(cwd: string): Promise<string[]> {
+/**
+ * The paths whose subtrees the sandbox must deny writes to for a checkout: the
+ * worktree root (so a cwd set to a subdirectory still protects the whole
+ * checkout, not just that subdir) plus the git dir and common dir (a linked
+ * worktree's live outside the root). All realpath-resolved. Empty when `cwd` is
+ * not in a git repo — the caller falls back to denying `cwd` itself.
+ */
+async function gitDenyRoots(cwd: string): Promise<string[]> {
 	try {
-		const { stdout } = await runGit("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { encoding: "utf8" });
+		const { stdout } = await runGit("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { encoding: "utf8" });
 		const dirs = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 		return await Promise.all(dirs.map((dir) => fs.realpath(dir).catch(() => path.resolve(dir))));
 	} catch {
 		return [];
 	}
+}
+
+/** Drop paths already covered by an earlier subpath in the list (dedupe/containment). */
+function minimalSubpaths(dirs: string[]): string[] {
+	const kept: string[] = [];
+	for (const dir of dirs) {
+		if (kept.some((root) => dir === root || dir.startsWith(`${root}${path.sep}`))) continue;
+		kept.push(dir);
+	}
+	return kept;
 }
 
 /**
@@ -100,10 +116,12 @@ async function gitMetadataDirs(cwd: string): Promise<string[]> {
 export async function wrapWithReadonlySandbox(command: string, args: string[], cwd: string): Promise<{ command: string; args: string[]; dir: string } | null> {
 	if (!readonlySandboxAvailable()) return null;
 	const realCwd = await fs.realpath(cwd).catch(() => path.resolve(cwd));
-	const gitDirs = (await gitMetadataDirs(realCwd)).filter((dir) => !dir.startsWith(`${realCwd}${path.sep}`) && dir !== realCwd);
+	// Deny the whole worktree root (and external git dirs), not just cwd, so a
+	// cwd set to a subdirectory can't leave the rest of the checkout writable.
+	const denyRoots = minimalSubpaths([...(await gitDenyRoots(realCwd)), realCwd]);
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-flow-sb-"));
 	const filePath = path.join(dir, "readonly.sb");
-	await fs.writeFile(filePath, buildReadonlyProfile(realCwd, gitDirs), "utf8");
+	await fs.writeFile(filePath, buildReadonlyProfile(denyRoots[0], denyRoots.slice(1)), "utf8");
 	return { command: SANDBOX_EXEC, args: ["-f", filePath, command, ...args], dir };
 }
 
