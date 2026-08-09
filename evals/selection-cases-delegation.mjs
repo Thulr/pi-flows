@@ -158,11 +158,14 @@ export const DELEGATION_SELECTION_CASES = [
 			// pattern below, so listing it here would let one on-topic mention
 			// vouch for the whole call.
 			taskPattern: "commit|history|branch",
-			// Role by role: every assigned task must itself inspect and report on
-			// the history — the lookaheads require both, so neither an off-intent
-			// sibling ("fix the flaky test") nor an off-subject one ("summarize
-			// README") can ride the top-level task's wording.
-			everyTaskPattern: "(?=[\\s\\S]*(inspect|report|review|analy|examin|summar|check))(?=[\\s\\S]*(commit|history|git))",
+			// Role by role: every assigned task must itself inspect the history AND
+			// ask for the requested output (the riskiest commit). Three lookaheads,
+			// not two — the harness stops at the admitted call and waives
+			// answerPattern, so a pair of bare "inspect git history" tasks would
+			// otherwise score as a recovery that never asks anyone for the answer.
+			// An off-intent sibling ("fix the flaky test") and an off-subject one
+			// ("summarize README") each fail on their own lookahead.
+			everyTaskPattern: "(?=[\\s\\S]*(inspect|report|review|analy|examin|summar|check))(?=[\\s\\S]*(commit|history|git))(?=[\\s\\S]*risk)",
 			// Two independent passes means two roles that can actually run.
 			knownAgentsOnly: true,
 			// …and that can actually do the assigned work: the request is for

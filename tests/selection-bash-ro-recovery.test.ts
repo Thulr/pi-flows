@@ -146,6 +146,16 @@ test("every role must itself inspect the history — an off-topic sibling cannot
 		tasks: [{ agent: "recon", task: READONLY_TASKS[0] }, { agent: "history-bot", task: READONLY_TASKS[1] }],
 	};
 	assert.match(scored([invented]).notes, /not bundled flow agents/);
+	// Inspection without the requested output is not the delegation either: the
+	// harness stops at the admitted call and waives answerPattern, so a role
+	// that is never asked for the riskiest commit must fail the binding.
+	const noAsk = {
+		why: WHY,
+		tasks: BASH_RO_FANOUT.tasks.map((task: any) => ({ ...task, task: "Inspect the git commit history on this branch." })),
+	};
+	const match = flowCallMatchesExpectation({ arguments: noAsk }, recoveryCase().expectedFlowCall);
+	assert.equal(match.pass, false);
+	assert.match(match.notes, /role task 1 did not match/);
 });
 
 test("the case binds the guidance it measures, and preflight fails when that guidance moves", () => {
