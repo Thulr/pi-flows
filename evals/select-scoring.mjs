@@ -67,6 +67,11 @@ const PRESET_CALL_KEYS = new Set([
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+// The modes whose handlers read the top-level params.cwd: single and monitor
+// directly, and a preset call through presetRunCwd (its nested roles). Every
+// other mode resolves per-role cwd only.
+const TOP_LEVEL_CWD_MODES = new Set(["single", "monitor", "preset"]);
+
 
 
 /** Declared overrides per bundled preset, read from the preset files so the eval cannot drift from them. */
@@ -356,7 +361,15 @@ function flowCallShapeMismatch(args, shape) {
 	// elsewhere: the guard stops refusing, and nothing else looks at cwd, so
 	// unrelated (or nonexistent) directories would score as a recovery.
 	if (shape.everyRoleSharesCwd) {
-		if (typeof args?.cwd === "string" && args.cwd) return `the call moves work out of the requested checkout (cwd ${args.cwd})`;
+		// Top-level cwd counts only where a handler actually consumes it —
+		// modes/single.ts and modes/monitor.ts read params.cwd, and presetRunCwd
+		// applies it to a preset's nested roles. A raw parallel/vote call builds
+		// its plans through integrationRunPlan, which resolves each ref's own
+		// cwd only, so failing such a call for a harmless top-level cwd would
+		// reject a recovery that does run in the evaluation checkout.
+		if (TOP_LEVEL_CWD_MODES.has(actualMode) && typeof args?.cwd === "string" && args.cwd) {
+			return `the call moves work out of the requested checkout (cwd ${args.cwd})`;
+		}
 		const relocated = firstSpawnAgentRefs(args ?? {}).filter((ref) => typeof ref.cwd === "string" && ref.cwd);
 		if (relocated.length > 0) {
 			return `role(s) ${[...new Set(relocated.map((ref) => `${ref.agent ?? "(unnamed)"}@${ref.cwd}`))].join(", ")} run outside the requested single checkout`;

@@ -728,7 +728,10 @@ unknown agent does not. `everyRoleSharesCwd` closes the same class on the
 other axis: cwd isolation is a real `SHARED_WRITE_CWD` recovery elsewhere (the
 guard groups refs by resolved directory and admits distinct ones), but a task
 naming one checkout is not served by roles pointed at other directories, so a
-per-role or top-level `cwd` fails the shape. Its `sourceExpectations` pin the tool guidance those
+per-role `cwd` fails the shape. Top-level `cwd` counts only in the modes whose
+handlers read it (single, monitor, and a preset's nested roles via
+`presetRunCwd`) — a raw fan-out resolves per-role directories only, so failing
+it there would reject a recovery that does run in the evaluation checkout. Its `sourceExpectations` pin the tool guidance those
 recoveries come from, so weakening that text fails preflight instead of the
 pass quietly meaning less. The new mode thresholds are
 paired explicitly:

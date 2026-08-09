@@ -95,10 +95,18 @@ test("cwd isolation is not a recovery for a task naming one checkout", () => {
 	const match = flowCallMatchesExpectation({ arguments: relocated }, recoveryCase().expectedFlowCall);
 	assert.equal(match.pass, false);
 	assert.match(match.notes, /outside the requested single checkout/);
-	// A top-level cwd moves every role together, which is still not this checkout.
-	const movedWholesale = flowCallMatchesExpectation({ arguments: { ...BASH_RO_FANOUT, cwd: "/tmp/elsewhere" } }, recoveryCase().expectedFlowCall);
-	assert.equal(movedWholesale.pass, false);
-	assert.match(movedWholesale.notes, /out of the requested checkout/);
+	// …but only where the tool reads it: a raw parallel call resolves per-role
+	// cwd only (integrationRunPlan), so a stray top-level cwd changes nothing
+	// and must not fail an otherwise-correct recovery.
+	const strayTopLevel = flowCallMatchesExpectation({ arguments: { ...BASH_RO_FANOUT, cwd: "." } }, recoveryCase().expectedFlowCall);
+	assert.equal(strayTopLevel.pass, true, strayTopLevel.notes);
+	// In single mode the handler does read it, so there the same field relocates.
+	const singleElsewhere = flowCallMatchesExpectation(
+		{ arguments: { why: WHY, agent: "overwatch", tools: "read,grep,find,ls,bash-ro", task: READONLY_TASKS[0], cwd: "/tmp/elsewhere" } },
+		{ mode: "single", everyRoleSharesCwd: true },
+	);
+	assert.equal(singleElsewhere.pass, false);
+	assert.match(singleElsewhere.notes, /out of the requested checkout/);
 });
 
 test("an unchanged retry after the refusal exceeds the budget", () => {
