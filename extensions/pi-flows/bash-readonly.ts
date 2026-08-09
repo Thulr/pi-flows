@@ -58,13 +58,13 @@ export function splitBashReadonly(tools: string[]): { argvTools: string[]; reado
  */
 export type BashReadonlyEnforcement = "sandbox" | "allowlist";
 
-export function bashReadonlyEnforcement(enforcerLoadable: boolean, sandboxUsable: boolean, allowUnsandboxed: boolean): BashReadonlyEnforcement | null {
+export function bashReadonlyEnforcement(enforcerLoadable: boolean, sandboxUsable: boolean, requireSandbox: boolean): BashReadonlyEnforcement | null {
 	if (sandboxUsable) return "sandbox";
-	// The command allowlist cannot be an exhaustive boundary — option
-	// abbreviation alone yields endless new bypasses across every tool — so it
-	// is never the *default* boundary. Off the sandbox it enforces only when the
-	// caller has explicitly accepted its best-effort nature.
-	if (enforcerLoadable && allowUnsandboxed) return "allowlist";
+	// Off the sandbox the command allowlist is the fallback, on by default. It
+	// is best-effort, not an exhaustive boundary (getopt-style option
+	// abbreviation yields endless spellings across every tool), so a caller who
+	// needs a kernel-enforced guarantee sets requireSandbox to refuse instead.
+	if (enforcerLoadable && !requireSandbox) return "allowlist";
 	return null;
 }
 
@@ -90,8 +90,8 @@ export function bashReadonlyUnenforceableError(): FlowError {
 	return flowError(
 		"BASH_READONLY_UNENFORCEABLE",
 		"bash-ro cannot be enforced on this host.",
-		"The OS read-only-checkout sandbox is unavailable or opted out (no macOS sandbox-exec, or PI_FLOWS_BASH_RO_NO_SANDBOX), and the best-effort command-allowlist fallback is not enabled — so spawning would grant the child unrestricted bash in the shared checkout.",
-		"Run on macOS (without PI_FLOWS_BASH_RO_NO_SANDBOX) so the sandbox enforces it; or, accepting that the command allowlist is best-effort not a security boundary, set PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED=1; or change the role's tools to bash (write-capable) or read,grep,find,ls.",
+		"The OS read-only-checkout sandbox is unavailable or opted out (no macOS sandbox-exec, or PI_FLOWS_BASH_RO_NO_SANDBOX), and the command-allowlist fallback is also unavailable (PI_FLOWS_BASH_RO_REQUIRE_SANDBOX is set, or the enforcer extension could not be located) — so spawning would grant the child unrestricted bash in the shared checkout.",
+		"Run on macOS (without PI_FLOWS_BASH_RO_NO_SANDBOX) so the sandbox enforces it; unset PI_FLOWS_BASH_RO_REQUIRE_SANDBOX to allow the best-effort allowlist fallback; or change the role's tools to bash (write-capable) or read,grep,find,ls.",
 	);
 }
 

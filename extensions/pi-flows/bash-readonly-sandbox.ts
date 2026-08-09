@@ -42,9 +42,9 @@ function sandboxUsable(): boolean {
 	return readonlySandboxAvailable() && !readonlySandboxDisabled(process.env.PI_FLOWS_BASH_RO_NO_SANDBOX);
 }
 
-/** Opt-in to the best-effort allowlist path where the OS sandbox is unavailable. */
-function allowUnsandboxed(): boolean {
-	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED?.trim() ?? "");
+/** Opt-in to refuse rather than use the best-effort allowlist where the OS sandbox is unavailable. */
+function requireSandbox(): boolean {
+	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_BASH_RO_REQUIRE_SANDBOX?.trim() ?? "");
 }
 
 /**
@@ -54,7 +54,7 @@ function allowUnsandboxed(): boolean {
  */
 export function resolveBashReadonlyEnforcement(readonly: boolean): { enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
 	if (!readonly) return { enforcement: null, error: null };
-	const enforcement = bashReadonlyEnforcement(bashReadonlyEnforcerAvailable(), sandboxUsable(), allowUnsandboxed());
+	const enforcement = bashReadonlyEnforcement(bashReadonlyEnforcerAvailable(), sandboxUsable(), requireSandbox());
 	return { enforcement, error: enforcement === null ? bashReadonlyUnenforceableError() : null };
 }
 

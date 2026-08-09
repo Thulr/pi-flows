@@ -433,9 +433,10 @@ after deciding that concurrent writes in one shared checkout are intentional.
   and known write/exec flags fail-closed. Because command parsing can never be
   exhaustive (getopt-style option abbreviation alone yields endless new
   spellings across every tool), the allowlist is **best-effort, not a security
-  boundary**. Where the OS sandbox is unavailable it enforces only when the
-  caller sets `PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED=1`; otherwise the spawn is
-  refused (`BASH_READONLY_UNENFORCEABLE`).
+  boundary**. It is the default fallback where the OS sandbox is unavailable;
+  a caller who needs a kernel-enforced guarantee sets
+  `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1`, which refuses
+  (`BASH_READONLY_UNENFORCEABLE`) instead of falling back.
 
 Every bash-ro child additionally runs with repository-configured git helpers
 neutralized (`diff.external`, pager, fsmonitor, hooks disabled via
@@ -447,10 +448,11 @@ When the sandbox enforces, verification commands that write *into* the checkout
 mutation the guard exists to prevent; run those in a non-`bash-ro` role or a
 distinct cwd. A toolset carrying both `bash` and `bash-ro` is write-capable
 (plain bash wins). A `bash-ro` spawn is refused with
-`BASH_READONLY_UNENFORCEABLE` when the OS sandbox is unavailable and the
-best-effort allowlist fallback is not opted in, rather than silently granting
-an unrestricted shell. The child span records which layer enforced it
-(`flow.bash_ro.enforcement` = `sandbox` or `allowlist`).
+`BASH_READONLY_UNENFORCEABLE` only when no layer can enforce it — the enforcer
+extension cannot be located, or `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX` is set on a
+host without the sandbox — rather than silently granting an unrestricted shell.
+The child span records which layer enforced it (`flow.bash_ro.enforcement` =
+`sandbox` or `allowlist`).
 
 ## Evaluate mode (generator-evaluator loop)
 

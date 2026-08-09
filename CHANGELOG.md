@@ -36,8 +36,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   survives `--no-extensions`. The child span records the enforcing layer as
   `flow.bash_ro.enforcement`. Because command parsing can never be an
   exhaustive boundary (option abbreviation yields endless bypasses), the
-  allowlist is best-effort: off the sandbox, `bash-ro` runs only with
-  `PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED=1` and is otherwise refused. Every
+  allowlist is best-effort: off the sandbox it is the default fallback, and a
+  caller who needs a kernel-enforced guarantee sets
+  `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse instead. Every
   bash-ro child also runs with repository-configured git helpers
   (`diff.external`, pager, fsmonitor, hooks) neutralized via `GIT_CONFIG_*`, so
   a plain `git diff`/`git show` cannot launch a configured external program.

@@ -122,13 +122,14 @@ test("bash-ro refusal names the offending segment, not just the whole command", 
 	assert.doesNotMatch(reason.split(":")[0] + reason.split(":")[1], /git status/);
 });
 
-test("bashReadonlyEnforcement uses the sandbox first; the allowlist only when explicitly opted in", () => {
+test("bashReadonlyEnforcement uses the sandbox first, then the allowlist fallback by default", () => {
 	assert.equal(bashReadonlyEnforcement(true, true, false), "sandbox");
 	assert.equal(bashReadonlyEnforcement(false, true, false), "sandbox");
-	// Off the sandbox the allowlist enforces only with the opt-in — never by default.
-	assert.equal(bashReadonlyEnforcement(true, false, false), null);
-	assert.equal(bashReadonlyEnforcement(true, false, true), "allowlist");
-	assert.equal(bashReadonlyEnforcement(false, false, true), null);
+	// Off the sandbox the allowlist is the default fallback...
+	assert.equal(bashReadonlyEnforcement(true, false, false), "allowlist");
+	// ...unless the caller requires the sandbox, or the enforcer can't load.
+	assert.equal(bashReadonlyEnforcement(true, false, true), null);
+	assert.equal(bashReadonlyEnforcement(false, false, false), null);
 });
 
 test("bashReadonlyGitEnv neutralizes repository-configured git exec helpers", () => {

@@ -20,11 +20,10 @@ import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 
 // The stub pi writes its calls.jsonl into the child cwd, which the real
 // bash-ro OS sandbox (deny writes under cwd) would block — so every
-// stub-driven flow opts out of it, and opts into the best-effort allowlist
-// path so bash-ro children still spawn. The sandbox's own behavior is covered
-// against real sandbox-exec in tests/bash-readonly-sandbox.test.ts.
+// stub-driven flow opts out of it and exercises the default allowlist
+// fallback. The sandbox's own behavior is covered against real sandbox-exec
+// in tests/bash-readonly-sandbox.test.ts.
 process.env.PI_FLOWS_BASH_RO_NO_SANDBOX = "1";
-process.env.PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED = "1";
 
 export const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
