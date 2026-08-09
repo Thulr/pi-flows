@@ -20,6 +20,7 @@ import { makeTraceSink } from "../extensions/pi-flows/trace-sink.ts";
 import { parseTraceJsonl, type TraceSpanRecord } from "../extensions/pi-flows/trace.ts";
 import {
 	emptyUsage,
+	makeSettle,
 	type DelegationContract,
 	type FlowDiscovery,
 	type FlowMode,
@@ -125,6 +126,8 @@ async function evidenceRunAt(
 		agentScope: "user",
 		defaultCwd: cwd,
 		makeDetails: catalog.makeDetails,
+		// Built exactly as the registry builds it, so this fake cannot drift.
+		settle: makeSettle(mode, catalog.makeDetails(mode)),
 		runChild: async (options) => {
 			const reply = replies[options.agentName];
 			const index = served.get(options.agentName) ?? 0;

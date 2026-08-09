@@ -9,7 +9,8 @@ import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumptio
 import { handleGraph } from "../extensions/pi-flows/modes/graph.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleSingle } from "../extensions/pi-flows/modes/single.ts";
-import { emptyUsage, type FlowDiscovery, type FlowRunResult, type ModeDeps, type RunChildOptions } from "../extensions/pi-flows/types.ts";
+import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
+import { emptyUsage, makeSettle, type FlowDiscovery, type FlowRunResult, type ModeDeps, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
 const discovery: FlowDiscovery = {
 	agents: [
@@ -37,6 +38,10 @@ function fakeResult(options: RunChildOptions, text: string): FlowRunResult {
 
 function makeDeps(params: Record<string, unknown>, runChild: ModeDeps["runChild"]): ModeDeps {
 	const catalog = createAgentCatalog(discovery, "user");
+	// The settle is built exactly as the registry builds it — from the detected
+	// mode's own details builder — so this fake cannot drift from production.
+	const detected = detectRunMode(params);
+	const mode = "mode" in detected ? detected.mode : "parallel";
 	return {
 		params,
 		discovery,
@@ -50,6 +55,7 @@ function makeDeps(params: Record<string, unknown>, runChild: ModeDeps["runChild"
 		agentScope: "user",
 		defaultCwd: "/tmp",
 		makeDetails: catalog.makeDetails,
+		settle: makeSettle(mode, catalog.makeDetails(mode)),
 		runChild,
 		concurrency: 4,
 	};

@@ -6,8 +6,10 @@
  * plumbing around it stay separately reviewable. Handlers keep importing both
  * from runner.ts, which re-exports this module.
  */
-import type { Budget, ChildSpanScope, DelegationContract, FlowAgentRefInput, FlowMode, FlowRunResult, ModeDeps, RunChildOptions, SpanStage } from "./types.ts";
+import type { Budget, ChildSpanScope, DelegationContract, FlowAgentRefInput, FlowError, FlowMode, FlowRunResult, ModeDeps, ModeOutput, RunChildOptions, SpanStage } from "./types.ts";
 import { makeEmptyRunResult, sanitizeText } from "./sanitize.ts";
+import type { Settle } from "./settle.ts";
+import { validateSharedWriteCwd } from "./validate.ts";
 
 export async function mapWithConcurrency<TIn, TOut>(
 	items: TIn[],
@@ -102,6 +104,14 @@ function emptyRun(ref: FlowAgentRefInput, task: string, deps: ModeDeps, error?: 
 	return result;
 }
 
+/**
+ * The bare concurrent fan-out. Superseded by {@link runWave} as the
+ * handler-facing entry point: this neither enforces the shared-write guard nor
+ * feeds the settle, so every direct caller re-sequences both by hand — and a
+ * new fan-out that forgets the guard call loses it silently. It stays exported
+ * unchanged until the mode sweep migrates the remaining direct callers;
+ * runWave wraps it, so there is still exactly one fan-out loop.
+ */
 export async function runAgentFanout(
 	deps: ModeDeps,
 	mode: FlowMode,
@@ -142,6 +152,41 @@ export async function runAgentFanout(
 		emit();
 		return result;
 	});
+}
+
+export interface WaveRunOptions {
+	/** Board text per settled count, exactly as the fan-out emits it. */
+	statusText: (settled: number, total: number) => string;
+	stage?: SpanStage;
+}
+
+/** How one wave settled: refused by the gate with zero children spawned, or run with its results (already tracked). */
+export type WaveDispatch =
+	| { status: "refused"; error: FlowError; output: ModeOutput }
+	| { status: "ok"; results: FlowRunResult[] };
+
+/**
+ * Dispatch one concurrent wave through the gate that governs it. The
+ * shared-write guard runs here, over the wave's own refs, BEFORE any spawn —
+ * the fan-out is the one place that always holds the wave, the discovery, the
+ * cwd, and the concurrency, so a new fan-out mode cannot forget the guard and
+ * no caller fabricates a wave to feed it. There is deliberately no opt-out
+ * parameter: `allowSharedWriteCwd` is the gate's own input, read from the
+ * call's params like every other gate input.
+ *
+ * A refusal returns before anything spawns, shaped by the settle so the runs
+ * that already ran stay visible. Otherwise the wave runs exactly as
+ * {@link runAgentFanout} runs it — blocking-error pre-check, live emits over
+ * the settle's prior results plus the wave's own, per-item scope merge, steps
+ * continuing from the settle — and the whole wave is tracked here after it
+ * settles. Callers must not track the returned results again.
+ */
+export async function runWave(deps: ModeDeps, settle: Settle, items: AgentFanoutItem[], options: WaveRunOptions): Promise<WaveDispatch> {
+	const error = validateSharedWriteCwd(deps.discovery, deps.defaultCwd, items.map((item) => item.ref), deps.params.allowSharedWriteCwd, deps.concurrency);
+	if (error) return { status: "refused", error, output: settle.refuse(error) };
+	const results = await runAgentFanout(deps, settle.mode, items, deps.concurrency, [...settle.results], options.statusText, options.stage);
+	settle.track(...results);
+	return { status: "ok", results };
 }
 
 /** How one dispatch differs from the default: its contract-derived limits and where it sits in the span tree. */
