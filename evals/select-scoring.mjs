@@ -11,7 +11,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callAdmissibilityFailure, scoringDiscovery } from "./select-admissibility.mjs";
-import { isWorkflowWorkPhase } from "../extensions/pi-flows/validate.ts";
+import { effectiveTools, firstSpawnAgentRefs, isWorkflowWorkPhase, resolvedCwd } from "../extensions/pi-flows/validate.ts";
 
 export { callAdmissibilityFailure } from "./select-admissibility.mjs";
 
@@ -66,6 +66,11 @@ const PRESET_CALL_KEYS = new Set([
 ]);
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// The modes whose handlers read the top-level params.cwd: single and monitor
+// directly, and a preset call through presetRunCwd (its nested roles). Every
+// other mode resolves per-role cwd only.
+const TOP_LEVEL_CWD_MODES = new Set(["single", "monitor", "preset"]);
 
 
 
@@ -327,6 +332,58 @@ function flowCallShapeMismatch(args, shape) {
 		const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
 		const unknown = perRoleAgentNames(args, actualMode).filter((name) => !known.has(name));
 		if (unknown.length > 0) return `role agent(s) ${[...new Set(unknown)].join(", ")} are not bundled flow agents`;
+	}
+
+	// A task that requires running commands is not delegated by roles that
+	// cannot run any: a shell-less fan-out reads as a SHARED_WRITE_CWD recovery
+	// (it is admissible) while assigning work its agents cannot do. Effective
+	// tools are resolved by the tool's own predicate — a per-role override else
+	// the agent's frontmatter — so `bash-ro` counts and pi defaults (which
+	// include bash) count, while an unknown agent resolves to nothing and fails.
+	if (shape.everyRoleShellCapable) {
+		const refs = firstSpawnAgentRefs(args ?? {});
+		const shell = (ref) => {
+			const tools = effectiveTools(scoringDiscovery, ref);
+			if (tools === null) return false;
+			if (tools === undefined) return true;
+			return tools.some((tool) => ["bash", "bash-ro"].includes(tool.toLowerCase()));
+		};
+		if (refs.length === 0) return "no first-spawn role to check for shell access";
+		const shellLess = refs.filter((ref) => !shell(ref));
+		if (shellLess.length > 0) {
+			return `role(s) ${[...new Set(shellLess.map((ref) => ref.agent ?? "(unnamed)"))].join(", ")} have no shell in their effective tools, so they cannot run the requested commands`;
+		}
+	}
+
+	// cwd isolation is a legitimate SHARED_WRITE_CWD recovery in general — the
+	// guard groups refs by resolved directory and admits distinct ones — but a
+	// case whose task names one checkout is not satisfied by roles pointed
+	// elsewhere: the guard stops refusing, and nothing else looks at cwd, so
+	// unrelated (or nonexistent) directories would score as a recovery.
+	if (shape.everyRoleSharesCwd) {
+		// Top-level cwd counts only where a handler actually consumes it —
+		// modes/single.ts and modes/monitor.ts read params.cwd, and presetRunCwd
+		// applies it to a preset's nested roles. A raw parallel/vote call builds
+		// its plans through integrationRunPlan, which resolves each ref's own
+		// cwd only, so failing such a call for a harmless top-level cwd would
+		// reject a recovery that does run in the evaluation checkout.
+		// Containment, not equality, over paths resolved exactly as the handlers
+		// resolve them (resolvedCwd against the caller's directory): ".", the
+		// checkout's own absolute path, and a subdirectory of it all name the
+		// requested checkout — a role can inspect this branch from any of them.
+		// Only a directory outside the checkout is a relocation.
+		const relocatedPath = (cwd) => {
+			if (typeof cwd !== "string" || !cwd) return false;
+			const relative = path.relative(repoRoot, resolvedCwd(repoRoot, cwd));
+			return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+		};
+		if (TOP_LEVEL_CWD_MODES.has(actualMode) && relocatedPath(args?.cwd)) {
+			return `the call moves work out of the requested checkout (cwd ${args.cwd})`;
+		}
+		const relocated = firstSpawnAgentRefs(args ?? {}).filter((ref) => relocatedPath(ref.cwd));
+		if (relocated.length > 0) {
+			return `role(s) ${[...new Set(relocated.map((ref) => `${ref.agent ?? "(unnamed)"}@${ref.cwd}`))].join(", ")} run outside the requested single checkout`;
+		}
 	}
 
 	// A disjunction of allowed sub-shapes on top of the shared fields above.
