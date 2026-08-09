@@ -315,7 +315,7 @@ function asList(value) {
 // scorer would silently ignore. firstCall is meaningful only on a top-level
 // expectation — inside anyOf arms and forbidden shapes it would be a silent
 // no-op, so it is unknown there.
-const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly", "everyRoleShellCapable"]);
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly", "everyRoleShellCapable", "everyRoleSharesCwd"]);
 
 function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
 	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
@@ -350,7 +350,7 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 	if (shape.firstCall !== undefined && typeof shape.firstCall !== "boolean") {
 		issues.push(`${label}.firstCall must be a boolean`);
 	}
-	for (const flagField of ["knownAgentsOnly", "everyRoleShellCapable"]) {
+	for (const flagField of ["knownAgentsOnly", "everyRoleShellCapable", "everyRoleSharesCwd"]) {
 		if (shape[flagField] !== undefined && shape[flagField] !== true) {
 			issues.push(`${label}.${flagField} must be true when present — false is the default and would constrain nothing`);
 		}

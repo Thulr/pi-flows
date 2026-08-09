@@ -724,7 +724,11 @@ with read-only shell commands, and dropping the shell entirely is admissible —
 so without that predicate, abandoning the work would score as a recovery.
 Effective tools are resolved by the tool's own `effectiveTools` (a per-role
 override else the agent's frontmatter), so `bash-ro` satisfies it and an
-unknown agent does not. Its `sourceExpectations` pin the tool guidance those
+unknown agent does not. `everyRoleSharesCwd` closes the same class on the
+other axis: cwd isolation is a real `SHARED_WRITE_CWD` recovery elsewhere (the
+guard groups refs by resolved directory and admits distinct ones), but a task
+naming one checkout is not served by roles pointed at other directories, so a
+per-role or top-level `cwd` fails the shape. Its `sourceExpectations` pin the tool guidance those
 recoveries come from, so weakening that text fails preflight instead of the
 pass quietly meaning less. The new mode thresholds are
 paired explicitly:

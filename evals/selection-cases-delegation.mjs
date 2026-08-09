@@ -172,6 +172,12 @@ export const DELEGATION_SELECTION_CASES = [
 			// recovery while quietly abandoning the task. `bash-ro` satisfies it —
 			// which is the whole point of the recovery this case measures.
 			everyRoleShellCapable: true,
+			// …in the checkout the request names. cwd isolation is a real
+			// SHARED_WRITE_CWD recovery elsewhere, and the guard admits distinct
+			// directories, but this task inspects THIS branch in THIS checkout:
+			// pointing the roles at other directories (or nonexistent ones) would
+			// stop the refusal without doing the requested work.
+			everyRoleSharesCwd: true,
 			anyOf: [
 				{ mode: "parallel", minTasks: 2 },
 				{ mode: "vote", minTasks: 2 },

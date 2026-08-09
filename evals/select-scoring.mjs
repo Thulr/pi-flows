@@ -350,6 +350,19 @@ function flowCallShapeMismatch(args, shape) {
 		}
 	}
 
+	// cwd isolation is a legitimate SHARED_WRITE_CWD recovery in general — the
+	// guard groups refs by resolved directory and admits distinct ones — but a
+	// case whose task names one checkout is not satisfied by roles pointed
+	// elsewhere: the guard stops refusing, and nothing else looks at cwd, so
+	// unrelated (or nonexistent) directories would score as a recovery.
+	if (shape.everyRoleSharesCwd) {
+		if (typeof args?.cwd === "string" && args.cwd) return `the call moves work out of the requested checkout (cwd ${args.cwd})`;
+		const relocated = firstSpawnAgentRefs(args ?? {}).filter((ref) => typeof ref.cwd === "string" && ref.cwd);
+		if (relocated.length > 0) {
+			return `role(s) ${[...new Set(relocated.map((ref) => `${ref.agent ?? "(unnamed)"}@${ref.cwd}`))].join(", ")} run outside the requested single checkout`;
+		}
+	}
+
 	// A disjunction of allowed sub-shapes on top of the shared fields above.
 	if (Array.isArray(shape.anyOf) && shape.anyOf.length > 0) {
 		const mismatches = shape.anyOf.map((arm) => flowCallShapeMismatch(args, arm)).filter((note) => note !== null);

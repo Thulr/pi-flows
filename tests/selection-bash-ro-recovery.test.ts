@@ -83,6 +83,24 @@ test("dropping the shell is not a recovery — the roles could not run the reque
 	assert.match(match.notes, /no shell in their effective tools/);
 });
 
+test("cwd isolation is not a recovery for a task naming one checkout", () => {
+	// Distinct per-role cwds make the guard admit the plain-bash pair (it groups
+	// by resolved directory), but the request is to inspect this branch in this
+	// checkout — so the refusal stops without the work being done.
+	const relocated = {
+		why: WHY,
+		tasks: PLAIN_BASH_FANOUT.tasks.map((task: any, index: number) => ({ ...task, cwd: `/tmp/checkout-${index}` })),
+	};
+	assert.equal(callAdmissibilityFailure(relocated), null, "distinct cwds are admissible — only the case shape rejects them");
+	const match = flowCallMatchesExpectation({ arguments: relocated }, recoveryCase().expectedFlowCall);
+	assert.equal(match.pass, false);
+	assert.match(match.notes, /outside the requested single checkout/);
+	// A top-level cwd moves every role together, which is still not this checkout.
+	const movedWholesale = flowCallMatchesExpectation({ arguments: { ...BASH_RO_FANOUT, cwd: "/tmp/elsewhere" } }, recoveryCase().expectedFlowCall);
+	assert.equal(movedWholesale.pass, false);
+	assert.match(movedWholesale.notes, /out of the requested checkout/);
+});
+
 test("an unchanged retry after the refusal exceeds the budget", () => {
 	const result = scored([PLAIN_BASH_FANOUT, PLAIN_BASH_FANOUT]);
 	assert.equal(result.pass, false);
