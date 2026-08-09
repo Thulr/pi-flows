@@ -711,7 +711,17 @@ independent-voter panel on the first call, must never set
 the observed refuse/retry/bypass sequence fails on measurement on all three
 axes. Worktree isolation is deliberately not an allowed arm there: worktree
 mode refuses a dirty source by default and branches its workers from committed
-HEAD, so it cannot review uncommitted state. The new mode thresholds are
+HEAD, so it cannot review uncommitted state. `readonly-shell-fanout-bash-ro-recovery`
+scores the recovery itself rather than the first call: concurrent shell-driven
+inspection of one checkout gets the obvious plain-`bash` fan-out refused, and
+the budgeted refusal buys exactly one retry that must actually change the
+topology — swapping `bash` for `bash-ro` (bash under the child-enforced
+read-only allowlist, so not write-capable) is admitted at full concurrency,
+alongside serialization, non-shell agents, and a voter panel, while
+`allowSharedWriteCwd:true` stays forbidden for work the request calls
+read-only. Its `sourceExpectations` pin the tool guidance those recoveries come
+from, so weakening that text fails preflight instead of the pass quietly
+meaning less. The new mode thresholds are
 paired explicitly:
 one typo is not `workflow`, one branch lookup or ordinary two-file fix is not
 `worktree`, an unrequested constrained decision is not `debate`, one source is not
@@ -923,7 +933,10 @@ blocked, and an explicitly named nonexistent ledger fails eval preflight.
 
 ## Add a case
 
-Append to `cases.mjs`, `pattern-cases.mjs`, or `selection-cases.mjs`, then register
+Append to `cases.mjs`, `pattern-cases.mjs`, or — for selection cases — the half
+of the split corpus the case belongs to (`selection-cases-no-flow.mjs` for tasks
+the parent must answer itself, `selection-cases-delegation.mjs` for tasks it must
+delegate; `selection-cases.mjs` only assembles the two). Then register
 the stable case id in `case-contract.mjs` with one portfolio suite
 (`representative`, `capability`, `regression`, or `adversarial`), a task-family
 label, and the structural fields for decomposability, dependency depth, shared

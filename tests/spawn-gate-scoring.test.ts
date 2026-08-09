@@ -6,7 +6,7 @@
 // rather than re-derived, so the scored rule cannot drift from the enforced one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callAdmissibilityFailure, flowCallMatchesExpectation } from "../evals/select.mjs";
+import { callAdmissibilityFailure, flowCallMatchesExpectation, letRefusalPlayOut } from "../evals/select.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 import { spawnJustificationMissing } from "../extensions/pi-flows/validate.ts";
 
@@ -74,11 +74,36 @@ test("non-spawning surfaces are exempt, exactly as in the tool", () => {
 
 test("every spawning selection fixture is already admissible — the gate needs no fixture edits", () => {
 	for (const testCase of SELECTION_CASES.filter((c) => c.expectFlow)) {
-		for (const args of testCase.mock.flowCallArgs ?? []) {
+		const calls = testCase.mock.flowCallArgs ?? [];
+		// A recovery case mocks the sequence it scores, so its refused calls are
+		// the point — but only up to the budget it declares, and only ahead of a
+		// call the tool actually runs. Everything else must be admissible: an
+		// unbudgeted refused mock means the fixture (or the gate) is wrong.
+		const budget = testCase.maxRefusedCalls ?? 0;
+		const refusals = calls.map((args: any) => callAdmissibilityFailure(args));
+		const refusedIndexes = refusals.flatMap((refusal: any, index: number) => (refusal ? [index] : []));
+		assert.ok(
+			refusedIndexes.length <= budget,
+			`${testCase.name}: ${refusedIndexes.length} refused mock call(s) exceed the case budget of ${budget} — ${JSON.stringify(refusals.filter(Boolean))}`,
+		);
+		// A refused mock call models a sequence the harness must be able to
+		// observe: only a refusal the play-out policy lets run leaves the model a
+		// turn to recover in, so a mock that refuses on a terminating code
+		// describes a live run that can never happen.
+		for (const index of refusedIndexes) {
+			assert.ok(
+				// index + 1: the harness asks after pushing the execution, so the
+				// count it passes is 1-based (select.mjs) — an off-by-one here
+				// would make this check laxer than the rule it mirrors.
+				letRefusalPlayOut(calls[index], index + 1, testCase),
+				`${testCase.name}: mock call ${index + 1} is refused ${refusals[index].code}, which terminates the run instead of letting the model recover`,
+			);
+		}
+		if (calls.length > 0) {
 			assert.equal(
-				callAdmissibilityFailure(args),
+				refusals.at(-1),
 				null,
-				`${testCase.name}: a dry-run mock the tool would refuse means the fixture (or the gate) is wrong`,
+				`${testCase.name}: the last dry-run mock call must be one the tool would run, not a refusal`,
 			);
 		}
 	}

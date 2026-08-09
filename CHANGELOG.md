@@ -20,6 +20,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   refused with the new `BASH_READONLY_UNENFORCEABLE` error instead of granted
   an unrestricted shell. This is coordination safety against ad-hoc mutations
   of a shared checkout.
+- A selection-eval case (`readonly-shell-fanout-bash-ro-recovery`) scoring the
+  `bash-ro` recovery from `SHARED_WRITE_CWD`: a concurrent read-only shell
+  fan-out in one checkout may spend one refusal, after which swapping `bash`
+  for `bash-ro` — like serializing, dropping the shell, or a voter panel —
+  must actually run, and `allowSharedWriteCwd:true` stays forbidden for work
+  the request describes as read-only.
 
 ### Changed
 

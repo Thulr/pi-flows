@@ -39,7 +39,15 @@ export function captureReleaseSystem(root) {
 	const promptHashes = fileHashes(root, promptFiles);
 	const topologyFiles = trackedFiles(root, ["extensions/pi-flows/modes", "extensions/pi-flows/topology.ts"]);
 	const harnessFiles = trackedFiles(root, ["evals"]).filter((file) => file.endsWith(".mjs"));
-	const suiteFiles = trackedFiles(root, ["evals/cases.mjs", "evals/pattern-cases.mjs", "evals/selection-cases.mjs", "evals/case-contract.mjs", "evals/fixtures"]);
+	// Derived, not enumerated: every module holding case literals must move this
+	// digest, and a hand-listed set silently stops identifying the suite the
+	// first time a corpus file is split (the selection corpus already is). The
+	// pattern over-includes rather than under-includes — a case-adjacent module
+	// with no literals costs a digest change, a missed one costs suite identity.
+	const suiteFiles = [
+		...trackedFiles(root, ["evals"]).filter((file) => /(^|\/)(.*cases.*|case-contract)\.mjs$/.test(file)),
+		...trackedFiles(root, ["evals/fixtures"]),
+	].sort();
 	return {
 		code: {
 			commit: git(root, ["rev-parse", "HEAD"]),

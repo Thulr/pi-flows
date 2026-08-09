@@ -143,6 +143,7 @@ register([
 ], "capability", "delegation-selection", decision);
 register([
 	"independent-review-safe-first-call",
+	"readonly-shell-fanout-bash-ro-recovery",
 ], "regression", "delegation-selection", review);
 register([
 	"implicit-evidence-corpus-uses-dossier",
