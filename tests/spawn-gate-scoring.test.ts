@@ -75,35 +75,38 @@ test("non-spawning surfaces are exempt, exactly as in the tool", () => {
 test("every spawning selection fixture is already admissible — the gate needs no fixture edits", () => {
 	for (const testCase of SELECTION_CASES.filter((c) => c.expectFlow)) {
 		const calls = testCase.mock.flowCallArgs ?? [];
-		// A recovery case mocks the sequence it scores, so its refused calls are
-		// the point — but only up to the budget it declares, and only ahead of a
-		// call the tool actually runs. Everything else must be admissible: an
-		// unbudgeted refused mock means the fixture (or the gate) is wrong.
+		if (calls.length === 0) continue;
+		// A mocked sequence must be one the harness could actually observe. The
+		// harness terminates on the FIRST admitted execution (select.mjs), so
+		// every call ahead of the last must be a refusal — an admitted call in
+		// the middle describes a live run that ends there, with the "recovery"
+		// after it unreachable. Each of those refusals must also be one the
+		// play-out policy lets run (a terminating code leaves no turn to recover
+		// in) and must fit the budget the case declares. The last call is the
+		// one the tool runs: an unbudgeted or terminal refusal there means the
+		// fixture (or the gate) is wrong.
 		const budget = testCase.maxRefusedCalls ?? 0;
 		const refusals = calls.map((args: any) => callAdmissibilityFailure(args));
-		const refusedIndexes = refusals.flatMap((refusal: any, index: number) => (refusal ? [index] : []));
-		assert.ok(
-			refusedIndexes.length <= budget,
-			`${testCase.name}: ${refusedIndexes.length} refused mock call(s) exceed the case budget of ${budget} — ${JSON.stringify(refusals.filter(Boolean))}`,
+		assert.equal(
+			refusals.at(-1),
+			null,
+			`${testCase.name}: the last dry-run mock call must be one the tool would run, not a refusal`,
 		);
-		// A refused mock call models a sequence the harness must be able to
-		// observe: only a refusal the play-out policy lets run leaves the model a
-		// turn to recover in, so a mock that refuses on a terminating code
-		// describes a live run that can never happen.
-		for (const index of refusedIndexes) {
+		assert.ok(
+			calls.length - 1 <= budget,
+			`${testCase.name}: ${calls.length - 1} pre-recovery mock call(s) exceed the refusal budget of ${budget}`,
+		);
+		for (const [index, refusal] of refusals.slice(0, -1).entries()) {
+			assert.ok(
+				refusal,
+				`${testCase.name}: mock call ${index + 1} is admitted but is not the last — the harness stops at the first admitted call, so nothing after it could be observed live`,
+			);
 			assert.ok(
 				// index + 1: the harness asks after pushing the execution, so the
 				// count it passes is 1-based (select.mjs) — an off-by-one here
 				// would make this check laxer than the rule it mirrors.
 				letRefusalPlayOut(calls[index], index + 1, testCase),
-				`${testCase.name}: mock call ${index + 1} is refused ${refusals[index].code}, which terminates the run instead of letting the model recover`,
-			);
-		}
-		if (calls.length > 0) {
-			assert.equal(
-				refusals.at(-1),
-				null,
-				`${testCase.name}: the last dry-run mock call must be one the tool would run, not a refusal`,
+				`${testCase.name}: mock call ${index + 1} is refused ${refusal.code}, which terminates the run instead of letting the model recover`,
 			);
 		}
 	}
