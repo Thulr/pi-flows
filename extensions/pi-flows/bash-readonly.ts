@@ -128,7 +128,7 @@ const INSPECTOR_SCREENS: Record<string, (args: string[]) => string | null> = {
 	uniq: (args) => uniqPositionals(args) > 1 ? "uniq with a second path writes it" : null,
 	date: (args) => DATE_SETS(args) ? "date -s/--set mutates the clock" : null,
 	file: (args) => FILE_COMPILES(args) ? "file -C compiles a magic file to disk" : null,
-	rg: (args) => args.some((arg) => arg === "--pre" || arg.startsWith("--pre=")) ? "rg --pre launches a preprocessor command" : null,
+	rg: (args) => args.some((arg) => ["--pre", "--hostname-bin"].some((flag) => arg === flag || arg.startsWith(`${flag}=`))) ? "rg --pre/--hostname-bin launches an external command" : null,
 };
 
 const FIND_FORBIDDEN = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls"];
@@ -153,6 +153,8 @@ function tokenizeSegment(segment: string): { tokens: string[] } | { refusal: str
 		const char = segment[index];
 		if (char === "\\") return { refusal: "backslash escaping can disguise a forbidden flag" };
 		if (char === "$") return { refusal: "unquoted $ expands before the command runs" };
+		if (char === "{" || char === "}") return { refusal: "unquoted brace expansion rewrites tokens before the command runs" };
+		if (char === "*" || char === "?" || char === "[") return { refusal: "unquoted glob expansion can inject repo-controlled filenames as flags; quote the pattern" };
 		if (char === "'" || char === '"') {
 			const end = segment.indexOf(char, index + 1);
 			if (end === -1) return { refusal: "unterminated quote" };
