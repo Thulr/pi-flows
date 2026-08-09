@@ -448,6 +448,45 @@ function sharedWriterRaceScenario(): FaultScenario {
 	};
 }
 
+/**
+ * The complement of shared-writer-race: two read-only reviewers whose shell is
+ * `bash-ro` (not write-capable) pointed at one working directory must be
+ * *admitted*, not refused. This pins the coordination property that bash-ro
+ * fan-out shares a checkout safely. The OS-level escapes bash-ro's sandbox
+ * contains (a configured diff.external launcher, an index refresh) are not
+ * representable here — this harness is model-free over the runChild seam and
+ * executes neither git nor the sandbox; those are documented limitations of
+ * the best-effort allowlist fallback instead.
+ */
+function bashReadonlySharedCwdScenario(): FaultScenario {
+	const cwd = workspace();
+	return {
+		id: "bash-ro-shared-cwd-admitted",
+		suite: FAULT_SUITE,
+		portfolio: "control",
+		faults: [],
+		faultKind: "none",
+		description: "Two bash-ro (read-only) reviewers point at one working directory and must be admitted, not falsely blocked.",
+		attackOpportunities: 0,
+		benignOpportunities: 1,
+		expected: {
+			outcome: { errorCode: null },
+			process: { dispatched: 2, refused: 0, unreached: [] },
+			policy: { contained: false, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 2 },
+		},
+		run: scenarioRun(() => {
+			const adapter = makeFaultAdapter({ replies: { recon: "reviewed" } });
+			const deps = faultDeps(
+				{ task: "review the shared change set", tasks: [{ agent: "recon", task: "standards review", tools: "read,grep,find,ls,bash-ro" }, { agent: "recon", task: "spec review", tools: "read,grep,find,ls,bash-ro" }] },
+				adapter,
+				cwd,
+			);
+			return { output: handleParallel(deps), adapter };
+		}, ["recon"], false),
+	};
+}
+
 function partialThenRetryScenario(): FaultScenario {
 	const cwd = workspace();
 	const partial = envelopeFor(BASE_CONTRACT, { status: "partial", unresolvedQuestions: ["subsystem B was unreachable"], retry: { retryable: true, reason: "transient" } });
@@ -728,6 +767,7 @@ export function faultScenarios(): FaultScenario[] {
 		duplicateBallotScenario(),
 		exhaustedBudgetScenario(),
 		sharedWriterRaceScenario(),
+		bashReadonlySharedCwdScenario(),
 		traceSuppressionScenario(),
 		failedVerifierScenario(),
 		partialThenRetryScenario(),

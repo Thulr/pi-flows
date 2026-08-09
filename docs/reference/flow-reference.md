@@ -454,6 +454,23 @@ host without the sandbox — rather than silently granting an unrestricted shell
 The child span records which layer enforced it (`flow.bash_ro.enforcement` =
 `sandbox` or `allowlist`).
 
+**Known limitations of the best-effort allowlist fallback.** Where the OS
+sandbox does not run (non-macOS, or opted out), a few git behaviors can still
+touch the checkout and are accepted residuals of a path documented as
+best-effort, not a security boundary:
+
+- A repository-configured `diff.external` or textconv driver runs on a plain
+  `git diff`/`git show`. Its command comes from *local* git config, which the
+  untrusted reviewed tree cannot set, and git offers no config/env switch to
+  disable it without breaking internal diff (only per-command `--no-ext-diff`).
+- `git status`/`git diff` may refresh `.git/index` stat data.
+- Command parsing cannot be exhaustive (option abbreviation).
+
+All three are contained on the sandbox path — the writes are denied at the
+kernel and git inspection still succeeds. Set
+`PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse rather than run best-effort where
+the sandbox is unavailable.
+
 ## Evaluate mode (generator-evaluator loop)
 
 The `operator` builds an artifact against the top-level `task`; a separate `redteam` judges that artifact against the goal and returns a verdict. Top-level `task` is preferred, but `evaluate.operator.task` is accepted as the goal when the top-level field is omitted. On `REVISE` the operator is re-shown **its previous artifact plus the critique** and revises it in place (rather than rebuilding from scratch); the loop stops on `PASS` or when `maxIterations` is reached, returning the last attempt either way.
