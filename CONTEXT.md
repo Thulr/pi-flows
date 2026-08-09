@@ -27,14 +27,14 @@ _Modules_: `index.ts`.
 
 The enforced direction is narrow on purpose: **Core may not import Supporting**, and the shared kernel may import only Core. Core reaching down into Generic plumbing is fine — commodity is there to be used. Core reaching sideways into the modes or the views is not: it would make the differentiator depend on the recombinations of it.
 
-Three placements are worth stating outright, because a first pass tends to put them elsewhere. **Tracing is Core, not reporting**: coordination evidence is what makes a returned finding checkable, which is the whole value proposition above — a flow that cannot show what it did has lost the thing being sold. **Redaction is Core, not plumbing**: `sanitize.ts` implements Capture policy, and what may leave a child is a guardrail, not a formatting concern. **The views are Supporting, not Generic**: they render domain concepts and must speak the glossary's terms, so they are not interchangeable commodity — but they hold no invariants, so they are not Core either.
+Four placements are worth stating outright, because a first pass tends to put them elsewhere. **Tracing is Core, not reporting**: coordination evidence is what makes a returned finding checkable, which is the whole value proposition above — a flow that cannot show what it did has lost the thing being sold. **Redaction is Core, not plumbing**: `sanitize.ts` implements Capture policy, and what may leave a child is a guardrail, not a formatting concern. **The views are Supporting, not Generic**: they render domain concepts and must speak the glossary's terms, so they are not interchangeable commodity — but they hold no invariants, so they are not Core either. **The shared-write gate's fan-out position is plumbing, not policy**: the rule is Core (`validateSharedWriteCwd` in `validate.ts`); `runWave` in Generic `dispatch.ts` invokes it at the one position that knows the concurrent set, so the fan-out enforces the Core-owned predicate without owning it.
 
 ## Language
 
 ### Delegation model
 
 **Flow**:
-One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it has a mode and a settled outcome of its own, and it is the thing a budget, a root span, and a checkpoint attach to when the call configures them. A flow refused before it spawns anything is still a flow. Its lifecycle is an explicit progression — refused → admitted → dispatched → settled — owned by the aggregate root in `flow.ts`.
+One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it has a mode and a settled outcome of its own, and it is the thing a budget, a root span, and a checkpoint attach to when the call configures them. A flow refused before it spawns anything is still a flow. Its lifecycle is an explicit progression — described, or refused → admitted → dispatched → settled — owned by the aggregate root in `flow.ts`. A **described** flow answered a describe surface (`list`, `showConfig`) from inside the admission walk: it spawned nothing and is neither refused nor admitted, and the walk fixes its precedence (list over showConfig over run modes, before preset expansion).
 _Avoid_: job, session
 
 **Admission**:

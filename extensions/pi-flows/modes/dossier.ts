@@ -3,7 +3,7 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
-import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.ts";
+import { fanoutThenTailCriticalPath, plannedRefs, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
  * Dossier's plan: the concurrent evidence-section wave, then the synthesizer
@@ -15,7 +15,7 @@ export function planDossier(params: any): ModePlan {
 	if (!params.dossier) return { waves: [], opening: [] };
 	const spec = params.dossier ?? {};
 	const sections = plannedRefs(spec.sections);
-	const guarded = !(Array.isArray(spec.sections) && spec.sections.length > MAX_PARALLEL_TASKS);
+	const guarded = withinFanoutCap(spec.sections);
 	const debrief = plannedRefs([spec.debrief?.agent ? spec.debrief : { agent: "debrief" }]);
 	return {
 		waves: [

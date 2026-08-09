@@ -1,4 +1,4 @@
-import type { FlowRunResult } from "../types.ts";
+import { MAX_PARALLEL_TASKS, type FlowRunResult } from "../types.ts";
 
 // The plan vocabulary (CONTEXT.md: Wave). A mode's topology used to be written
 // five times — the handler, the requested-agents lambda, the shared-write
@@ -95,6 +95,16 @@ export type ModeCriticalPathFn = (params: any, results: FlowRunResult[]) => numb
  * resolve to a write-capable toolset. The tool itself refuses these calls at
  * its schema layer — a refusal outside the plan's vocabulary.
  */
+/**
+ * Whether a fan-out list stays inside MAX_PARALLEL_TASKS — the one shape of
+ * every plan's guarded marker for a cap-refusable wave. An over-cap fan-out is
+ * refused (TOO_MANY_TASKS, or at the schema layer) before the shared-write
+ * guard runs, so its wave stays declared but unguarded.
+ */
+export function withinFanoutCap(list: unknown): boolean {
+	return !(Array.isArray(list) && list.length > MAX_PARALLEL_TASKS);
+}
+
 export function plannedRefs(value: unknown): PlannedRef[] {
 	if (!Array.isArray(value)) return [];
 	return value.flatMap((ref): PlannedRef[] => {

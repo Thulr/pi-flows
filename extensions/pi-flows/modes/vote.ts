@@ -3,7 +3,7 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
-import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan, type PlannedWave } from "./plan.ts";
+import { fanoutThenTailCriticalPath, plannedRefs, withinFanoutCap, type ModePlan, type PlannedWave } from "./plan.ts";
 
 /**
  * Vote's plan: the voter wave (explicit list, or one agent replicated `count`
@@ -21,7 +21,7 @@ export function planVote(params: any): ModePlan {
 	const waves: PlannedWave[] = [];
 	const explicit = Array.isArray(spec.voters) && spec.voters.length > 0;
 	if (explicit) {
-		waves.push({ refs: plannedRefs(spec.voters), guarded: spec.voters.length <= MAX_PARALLEL_TASKS, contracts: "resolved" });
+		waves.push({ refs: plannedRefs(spec.voters), guarded: withinFanoutCap(spec.voters), contracts: "resolved" });
 	}
 	if (typeof spec.agent === "string" && spec.agent) {
 		if (explicit) {

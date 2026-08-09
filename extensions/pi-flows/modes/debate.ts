@@ -4,7 +4,7 @@ import { runWave } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
-import { maxRunDuration, plannedRefs, runDuration, type ModePlan } from "./plan.ts";
+import { maxRunDuration, plannedRefs, runDuration, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
  * Debate's plan: the advocate wave (repeated per round at runtime; the roles
@@ -17,7 +17,7 @@ export function planDebate(params: any): ModePlan {
 	if (!params.debate) return { waves: [], opening: [] };
 	const spec = params.debate ?? {};
 	const participants = plannedRefs(spec.participants);
-	const guarded = !(Array.isArray(spec.participants) && spec.participants.length > MAX_PARALLEL_TASKS);
+	const guarded = withinFanoutCap(spec.participants);
 	const adjudicator = plannedRefs([spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" }]);
 	return {
 		waves: [

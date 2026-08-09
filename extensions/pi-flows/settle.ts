@@ -49,11 +49,15 @@ export class Settle {
 		return this.#tracked;
 	}
 
+	/** The 1-based step the next dispatched run will hold — the one home of step arithmetic, so no dispatch site hand-computes `results.length + 1`. */
+	get nextStep(): number {
+		return this.#tracked.length + 1;
+	}
+
 	/**
-	 * Append settled runs, returning the 1-based step of the last one — the one
-	 * home of step arithmetic, replacing the hand-computed `results.length + 1`
-	 * at every dispatch site. Track a run before any return path that could
-	 * carry an output: a tracked run is what keeps its spend visible.
+	 * Append settled runs, returning the 1-based step of the last one. Track a
+	 * run before any return path that could carry an output: a tracked run is
+	 * what keeps its spend visible.
 	 */
 	track(...results: FlowRunResult[]): number {
 		this.#tracked.push(...results);

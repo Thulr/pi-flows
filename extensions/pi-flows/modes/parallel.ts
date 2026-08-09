@@ -3,7 +3,7 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
-import { maxRunDuration, plannedRefs, type ModePlan } from "./plan.ts";
+import { maxRunDuration, plannedRefs, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
  * Parallel's plan: one concurrent wave of every task, guarded — unless the
@@ -15,7 +15,7 @@ import { maxRunDuration, plannedRefs, type ModePlan } from "./plan.ts";
 export function planParallel(params: any): ModePlan {
 	if (!Array.isArray(params.tasks) || params.tasks.length === 0) return { waves: [], opening: [] };
 	const refs = plannedRefs(params.tasks);
-	const guarded = params.tasks.length <= MAX_PARALLEL_TASKS;
+	const guarded = withinFanoutCap(params.tasks);
 	return { waves: [{ refs, guarded, contracts: "resolved" }], opening: guarded ? refs : [] };
 }
 

@@ -182,7 +182,7 @@ export async function dispatchIntegrationPlan<C extends IntegrationCompletion = 
 	if (completion === "integrate" && !(options.scope ?? plan.scope)?.key) {
 		throw new Error("dispatchIntegrationPlan: an integrating consumption needs a keyed span scope on the plan or the options — without one its handoff mints no dependency key. Key the plan's scope; this is mode wiring, not a child failure.");
 	}
-	const result = await runIntegrationPlan(deps, plan, settle.mode, settle.results.length + 1, [...settle.results]);
+	const result = await runIntegrationPlan(deps, plan, settle.mode, settle.nextStep, [...settle.results]);
 	settle.track(result);
 	if (isFailed(result)) return { status: "failed", result };
 	const handoff = deps.handoffs.consumeResult({

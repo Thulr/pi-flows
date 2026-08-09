@@ -6,7 +6,7 @@ import { parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runWave } from "../runner.ts";
 import { runCheckCommand } from "../commands.ts";
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
-import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
+import { plannedRefs, sumRunDurations, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
  * Evaluate's plan: the generator wave first (it spawns before any critic and
@@ -20,7 +20,7 @@ export function planEvaluate(params: any): ModePlan {
 	const spec = params.evaluate ?? {};
 	const operator = plannedRefs([spec.operator ?? { agent: "operator" }]);
 	const criticList = Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }];
-	const guarded = !(Array.isArray(spec.redteam) && spec.redteam.length > MAX_PARALLEL_TASKS);
+	const guarded = withinFanoutCap(spec.redteam);
 	const panel = plannedRefs(criticList).slice(0, MAX_PARALLEL_TASKS);
 	const critics = guarded ? (panel.length > 0 ? panel : [{ agent: "redteam" }]) : plannedRefs(criticList);
 	return {
