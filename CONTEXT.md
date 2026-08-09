@@ -233,7 +233,7 @@ Which budget a ceiling belongs to — flow or contract. Carried wherever a ceili
 _Avoid_: budget owner, budget scope
 
 **Wrap-up notice**:
-The steer a budget delivers into a live child at 80% of a ceiling it would stop that run for: stop working and emit the return envelope now, recording unfinished work as skipped coverage and unresolved questions. Owned by the budget — the notice must name the authority and spend of the ceiling about to bind — and delivered over the file channel in `wrapup.ts`. A ceiling crossed after the notice settles the run gracefully (`budget_wrap_up`) instead of forfeiting it; a ceiling crossed before any notice could be honored keeps the hard stop.
+The steer a budget delivers into a live child at 80% of a ceiling it would stop that run for — at spawn, when a shared ceiling is already inside the window: stop working and emit the return envelope now, recording unfinished work as skipped coverage and unresolved questions. Owned by the budget — the notice must name the authority and spend of the ceiling about to bind — and delivered over the file channel in `wrapup.ts`. Requesting is not receiving: only a notice seen echoed back into the child session counts as delivered. A ceiling crossed after a delivered notice settles the run gracefully (`budget_wrap_up`) instead of forfeiting it; a ceiling crossed before any notice could be delivered keeps the hard stop.
 _Avoid_: soft limit, warning threshold, grace period
 
 **Capture policy**:

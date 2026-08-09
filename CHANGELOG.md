@@ -16,12 +16,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   envelope now, marking unfinished work as skipped coverage and
   `unresolvedQuestions`. The channel is a per-child wrap-up file announced in
   the child's environment and watched by the pi-flows extension inside the
-  child (`extensions/pi-flows/wrapup.ts`). A child that crosses the ceiling
-  after being steered is still terminated, but settles gracefully
-  (`stopReason: "budget_wrap_up"`, exit 0) and its final envelope is validated
-  normally, converting a breach from total loss into a valid partial envelope.
-  The wrap-up request (`child.wrap_up`) and a graceful exhaustion
-  (`flow.budget.graceful`) are recorded as budget events on the trace.
+  child (`extensions/pi-flows/wrapup.ts`); a child spawned while a shared
+  ceiling is already inside the window is steered at spawn. Requesting is not
+  receiving: the runner treats the notice as delivered only when it is seen
+  echoed back into the child session as a user message. A child that crosses
+  the ceiling after a delivered notice is still terminated, but settles
+  gracefully (`stopReason: "budget_wrap_up"`, exit 0) and its final envelope
+  is validated normally, converting a breach from total loss into a valid
+  partial envelope; an undelivered notice keeps the hard stop. The wrap-up
+  request (`child.wrap_up`, with `flow.budget.wrapup_delivered`) and a
+  graceful exhaustion (`flow.budget.graceful`) are recorded as budget events
+  on the trace.
 
 - A `bash-ro` tools token (`extensions/pi-flows/bash-readonly.ts`): bash under
   a read-only command allowlist — git inspection, file inspection, and repo

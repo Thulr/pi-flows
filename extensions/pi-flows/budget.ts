@@ -26,6 +26,14 @@ export interface BudgetCeiling {
 export const WRAP_UP_FRACTION = 0.8;
 
 /**
+ * First line of every wrap-up notice. A steered notice re-enters the child's
+ * event stream as a user message, and the runner recognizes that echo by this
+ * marker — the proof the notice actually reached the child session, without
+ * which an exhaustion may not settle gracefully.
+ */
+export const WRAP_UP_NOTICE_MARKER = "[pi-flows budget notice]";
+
+/**
  * The spend ceilings a budget is constructed with. An absent ceiling is uncapped
  * on that dimension. Distinct from `BudgetCeiling`, which is one ceiling paired
  * with its authority for disclosure; this is the set a budget enforces.
@@ -140,7 +148,7 @@ export class Budget {
 	 */
 	wrapUpNotice(): string {
 		return [
-			`[pi-flows budget notice] ${this.authorityLabel} budget is nearly exhausted (${this.crossed(WRAP_UP_FRACTION)?.spend ?? "approaching a configured ceiling"}).`,
+			`${WRAP_UP_NOTICE_MARKER} ${this.authorityLabel} budget is nearly exhausted (${this.crossed(WRAP_UP_FRACTION)?.spend ?? "approaching a configured ceiling"}).`,
 			"Stop working now and return your final answer in this turn; do not start new tool calls.",
 			'If this task requires a pi-flows.return-envelope.v1 JSON object, emit it now with status "partial":',
 			"record work you did not finish as skipped coverage entries and unresolvedQuestions instead of continuing past the budget.",

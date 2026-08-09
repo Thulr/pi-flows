@@ -8,7 +8,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { Budget } from "../extensions/pi-flows/types.ts";
+import { WRAP_UP_NOTICE_MARKER } from "../extensions/pi-flows/budget.ts";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
+import { ChildBudgets } from "../extensions/pi-flows/runner-budget.ts";
 import { parseTraceJsonl } from "../extensions/pi-flows/trace.ts";
 import { WRAPUP_FILE_ENV, registerWrapUpSteering, requestWrapUp } from "../extensions/pi-flows/wrapup.ts";
 import { runFlow } from "./stub-harness.ts";
@@ -137,6 +139,95 @@ test("a child steered to wrap up returns a partial envelope instead of forfeitin
 	const exhausted = events.find((span) => span.attributes?.["flow.event_name"] === "child.exhausted");
 	assert.ok(exhausted, "crossing the ceiling after the wrap-up is still recorded");
 	assert.equal(exhausted!.attributes!["flow.budget.graceful"], true);
+	assert.equal(wrapUp!.attributes!["flow.budget.wrapup_delivered"], true, "the echo of the steered notice is the delivery proof");
+});
+
+test("a notice that never reaches the child keeps exhaustion fatal", async () => {
+	// The child runs without the pi-flows extension (the stub only honors the
+	// wrap-up file when scripted to), so the requested notice is never seen.
+	// Settling gracefully here would return arbitrary truncated output as
+	// success — the hard stop must stand.
+	const secondTurn = {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: "still going, never saw the notice" }],
+			usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, cost: { total: 0.0001 }, totalTokens: 20 },
+			model: "stub-model",
+			stopReason: "endTurn",
+		},
+	};
+	const { result } = await runFlow(
+		{ agent: "recon", contract: contractWithBudget({ maxTokens: 25 }), timeoutMs: 5_000 },
+		{ recon: { reply: "still reading", extraEvents: [{ delayMs: 400, event: secondTurn }], holdOpenMs: 2_000 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.wrapUpRequested, true, "the first turn crossed 80%, so a wrap-up was requested");
+	assert.equal(child.stopReason, "budget_exceeded", "an unconfirmed notice must not soften the stop");
+	assert.equal(child.error?.code, "BUDGET_EXCEEDED");
+});
+
+test("a budget already inside the wrap-up window latches at spawn, and delivery cannot be confirmed before a request exists", () => {
+	const turnUsage = turn(0, 60, 25);
+	const near = Budget.forContract({ maxTokens: 100 })!;
+	near.charge(turnUsage);
+	const atSpawn = new ChildBudgets([near], undefined, undefined);
+	const notice = atSpawn.wrapUpAtSpawn();
+	assert.ok(notice?.includes(WRAP_UP_NOTICE_MARKER), "a child joining a nearly spent budget is told to wrap up before its first turn");
+
+	const fresh = new ChildBudgets([Budget.forContract({ maxTokens: 100 })!], undefined, undefined);
+	assert.equal(fresh.wrapUpAtSpawn(), undefined);
+	fresh.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} anything`); // no wrap-up requested yet: a stray marker echo must not pre-arm graceful settling
+
+	// A quoted marker — one steered child's output riding into a sibling's
+	// prompt — is not delivery either: only the latched notice verbatim counts.
+	const crossing = new ChildBudgets([near], undefined, undefined);
+	const latched = crossing.wrapUpAtSpawn();
+	assert.ok(latched);
+	crossing.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} some other budget's notice`);
+	crossing.chargeTurn(turn(0, 60, 25), true);
+	const settled: any = { exitCode: -1 };
+	assert.equal(crossing.settle(settled), true);
+	assert.equal(settled.error?.code, "BUDGET_EXCEEDED", "a marker without the latched notice must not soften the stop");
+
+	// The genuine echo — the latched notice verbatim — is what flips it.
+	const delivered = new ChildBudgets([near], undefined, undefined);
+	const deliveredNotice = delivered.wrapUpAtSpawn()!;
+	delivered.confirmDelivery(`context before\n${deliveredNotice}\ncontext after`);
+	delivered.chargeTurn(turn(0, 60, 25), true);
+	const gracefully: any = { exitCode: -1 };
+	assert.equal(delivered.settle(gracefully), true);
+	assert.equal(gracefully.error, undefined);
+	assert.equal(gracefully.stopReason, "budget_wrap_up");
+});
+
+test("a child spawned into a nearly spent shared budget is steered before its first turn can cross", async () => {
+	// Two scouts spend a shared flow generated-token ceiling to 89%; the third
+	// child then starts inside the wrap-up window. Its notice lands at spawn, the
+	// stub finds it on the first poll, and its answer to the steer is what
+	// crosses the ceiling — settling gracefully instead of as a breach.
+	const { result } = await runFlow(
+		{
+			task: "three readers, one ceiling",
+			maxGeneratedTokens: 18,
+			concurrency: 1,
+			timeoutMs: 5_000,
+			tasks: [
+				{ agent: "recon", task: "read A" },
+				{ agent: "recon", task: "read B" },
+				{ agent: "analyst", task: "read C" },
+			],
+		},
+		{
+			recon: { reply: "finding" },
+			analyst: { omitUsage: true, reply: "ack", wrapUpReply: "wrapped up early with partial notes", holdOpenMs: 4_000 },
+		},
+	);
+	const third = result.details.results[2];
+	assert.equal(third.wrapUpRequested, true, "the wrap-up was requested at spawn, before any settled turn");
+	assert.equal(third.stopReason, "budget_wrap_up");
+	assert.equal(third.error, undefined);
+	assert.equal(third.exitCode, 0);
 });
 
 test("a ceiling crossed with no wrap-up requested still hard-stops the child", async () => {

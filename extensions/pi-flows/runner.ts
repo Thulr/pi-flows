@@ -267,6 +267,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		// The wrap-up channel rides in the task's temp dir so it shares its
 		// lifetime; it is offered only to a child that runs under some budget.
 		const wrapUpFile = path.join(taskPrompt.dir, "wrap-up.md");
+		// A shared ceiling other children spent against can already be inside the
+		// wrap-up window; land the notice now so this child's first poll finds it
+		// instead of waiting for a settled turn that may cross the hard ceiling.
+		const spawnNotice = childBudgets.wrapUpAtSpawn();
+		if (spawnNotice) {
+			result.wrapUpRequested = true;
+			requestWrapUp(wrapUpFile, spawnNotice);
+		}
 
 		const childCwd = path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd);
 		let invocation = getPiInvocation(args);
@@ -313,6 +321,13 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						// turn (no errorMessage) proves recovery and clears the mark.
 						if (message.errorMessage && message.stopReason === "error") terminalErrorSeen = true;
 						else if (!message.errorMessage) terminalErrorSeen = false;
+					}
+					// The steered wrap-up notice re-enters the child's stream as a user
+					// message; seeing it echoed verbatim is the proof of delivery that
+					// lets a later exhaustion settle gracefully instead of forfeiting
+					// the run. ChildBudgets does the exact comparison.
+					if (message.role === "user" && Array.isArray(message.content)) {
+						childBudgets.confirmDelivery(message.content.map((part: any) => part?.type === "text" && typeof part.text === "string" ? part.text : "").join("\n"));
 					}
 					result.messages.push(storeMessage(toChildMessage(message), policy));
 					emitUpdate();

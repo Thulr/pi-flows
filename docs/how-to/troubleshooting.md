@@ -246,11 +246,13 @@ or `maxGeneratedTokens` ceiling. Cost and generated-output ceilings
 stop the active child after its completed model response; the legacy total-token
 ceiling preserves that response. All three prevent further child spawns. This
 bounds the **cost** dimension of runaway delegation that the iteration, fan-out,
-and time caps do not cover. A child that was already steered to wrap up (the
-80% wrap-up notice) does not produce this error when it crosses the ceiling —
-it settles gracefully with `stopReason: "budget_wrap_up"` and its envelope is
-validated normally — so seeing `BUDGET_EXCEEDED` means the ceiling was crossed
-before any wrap-up could be requested or honored.
+and time caps do not cover. A child that demonstrably received the 80%
+wrap-up notice (the steered message is seen echoed into its session) does not
+produce this error when it crosses the ceiling — it settles gracefully with
+`stopReason: "budget_wrap_up"` and its envelope is validated normally — so
+seeing `BUDGET_EXCEEDED` means the ceiling was crossed before any wrap-up
+could be requested, or the notice never reached the child (for example when
+child extensions are disabled, or one turn jumped from below 80% past 100%).
 
 Fix: do not automatically replay the same Flow unchanged. Ask for direction, or
 make a material, visible change that stays within the configured ceiling:

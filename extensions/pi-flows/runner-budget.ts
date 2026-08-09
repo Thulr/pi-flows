@@ -26,6 +26,16 @@ export class ChildBudgets {
 	 * being forfeited with the run.
 	 */
 	private wrapUp?: Budget;
+	/** The notice text actually landed in the wrap-up file, kept for the delivery comparison below. */
+	private notice?: string;
+	/**
+	 * Whether the requested notice observably reached the child session — the
+	 * runner saw it echoed back as a user message. Requesting is not receiving:
+	 * a child running without extensions never sees the wrap-up file, and
+	 * settling its breach gracefully would return arbitrary truncated output as
+	 * success. Without this confirmation, exhaustion stays fatal.
+	 */
+	private noticeDelivered = false;
 
 	constructor(
 		private readonly budgets: Budget[],
@@ -65,6 +75,32 @@ export class ChildBudgets {
 	}
 
 	/**
+	 * A budget already inside the wrap-up window before this child's first turn
+	 * — a shared flow ceiling other children have been spending against — latches
+	 * the wrap-up now and returns the notice, so the child finds it on its first
+	 * poll instead of only after a settled turn that may already have crossed
+	 * the hard ceiling.
+	 */
+	wrapUpAtSpawn(): string | undefined {
+		if (!this.wrapUp) {
+			this.wrapUp = this.budgets.find((budget) => budget.nearsLiveStop());
+			if (this.wrapUp) this.notice = this.wrapUp.wrapUpNotice();
+		}
+		return this.notice;
+	}
+
+	/**
+	 * A user message from the child's stream that may be the steered notice
+	 * echoed back. Delivery is confirmed only by the latched notice appearing
+	 * verbatim — a bare marker quoted in ordinary task or handoff text (one
+	 * steered child's output riding into a sibling's prompt under the same
+	 * shared budget) must not pre-arm graceful settling.
+	 */
+	confirmDelivery(echoedText: string): void {
+		if (this.notice && echoedText.includes(this.notice)) this.noticeDelivered = true;
+	}
+
+	/**
 	 * Charge one settled turn and decide the mid-stream action, which the caller
 	 * carries out: `terminate` stops the child; `wrapUpNotice` (returned once per
 	 * run, on the turn its budget latched) is delivered into the child. The hard
@@ -96,7 +132,10 @@ export class ChildBudgets {
 		}
 		if (!this.budgetStop && !this.wrapUp) {
 			this.wrapUp = this.budgets.find((budget) => budget.nearsLiveStop());
-			if (this.wrapUp) return { wrapUpNotice: this.wrapUp.wrapUpNotice() };
+			if (this.wrapUp) {
+				this.notice = this.wrapUp.wrapUpNotice();
+				return { wrapUpNotice: this.notice };
+			}
 		}
 		return {};
 	}
@@ -105,12 +144,13 @@ export class ChildBudgets {
 	 * Apply a budget-owned outcome to the result; false when no budget stopped
 	 * this run and the ordinary exit-code cascade should decide instead.
 	 *
-	 * A ceiling crossed after the child was asked to wrap up is the paid-for
-	 * envelope turn arriving, not a failure: the child is still terminated so
-	 * the spend stays bounded, but the run settles gracefully and its final
-	 * text goes on to envelope validation instead of being forfeited
-	 * (issue #104). An unobservable budget always stays a hard stop — spend
-	 * that cannot be metered cannot be graciously settled either.
+	 * A ceiling crossed after the wrap-up notice demonstrably reached the child
+	 * is the paid-for envelope turn arriving, not a failure: the child is still
+	 * terminated so the spend stays bounded, but the run settles gracefully and
+	 * its final text goes on to envelope validation instead of being forfeited
+	 * (issue #104). A notice merely requested — never seen echoed into the
+	 * child session — keeps the hard stop, and an unobservable budget always
+	 * does: spend that cannot be metered cannot be graciously settled either.
 	 */
 	settle(result: FlowRunResult): boolean {
 		if (!this.budgetStop) return false;
@@ -136,6 +176,7 @@ export class ChildBudgets {
 				attributes: {
 					"flow.budget.wrapup_agent": agentName,
 					"flow.budget.authority": this.wrapUp.authority,
+					"flow.budget.wrapup_delivered": this.noticeDelivered,
 					...budgetAttributes(this.wrapUp.snapshot()),
 				},
 			});
@@ -159,7 +200,7 @@ export class ChildBudgets {
 	}
 
 	private get graceful(): boolean {
-		return this.budgetStop?.reason === "exhausted" && this.wrapUp !== undefined;
+		return this.budgetStop?.reason === "exhausted" && this.wrapUp !== undefined && this.noticeDelivered;
 	}
 
 	private eventScope(unit: string): ChildSpanScope | undefined {

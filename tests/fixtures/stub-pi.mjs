@@ -128,7 +128,14 @@ if (wrapUpReply !== undefined && process.env.PI_FLOWS_WRAPUP_FILE) {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 	if (existsSync(wrapUpFile)) {
-		if (stubDir) writeFileSync(path.join(stubDir, "wrapup-notice.txt"), readFileSync(wrapUpFile, "utf8"));
+		const notice = readFileSync(wrapUpFile, "utf8");
+		if (stubDir) writeFileSync(path.join(stubDir, "wrapup-notice.txt"), notice);
+		// A steered user message re-enters the session event stream; the runner
+		// treats this echo as the proof the notice reached the child.
+		process.stdout.write(`${JSON.stringify({
+			type: "message_end",
+			message: { role: "user", content: [{ type: "text", text: notice }] },
+		})}\n`);
 		process.stdout.write(`${JSON.stringify({
 			type: "message_end",
 			message: {
