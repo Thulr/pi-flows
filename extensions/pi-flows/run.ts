@@ -80,11 +80,16 @@ export class Run {
 	}
 
 	/**
-	 * Retain a shape-valid envelope that failed contract validation, in stored
-	 * (capture-policy) form. It never reaches `result.envelope` — that field
+	 * Retain, in its stored (capture-policy) form, a rejected envelope whose
+	 * claims may still be surfaced. It never reaches `result.envelope` — that field
 	 * means "validated" — but the child's own claims are the evidence of what
 	 * the spend produced, and a harness formatter may surface them as
-	 * unvalidated rather than zeroing out the run (issue #104).
+	 * Unvalidated claims rather than zeroing out the run (issue #104).
+	 *
+	 * Eligibility is the caller's to decide, not this object's — see the
+	 * Unvalidated claims entry in CONTEXT.md for which rejection qualifies and
+	 * why. Retaining anything else would put claims in front of the parent that
+	 * the glossary promises are never shown.
 	 */
 	retainRejectedEnvelope(stored: DelegationReturnEnvelope): void {
 		this.#rejectedReturnEnvelope = structuredClone(stored);

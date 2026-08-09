@@ -8,7 +8,26 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Fixed
+
+- A **rejected envelope**'s claims are no longer surfaced as **unvalidated
+  claims** when its artifacts were never verified. A return envelope's three
+  contract checks now run attribution → integrity → conformance, where
+  conformance previously short-circuited ahead of integrity: an envelope that
+  missed `contract.returnSchema` was treated as surfaceable without its digests
+  or artifact containment ever being checked, so an artifact reference escaping
+  the child `cwd`, or one no longer matching its digest, could ride out on a
+  schema miss. Only an envelope that is attributable to the dispatched contract,
+  whose artifact references stay inside the child `cwd`, and whose declared
+  digests match, may have its claims surfaced.
+  Two consequences for reported errors, both only when an integrity failure and
+  a schema miss arrive together: a digest mismatch is now reported as
+  `RETURN_DIGEST_MISMATCH` rather than `RETURN_ENVELOPE_INVALID`, the more
+  serious diagnosis and the one whose fix ("treat the handoff as untrusted")
+  applies; and the other integrity failures — an artifact reference escaping the
+  child `cwd`, a missing, unreadable, or non-regular artifact, a digest naming
+  an undeclared artifact — keep `RETURN_ENVELOPE_INVALID` but now report the
+  integrity failure as the cause instead of the schema miss.
 
 ## 0.7.1 - 2026-08-09
 

@@ -97,18 +97,26 @@ function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowE
 }
 
 /**
- * The three contract checks in order, discriminating the one failure whose
- * claims may be salvaged: an envelope produced under the RIGHT contract whose
- * `data` merely missed the strict schema. An identity mismatch (stale or
- * unbound) or an artifact/digest integrity failure must never have its claims
- * surfaced as findings — those envelopes are wrong or untrustworthy, not
- * merely unvalidated.
+ * The three contract checks, ordered so the one failure whose claims may still
+ * be surfaced is the last one reachable: attribution, then integrity, then
+ * conformance. Only an envelope that is attributable to this contract, whose
+ * artifact references stay inside the child cwd, and whose declared digests
+ * match, failing nothing but the strict `data` schema, carries Unvalidated
+ * claims (CONTEXT.md).
+ *
+ * The order is the invariant, not an implementation detail. Checking conformance
+ * first would report `claimsSurfaceable` for an envelope whose digests were
+ * never verified, so an artifact reference that escaped the child cwd — or a
+ * digest that no longer matches — would ride out on a schema miss. An envelope
+ * that fails both integrity and conformance is reported as the integrity
+ * failure: the more serious diagnosis, and the one whose fix carries the right
+ * instruction for it.
  */
 function validateEnvelopeAgainstContract(
 	envelope: DelegationReturnEnvelope,
 	contract: ResolvedDelegationContract,
 	cwd: string,
-): { error: FlowError; salvageable: boolean } | null {
+): { error: FlowError; claimsSurfaceable: boolean } | null {
 	if (envelope.contractId !== contract.id) {
 		const actual = envelope.contractId ?? "(missing)";
 		return {
@@ -118,12 +126,13 @@ function validateEnvelopeAgainstContract(
 				`Expected contractId ${contract.id}, received ${actual}.`,
 				"Discard the stale or unbound handoff and rerun the child with the current delegation contract.",
 			),
-			salvageable: false,
+			claimsSurfaceable: false,
 		};
 	}
-	if (!contract.checkReturnData(envelope.data)) return { error: envelopeError("Envelope `data` does not satisfy contract.returnSchema."), salvageable: true };
 	const digestError = validateDigests(envelope, cwd);
-	return digestError ? { error: digestError, salvageable: false } : null;
+	if (digestError) return { error: digestError, claimsSurfaceable: false };
+	if (!contract.checkReturnData(envelope.data)) return { error: envelopeError("Envelope `data` does not satisfy contract.returnSchema."), claimsSurfaceable: true };
+	return null;
 }
 
 function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolicy): DelegationReturnEnvelope {
@@ -169,12 +178,11 @@ function validateReturnEnvelope(
 	const validation = validateEnvelopeAgainstContract(parsed, contract, cwd);
 	if (validation) {
 		const rejected = storedEnvelope(parsed, policy);
-		// Retained on the run — so a harness-owned formatter can surface the
-		// child's unvalidated claims instead of losing the whole spend with
-		// them — only for a strict-schema miss under the right contract. The
-		// rejected form is still returned for every failure: a digest mismatch's
-		// artifact claims are trace evidence, not salvageable findings.
-		if (validation.salvageable) run.retainRejectedEnvelope(rejected);
+		// Every failure produces a rejected envelope, because a rejected envelope is
+		// trace evidence of what the spend produced. Only the one whose attribution
+		// and integrity held is retained on the run, where a harness-owned formatter
+		// may surface its Unvalidated claims.
+		if (validation.claimsSurfaceable) run.retainRejectedEnvelope(rejected);
 		return { error: storedError(validation.error, policy), rejected };
 	}
 	const validated = { ...parsed, usage: result.usage };
