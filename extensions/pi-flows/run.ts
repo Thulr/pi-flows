@@ -80,8 +80,8 @@ export class Run {
 	}
 
 	/**
-	 * Retain a rejected envelope whose claims may still be surfaced, in stored
-	 * (capture-policy) form. It never reaches `result.envelope` — that field
+	 * Retain, in its stored (capture-policy) form, a rejected envelope whose
+	 * claims may still be surfaced. It never reaches `result.envelope` — that field
 	 * means "validated" — but the child's own claims are the evidence of what
 	 * the spend produced, and a harness formatter may surface them as
 	 * Unvalidated claims rather than zeroing out the run (issue #104).
