@@ -11,7 +11,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callAdmissibilityFailure, scoringDiscovery } from "./select-admissibility.mjs";
-import { effectiveTools, firstSpawnAgentRefs, isWorkflowWorkPhase } from "../extensions/pi-flows/validate.ts";
+import { effectiveTools, firstSpawnAgentRefs, isWorkflowWorkPhase, resolvedCwd } from "../extensions/pi-flows/validate.ts";
 
 export { callAdmissibilityFailure } from "./select-admissibility.mjs";
 
@@ -367,10 +367,15 @@ function flowCallShapeMismatch(args, shape) {
 		// its plans through integrationRunPlan, which resolves each ref's own
 		// cwd only, so failing such a call for a harmless top-level cwd would
 		// reject a recovery that does run in the evaluation checkout.
-		if (TOP_LEVEL_CWD_MODES.has(actualMode) && typeof args?.cwd === "string" && args.cwd) {
+		// Compared as resolved paths, exactly as the handlers resolve them
+		// (resolvedCwd against the caller's directory): an explicit "." or the
+		// checkout's own absolute path names the requested checkout and must
+		// pass — only a directory that differs is a relocation.
+		const relocatedPath = (cwd) => typeof cwd === "string" && cwd && resolvedCwd(repoRoot, cwd) !== repoRoot;
+		if (TOP_LEVEL_CWD_MODES.has(actualMode) && relocatedPath(args?.cwd)) {
 			return `the call moves work out of the requested checkout (cwd ${args.cwd})`;
 		}
-		const relocated = firstSpawnAgentRefs(args ?? {}).filter((ref) => typeof ref.cwd === "string" && ref.cwd);
+		const relocated = firstSpawnAgentRefs(args ?? {}).filter((ref) => relocatedPath(ref.cwd));
 		if (relocated.length > 0) {
 			return `role(s) ${[...new Set(relocated.map((ref) => `${ref.agent ?? "(unnamed)"}@${ref.cwd}`))].join(", ")} run outside the requested single checkout`;
 		}

@@ -95,10 +95,17 @@ test("cwd isolation is not a recovery for a task naming one checkout", () => {
 	const match = flowCallMatchesExpectation({ arguments: relocated }, recoveryCase().expectedFlowCall);
 	assert.equal(match.pass, false);
 	assert.match(match.notes, /outside the requested single checkout/);
-	// …but only where the tool reads it: a raw parallel call resolves per-role
+	// A role cwd that resolves to the evaluation checkout is not a relocation:
+	// the handlers resolve it the same way, and the work runs where asked.
+	const sameCheckout = flowCallMatchesExpectation(
+		{ arguments: { ...BASH_RO_FANOUT, tasks: BASH_RO_FANOUT.tasks.map((task: any) => ({ ...task, cwd: "." })) } },
+		recoveryCase().expectedFlowCall,
+	);
+	assert.equal(sameCheckout.pass, true, sameCheckout.notes);
+	// …and top-level cwd counts only where the tool reads it: a raw parallel call resolves per-role
 	// cwd only (integrationRunPlan), so a stray top-level cwd changes nothing
 	// and must not fail an otherwise-correct recovery.
-	const strayTopLevel = flowCallMatchesExpectation({ arguments: { ...BASH_RO_FANOUT, cwd: "." } }, recoveryCase().expectedFlowCall);
+	const strayTopLevel = flowCallMatchesExpectation({ arguments: { ...BASH_RO_FANOUT, cwd: "/tmp/elsewhere" } }, recoveryCase().expectedFlowCall);
 	assert.equal(strayTopLevel.pass, true, strayTopLevel.notes);
 	// In single mode the handler does read it, so there the same field relocates.
 	const singleElsewhere = flowCallMatchesExpectation(
