@@ -87,27 +87,47 @@ export function buildReadonlyProfile(realCwd: string, extraDenies: string[] = []
 
 const runGit = promisify(execFile);
 
+/** One repo level's deny paths: worktree root, git dir, common dir — plus the superproject above it, if any. */
+async function gitLevel(cwd: string): Promise<{ dirs: string[]; superproject: string | null }> {
+	const { stdout } = await runGit("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { encoding: "utf8" });
+	const dirs = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+	const { stdout: parent } = await runGit("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--show-superproject-working-tree"], { encoding: "utf8" }).catch(() => ({ stdout: "" }));
+	return { dirs, superproject: parent.trim() || null };
+}
+
 /**
  * The paths whose subtrees the sandbox must deny writes to for a checkout: the
  * worktree root (so a cwd set to a subdirectory still protects the whole
- * checkout, not just that subdir) plus the git dir and common dir (a linked
- * worktree's live outside the root). All realpath-resolved. Empty when `cwd` is
- * not in a git repo — the caller falls back to denying `cwd` itself.
+ * checkout, not just that subdir), the git dir and common dir (a linked
+ * worktree's live outside the root), and the same for every enclosing
+ * superproject — a cwd inside a submodule must not leave the parent checkout
+ * writable. All realpath-resolved. Empty when `cwd` is not in a git repo — the
+ * caller falls back to denying `cwd` itself.
  */
 async function gitDenyRoots(cwd: string): Promise<string[]> {
-	try {
-		const { stdout } = await runGit("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { encoding: "utf8" });
-		const dirs = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-		return await Promise.all(dirs.map((dir) => fs.realpath(dir).catch(() => path.resolve(dir))));
-	} catch {
-		return [];
+	const collected: string[] = [];
+	let at: string | null = cwd;
+	// Bounded walk: submodule nesting is finite, and the guard stops a cycle.
+	for (let depth = 0; at && depth < 16; depth += 1) {
+		try {
+			const level: { dirs: string[]; superproject: string | null } = await gitLevel(at);
+			collected.push(...level.dirs);
+			at = level.superproject;
+		} catch {
+			break;
+		}
 	}
+	return await Promise.all(collected.map((dir) => fs.realpath(dir).catch(() => path.resolve(dir))));
 }
 
-/** Drop paths already covered by an earlier subpath in the list (dedupe/containment). */
+/**
+ * The smallest set of subpaths covering every input: shortest (ancestor) first,
+ * so a superproject root subsumes the submodule root nested inside it and the
+ * result does not depend on the order the paths were discovered.
+ */
 function minimalSubpaths(dirs: string[]): string[] {
 	const kept: string[] = [];
-	for (const dir of dirs) {
+	for (const dir of [...new Set(dirs)].sort((a, b) => a.length - b.length)) {
 		if (kept.some((root) => dir === root || dir.startsWith(`${root}${path.sep}`))) continue;
 		kept.push(dir);
 	}

@@ -77,6 +77,44 @@ test("the sandbox denies writes into the checkout but allows reads and out-of-tr
 	}
 });
 
+test("a cwd inside a submodule also denies writes to the enclosing superproject", { skip: readonlySandboxAvailable() ? false : "sandbox-exec unavailable" }, async () => {
+	const base = await mkdtemp(path.join(tmpdir(), "sb-sm-"));
+	const commit = ["-c", "user.email=t@t", "-c", "user.name=t"];
+	try {
+		const inner = path.join(base, "inner");
+		await mkdir(inner);
+		await run("git", ["-C", inner, "init", "-q"]);
+		await writeFile(path.join(inner, "s.txt"), "sub\n");
+		await run("git", ["-C", inner, "add", "-A"]);
+		await run("git", ["-C", inner, ...commit, "commit", "-qm", "s"]);
+		const superRoot = path.join(base, "super");
+		await mkdir(superRoot);
+		await run("git", ["-C", superRoot, "init", "-q"]);
+		await writeFile(path.join(superRoot, "parent.txt"), "parent\n");
+		await run("git", ["-C", superRoot, "add", "-A"]);
+		await run("git", ["-C", superRoot, ...commit, "commit", "-qm", "p"]);
+		await run("git", ["-C", superRoot, "-c", "protocol.file.allow=always", "submodule", "add", "-q", inner, "sub"]);
+		await run("git", ["-C", superRoot, ...commit, "commit", "-qm", "add-sub"]);
+
+		const subCwd = path.join(superRoot, "sub");
+		const wrapped = (await wrapWithReadonlySandbox("/bin/bash", ["-c", ""], subCwd))!;
+		const exec = async (script: string) => {
+			try {
+				await run(wrapped.command, [...wrapped.args.slice(0, 2), "/bin/bash", "-c", script]);
+				return 0;
+			} catch (error: any) {
+				return error.code ?? 1;
+			}
+		};
+		assert.notEqual(await exec(`echo pwned > ${path.join(superRoot, "parent.txt")}`), 0, "a submodule cwd must not leave the superproject writable");
+		assert.equal((await readFile(path.join(superRoot, "parent.txt"), "utf8")).trim(), "parent");
+		assert.notEqual(await exec(`echo pwned > ${path.join(subCwd, "s.txt")}`), 0, "the submodule itself stays denied");
+		await rm(wrapped.dir, { recursive: true, force: true });
+	} finally {
+		await rm(base, { recursive: true, force: true });
+	}
+});
+
 test("a cwd set to a subdirectory still denies writes across the whole worktree", { skip: readonlySandboxAvailable() ? false : "sandbox-exec unavailable" }, async () => {
 	const root = await mkdtemp(path.join(tmpdir(), "sb-repo-"));
 	try {
