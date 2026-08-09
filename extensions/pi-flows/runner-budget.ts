@@ -94,10 +94,12 @@ export class ChildBudgets {
 	 */
 	arm(deliver: (notice: string) => void): void {
 		this.deliver = deliver;
-		// Never steer a child the budget already refuses: nearsLiveStop stays true
-		// past the hard ceiling, and a refused child gets a refusal, not a notice
-		// — nor a seat on the channel a later transition would steer.
-		if (this.budgets.some((budget) => budget.refusesSpawn())) return;
+		// Never steer a child a budget would already hard-stop: nearsLiveStop
+		// stays true past the ceiling, and such a child gets stopped, not a
+		// notice — nor a seat on the channel a later transition would steer.
+		// (A spent spawn-only gate is the caller's refusal to make, and both
+		// callers refuse before arming.)
+		if (this.budgets.some((budget) => budget.stopsLiveRun())) return;
 		for (const budget of this.budgets) {
 			let siblings = liveChildren.get(budget);
 			if (!siblings) liveChildren.set(budget, siblings = new Set());
@@ -116,11 +118,14 @@ export class ChildBudgets {
 	/**
 	 * One budget's soft threshold crossed: steer every live child it governs,
 	 * not only the one whose turn settled. Only inside the window — a budget at
-	 * or past a hard ceiling refuses and stops; steering there would let spend
-	 * on an exhausted budget settle gracefully.
+	 * or past a ceiling that stops live runs would let spend on an exhausted
+	 * budget settle gracefully. The screen is `stopsLiveRun`, not `refusesSpawn`:
+	 * a flow's spent total-token ceiling only gates later spawns, and the
+	 * children legitimately still running under it keep their claim to a steer
+	 * when a generated or cost ceiling enters its window.
 	 */
 	private static steerLiveChildren(budget: Budget): void {
-		if (budget.refusesSpawn()) return;
+		if (budget.stopsLiveRun()) return;
 		for (const child of liveChildren.get(budget) ?? []) child.latchWrapUp(budget);
 	}
 

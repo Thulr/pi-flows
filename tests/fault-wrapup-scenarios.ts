@@ -201,6 +201,58 @@ function wrapUpBroadcastControlScenario(): FaultScenario {
 	};
 }
 
+/**
+ * The mixed-ceiling shared budget: the flow's total-token spawn gate is spent
+ * by the same turn that brings its generated ceiling to 80%. The gate only
+ * refuses LATER spawns — the children legitimately still running must be
+ * steered for the generated ceiling, not silenced by the spent gate, and the
+ * steered sibling's partial envelope must integrate.
+ */
+function wrapUpMixedCeilingControlScenario(): FaultScenario {
+	const cwd = workspace();
+	const contract: DelegationContract = { ...boundedContract(), budget: {} };
+	const partial = envelopeFor(contract, {
+		status: "partial",
+		unresolvedQuestions: ["steered off under a mixed-ceiling flow budget"],
+	});
+	return {
+		id: "wrapup-mixed-ceiling-gate",
+		suite: FAULT_SUITE,
+		portfolio: "control",
+		faults: [],
+		faultKind: "none",
+		description: "A spent flow total-token spawn gate must not suppress the wrap-up steer for the generated ceiling still governing live children.",
+		attackOpportunities: 0,
+		benignOpportunities: 2,
+		expected: {
+			outcome: { errorCode: null },
+			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
+			policy: { contained: false, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 2 },
+		},
+		run: async () => {
+			const { Budget } = await import("../extensions/pi-flows/types.ts");
+			const adapter = makeFaultAdapter({
+				// One turn spends the total gate (22+8=30) and lands generated at
+				// exactly 80% (8 of 10); the live sibling must still be steered.
+				replies: { recon: envelopeFor(contract), redteam: { reply: "reading", turns: 2, wrapUpReply: partial } },
+				usage: { input: 22, output: 8, cost: 0.001 },
+			});
+			const deps = faultDeps(
+				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
+				adapter,
+				cwd,
+				{ budget: Budget.forFlow({ maxTokens: 30, maxGeneratedTokens: 10 }) },
+			);
+			const output = await handleParallel(deps);
+			const steered = output.details.results.find((result) => result.agent === "redteam");
+			if (!steered?.wrapUpRequested) throw new Error("the spent spawn gate must not silence the generated-ceiling steer");
+			if (steered.stopReason !== "budget_wrap_up") throw new Error("the steered sibling's breach must settle gracefully");
+			return observe(output, adapter.ledger, ["debrief"], { attack: false });
+		},
+	};
+}
+
 export function wrapUpScenarios(): FaultScenario[] {
-	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario(), wrapUpBroadcastControlScenario()];
+	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario(), wrapUpBroadcastControlScenario(), wrapUpMixedCeilingControlScenario()];
 }

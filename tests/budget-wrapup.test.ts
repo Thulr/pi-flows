@@ -265,6 +265,30 @@ test("a child already latched by its contract still broadcasts the shared flow t
 	sibling.child.release();
 });
 
+test("a spent flow total-token spawn gate does not suppress the steer for a live-stop ceiling", () => {
+	// A flow maxTokens ceiling only gates later spawns — children legitimately
+	// keep running under it. When the generated ceiling then enters its window,
+	// those live children still get their steer; screening on the spawn gate
+	// would let them cross the generated hard ceiling unsteered.
+	const mixed = Budget.forFlow({ maxTokens: 30, maxGeneratedTokens: 10 })!;
+	const a = armed([mixed]);
+	const b = armed([mixed]);
+	a.child.chargeTurn(turn(0, 22, 8), true); // total 30 ≥ 30 (gate spent) and generated 8 = 80%
+	assert.equal(mixed.refusesSpawn(), true, "the spawn gate is reached");
+	assert.equal(a.notices.length, 1, "the crossing child is still steered");
+	assert.equal(b.notices.length, 1, "so is its live sibling");
+	a.child.release();
+	b.child.release();
+
+	// Past a live-stop ceiling the screen still holds: an exhausted generated
+	// ceiling never steers.
+	const spentGenerated = Budget.forFlow({ maxGeneratedTokens: 10 })!;
+	spentGenerated.charge(turn(0, 0, 12));
+	const late = armed([spentGenerated]);
+	assert.equal(late.notices.length, 0);
+	late.child.release();
+});
+
 test("a live sibling in a concurrent fan-out is steered when another child's turn crosses the shared threshold", async () => {
 	// The scout's one settled turn lands exactly at 80% of the shared flow
 	// ceiling while the analyst's child process is still holding open. The same
