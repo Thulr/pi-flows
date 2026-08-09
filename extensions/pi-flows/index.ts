@@ -252,24 +252,10 @@ export default function (pi: ExtensionAPI) {
 				};
 			};
 			// The caller's own unexpanded resolution, and the pre-admission builder
-			// made from it: used by the list/config paths and the preset-resolution
-			// refusal, none of which ever see post-preset state.
+			// made from it: used by the describe port and the preset-resolution
+			// refusal, neither of which ever sees post-preset state.
 			const callerCall: ResolvedCall = { params, policy: callerPolicy };
 			const callerDetails = makeDetails(callerCall);
-
-			if (params.list) {
-				return {
-					content: [{ type: "text", text: `Workflow presets:\n${summarizePresets(presetDiscovery, callerPolicy)}\n\nFlow agents:\n${catalog.summary()}` }],
-					details: callerDetails("list")([]),
-				};
-			}
-
-			if (params.showConfig) {
-				return {
-					content: [{ type: "text", text: `${catalog.configSummary(roster)}\n\n${presetConfigSummary(presetDiscovery, callerPolicy)}` }],
-					details: callerDetails("config")([]),
-				};
-			}
 
 			// The caller's own trace settings, captured before preset expansion can
 			// add repo-controlled ones: a refused project preset records onto these.
@@ -298,6 +284,20 @@ export default function (pi: ExtensionAPI) {
 				onUpdate,
 				runChild: runFlowAgent,
 				makeDetails,
+				// The two answers-without-spawning, rendered from the caller's own
+				// unexpanded resolution. What each surface says — catalogs, effective
+				// config — is composition and stays here; that they fire first, list
+				// before config, is the aggregate's walk.
+				describe: (surface) =>
+					surface === "list"
+						? {
+							content: [{ type: "text", text: `Workflow presets:\n${summarizePresets(presetDiscovery, callerPolicy)}\n\nFlow agents:\n${catalog.summary()}` }],
+							details: callerDetails("list")([]),
+						}
+						: {
+							content: [{ type: "text", text: `${catalog.configSummary(roster)}\n\n${presetConfigSummary(presetDiscovery, callerPolicy)}` }],
+							details: callerDetails("config")([]),
+						},
 				resolvePreset: params.preset
 					? () => {
 						const resolved = resolveFlowPreset(params as Record<string, unknown>, presetDiscovery, callerPolicy);
@@ -390,6 +390,7 @@ export default function (pi: ExtensionAPI) {
 				decorateRootAttributes: (attributes, details, deliverable, preset) => attachPresetTraceAttributes(attributes, preset, details, deliverable),
 				persist: (details) => appendFlowSessionEntry(pi, details),
 			});
+			if ("described" in admission) return admission.described;
 			if ("refused" in admission) return admission.refused;
 			const dispatched = await admission.admitted.dispatch();
 			return dispatched.settle();

@@ -1,10 +1,13 @@
 // The Flow aggregate root (flow.ts): one bounded delegation whose lifecycle is
 // an explicit progression — refused → admitted → dispatched → settled. These
 // tests name the ordering invariants that used to be the positional body of
-// index.ts execute(): the aggregate walks the pre-spawn gates in its own
-// declared order, a refusal finalizes the trace with zero children, admission
-// is the only path to dispatch, dispatch is the only path to settle, and the
-// settle sequence ends with durable persistence after the strict-trace gate.
+// index.ts execute(): the describe surfaces answer at the walk's first gate
+// (list wins over config, before any preset resolves or mode detects), the
+// aggregate walks the remaining pre-spawn gates in its own declared order, a
+// refusal finalizes the trace with zero children, a thrown handler still
+// finalizes a closed trace, admission is the only path to dispatch, dispatch
+// is the only path to settle, and the settle sequence ends with durable
+// persistence after the strict-trace gate.
 import { strict as assert } from "node:assert";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,6 +73,10 @@ function harness(params: Record<string, unknown>, overrides: Partial<FlowPorts> 
 		discovery,
 		runChild: async () => { throw new Error("flow-lifecycle tests stub the handler, not the child seam"); },
 		makeDetails: () => (mode, agents) => catalog.makeDetails(mode, agents),
+		describe: (surface) => {
+			order.push(`describe:${surface}`);
+			return { content: [{ type: "text", text: surface === "list" ? "presets and agents" : "effective config" }], details: catalog.makeDetails(surface)([]) };
+		},
 		detectMode: (candidate) => {
 			order.push("detectMode");
 			const detected = detectRunMode(candidate);
@@ -121,6 +128,49 @@ async function settleFlow(h: Harness): Promise<ModeOutput> {
 	const dispatched = await admission.admitted.dispatch();
 	return dispatched.settle();
 }
+
+// --- answers without spawning -------------------------------------------------
+
+test("list wins over showConfig: a call carrying both is answered as list at the walk's first gate", async () => {
+	const h = harness({ list: true, showConfig: true });
+	const admission = await Flow.admit(h.ports);
+	assert.ok("described" in admission, "a describe call is answered, not refused or admitted");
+	assert.equal(admission.described.content[0]?.text, "presets and agents");
+	assert.deepEqual(h.order, ["describe:list"], "a described flow walks no further gate");
+});
+
+test("showConfig wins over the run modes: config answers a call that also carries tasks, instead of refusing two modes", async () => {
+	const h = harness({ showConfig: true, tasks: [{ agent: "recon", task: "inspect" }] });
+	const admission = await Flow.admit(h.ports);
+	assert.ok("described" in admission);
+	assert.equal(admission.described.content[0]?.text, "effective config");
+	assert.ok(!h.order.includes("detectMode"), "the run-mode params must never reach mode detection");
+});
+
+test("list wins over the run modes and needs no why: describing the surface is not a spawning call", async () => {
+	const h = harness({ list: true, tasks: [{ agent: "recon", task: "inspect" }] });
+	const admission = await Flow.admit(h.ports);
+	assert.ok("described" in admission);
+	assert.equal(admission.described.content[0]?.text, "presets and agents");
+	assert.ok(!h.order.includes("handler"));
+	assert.ok(!h.order.includes("presence.start"), "a described flow never becomes live");
+});
+
+test("a describing call never resolves its preset", async () => {
+	const h = harness({ list: true, preset: "code-review" }, {
+		resolvePreset: () => { throw new Error("a describing call must not expand its preset"); },
+	});
+	const admission = await Flow.admit(h.ports);
+	assert.ok("described" in admission);
+});
+
+test("with no describe port supplied, describe params fall through the walk to mode detection", async () => {
+	const h = harness({ list: true }, { describe: undefined });
+	const admission = await Flow.admit(h.ports);
+	assert.ok("refused" in admission);
+	assert.equal(admission.refused.details.error?.code, "INVALID_MODE");
+	assert.ok(h.order.includes("detectMode"), "absent the port, the aggregate has no answer surface to fire");
+});
 
 // --- admission order ---------------------------------------------------------
 
@@ -245,6 +295,40 @@ test("a handler failure still settles the flow's live presence before the failur
 	assert.ok("admitted" in admission);
 	await assert.rejects(() => admission.admitted.dispatch(), /handler exploded/);
 	assert.ok(h.order.includes("presence.settle"), "the fleet registry must not leak a dead flow");
+});
+
+test("a thrown handler still finalizes the trace: a closed, refusable tree instead of an unrootable fragment", async () => {
+	const cwd = workspace();
+	const traceFile = path.join(cwd, "trace.jsonl");
+	const h = harness({ ...SPAWNING, traceFile }, { cwd }, {
+		handler: async (deps) => {
+			const result = {
+				agent: "recon",
+				agentSource: "package" as const,
+				task: "inspect",
+				exitCode: 0,
+				messages: [{ role: "assistant", content: [{ type: "text", text: "found it" }] }],
+				stderr: "",
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.01, contextTokens: 0, turns: 1 },
+				durationMs: 5,
+			};
+			// Recorded under a stage: the stage span is written only at finalize,
+			// which is exactly the fragment a thrown handler used to leave behind.
+			deps.recordSpan?.(result, { scope: { key: "worker-1", stage: { key: "wave-1", name: "wave 1" } } });
+			deps.onUpdate?.({ content: [{ type: "text", text: "one settled" }], details: deps.makeDetails("single")([result]) });
+			throw new Error("handler exploded");
+		},
+	});
+	const admission = await Flow.admit(h.ports);
+	assert.ok("admitted" in admission);
+	await assert.rejects(() => admission.admitted.dispatch(), /handler exploded/);
+	const parsed = parseTraceJsonl(readFileSync(traceFile, "utf8"));
+	const root = parsed.spans.find((span) => span.attributes["flow.span_role"] === "root");
+	assert.ok(root, "a thrown handler must still write the root span");
+	assert.equal(root.attributes["flow.execution_success"], false);
+	assert.equal(root.attributes["flow.child_count"], 1, "the root summarizes the last live details the handler shared");
+	assert.ok(parsed.spans.some((span) => span.attributes["flow.span_role"] === "stage"), "the recorded child's stage is written, so no span is parented to an unwritten id");
+	assert.ok(h.order.includes("presence.settle"), "the trace write must not displace the presence settle");
 });
 
 // --- settle order ------------------------------------------------------------
