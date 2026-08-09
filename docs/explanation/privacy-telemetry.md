@@ -53,9 +53,13 @@ Consult pi documentation for provider/session behavior. Useful environment contr
   never leaks into grandchildren). Setting it by hand in your own shell makes
   that pi session's bash allowlist-restricted too.
 - `PI_FLOWS_BASH_RO_NO_SANDBOX=1` opts `bash-ro` children out of the OS
-  read-only-checkout sandbox (macOS `sandbox-exec`), falling back to the
-  in-child command allowlist alone. Use it if the sandbox interferes with a
-  toolchain; the allowlist is best-effort, not a kernel-enforced boundary.
+  read-only-checkout sandbox (macOS `sandbox-exec`). Use it if the sandbox
+  interferes with a toolchain.
+- `PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED=1` permits `bash-ro` to run on the
+  best-effort command allowlist alone where the OS sandbox is unavailable
+  (non-macOS, or opted out). Without it, such a spawn is refused
+  (`BASH_READONLY_UNENFORCEABLE`) rather than run without a real boundary — the
+  allowlist cannot be exhaustive, so this opt-in acknowledges it is best-effort.
 
 ## Retention
 

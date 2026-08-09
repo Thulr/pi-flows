@@ -42,6 +42,11 @@ function sandboxUsable(): boolean {
 	return readonlySandboxAvailable() && !readonlySandboxDisabled(process.env.PI_FLOWS_BASH_RO_NO_SANDBOX);
 }
 
+/** Opt-in to the best-effort allowlist path where the OS sandbox is unavailable. */
+function allowUnsandboxed(): boolean {
+	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED?.trim() ?? "");
+}
+
 /**
  * Resolve how (or whether) a bash-ro child can be enforced on this host. The
  * runner refuses the spawn when `error` is set, otherwise wraps per
@@ -49,7 +54,7 @@ function sandboxUsable(): boolean {
  */
 export function resolveBashReadonlyEnforcement(readonly: boolean): { enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
 	if (!readonly) return { enforcement: null, error: null };
-	const enforcement = bashReadonlyEnforcement(bashReadonlyEnforcerAvailable(), sandboxUsable());
+	const enforcement = bashReadonlyEnforcement(bashReadonlyEnforcerAvailable(), sandboxUsable(), allowUnsandboxed());
 	return { enforcement, error: enforcement === null ? bashReadonlyUnenforceableError() : null };
 }
 

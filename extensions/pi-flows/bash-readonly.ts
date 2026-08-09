@@ -58,10 +58,31 @@ export function splitBashReadonly(tools: string[]): { argvTools: string[]; reado
  */
 export type BashReadonlyEnforcement = "sandbox" | "allowlist";
 
-export function bashReadonlyEnforcement(enforcerLoadable: boolean, sandboxUsable: boolean): BashReadonlyEnforcement | null {
+export function bashReadonlyEnforcement(enforcerLoadable: boolean, sandboxUsable: boolean, allowUnsandboxed: boolean): BashReadonlyEnforcement | null {
 	if (sandboxUsable) return "sandbox";
-	if (enforcerLoadable) return "allowlist";
+	// The command allowlist cannot be an exhaustive boundary — option
+	// abbreviation alone yields endless new bypasses across every tool — so it
+	// is never the *default* boundary. Off the sandbox it enforces only when the
+	// caller has explicitly accepted its best-effort nature.
+	if (enforcerLoadable && allowUnsandboxed) return "allowlist";
 	return null;
+}
+
+/**
+ * Child env that neutralizes repository-configured git helpers which would
+ * otherwise launch external programs on a plain inspection command
+ * (diff.external, pager, fsmonitor, hooks). Applied to every bash-ro child so
+ * the guarantee does not depend on the command string. Uses git's
+ * GIT_CONFIG_COUNT override mechanism (git >= 2.31).
+ */
+export function bashReadonlyGitEnv(): Record<string, string> {
+	const pairs: Array<[string, string]> = [["diff.external", ""], ["core.pager", "cat"], ["core.fsmonitor", "false"], ["core.hooksPath", "/dev/null"]];
+	const env: Record<string, string> = { GIT_CONFIG_COUNT: String(pairs.length) };
+	pairs.forEach(([key, value], index) => {
+		env[`GIT_CONFIG_KEY_${index}`] = key;
+		env[`GIT_CONFIG_VALUE_${index}`] = value;
+	});
+	return env;
 }
 
 /** The fail-closed refusal: never spawn a bash-ro child no layer can enforce. */
@@ -69,8 +90,8 @@ export function bashReadonlyUnenforceableError(): FlowError {
 	return flowError(
 		"BASH_READONLY_UNENFORCEABLE",
 		"bash-ro cannot be enforced on this host.",
-		"Neither the OS read-only-checkout sandbox nor the in-child command allowlist is available (no sandbox-exec / opted out, and the enforcer extension could not be located), so spawning would grant the child unrestricted bash in the shared checkout.",
-		"Run on a host with the sandbox available (macOS, without PI_FLOWS_BASH_RO_NO_SANDBOX), or change the role's tools to bash (accepting write-capable classification) or to read,grep,find,ls.",
+		"The OS read-only-checkout sandbox is unavailable or opted out (no macOS sandbox-exec, or PI_FLOWS_BASH_RO_NO_SANDBOX), and the best-effort command-allowlist fallback is not enabled — so spawning would grant the child unrestricted bash in the shared checkout.",
+		"Run on macOS (without PI_FLOWS_BASH_RO_NO_SANDBOX) so the sandbox enforces it; or, accepting that the command allowlist is best-effort not a security boundary, set PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED=1; or change the role's tools to bash (write-capable) or read,grep,find,ls.",
 	);
 }
 
@@ -123,8 +144,17 @@ function hasShortFlag(letter: string, longForm: string | null): (args: string[])
 	return (args) => args.some((arg) => cluster.test(arg) || (longForm !== null && (arg === longForm || arg.startsWith(`${longForm}=`))));
 }
 
-// --out is a GNU abbreviation of --output; --compress-program runs a program.
-const SORT_WRITES = (args: string[]) => hasShortFlag("o", "--output")(args) || args.some((arg) => /^--out(p(u(t)?)?)?(=|$)/.test(arg) || arg === "--compress-program" || arg.startsWith("--compress-program="));
+// A `--`-flag is an abbreviation of `full` when its non-empty name is a prefix
+// of `full` (getopt_long accepts any unambiguous prefix, down to one letter).
+// Over-refusing an ambiguous prefix is fine — fail-closed. Not exhaustive
+// across all tools, which is why the allowlist is best-effort and gated off
+// the sandbox.
+function isLongAbbrev(arg: string, full: string): boolean {
+	const name = arg.replace(/^--/, "").split("=")[0];
+	return arg.startsWith("--") && name.length >= 1 && full.startsWith(name);
+}
+// sort writes with -o/--output (abbrev) and runs a program with --compress-program (abbrev).
+const SORT_WRITES = (args: string[]) => hasShortFlag("o", "--output")(args) || args.some((arg) => isLongAbbrev(arg, "output") || isLongAbbrev(arg, "compress-program"));
 const FILE_COMPILES = hasShortFlag("C", null);
 // Leading `-s` only, not the cluster: `date -Iseconds` is a read the cluster
 // regex would misread as carrying `s`.

@@ -522,19 +522,20 @@ concurrent writes in one checkout are actually intended.
 
 ### `BASH_READONLY_UNENFORCEABLE`
 
-Cause: a role's tools included `bash-ro`, but neither enforcement layer is
-available on this host — the OS read-only-checkout sandbox is absent or opted
-out (`PI_FLOWS_BASH_RO_NO_SANDBOX`), *and* the in-child allowlist enforcer
-extension could not be located. Spawning anyway would grant the child
-unrestricted bash in the shared checkout while the parent had classified it
-read-only, so the spawn is refused before any process starts. (Note
-`PI_FLOWS_CHILD_NO_EXTENSIONS` alone no longer triggers this: the enforcer is
-loaded with an explicit `-e`, which pi keeps even under `--no-extensions`.)
+Cause: a role's tools included `bash-ro`, but the OS read-only-checkout
+sandbox is unavailable or opted out (`PI_FLOWS_BASH_RO_NO_SANDBOX`, or a
+non-macOS host), and the best-effort command-allowlist fallback has not been
+enabled. Spawning anyway would grant the child unrestricted bash in the shared
+checkout while the parent had classified it read-only, so the spawn is refused
+before any process starts. (Note `PI_FLOWS_CHILD_NO_EXTENSIONS` alone no longer
+triggers this: the enforcer loads via an explicit `-e`, which pi keeps even
+under `--no-extensions`.)
 
-Fix: run on a host where the sandbox is available (macOS, without
-`PI_FLOWS_BASH_RO_NO_SANDBOX`), or change the role's tools — `bash` if
-write-capable classification (and the shared-write guard) is acceptable, or
-`read,grep,find,ls` if the child does not actually need a shell.
+Fix: run on macOS (without `PI_FLOWS_BASH_RO_NO_SANDBOX`) so the sandbox
+enforces it; or, accepting that the command allowlist is best-effort and not a
+security boundary, set `PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED=1`; or change the
+role's tools — `bash` if write-capable classification (and the shared-write
+guard) is acceptable, or `read,grep,find,ls` if the child does not need a shell.
 
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`
 

@@ -4,7 +4,7 @@
 // lives in tests/bash-readonly-integration.test.ts against the stub pi.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BASH_READONLY_ENV, bashReadonlyEnabled, bashReadonlyEnforcement, bashReadonlyRefusal, splitBashReadonly } from "../extensions/pi-flows/bash-readonly.ts";
+import { BASH_READONLY_ENV, bashReadonlyEnabled, bashReadonlyEnforcement, bashReadonlyGitEnv, bashReadonlyRefusal, splitBashReadonly } from "../extensions/pi-flows/bash-readonly.ts";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { bashReadonlyEnforcerArgs, registerBashReadonlyGuard } from "../extensions/pi-flows/bash-readonly-extension.ts";
 
@@ -67,6 +67,9 @@ const REFUSED = [
 	"sort --out=generated.txt README.md",
 	"sort --output=generated.txt README.md",
 	"sort --compress-program=./mutator -S 1b README.md",
+	"sort --co=./mutator -S 1b README.md",
+	"sort --comp=./mutator README.md",
+	"sort --o generated.txt README.md",
 	"git cat-file --filters HEAD:path",
 	"git grep --textconv pattern",
 	"git grep -Ovi pattern",
@@ -119,11 +122,23 @@ test("bash-ro refusal names the offending segment, not just the whole command", 
 	assert.doesNotMatch(reason.split(":")[0] + reason.split(":")[1], /git status/);
 });
 
-test("bashReadonlyEnforcement prefers the sandbox, falls back to the allowlist, else refuses", () => {
-	assert.equal(bashReadonlyEnforcement(true, true), "sandbox");
-	assert.equal(bashReadonlyEnforcement(false, true), "sandbox");
-	assert.equal(bashReadonlyEnforcement(true, false), "allowlist");
-	assert.equal(bashReadonlyEnforcement(false, false), null);
+test("bashReadonlyEnforcement uses the sandbox first; the allowlist only when explicitly opted in", () => {
+	assert.equal(bashReadonlyEnforcement(true, true, false), "sandbox");
+	assert.equal(bashReadonlyEnforcement(false, true, false), "sandbox");
+	// Off the sandbox the allowlist enforces only with the opt-in — never by default.
+	assert.equal(bashReadonlyEnforcement(true, false, false), null);
+	assert.equal(bashReadonlyEnforcement(true, false, true), "allowlist");
+	assert.equal(bashReadonlyEnforcement(false, false, true), null);
+});
+
+test("bashReadonlyGitEnv neutralizes repository-configured git exec helpers", () => {
+	const env = bashReadonlyGitEnv();
+	const count = Number(env.GIT_CONFIG_COUNT);
+	const pairs = new Map<string, string>();
+	for (let i = 0; i < count; i += 1) pairs.set(env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]);
+	assert.equal(pairs.get("diff.external"), "");
+	assert.equal(pairs.get("core.pager"), "cat");
+	assert.equal(pairs.get("core.hooksPath"), "/dev/null");
 });
 
 test("bashReadonlyEnabled follows the shared env truthiness convention", () => {

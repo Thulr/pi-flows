@@ -34,7 +34,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   neither layer is available; `PI_FLOWS_CHILD_NO_EXTENSIONS` alone no longer
   triggers it, because the enforcer loads through an explicit `-e` that
   survives `--no-extensions`. The child span records the enforcing layer as
-  `flow.bash_ro.enforcement`.
+  `flow.bash_ro.enforcement`. Because command parsing can never be an
+  exhaustive boundary (option abbreviation yields endless bypasses), the
+  allowlist is best-effort: off the sandbox, `bash-ro` runs only with
+  `PI_FLOWS_BASH_RO_ALLOW_UNSANDBOXED=1` and is otherwise refused. Every
+  bash-ro child also runs with repository-configured git helpers
+  (`diff.external`, pager, fsmonitor, hooks) neutralized via `GIT_CONFIG_*`, so
+  a plain `git diff`/`git show` cannot launch a configured external program.
 - The `code-review` preset's two reviewers now run with
   `read,grep,find,ls,bash-ro` at `concurrency: 2` — the two axes review
   concurrently in one checkout instead of serializing. The `scout` preset

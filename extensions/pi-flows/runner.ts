@@ -9,7 +9,7 @@ import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { Run } from "./run.ts";
 import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
-import { BASH_READONLY_ENV } from "./bash-readonly.ts";
+import { BASH_READONLY_ENV, bashReadonlyGitEnv } from "./bash-readonly.ts";
 import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
 import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
 import { buildChildArgs, getPiInvocation } from "./commands.ts";
@@ -300,7 +300,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			command: invocation.command,
 			args: invocation.args,
 			cwd: childCwd,
-			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1), [BASH_READONLY_ENV]: enforcement ? "1" : "" }, // "" not an omitted key: the spread must not leak a parent's marker into grandchildren
+			// "" not an omitted key: the spread must not leak a parent's marker into grandchildren. Git-helper neutralization rides along for bash-ro children.
+			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1), [BASH_READONLY_ENV]: enforcement ? "1" : "", ...(enforcement ? bashReadonlyGitEnv() : {}) },
 
 			timeoutMs,
 			signal: options.signal,
