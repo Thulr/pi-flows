@@ -254,6 +254,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
 	let wasAborted = false;
 	let timedOut = false;
+	/** Set when the budget refused this child after async setup: the child never ran, so no span or budget outcome is recorded for it. */
+	let refusedLate: FlowRunResult | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -267,14 +269,6 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		// The wrap-up channel rides in the task's temp dir so it shares its
 		// lifetime; it is offered only to a child that runs under some budget.
 		const wrapUpFile = path.join(taskPrompt.dir, "wrap-up.md");
-		// A shared ceiling other children spent against can already be inside the
-		// wrap-up window; land the notice now so this child's first poll finds it
-		// instead of waiting for a settled turn that may cross the hard ceiling.
-		const spawnNotice = childBudgets.wrapUpAtSpawn();
-		if (spawnNotice) {
-			result.wrapUpRequested = true;
-			requestWrapUp(wrapUpFile, spawnNotice);
-		}
 
 		const childCwd = path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd);
 		let invocation = getPiInvocation(args);
@@ -283,6 +277,24 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		if (sandboxed) {
 			invocation = sandboxed.invocation;
 			tempFiles.push(sandboxed.tempFile);
+		}
+		// Siblings sharing a budget kept settling turns during the awaited prompt
+		// and sandbox setup above; a ceiling crossed in that window must refuse
+		// this child now — nearsLiveStop stays true past 100%, so checking only
+		// the soft threshold here would steer and spawn a child the budget
+		// already refuses.
+		const lateRefusal = childBudgets.refuseSpawn(options.agentName);
+		if (lateRefusal) {
+			refusedLate = Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, lateRefusal), { role: capturedRole });
+			return refusedLate;
+		}
+		// A shared ceiling other children spent against can already be inside the
+		// wrap-up window; land the notice now so this child's first poll finds it
+		// instead of waiting for a settled turn that may cross the hard ceiling.
+		const spawnNotice = childBudgets.wrapUpAtSpawn();
+		if (spawnNotice) {
+			result.wrapUpRequested = true;
+			requestWrapUp(wrapUpFile, spawnNotice);
 		}
 		emitUpdate("starting child pi process...");
 		const rawGrace = Number(process.env.PI_FLOWS_ERROR_GRACE_MS);
@@ -449,9 +461,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		if (isFailed(result)) Run.of(result).discardEnvelopeCandidate();
 		return result;
 	} finally {
-		result.durationMs = Date.now() - started;
-		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
-		childBudgets.recordOutcome(agent.name);
+		// A late refusal spawned nothing: like the pre-setup refusal it records
+		// only its budget event (already emitted by refuseSpawn), never a child
+		// span for a child that did not run.
+		if (!refusedLate) {
+			result.durationMs = Date.now() - started;
+			options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
+			childBudgets.recordOutcome(agent.name);
+		}
 		await Promise.all(tempFiles.map((tmp) => fs.rm(tmp.dir, { recursive: true, force: true }).catch(() => undefined)));
 	}
 }

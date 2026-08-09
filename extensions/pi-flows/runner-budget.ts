@@ -82,6 +82,9 @@ export class ChildBudgets {
 	 * the hard ceiling.
 	 */
 	wrapUpAtSpawn(): string | undefined {
+		// Never steer a child the budget already refuses: nearsLiveStop stays true
+		// past the hard ceiling, and a refused child gets a refusal, not a notice.
+		if (this.budgets.some((budget) => budget.refusesSpawn())) return undefined;
 		if (!this.wrapUp) {
 			this.wrapUp = this.budgets.find((budget) => budget.nearsLiveStop());
 			if (this.wrapUp) this.notice = this.wrapUp.wrapUpNotice();

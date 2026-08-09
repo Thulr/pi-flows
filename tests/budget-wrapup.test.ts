@@ -175,13 +175,27 @@ test("a budget already inside the wrap-up window latches at spawn, and delivery 
 	const notice = atSpawn.wrapUpAtSpawn();
 	assert.ok(notice?.includes(WRAP_UP_NOTICE_MARKER), "a child joining a nearly spent budget is told to wrap up before its first turn");
 
+	// Past the hard ceiling, nearsLiveStop is still true — but a child the
+	// budget refuses gets a refusal, never a steer: a sibling can exhaust a
+	// shared budget between the admission check and the spawn.
+	const spent = Budget.forFlow({ maxGeneratedTokens: 10 })!;
+	spent.charge(turn(0, 0, 12));
+	const refused = new ChildBudgets([spent], undefined, undefined);
+	assert.equal(refused.wrapUpAtSpawn(), undefined, "an exhausted budget refuses; it does not steer");
+	assert.ok(refused.refuseSpawn("recon"), "the late recheck must surface the refusal instead");
+
 	const fresh = new ChildBudgets([Budget.forContract({ maxTokens: 100 })!], undefined, undefined);
 	assert.equal(fresh.wrapUpAtSpawn(), undefined);
 	fresh.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} anything`); // no wrap-up requested yet: a stray marker echo must not pre-arm graceful settling
 
 	// A quoted marker — one steered child's output riding into a sibling's
 	// prompt — is not delivery either: only the latched notice verbatim counts.
-	const crossing = new ChildBudgets([near], undefined, undefined);
+	const nearlySpent = () => {
+		const budget = Budget.forContract({ maxTokens: 100 })!;
+		budget.charge(turnUsage);
+		return budget;
+	};
+	const crossing = new ChildBudgets([nearlySpent()], undefined, undefined);
 	const latched = crossing.wrapUpAtSpawn();
 	assert.ok(latched);
 	crossing.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} some other budget's notice`);
@@ -191,7 +205,7 @@ test("a budget already inside the wrap-up window latches at spawn, and delivery 
 	assert.equal(settled.error?.code, "BUDGET_EXCEEDED", "a marker without the latched notice must not soften the stop");
 
 	// The genuine echo — the latched notice verbatim — is what flips it.
-	const delivered = new ChildBudgets([near], undefined, undefined);
+	const delivered = new ChildBudgets([nearlySpent()], undefined, undefined);
 	const deliveredNotice = delivered.wrapUpAtSpawn()!;
 	delivered.confirmDelivery(`context before\n${deliveredNotice}\ncontext after`);
 	delivered.chargeTurn(turn(0, 60, 25), true);
