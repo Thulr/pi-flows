@@ -167,52 +167,132 @@ test("a notice that never reaches the child keeps exhaustion fatal", async () =>
 	assert.equal(child.error?.code, "BUDGET_EXCEEDED");
 });
 
-test("a budget already inside the wrap-up window latches at spawn, and delivery cannot be confirmed before a request exists", () => {
+/** Arm a fresh ChildBudgets on `budgets`, collecting delivered notices; release() is the caller's job. */
+function armed(budgets: Budget[]): { child: ChildBudgets; notices: string[] } {
+	const child = new ChildBudgets(budgets, undefined, undefined);
+	const notices: string[] = [];
+	child.arm((notice) => notices.push(notice));
+	return { child, notices };
+}
+
+test("a budget already inside the wrap-up window steers at arm, and delivery cannot be confirmed before a request exists", () => {
 	const turnUsage = turn(0, 60, 25);
-	const near = Budget.forContract({ maxTokens: 100 })!;
-	near.charge(turnUsage);
-	const atSpawn = new ChildBudgets([near], undefined, undefined);
-	const notice = atSpawn.wrapUpAtSpawn();
-	assert.ok(notice?.includes(WRAP_UP_NOTICE_MARKER), "a child joining a nearly spent budget is told to wrap up before its first turn");
+	const nearlySpent = () => {
+		const budget = Budget.forContract({ maxTokens: 100 })!;
+		budget.charge(turnUsage);
+		return budget;
+	};
+	const atSpawn = armed([nearlySpent()]);
+	assert.ok(atSpawn.notices[0]?.includes(WRAP_UP_NOTICE_MARKER), "a child joining a nearly spent budget is told to wrap up before its first turn");
+	atSpawn.child.release();
 
 	// Past the hard ceiling, nearsLiveStop is still true — but a child the
 	// budget refuses gets a refusal, never a steer: a sibling can exhaust a
 	// shared budget between the admission check and the spawn.
 	const spent = Budget.forFlow({ maxGeneratedTokens: 10 })!;
 	spent.charge(turn(0, 0, 12));
-	const refused = new ChildBudgets([spent], undefined, undefined);
-	assert.equal(refused.wrapUpAtSpawn(), undefined, "an exhausted budget refuses; it does not steer");
-	assert.ok(refused.refuseSpawn("recon"), "the late recheck must surface the refusal instead");
+	const refused = armed([spent]);
+	assert.equal(refused.notices.length, 0, "an exhausted budget refuses; it does not steer");
+	assert.ok(refused.child.refuseSpawn("recon"), "the late recheck must surface the refusal instead");
+	refused.child.release();
 
-	const fresh = new ChildBudgets([Budget.forContract({ maxTokens: 100 })!], undefined, undefined);
-	assert.equal(fresh.wrapUpAtSpawn(), undefined);
-	fresh.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} anything`); // no wrap-up requested yet: a stray marker echo must not pre-arm graceful settling
+	const fresh = armed([Budget.forContract({ maxTokens: 100 })!]);
+	assert.equal(fresh.notices.length, 0);
+	fresh.child.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} anything`); // no wrap-up requested yet: a stray marker echo must not pre-arm graceful settling
+	fresh.child.release();
 
 	// A quoted marker — one steered child's output riding into a sibling's
 	// prompt — is not delivery either: only the latched notice verbatim counts.
-	const nearlySpent = () => {
-		const budget = Budget.forContract({ maxTokens: 100 })!;
-		budget.charge(turnUsage);
-		return budget;
-	};
-	const crossing = new ChildBudgets([nearlySpent()], undefined, undefined);
-	const latched = crossing.wrapUpAtSpawn();
-	assert.ok(latched);
-	crossing.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} some other budget's notice`);
-	crossing.chargeTurn(turn(0, 60, 25), true);
+	const crossing = armed([nearlySpent()]);
+	assert.equal(crossing.notices.length, 1);
+	crossing.child.confirmDelivery(`${WRAP_UP_NOTICE_MARKER} some other budget's notice`);
+	crossing.child.chargeTurn(turn(0, 60, 25), true);
 	const settled: any = { exitCode: -1 };
-	assert.equal(crossing.settle(settled), true);
+	assert.equal(crossing.child.settle(settled), true);
 	assert.equal(settled.error?.code, "BUDGET_EXCEEDED", "a marker without the latched notice must not soften the stop");
+	crossing.child.release();
 
 	// The genuine echo — the latched notice verbatim — is what flips it.
-	const delivered = new ChildBudgets([nearlySpent()], undefined, undefined);
-	const deliveredNotice = delivered.wrapUpAtSpawn()!;
-	delivered.confirmDelivery(`context before\n${deliveredNotice}\ncontext after`);
-	delivered.chargeTurn(turn(0, 60, 25), true);
+	const delivered = armed([nearlySpent()]);
+	delivered.child.confirmDelivery(`context before\n${delivered.notices[0]}\ncontext after`);
+	delivered.child.chargeTurn(turn(0, 60, 25), true);
 	const gracefully: any = { exitCode: -1 };
-	assert.equal(delivered.settle(gracefully), true);
+	assert.equal(delivered.child.settle(gracefully), true);
 	assert.equal(gracefully.error, undefined);
 	assert.equal(gracefully.stopReason, "budget_wrap_up");
+	delivered.child.release();
+});
+
+test("a threshold transition steers every live child on the shared budget, not only the one whose turn crossed", () => {
+	const shared = Budget.forFlow({ maxGeneratedTokens: 10 })!;
+	const a = armed([shared]);
+	const b = armed([shared]);
+	const released = armed([shared]);
+	released.child.release();
+
+	a.child.chargeTurn(turn(0, 0, 8), true); // 80% of the shared ceiling, crossed by A's turn
+	assert.equal(a.notices.length, 1, "the crossing child is steered through its own channel");
+	assert.equal(b.notices.length, 1, "a live sibling mid-turn is steered at the same moment, not at its own next settle");
+	assert.equal(released.notices.length, 0, "a released child's reclaimed channel receives nothing");
+
+	// The steered sibling's graceful settle works exactly as a self-latched one.
+	b.child.confirmDelivery(b.notices[0]);
+	b.child.chargeTurn(turn(0, 0, 8), true); // crosses the hard ceiling
+	const settled: any = { exitCode: -1 };
+	assert.equal(b.child.settle(settled), true);
+	assert.equal(settled.stopReason, "budget_wrap_up");
+	a.child.release();
+	b.child.release();
+});
+
+test("a child already latched by its contract still broadcasts the shared flow transition", () => {
+	// The transition belongs to the budget: gating the broadcast on the charging
+	// child's own latch would steer flow siblings one turn late whenever a
+	// contract ceiling latched that child first.
+	const flow = Budget.forFlow({ maxGeneratedTokens: 20 })!;
+	const worker = armed([flow, Budget.forContract({ maxGeneratedTokens: 5 })!]);
+	const sibling = armed([flow]);
+
+	worker.child.chargeTurn(turn(0, 0, 4), true); // contract at 80%: the worker is latched, the flow (20%) is not near
+	assert.equal(worker.notices.length, 1);
+	assert.equal(sibling.notices.length, 0);
+
+	// The worker's next turn hard-stops its contract AND pushes the shared flow
+	// ceiling to 80% — the sibling must be steered by that same turn.
+	worker.child.chargeTurn(turn(0, 0, 12), true);
+	assert.equal(sibling.notices.length, 1, "an already-latched (even stopping) child still broadcasts the flow transition");
+	worker.child.release();
+	sibling.child.release();
+});
+
+test("a live sibling in a concurrent fan-out is steered when another child's turn crosses the shared threshold", async () => {
+	// The scout's one settled turn lands exactly at 80% of the shared flow
+	// ceiling while the analyst's child process is still holding open. The same
+	// transition writes the analyst's wrap-up file; its answer to the steer
+	// crosses the hard ceiling and settles gracefully — the concurrent shape of
+	// the code-review preset (two children, one flow budget).
+	const { result, stubDir } = await runFlow(
+		{
+			task: "two readers, one ceiling",
+			maxGeneratedTokens: 10,
+			concurrency: 2,
+			timeoutMs: 8_000,
+			tasks: [
+				{ agent: "recon", task: "read A" },
+				{ agent: "analyst", task: "read B" },
+			],
+		},
+		{
+			recon: { reply: "scanned" },
+			analyst: { omitUsage: true, reply: "ack", wrapUpReply: "wrapped with partial notes", holdOpenMs: 6_000 },
+		},
+	);
+	const sibling = result.details.results[1];
+	assert.equal(sibling.wrapUpRequested, true, "the sibling was steered by a transition another child's turn crossed");
+	assert.equal(sibling.stopReason, "budget_wrap_up");
+	assert.equal(sibling.error, undefined);
+	const notice = readFileSync(path.join(stubDir, "wrapup-notice.txt"), "utf8");
+	assert.match(notice, /Flow budget/, "the steered notice names the shared flow ceiling");
 });
 
 test("a child spawned into a nearly spent shared budget is steered before its first turn can cross", async () => {

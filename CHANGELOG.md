@@ -16,8 +16,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   envelope now, marking unfinished work as skipped coverage and
   `unresolvedQuestions`. The channel is a per-child wrap-up file announced in
   the child's environment and watched by the pi-flows extension inside the
-  child (`extensions/pi-flows/wrapup.ts`); a child spawned while a shared
-  ceiling is already inside the window is steered at spawn. Requesting is not
+  child (`extensions/pi-flows/wrapup.ts`); the threshold transition belongs to
+  the ceiling, so it steers every live child governed by a shared budget at
+  the same moment, and a child spawned while a shared ceiling is already
+  inside the window is steered at spawn. Requesting is not
   receiving: the runner treats the notice as delivered only when it is seen
   echoed back into the child session as a user message. A child that crosses
   the ceiling after a delivered notice is still terminated, but settles

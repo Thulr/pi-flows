@@ -96,22 +96,34 @@ function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowE
 	return null;
 }
 
+/**
+ * The three contract checks in order, discriminating the one failure whose
+ * claims may be salvaged: an envelope produced under the RIGHT contract whose
+ * `data` merely missed the strict schema. An identity mismatch (stale or
+ * unbound) or an artifact/digest integrity failure must never have its claims
+ * surfaced as findings — those envelopes are wrong or untrustworthy, not
+ * merely unvalidated.
+ */
 function validateEnvelopeAgainstContract(
 	envelope: DelegationReturnEnvelope,
 	contract: ResolvedDelegationContract,
 	cwd: string,
-): FlowError | null {
+): { error: FlowError; salvageable: boolean } | null {
 	if (envelope.contractId !== contract.id) {
 		const actual = envelope.contractId ?? "(missing)";
-		return flowError(
-			"RETURN_CONTRACT_MISMATCH",
-			"Child return envelope did not match the dispatched contract.",
-			`Expected contractId ${contract.id}, received ${actual}.`,
-			"Discard the stale or unbound handoff and rerun the child with the current delegation contract.",
-		);
+		return {
+			error: flowError(
+				"RETURN_CONTRACT_MISMATCH",
+				"Child return envelope did not match the dispatched contract.",
+				`Expected contractId ${contract.id}, received ${actual}.`,
+				"Discard the stale or unbound handoff and rerun the child with the current delegation contract.",
+			),
+			salvageable: false,
+		};
 	}
-	if (!contract.checkReturnData(envelope.data)) return envelopeError("Envelope `data` does not satisfy contract.returnSchema.");
-	return validateDigests(envelope, cwd);
+	if (!contract.checkReturnData(envelope.data)) return { error: envelopeError("Envelope `data` does not satisfy contract.returnSchema."), salvageable: true };
+	const digestError = validateDigests(envelope, cwd);
+	return digestError ? { error: digestError, salvageable: false } : null;
 }
 
 function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolicy): DelegationReturnEnvelope {
@@ -154,13 +166,16 @@ function validateReturnEnvelope(
 	const run = Run.of(result);
 	const parsed = extractLastJsonBlock(run.takeEnvelopeCandidate() ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
-	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd);
-	if (validationError) {
+	const validation = validateEnvelopeAgainstContract(parsed, contract, cwd);
+	if (validation) {
 		const rejected = storedEnvelope(parsed, policy);
-		// Retained on the run so a harness-owned formatter can surface the
-		// child's unvalidated claims instead of losing the whole spend with them.
-		run.retainRejectedEnvelope(rejected);
-		return { error: storedError(validationError, policy), rejected };
+		// Retained on the run — so a harness-owned formatter can surface the
+		// child's unvalidated claims instead of losing the whole spend with
+		// them — only for a strict-schema miss under the right contract. The
+		// rejected form is still returned for every failure: a digest mismatch's
+		// artifact claims are trace evidence, not salvageable findings.
+		if (validation.salvageable) run.retainRejectedEnvelope(rejected);
+		return { error: storedError(validation.error, policy), rejected };
 	}
 	const validated = { ...parsed, usage: result.usage };
 	const envelope = storedEnvelope(validated, policy);

@@ -288,14 +288,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			refusedLate = Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, lateRefusal), { role: capturedRole });
 			return refusedLate;
 		}
-		// A shared ceiling other children spent against can already be inside the
-		// wrap-up window; land the notice now so this child's first poll finds it
-		// instead of waiting for a settled turn that may cross the hard ceiling.
-		const spawnNotice = childBudgets.wrapUpAtSpawn();
-		if (spawnNotice) {
+		// Join the wrap-up channel: a shared ceiling already inside the window
+		// steers this child now, and a threshold any sibling's turn crosses later
+		// steers it the same way — the transition belongs to the budget, not to
+		// whichever child's settled turn happened to cross it.
+		childBudgets.arm((notice) => {
 			result.wrapUpRequested = true;
-			requestWrapUp(wrapUpFile, spawnNotice);
-		}
+			requestWrapUp(wrapUpFile, notice);
+		});
 		emitUpdate("starting child pi process...");
 		const rawGrace = Number(process.env.PI_FLOWS_ERROR_GRACE_MS);
 		const errorGraceMs = Number.isFinite(rawGrace) && rawGrace >= 0 ? rawGrace : DEFAULT_CHILD_ERROR_GRACE_MS;
@@ -319,12 +319,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						const turnUsage = emptyUsage();
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
-						const decision = childBudgets.chargeTurn(turnUsage, !message.errorMessage);
-						if (decision.terminate) controls.terminate();
-						if (decision.wrapUpNotice) {
-							result.wrapUpRequested = true;
-							requestWrapUp(wrapUpFile, decision.wrapUpNotice);
-						}
+						if (childBudgets.chargeTurn(turnUsage, !message.errorMessage).terminate) controls.terminate();
 						if (!result.model && message.model) result.model = message.model;
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
@@ -376,6 +371,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			},
 		});
 		if (terminalErrorTimer) clearTimeout(terminalErrorTimer);
+		// The child is gone: leave the channel now so a sibling's later
+		// transition cannot mark this settled run as steered. The finally-block
+		// release stays for the paths that never reach here.
+		childBudgets.release();
 		timedOut = run.timedOut;
 		wasAborted = run.aborted;
 
@@ -469,6 +468,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
 			childBudgets.recordOutcome(agent.name);
 		}
+		// Leave the channel before the temp dir goes: a sibling's later
+		// transition must not write into a reclaimed directory.
+		childBudgets.release();
 		await Promise.all(tempFiles.map((tmp) => fs.rm(tmp.dir, { recursive: true, force: true }).catch(() => undefined)));
 	}
 }

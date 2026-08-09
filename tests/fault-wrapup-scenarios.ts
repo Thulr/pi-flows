@@ -148,6 +148,59 @@ function wrapUpHonoredControlScenario(): FaultScenario {
 	};
 }
 
+/**
+ * The concurrent-live-sibling case: one child's settled turn crosses 80% of a
+ * SHARED flow ceiling while a sibling is still mid-run. The transition must
+ * steer the live sibling at that moment — not at its own next settled turn,
+ * which can already be the one that crosses the hard ceiling — and the
+ * sibling's honored partial envelope must integrate.
+ */
+function wrapUpBroadcastControlScenario(): FaultScenario {
+	const cwd = workspace();
+	const contract: DelegationContract = { ...boundedContract(), budget: {} };
+	const partial = envelopeFor(contract, {
+		status: "partial",
+		unresolvedQuestions: ["steered off by a sibling's threshold crossing"],
+	});
+	return {
+		id: "wrapup-broadcast-live-sibling",
+		suite: FAULT_SUITE,
+		portfolio: "control",
+		faults: [],
+		faultKind: "none",
+		description: "A live sibling on a shared flow ceiling is steered by another child's threshold crossing and integrates a partial envelope.",
+		attackOpportunities: 0,
+		benignOpportunities: 2,
+		expected: {
+			outcome: { errorCode: null },
+			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
+			policy: { contained: false, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 2 },
+		},
+		run: async () => {
+			const { Budget } = await import("../extensions/pi-flows/types.ts");
+			const adapter = makeFaultAdapter({
+				// The first child's one turn lands exactly at 80% of the shared
+				// ceiling; the concurrently armed sibling is steered before charging
+				// any turn of its own and answers with the partial envelope.
+				replies: { recon: envelopeFor(contract), redteam: { reply: "reading", turns: 2, wrapUpReply: partial } },
+				usage: { input: 2, output: 8, cost: 0.001 },
+			});
+			const deps = faultDeps(
+				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
+				adapter,
+				cwd,
+				{ budget: Budget.forFlow({ maxGeneratedTokens: 10 }) },
+			);
+			const output = await handleParallel(deps);
+			const steered = output.details.results.find((result) => result.agent === "redteam");
+			if (!steered?.wrapUpRequested) throw new Error("the live sibling must be steered by the shared transition");
+			if (steered.stopReason !== "budget_wrap_up") throw new Error("the steered sibling's breach must settle gracefully");
+			return observe(output, adapter.ledger, ["debrief"], { attack: false });
+		},
+	};
+}
+
 export function wrapUpScenarios(): FaultScenario[] {
-	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario()];
+	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario(), wrapUpBroadcastControlScenario()];
 }

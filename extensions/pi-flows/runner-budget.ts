@@ -9,6 +9,15 @@
 import { budgetAttributes } from "./trace-attributes.ts";
 import type { Budget, ChildSpanScope, FlowError, FlowRunResult, RecordEvent, UsageStats } from "./types.ts";
 
+/**
+ * The live children currently armed on each budget. A soft-threshold
+ * transition is a fact about the *budget*, not about the child whose settled
+ * turn happened to cross it — a sibling mid-turn on the same shared ceiling
+ * has the same claim to the steer, and waiting for its own next turn to settle
+ * may be exactly one turn too late.
+ */
+const liveChildren = new WeakMap<Budget, Set<ChildBudgets>>();
+
 export class ChildBudgets {
 	/**
 	 * The budget decision that stopped this run: which budget, and whether it
@@ -36,6 +45,8 @@ export class ChildBudgets {
 	 * success. Without this confirmation, exhaustion stays fatal.
 	 */
 	private noticeDelivered = false;
+	/** How the runner lands this child's notice (its wrap-up file). Set by `arm`, cleared by `release`. */
+	private deliver?: (notice: string) => void;
 
 	constructor(
 		private readonly budgets: Budget[],
@@ -75,21 +86,50 @@ export class ChildBudgets {
 	}
 
 	/**
-	 * A budget already inside the wrap-up window before this child's first turn
-	 * — a shared flow ceiling other children have been spending against — latches
-	 * the wrap-up now and returns the notice, so the child finds it on its first
-	 * poll instead of only after a settled turn that may already have crossed
-	 * the hard ceiling.
+	 * Join the wrap-up channel: register on every governing budget so a
+	 * soft-threshold transition any sibling's turn crosses steers this child
+	 * too, and steer immediately when a shared ceiling is already inside the
+	 * window — a child spawned at 85% must find its notice on the first poll,
+	 * not after a settled turn that may already have crossed the hard ceiling.
 	 */
-	wrapUpAtSpawn(): string | undefined {
+	arm(deliver: (notice: string) => void): void {
+		this.deliver = deliver;
 		// Never steer a child the budget already refuses: nearsLiveStop stays true
-		// past the hard ceiling, and a refused child gets a refusal, not a notice.
-		if (this.budgets.some((budget) => budget.refusesSpawn())) return undefined;
-		if (!this.wrapUp) {
-			this.wrapUp = this.budgets.find((budget) => budget.nearsLiveStop());
-			if (this.wrapUp) this.notice = this.wrapUp.wrapUpNotice();
+		// past the hard ceiling, and a refused child gets a refusal, not a notice
+		// — nor a seat on the channel a later transition would steer.
+		if (this.budgets.some((budget) => budget.refusesSpawn())) return;
+		for (const budget of this.budgets) {
+			let siblings = liveChildren.get(budget);
+			if (!siblings) liveChildren.set(budget, siblings = new Set());
+			siblings.add(this);
 		}
-		return this.notice;
+		const near = this.budgets.find((budget) => budget.nearsLiveStop());
+		if (near) this.latchWrapUp(near);
+	}
+
+	/** Leave the wrap-up channel. The run is over (or refused): later transitions on a shared budget must not write into its reclaimed temp dir. */
+	release(): void {
+		for (const budget of this.budgets) liveChildren.get(budget)?.delete(this);
+		this.deliver = undefined;
+	}
+
+	/**
+	 * One budget's soft threshold crossed: steer every live child it governs,
+	 * not only the one whose turn settled. Only inside the window — a budget at
+	 * or past a hard ceiling refuses and stops; steering there would let spend
+	 * on an exhausted budget settle gracefully.
+	 */
+	private static steerLiveChildren(budget: Budget): void {
+		if (budget.refusesSpawn()) return;
+		for (const child of liveChildren.get(budget) ?? []) child.latchWrapUp(budget);
+	}
+
+	/** Latch this child's wrap-up against `budget` and land its notice, once; a child already stopping or steered keeps its first notice. */
+	private latchWrapUp(budget: Budget): void {
+		if (this.wrapUp || this.budgetStop) return;
+		this.wrapUp = budget;
+		this.notice = budget.wrapUpNotice();
+		this.deliver?.(this.notice);
 	}
 
 	/**
@@ -105,20 +145,22 @@ export class ChildBudgets {
 
 	/**
 	 * Charge one settled turn and decide the mid-stream action, which the caller
-	 * carries out: `terminate` stops the child; `wrapUpNotice` (returned once per
-	 * run, on the turn its budget latched) is delivered into the child. The hard
-	 * stop is latched on the first decision to stop: a turn that arrives after
-	 * `terminate()` must not overwrite the budget that caused it, and the error
-	 * is built HERE, not at settle time — a budget keeps charging for turns that
-	 * arrive between `terminate()` and the child actually exiting, so a ceiling
-	 * crossed only afterwards could otherwise out-rank the one that caused the
-	 * stop. The soft threshold is checked strictly after the hard one: a turn
-	 * that crosses both at once latches the stop and never asks for a wrap-up
-	 * there was no headroom to honor.
+	 * carries out: `terminate` stops the child. A soft threshold this turn
+	 * crosses is not returned but broadcast — every live child on the crossing
+	 * budget (this one included, via its armed channel) is steered at the same
+	 * moment. The hard stop is latched on the first decision to stop: a turn
+	 * that arrives after `terminate()` must not overwrite the budget that caused
+	 * it, and the error is built HERE, not at settle time — a budget keeps
+	 * charging for turns that arrive between `terminate()` and the child
+	 * actually exiting, so a ceiling crossed only afterwards could otherwise
+	 * out-rank the one that caused the stop. The soft threshold is checked
+	 * strictly after the hard one: a turn that crosses both at once latches the
+	 * stop and never asks for a wrap-up there was no headroom to honor.
 	 */
-	chargeTurn(turnUsage: UsageStats, healthy: boolean): { terminate?: boolean; wrapUpNotice?: string } {
+	chargeTurn(turnUsage: UsageStats, healthy: boolean): { terminate?: boolean } {
 		for (const budget of this.budgets) budget.charge(turnUsage);
 		if (!healthy) return {};
+		let terminate = false;
 		if (!this.budgetStop) {
 			const unenforceable = turnUsage.costKnown === false ? this.budgets.find((budget) => budget.enforcesCost) : undefined;
 			// Which ceilings bite mid-stream depends on the budget's authority;
@@ -130,17 +172,20 @@ export class ChildBudgets {
 					reason: unenforceable ? "unobservable" : "exhausted",
 					error: unenforceable ? stopped.unobservableError() : stopped.exhaustedError(),
 				};
-				return { terminate: true };
+				terminate = true;
 			}
 		}
-		if (!this.budgetStop && !this.wrapUp) {
-			this.wrapUp = this.budgets.find((budget) => budget.nearsLiveStop());
-			if (this.wrapUp) {
-				this.notice = this.wrapUp.wrapUpNotice();
-				return { wrapUpNotice: this.notice };
-			}
+		// Broadcast EVERY governing budget inside the wrap-up window, whatever
+		// this child's own state — even a turn that just latched this child's
+		// stop: a child stopped by its contract still carries the flow ceiling
+		// its siblings share, and skipping the broadcast here would steer them
+		// one turn late. Per-child dedup lives in latchWrapUp (a stopping child
+		// never self-steers); the exhausted case is screened inside
+		// steerLiveChildren.
+		for (const budget of this.budgets) {
+			if (budget.nearsLiveStop()) ChildBudgets.steerLiveChildren(budget);
 		}
-		return {};
+		return terminate ? { terminate: true } : {};
 	}
 
 	/**

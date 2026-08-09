@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
+import { delegationContractId, prepareIntegrationHandoff, ResolvedDelegationContract } from "../extensions/pi-flows/delegation.ts";
+import { Run } from "../extensions/pi-flows/run.ts";
 import { attachPresetTraceAttributes } from "../extensions/pi-flows/preset-catalog.ts";
 import { formatPresetResult, loadPresetsFromDir, packagePresetsDir, preparePresetRun, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
 import { emptyUsage, type FlowPreset, type FlowRunResult } from "../extensions/pi-flows/types.ts";
@@ -336,6 +337,59 @@ test("a three-dot review request freezes at the merge base so the manifest is th
 		endpointRange,
 	);
 	assert.equal(endpointReviewed.details.presetOutcome, "PARTIAL", "src/b.ts also differs between the endpoints, so that coverage is incomplete");
+});
+
+test("only a schema-missed envelope is retained for salvage; stale identities are discarded", async () => {
+	// A finding is only worth surfacing unvalidated when it was produced under
+	// the right contract: a stale contractId or an integrity failure is a wrong
+	// or untrustworthy envelope, not a merely-unvalidated one.
+	const contract = {
+		objective: "Review the change.",
+		constraints: [],
+		nonGoals: [],
+		dependencies: [],
+		authority: { may: [], mustNot: [], requiresApproval: [] },
+		sideEffectClass: "read-only" as const,
+		budget: {},
+		acceptanceChecks: [],
+		returnSchema: { type: "object", required: ["axis"], properties: { axis: { type: "string" } }, additionalProperties: false },
+		owner: "spec",
+	};
+	const resolved = ResolvedDelegationContract.resolve(contract).resolved!;
+	const policy = { recordContent: true, redactSecrets: true };
+	const envelope = (contractId: string, data: unknown) => JSON.stringify({
+		schemaVersion: "pi-flows.return-envelope.v1",
+		contractId,
+		status: "completed",
+		summary: "done",
+		evidence: [],
+		artifactReferences: [],
+		digests: [],
+		changedState: [],
+		unresolvedQuestions: [],
+		retry: { retryable: false },
+		data,
+	});
+	const run = (text: string): FlowRunResult => ({
+		agent: "overwatch",
+		agentSource: "package",
+		task: "review",
+		exitCode: 0,
+		messages: [{ role: "assistant", content: [{ type: "text", text }] }],
+		stderr: "",
+		usage: emptyUsage(),
+	});
+
+	const schemaMiss = run(envelope(resolved.id, { axis: "spec", findings: [{ claim: "salvageable" }] }));
+	const missed = prepareIntegrationHandoff(schemaMiss, { contract: resolved, cwd: process.cwd(), policy });
+	assert.equal(missed.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.ok(Run.of(schemaMiss).takeRejectedReturnEnvelope(), "a strict-schema miss under the right contract is retained for salvage");
+
+	const stale = run(envelope(`sha256:${"0".repeat(64)}`, { axis: "spec", findings: [{ claim: "stale" }] }));
+	const mismatched = prepareIntegrationHandoff(stale, { contract: resolved, cwd: process.cwd(), policy });
+	assert.equal(mismatched.error?.code, "RETURN_CONTRACT_MISMATCH");
+	assert.ok(mismatched.rejected, "the stale envelope's claims stay available as trace evidence");
+	assert.equal(Run.of(stale).takeRejectedReturnEnvelope(), undefined, "but a stale identity must not be retained as salvageable findings");
 });
 
 test("a validated axis keeps its findings when the other axis fails validation", async () => {

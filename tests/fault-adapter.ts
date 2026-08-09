@@ -280,40 +280,49 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 			? failedResult(childOptions, failure.code, failure.message, failure.cause, failure.retryable)
 			: baseResult(childOptions, body, options.usage);
 		result.durationMs = durationMs;
-		// The wrap-up round-trip, at the fidelity the real runner has: a budget
-		// already near its ceiling steers at spawn, each scripted turn is charged
-		// as it settles, an honored notice costs one further turn whose text is
-		// the final body, and the budget settles the outcome — graceful only when
+		// The wrap-up round-trip, at the fidelity the real runner has: the child
+		// joins the wrap-up channel (so a shared ceiling near its stop — or a
+		// sibling's crossing turn — steers it), each scripted turn is charged as
+		// it settles, an honored notice costs one further turn whose text is the
+		// final body, and the budget settles the outcome — graceful only when
 		// the notice was actually delivered.
 		if (failure) {
 			childBudgets.chargeTurn(result.usage, false);
 		} else {
 			const spend = options.usage ?? DEFAULT_USAGE;
 			const turnUsage = (): UsageStats => ({ ...emptyUsage(), input: spend.input, output: spend.output, cost: spend.cost, turns: 1 });
-			let notice = childBudgets.wrapUpAtSpawn();
+			let notice: string | undefined;
+			childBudgets.arm((text) => {
+				notice = text;
+				result.wrapUpRequested = true;
+			});
+			// One yield so concurrently dispatched siblings join the channel before
+			// this child's first turn settles — the seam's only async boundary,
+			// mirroring the real runner's awaited setup between arm and spawn.
+			await new Promise((resolve) => setImmediate(resolve));
 			let decision: ReturnType<ChildBudgets["chargeTurn"]> = {};
 			// Count the turns actually charged: a mid-script termination must not
-			// report usage the budget never saw.
+			// report usage the budget never saw. A child scripted to honor the
+			// notice breaks off its remaining work the moment the steer lands; a
+			// child with no wrapUpReply plays every scripted turn regardless —
+			// that is the undelivered/ignored-notice fault.
 			let turnsCharged = 0;
-			for (let turn = 0; turn < Math.max(1, scripted.turns ?? 1) && !decision.terminate; turn++) {
+			for (let turn = 0; turn < Math.max(1, scripted.turns ?? 1) && !decision.terminate && !(notice !== undefined && scripted.wrapUpReply !== undefined); turn++) {
 				decision = childBudgets.chargeTurn(turnUsage(), true);
 				turnsCharged++;
-				notice ??= decision.wrapUpNotice;
 			}
 			result.usage = { ...result.usage, input: spend.input * turnsCharged, output: spend.output * turnsCharged, cost: spend.cost * turnsCharged, turns: turnsCharged };
-			if (notice) {
-				result.wrapUpRequested = true;
-				if (scripted.wrapUpReply !== undefined && !decision.terminate) {
-					childBudgets.confirmDelivery(notice);
-					body = scripted.wrapUpReply;
-					result.messages.push({ role: "assistant", content: [{ type: "text", text: body }] } as any);
-					childBudgets.chargeTurn(turnUsage(), true);
-					result.usage = { ...result.usage, input: result.usage.input + spend.input, output: result.usage.output + spend.output, cost: result.usage.cost + spend.cost, turns: result.usage.turns + 1 };
-				}
+			if (notice !== undefined && scripted.wrapUpReply !== undefined && !decision.terminate) {
+				childBudgets.confirmDelivery(notice);
+				body = scripted.wrapUpReply;
+				result.messages.push({ role: "assistant", content: [{ type: "text", text: body }] } as any);
+				childBudgets.chargeTurn(turnUsage(), true);
+				result.usage = { ...result.usage, input: result.usage.input + spend.input, output: result.usage.output + spend.output, cost: result.usage.cost + spend.cost, turns: result.usage.turns + 1 };
 			}
 			childBudgets.settle(result);
 		}
 		childBudgets.recordOutcome(agent);
+		childBudgets.release();
 		if (!failure) servedByAgent.set(agent, [...(servedByAgent.get(agent) ?? []), body]);
 
 		ledger.dispatches.push({
