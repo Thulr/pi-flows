@@ -105,14 +105,12 @@ function emptyRun(ref: FlowAgentRefInput, task: string, deps: ModeDeps, error?: 
 }
 
 /**
- * The bare concurrent fan-out. Superseded by {@link runWave} as the
- * handler-facing entry point: this neither enforces the shared-write guard nor
- * feeds the settle, so every direct caller re-sequences both by hand — and a
- * new fan-out that forgets the guard call loses it silently. It stays exported
- * unchanged until the mode sweep migrates the remaining direct callers;
- * runWave wraps it, so there is still exactly one fan-out loop.
+ * The bare concurrent fan-out behind {@link runWave} — the one fan-out loop.
+ * Private on purpose: it neither enforces the shared-write guard nor feeds the
+ * settle, so a caller reaching it directly would re-own both by hand, which is
+ * exactly the ritual runWave exists to end.
  */
-export async function runAgentFanout(
+async function runAgentFanout(
 	deps: ModeDeps,
 	mode: FlowMode,
 	items: AgentFanoutItem[],

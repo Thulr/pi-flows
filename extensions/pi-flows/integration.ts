@@ -102,8 +102,13 @@ export function integrationRunPlan(
 	};
 }
 
-/** Dispatch a validated plan without unpacking its contract limits or span scope. */
-export function runIntegrationPlan(
+/**
+ * Dispatch a validated plan without unpacking its contract limits or span
+ * scope. Private on purpose: {@link dispatchIntegrationPlan} is the
+ * handler-facing entry point, and it owns the track/isFailed/consume ordering
+ * a bare dispatch would hand back to the caller.
+ */
+function runIntegrationPlan(
 	deps: ModeDeps,
 	plan: IntegrationRunPlan,
 	mode: FlowMode,

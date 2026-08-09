@@ -76,7 +76,7 @@ The slot in a mode's topology that an agent fills (generator, critic, worker, ad
 _Avoid_: position
 
 **Wave**:
-The set of roles a mode spawns concurrently at one step of its topology. A wave is the planned concurrent set; a stage is the recorded span that step becomes in the trace.
+The set of roles a mode spawns concurrently at one step of its topology. A wave is the planned concurrent set; a stage is the recorded span that step becomes in the trace. Each mode declares its pre-spawn waves once as its plan (`modes/plan.ts` vocabulary, a `plan` member on the mode table beside the handler); requested agents, the shared-write admissibility mirror, and budget disclosure read that declaration rather than re-deriving the topology by hand.
 _Avoid_: batch, group
 
 **Task**:
@@ -97,6 +97,10 @@ _Avoid_: active, in-flight, running
 **Settled**:
 A run (or a whole flow) that has reached a terminal state, whether it completed or failed. The opposite of live.
 _Avoid_: done, finished (both read as "succeeded")
+
+**Settle** (as an object):
+The per-invocation object (`settle.ts`) a mode handler finishes through. It holds the mode identity, fixed from the registry row at construction, and every run tracked so far; its refuse/complete outputs are the only outputs a handler returns, so an error output that drops already-spent runs is not a value a handler can build. Its details decorator and refusal footer are the extension points workflow and worktree use.
+_Avoid_: output builder, result collector
 
 **Replay**:
 The parent re-issuing a flow after it failed. Distinct from a retry, which happens inside a flow against one run. A bounded refusal — budget exhausted, gate failed — is not a signal to replay unchanged.
