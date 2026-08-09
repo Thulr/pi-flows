@@ -8,6 +8,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.7.1 - 2026-08-09
+
 ### Added
 
 - A budget **wrap-up notice** (#104): at 80% of any ceiling that would stop the
