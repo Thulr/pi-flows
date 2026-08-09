@@ -367,11 +367,16 @@ function flowCallShapeMismatch(args, shape) {
 		// its plans through integrationRunPlan, which resolves each ref's own
 		// cwd only, so failing such a call for a harmless top-level cwd would
 		// reject a recovery that does run in the evaluation checkout.
-		// Compared as resolved paths, exactly as the handlers resolve them
-		// (resolvedCwd against the caller's directory): an explicit "." or the
-		// checkout's own absolute path names the requested checkout and must
-		// pass — only a directory that differs is a relocation.
-		const relocatedPath = (cwd) => typeof cwd === "string" && cwd && resolvedCwd(repoRoot, cwd) !== repoRoot;
+		// Containment, not equality, over paths resolved exactly as the handlers
+		// resolve them (resolvedCwd against the caller's directory): ".", the
+		// checkout's own absolute path, and a subdirectory of it all name the
+		// requested checkout — a role can inspect this branch from any of them.
+		// Only a directory outside the checkout is a relocation.
+		const relocatedPath = (cwd) => {
+			if (typeof cwd !== "string" || !cwd) return false;
+			const relative = path.relative(repoRoot, resolvedCwd(repoRoot, cwd));
+			return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+		};
 		if (TOP_LEVEL_CWD_MODES.has(actualMode) && relocatedPath(args?.cwd)) {
 			return `the call moves work out of the requested checkout (cwd ${args.cwd})`;
 		}

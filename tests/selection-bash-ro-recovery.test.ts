@@ -95,6 +95,14 @@ test("cwd isolation is not a recovery for a task naming one checkout", () => {
 	const match = flowCallMatchesExpectation({ arguments: relocated }, recoveryCase().expectedFlowCall);
 	assert.equal(match.pass, false);
 	assert.match(match.notes, /outside the requested single checkout/);
+	// A subdirectory of the checkout is still the checkout: the roles can read
+	// this branch's history from there, so containment — not equality with the
+	// root — is the test.
+	const subdirectory = flowCallMatchesExpectation(
+		{ arguments: { ...BASH_RO_FANOUT, tasks: BASH_RO_FANOUT.tasks.map((task: any) => ({ ...task, cwd: "extensions/pi-flows" })) } },
+		recoveryCase().expectedFlowCall,
+	);
+	assert.equal(subdirectory.pass, true, subdirectory.notes);
 	// A role cwd that resolves to the evaluation checkout is not a relocation:
 	// the handlers resolve it the same way, and the work runs where asked.
 	const sameCheckout = flowCallMatchesExpectation(
