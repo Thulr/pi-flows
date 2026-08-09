@@ -1,25 +1,49 @@
-import { flowError, formatFlowError, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, formatFlowError, modeSettle, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentRef } from "../runner.ts";
+import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
+
+/**
+ * Loop's plan: the body role (the opening — empty when no body agent is
+ * named, and the handler refuses INVALID_MODE), then the optional judge.
+ * Iterations repeat these roles sequentially, so nothing is guarded and no
+ * wave carries contract budgets.
+ */
+export function planLoop(params: any): ModePlan {
+	if (!params.loop) return { waves: [], opening: [] };
+	const body = plannedRefs([params.loop?.body]);
+	const judge = plannedRefs([params.loop?.judge]);
+	return {
+		waves: [
+			{ refs: body, guarded: false },
+			...(judge.length > 0 ? [{ refs: judge, guarded: false }] : []),
+		],
+		opening: body,
+	};
+}
+
+/** Body and judge alternate one at a time: sequential. */
+export function criticalPathLoop(_params: any, results: FlowRunResult[]): number | undefined {
+	return sumRunDurations(results);
+}
 
 /** One place each loop unit key is derived, so the judge's dependency link names the body that actually ran. */
 const bodyKey = (stageKey: string) => `${stageKey}.body`;
 
 export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd, signal, makeDetails } = deps;
+	const settle = modeSettle(deps);
+	const { params, policy } = deps;
 	const spec = params.loop ?? {};
 	const goal: string | undefined = params.task;
 	if (!goal?.trim() || !spec.body?.agent) {
-		const error = flowError("INVALID_MODE", "Loop mode requires task and loop.body.agent.", "loop runs one body agent repeatedly until DONE/PASS or maxIterations.", 'Use { "task": "...", "loop": { "body": { "agent": "operator" } } }.');
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: makeDetails("loop")([], error) };
+		return settle.refuse(flowError("INVALID_MODE", "Loop mode requires task and loop.body.agent.", "loop runs one body agent repeatedly until DONE/PASS or maxIterations.", 'Use { "task": "...", "loop": { "body": { "agent": "operator" } } }.'));
 	}
 	const maxIterations = clampLoopIterations(spec.maxIterations);
 	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 	const bodyRef: FlowAgentRefInput = spec.body;
 	const judgeRef: FlowAgentRefInput | undefined = spec.judge?.agent ? spec.judge : undefined;
-	const results: FlowRunResult[] = [];
 	let previous = "";
 	let critique = "";
 	let done = false;
@@ -47,15 +71,15 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			judgeRef ? "Produce the next artifact for this loop iteration." : `Produce the next artifact. ${loopProtocolInstruction()}`,
 		].filter(Boolean).join("\n");
-		const body = await runAgentRef(deps, bodyRef, bodyTask, "loop", results.length + 1, results, { scope: { stage, key: bodyKey(stage.key), ...(priorIterationKey ? { dependsOn: [priorIterationKey] } : {}) } });
-		results.push(body);
-		if (isFailed(body)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy) }], details: makeDetails("loop")(results) };
+		const body = await runAgentRef(deps, bodyRef, bodyTask, settle.mode, settle.nextStep, [...settle.results], { scope: { stage, key: bodyKey(stage.key), ...(priorIterationKey ? { dependsOn: [priorIterationKey] } : {}) } });
+		settle.track(body);
+		if (isFailed(body)) return settle.complete(sanitizeText(`Flow loop: body "${bodyRef.agent}" failed at iteration ${iteration}.\n\n${resultText(body)}`, policy));
 		const bodyDone = judgeRef ? false : parseLoopStatus(resultText(body)) === "done";
 		const bodyConsumed = Boolean(judgeRef) || (!bodyDone && iteration < maxIterations);
 		const bodyHandoff = deps.handoffs.consumeResult({
 			result: body,
 			scope: { stage, key: bodyKey(stage.key) },
-			consumed: bodyConsumed,
+			completion: bodyConsumed ? "integrate" : "terminal",
 			noticeLabel: `loop iteration ${iteration} output`,
 			payload: "source",
 		});
@@ -63,7 +87,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		// This output crosses to a judge, or to the next iteration. On a final pass
 		// with neither, it is the answer — no boundary was crossed, and recording
 		// one would invent an inter-agent handoff in a healthy trace.
-		if (bodyHandoff.error) return { content: [{ type: "text", text: formatFlowError(bodyHandoff.error) }], details: makeDetails("loop")(results, bodyHandoff.error) };
+		if (bodyHandoff.error) return settle.refuse(bodyHandoff.error);
 
 		priorIterationKey = bodyHandoff.dependencyKey;
 		if (!judgeRef) {
@@ -80,29 +104,33 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 			"\n## Your job",
 			verdictProtocolInstruction("actionable feedback if another iteration should run"),
 		].join("\n");
-		const judged = await runAgentRef(deps, judgeRef, judgeTask, "loop", results.length + 1, results, { scope: { stage, key: `${stage.key}.judge`, dependsOn: [bodyHandoff.dependencyKey!] } });
-		results.push(judged);
-		if (isFailed(judged)) return { content: [{ type: "text", text: sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy) }], details: makeDetails("loop")(results) };
+		const judged = await runAgentRef(deps, judgeRef, judgeTask, settle.mode, settle.nextStep, [...settle.results], { scope: { stage, key: `${stage.key}.judge`, dependsOn: [bodyHandoff.dependencyKey!] } });
+		settle.track(judged);
+		if (isFailed(judged)) return settle.complete(sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy));
 		done = parseVerdict(resultText(judged)) === "pass";
 		if (done) break;
 		const critiqueConsumed = iteration < maxIterations;
 		const critiqueHandoff = deps.handoffs.consumeResult({
 			result: judged,
 			scope: { stage, key: `${stage.key}.judge` },
-			consumed: critiqueConsumed,
+			completion: critiqueConsumed ? "integrate" : "terminal",
 			noticeLabel: `loop judge iteration ${iteration}`,
 			payload: "source",
 		});
 		critique = critiqueHandoff.text;
 		// Likewise: a REVISE on the final iteration ends the loop, so nothing reads
 		// this critique and no boundary was crossed.
-		if (critiqueHandoff.error) return { content: [{ type: "text", text: formatFlowError(critiqueHandoff.error) }], details: makeDetails("loop")(results, critiqueHandoff.error) };
+		if (critiqueHandoff.error) return settle.refuse(critiqueHandoff.error);
 		priorIterationKey = critiqueHandoff.dependencyKey;
 	}
 
 	if (done) {
-		return { content: [{ type: "text", text: capModelVisibleText(`Flow loop: stop condition passed after ${Math.ceil(results.length / (judgeRef ? 2 : 1))} iteration(s).\n\n${previous}`) }], details: makeDetails("loop")(results) };
+		return settle.complete(capModelVisibleText(`Flow loop: stop condition passed after ${Math.ceil(settle.results.length / (judgeRef ? 2 : 1))} iteration(s).\n\n${previous}`));
 	}
 	const error = flowError("LOOP_DID_NOT_CONVERGE", "Loop did not reach DONE/PASS within maxIterations.", "The bounded loop exhausted its iteration cap before the stop condition passed.", "Raise loop.maxIterations, narrow the task, improve the stop condition, or inspect the final critique.");
-	return { content: [{ type: "text", text: capModelVisibleText(`${formatFlowError(error)}\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}`) }], details: makeDetails("loop")(results, error) };
+	// The visibility cap applies over the whole message, formatted error
+	// included, exactly as the hand-assembled return capped it — so the footer
+	// is the capped text minus the formatted prefix refuse re-prepends.
+	const formatted = formatFlowError(error);
+	return settle.refuse(error, { footer: capModelVisibleText(`${formatted}\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}`).slice(formatted.length) });
 }

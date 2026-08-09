@@ -12,9 +12,8 @@ import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeFaultAdapter, faultDeps, faultDiscovery } from "./fault-adapter.ts";
-import { RUN_MODE_CONTRACTS } from "../extensions/pi-flows/modes/contract.ts";
+import { RUN_MODE_CONTRACTS, firstSpawnAgentRefs, preSpawnSharedWriteRefusal, preSpawnSharedWriteWaves } from "../extensions/pi-flows/modes/contract.ts";
 import { runFlowAgent } from "../extensions/pi-flows/runner.ts";
-import { firstSpawnAgentRefs, preSpawnSharedWriteRefusal, preSpawnSharedWriteWaves } from "../extensions/pi-flows/validate.ts";
 import { DEFAULT_CONCURRENCY, type RunMode } from "../extensions/pi-flows/types.ts";
 
 function workspace(): string {

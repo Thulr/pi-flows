@@ -1,8 +1,31 @@
 import * as path from "node:path";
-import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, formatFlowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, modeSettle, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../commands.ts";
+import { plannedRefs, type ModePlan } from "./plan.ts";
+
+/**
+ * Monitor's plan: the reactor role with the handler's analyst default, never
+ * guarded and never an opening — the reactor spawns only if the probe ever
+ * trips the trigger, so no spawn is statically certain and a completed watch
+ * may hold zero runs. The reactor dispatches with no contract limits.
+ */
+export function planMonitor(params: any): ModePlan {
+	if (!params.monitor) return { waves: [], opening: [] };
+	const spec = params.monitor ?? {};
+	const reactor = plannedRefs([spec.reactor?.agent ? spec.reactor : { agent: "analyst" }]);
+	return { waves: [{ refs: reactor, guarded: false }], opening: [] };
+}
+
+/**
+ * Declared unavailable: probe checks are unmeasured wall-clock waits around
+ * at most one reactor run, so no duration arithmetic reflects the path. This
+ * is the per-mode declaration of what used to be a silent fall-through.
+ */
+export function criticalPathMonitor(): number | undefined {
+	return undefined;
+}
 
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
 	if (!Number.isFinite(value)) return fallback;
@@ -21,11 +44,11 @@ export function waitForMonitorInterval(ms: number, signal?: AbortSignal): Promis
 const TRIGGER_KEY = "trigger";
 
 export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
-	const { params, discovery, policy, agentScope, defaultCwd } = deps;
+	const settle = modeSettle(deps);
+	const { params, policy, defaultCwd } = deps;
 	const spec = params.monitor ?? {};
 	if (!spec.command?.trim()) {
-		const error = flowError("MONITOR_INVALID", "Monitor mode requires a probe command.", "No deterministic observation source was configured.", "Provide monitor.command and a bounded trigger policy.");
-		return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("monitor")([], error) };
+		return settle.refuse(flowError("MONITOR_INVALID", "Monitor mode requires a probe command.", "No deterministic observation source was configured.", "Provide monitor.command and a bounded trigger policy."));
 	}
 	const trigger = ["failure", "match"].includes(spec.trigger) ? spec.trigger : "success";
 	let pattern: RegExp | null = null;
@@ -34,8 +57,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 			if (!spec.pattern) throw new Error("pattern is required for a match trigger");
 			pattern = new RegExp(spec.pattern, "i");
 		} catch (cause) {
-			const error = flowError("MONITOR_INVALID", "Monitor match trigger has an invalid pattern.", cause instanceof Error ? cause.message : String(cause), "Provide a valid JavaScript regular expression in monitor.pattern.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("monitor")([], error) };
+			return settle.refuse(flowError("MONITOR_INVALID", "Monitor match trigger has an invalid pattern.", cause instanceof Error ? cause.message : String(cause), "Provide a valid JavaScript regular expression in monitor.pattern."));
 		}
 	}
 
@@ -47,8 +69,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 	for (let check = 1; check <= maxChecks; check += 1) {
 		const probe = await runProbeCommand(spec.command, path.resolve(defaultCwd, params.cwd ?? defaultCwd), checkTimeoutMs, policy, deps.signal);
 		if (probe.spawnFailed) {
-			const error = flowError("MONITOR_INVALID", "Monitor probe could not start.", probe.output || "The shell failed to spawn the probe command.", "Verify monitor.command and cwd, then retry.");
-			return { content: [{ type: "text", text: formatFlowError(error) }], details: deps.makeDetails("monitor")([], error) };
+			return settle.refuse(flowError("MONITOR_INVALID", "Monitor probe could not start.", probe.output || "The shell failed to spawn the probe command.", "Verify monitor.command and cwd, then retry."));
 		}
 		const output = probe.output.trim();
 		observations.push(`check ${check}: exit=${probe.exitCode ?? "none"}\n${output || "[no output]"}`);
@@ -82,7 +103,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 			attributes: { "flow.monitor.trigger": trigger, "flow.monitor.max_checks": maxChecks },
 		});
 		const error = flowError("MONITOR_NOT_TRIGGERED", `Monitor reached its bound (${maxChecks} checks) without firing.`, observations.at(-1) ?? "No probe observation was produced.", "Raise maxChecks/intervalMs only when the bounded wait is intentional, adjust the trigger, or use durable automation outside pi-flows.", true);
-		return { content: [{ type: "text", text: `${formatFlowError(error)}\n\n${sanitizeText(observations.join("\n\n"), policy)}` }], details: deps.makeDetails("monitor")([], error) };
+		return settle.refuse(error, { footer: `\n\n${sanitizeText(observations.join("\n\n"), policy)}` });
 	}
 
 	const prepared = deps.handoffs.consumeText({
@@ -90,7 +111,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 		text: triggered.output,
 		scope: { key: TRIGGER_KEY },
 	});
-	if (prepared.error) return { content: [{ type: "text", text: formatFlowError(prepared.error) }], details: deps.makeDetails("monitor")([], prepared.error) };
+	if (prepared.error) return settle.refuse(prepared.error);
 	const reactor: FlowAgentRefInput = spec.reactor?.agent ? spec.reactor : { agent: "analyst" };
 	const reactTask = [
 		"## Monitor goal",
@@ -102,10 +123,8 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 	].join("\n");
 	// The reactor's whole input is the triggering observation, so the diagnosis
 	// must not export as independent of what it diagnosed.
-	const reacted = await runAgentRef(deps, reactor, reactTask, "monitor", 1, [], { scope: { key: "reactor", dependsOn: [prepared.dependencyKey!] } });
-	if (isFailed(reacted)) return { content: [{ type: "text", text: sanitizeText(`Flow monitor triggered on check ${triggered.check}, but reactor ${reactor.agent} failed.\n\n${resultText(reacted)}`, policy) }], details: deps.makeDetails("monitor")([reacted]) };
-	return {
-		content: [{ type: "text", text: capModelVisibleText(`Flow monitor: trigger "${trigger}" fired on check ${triggered.check}/${maxChecks}; reactor ${reactor.agent} completed.${prepared.warnings.length ? " Probe output contained injection-like text and was treated as data." : ""}\n\n${sanitizeText(resultText(reacted), policy)}`) }],
-		details: deps.makeDetails("monitor")([reacted]),
-	};
+	const reacted = await runAgentRef(deps, reactor, reactTask, settle.mode, settle.nextStep, [...settle.results], { scope: { key: "reactor", dependsOn: [prepared.dependencyKey!] } });
+	settle.track(reacted);
+	if (isFailed(reacted)) return settle.complete(sanitizeText(`Flow monitor triggered on check ${triggered.check}, but reactor ${reactor.agent} failed.\n\n${resultText(reacted)}`, policy));
+	return settle.complete(capModelVisibleText(`Flow monitor: trigger "${trigger}" fired on check ${triggered.check}/${maxChecks}; reactor ${reactor.agent} completed.${prepared.warnings.length ? " Probe output contained injection-like text and was treated as data." : ""}\n\n${sanitizeText(resultText(reacted), policy)}`));
 }

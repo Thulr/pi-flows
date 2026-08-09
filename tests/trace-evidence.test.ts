@@ -729,14 +729,20 @@ test("evaluate records no handoff for feedback or artifacts nothing will read", 
 
 test("parallel validates its returns but records no handoff", async () => {
 	// Parallel's outputs go into the response the caller reads; it spawns nothing
-	// that consumes them. Validation still fails closed — only the boundary
-	// evidence is withheld, because no boundary was crossed.
+	// that consumes them. No boundary is claimed — but the contract validation
+	// that admitted each return is itself evidence, recorded under the
+	// validation vocabulary rather than as a handoff that never happened.
 	const { stubDir } = await runFlow(
 		{ task: "collect", traceFile: TRACE, contract, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: envelope() },
 	);
 	const spans = await readSpans(stubDir);
 	assert.equal(spans.filter((span) => attr(span, "flow.event_kind") === "handoff").length, 0);
+	assert.deepEqual(
+		spans.filter((span) => attr(span, "flow.event_kind") === "validation").map((span) => attr(span, "flow.event_name")),
+		["envelope.validated", "envelope.validated"],
+		"each contracted terminal report leaves exactly one validation attestation",
+	);
 	assert.equal(byRole(spans, "child").length, 2, "the children themselves are still evidence");
 
 	const invalid = await runFlow(

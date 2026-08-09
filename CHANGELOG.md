@@ -8,7 +8,49 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Changed
+
+- Every mode now declares its **plan** — its pre-spawn **waves** of agent refs —
+  once, beside its handler, and the four surfaces that used to re-derive the
+  topology by hand (requested agents, the shared-write admissibility mirror,
+  budget disclosure, the critical-path resolver) read the declaration instead.
+  A new mode without a plan or critical path is a compile error; the
+  admissibility mirror moved out of Core onto the mode table.
+- Mode handlers settle through a per-invocation **Settle** object and dispatch
+  through `dispatchIntegrationPlan`/`runWave`. The shared-write gate is now
+  enforced inside the fan-out itself (no hand-called guard to forget), a
+  refusal structurally carries every run that already spent, and contracted
+  dispatch derives its limits, cwd, and step in exactly one place. Refusal
+  precedence between an invalid delegation contract and a shared-write
+  collision flips accordingly (plans validate before the wave gate; both
+  remain strictly pre-spawn).
+- `list:true` and `showConfig:true` are decided inside the admission walk
+  rather than by statement order in the composition root; their precedence
+  (list over showConfig over run modes, before preset resolution) is now a
+  stated, tested rule.
+
 ### Fixed
+
+- A flow whose router settled without naming a valid candidate
+  (`ROUTE_UNRESOLVED`) reported no runs: the router child that had already
+  spent tokens vanished from `details.results`, so the flow card read
+  "0 agents" and reflexion skipped a flow that did spawn. The refusal now
+  carries the router run.
+- Terminal (parent-facing) contracted results now leave coordination
+  evidence: `envelope.validated` / `envelope.rejected` validation events with
+  their artifact events, in every mode. Previously a digest mismatch recorded
+  five spans through `graph` and none through `single` or `parallel` — the
+  mode the code-review preset runs. Injection-policy enforcement for terminal
+  reports is unchanged; only the recording became unconditional.
+- The trace writer no longer emits a shape its own reader refuses: a
+  `dependsOn` key that resolves to no span is recorded as
+  `flow.depends_on_unresolved` (a dangling link — a handler bug, reported
+  separately) instead of being silently dropped and read back as corruption.
+  A thrown handler now finalizes a closed, refusable trace instead of leaving
+  child spans parented to stage ids that were never written.
+- `npm run trace:report`, the command named in the `TRACE_INCOMPLETE` fix
+  text, crashed under plain `node` on the first TypeScript parameter property;
+  it now runs under the tsx loader and is smoke-tested.
 
 - A **rejected envelope**'s claims are no longer surfaced as **unvalidated
   claims** when its artifacts were never verified. A return envelope's three

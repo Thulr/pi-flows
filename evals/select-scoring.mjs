@@ -11,7 +11,8 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callAdmissibilityFailure, scoringDiscovery } from "./select-admissibility.mjs";
-import { effectiveTools, firstSpawnAgentRefs, isWorkflowWorkPhase, resolvedCwd } from "../extensions/pi-flows/validate.ts";
+import { effectiveTools, isWorkflowWorkPhase, resolvedCwd } from "../extensions/pi-flows/validate.ts";
+import { firstSpawnAgentRefs } from "../extensions/pi-flows/modes/contract.ts";
 
 export { callAdmissibilityFailure } from "./select-admissibility.mjs";
 

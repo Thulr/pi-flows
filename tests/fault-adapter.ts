@@ -23,8 +23,9 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
+import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
 import { ChildBudgets } from "../extensions/pi-flows/runner-budget.ts";
-import { emptyUsage, flowError, type Budget, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions, type UsageStats } from "../extensions/pi-flows/types.ts";
+import { emptyUsage, flowError, makeSettle, type Budget, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions, type UsageStats } from "../extensions/pi-flows/types.ts";
 
 export type FaultKind = "delay" | "loss" | "duplicate" | "reorder" | "failure" | "stale";
 
@@ -377,6 +378,10 @@ export function faultDeps(params: Record<string, unknown>, adapter: FaultAdapter
 	const recordEvent: RecordEvent = (event) => {
 		adapter.ledger.events.push({ kind: event.kind, name: event.name, ok: event.ok !== false, attributes: event.attributes ?? {} });
 	};
+	// The settle is built exactly as the registry builds it — from the detected
+	// mode's own details builder — so this fake cannot drift from production.
+	const detected = detectRunMode(params);
+	const mode = "mode" in detected ? detected.mode : "parallel";
 	return {
 		params: { why: "fault-injection scenario", ...params },
 		discovery,
@@ -391,6 +396,7 @@ export function faultDeps(params: Record<string, unknown>, adapter: FaultAdapter
 		agentScope: "user",
 		defaultCwd: cwd,
 		makeDetails: catalog.makeDetails,
+		settle: makeSettle(mode, catalog.makeDetails(mode)),
 		runChild: adapter.runChild,
 		recordEvent,
 		concurrency: 4,

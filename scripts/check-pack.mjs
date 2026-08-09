@@ -106,5 +106,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // from presets.ts) — plus the budget wrap-up sections in flow-reference and
 // troubleshooting and the changelog entries. Same verification: 101 files,
 // none from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 1_040_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_100_000 for the mode-seam deepening: unconditional terminal
+// envelope-validation evidence (handoff-consumption.ts), unresolved
+// dependency-link recording (trace-sink/structure/report), the describe gate
+// in the admission walk (flow.ts), and the declared mode plans + settle
+// object the mode table gained. Same verification: no files from tests/,
+// scripts/, or evals/.
+assert.ok(pack.unpackedSize < 1_100_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

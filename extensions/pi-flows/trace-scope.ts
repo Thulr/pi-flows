@@ -130,6 +130,8 @@ export function encodeUnitKey(key: string): string {
  * Escape an author-supplied identifier before it becomes part of a unit key.
  *
  * The framework derives keys by suffixing a dot — `<unit>.handoff`,
+ * `<unit>.validation` (a terminal attestation, kept apart from the handoff
+ * slot so a later boundary crossing stays uniquely addressable),
  * `<unit>.check`, `<phase>.approval`. A graph node, workflow phase, or worktree
  * task may legitimately be named `source.handoff`, and unescaped it would answer
  * to the same name as node `source`'s handoff event. A dependency on `source`

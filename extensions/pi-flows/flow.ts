@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { createHandoffConsumer, type HandoffConsumer } from "./handoff-consumption.ts";
 import { isFailed } from "./sanitize.ts";
-import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type TraceSink } from "./trace.ts";
+import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type CriticalPathResolver, type TraceSink } from "./trace.ts";
 import {
 	Budget,
 	DEFAULT_CONCURRENCY,
@@ -77,6 +77,8 @@ export interface FlowPorts {
 	runChild: RunChild;
 	/** Details-builder factory, a pure function of the resolution it is given. The aggregate calls it exactly once, after preset expansion, so every refusal, live row, and handler reads details built from the same resolved state. */
 	makeDetails: (call: ResolvedCall) => DetailsBuilder;
+	/** Render one answer-without-spawning surface (CONTEXT.md: Spawn gate — "surfaces that answer without spawning sit outside it"). What the answer says — catalogs, effective config — is the supplier's; WHERE it fires in the walk, and that list wins over config, is the aggregate's (see {@link Flow.admit}). Absent when the supplier offers no describe surfaces, in which case describe params fall through the walk. */
+	describe?: (surface: "list" | "config") => ModeOutput;
 	/** Expand a named preset into ordinary mode params, a tightened capture policy, and the preset itself. Pure: the returned resolution is the only copy. Absent when the call names none. */
 	resolvePreset?: () => ResolvedCall | { refusal: ModeOutput };
 	/** Which single mode the params activate; the refusal carries the mode-hint content, built with the aggregate-constructed builder. */
@@ -101,6 +103,8 @@ export interface FlowPorts {
 	recordLesson?: (params: Record<string, any>, mode: RunMode, text: string, policy: CapturePolicy) => Promise<void>;
 	/** Decorate the root span's summary attributes (preset provenance and outcome). `deliverable` is false when a strict run cannot evidence the verdict it reached; `preset` is the resolved selection the aggregate carried. */
 	decorateRootAttributes?: (attributes: Record<string, unknown>, details: FlowDetails, deliverable: boolean, preset?: FlowPreset) => Record<string, unknown>;
+	/** The mode table's critical-path resolver, supplied from the composition root where the table is reachable — the aggregate passes it through to trace summaries and never reads mode topology itself. Absent (barebones tests), the metric reports unavailable. */
+	criticalPath?: CriticalPathResolver;
 	/** Append the durable session entry. The aggregate calls it last, so history can never record an outcome the caller was not told. */
 	persist: (details: FlowDetails) => void;
 }
@@ -123,7 +127,8 @@ interface AdmittedState {
 	budget?: Budget;
 }
 
-export type FlowAdmission = { refused: ModeOutput } | { admitted: AdmittedFlow };
+/** Admission's three exits: answered without spawning (described), stopped by a gate (refused), or handed the dispatch capability (admitted). */
+export type FlowAdmission = { described: ModeOutput } | { refused: ModeOutput } | { admitted: AdmittedFlow };
 
 /**
  * Module-private construction token. flow.ts ships in the published package,
@@ -142,15 +147,21 @@ const LIFECYCLE: unique symbol = Symbol("pi-flows.flow.lifecycle");
  * the only source of an {@link AdmittedFlow}, whose `dispatch` is the only
  * source of a {@link DispatchedFlow}, whose `settle` produces the final
  * output. Out-of-order transitions are uncompilable, and each transition
- * spends itself, so a replay is refused at runtime too.
+ * spends itself, so a replay is refused at runtime too. A describing call
+ * (`list`, `showConfig`) exits at the walk's first gate with an answer
+ * instead of entering the progression: a described flow is neither refused
+ * nor admitted.
  */
 export class Flow {
 	/**
-	 * Walk the pre-spawn gates in the aggregate's declared order: preset
-	 * expansion, mode detection, the spawn gate (`why`), delegation depth,
-	 * concurrency bounds, preset trust, preset-owned preparation, strict-trace
-	 * configuration, then — once the trace sink exists — project-agent trust,
-	 * the spawn checkpoint, handler resolution, and budget construction.
+	 * Walk the pre-spawn gates in the aggregate's declared order: the describe
+	 * surfaces (`list` wins over `showConfig`, and both answer before anything
+	 * else — a describing call never resolves a preset and never reaches mode
+	 * detection), preset expansion, mode detection, the spawn gate (`why`),
+	 * delegation depth, concurrency bounds, preset trust, preset-owned
+	 * preparation, strict-trace configuration, then — once the trace sink
+	 * exists — project-agent trust, the spawn checkpoint, handler resolution,
+	 * and budget construction.
 	 *
 	 * A refusal after the sink exists finalizes the trace with
 	 * `flow.child_count: 0` and the refusal code, so a caller carrying a
@@ -160,6 +171,17 @@ export class Flow {
 	 * settings) — never with evidence borrowed from a run that did not happen.
 	 */
 	static async admit(ports: FlowPorts): Promise<FlowAdmission> {
+		// Answers-without-spawning sit outside the spawn gate (CONTEXT.md), but
+		// "outside" is a position in this walk, not an exemption from it: list,
+		// then config, both before preset expansion — a `{ list, preset }` call
+		// describes the installed surface without resolving the preset — and
+		// before mode detection, so a describe param never counts as a second
+		// mode. The supplier renders the answer; the aggregate owns only where,
+		// and in which precedence, it fires.
+		if (ports.describe) {
+			if (ports.params.list) return { described: ports.describe("list") };
+			if (ports.params.showConfig) return { described: ports.describe("config") };
+		}
 		let call: ResolvedCall = { params: ports.params, policy: ports.policy };
 		if (ports.resolvePreset) {
 			const resolved = ports.resolvePreset();
@@ -331,7 +353,21 @@ export class AdmittedFlow {
 			});
 			return DispatchedFlow.fromDispatch(LIFECYCLE, state, output, (details) => { this.#liveDetails = details; });
 		} catch (error) {
-			ports.presence.settle(this.#liveDetails);
+			// `finalize` is the only writer of stage spans and the root, so a
+			// thrown handler must still reach it: without this the export is an
+			// unrootable fragment — child spans parented to stage ids never
+			// written, no root, no expectation for health to count against.
+			// ok:false, summarized from the last live details the handler shared;
+			// settle's success-path finalize is untouched because a throwing
+			// handler never constructs the DispatchedFlow that would run it.
+			try {
+				await state.sink?.finalize({ ok: false }, traceSummaryAttributes(mode, state.call.params, { content: [], details: this.#liveDetails }, ports.criticalPath));
+			} catch {
+				// Deliberate: the handler's error is the flow's failure, and a
+				// failing sink must not replace it on the way out.
+			} finally {
+				ports.presence.settle(this.#liveDetails);
+			}
 			throw error;
 		}
 	}
@@ -399,7 +435,7 @@ export class DispatchedFlow {
 				// A strict run whose own evidence is degraded is about to be refused,
 				// so the root must not claim a verified outcome it never delivered.
 				output.details.trace = await state.sink.finalize({ ok }, (health) => {
-					const attributes = traceSummaryAttributes(mode, params, output);
+					const attributes = traceSummaryAttributes(mode, params, output, ports.criticalPath);
 					const deliverable = !state.traceStrict || traceHealthStatus(health, true) === "recorded";
 					return ports.decorateRootAttributes ? ports.decorateRootAttributes(attributes, output.details, deliverable, state.call.preset) : attributes;
 				});

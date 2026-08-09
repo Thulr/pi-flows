@@ -1,7 +1,7 @@
 import { resolveDelegationContract } from "./contract-resolution.ts";
-import { activeRunModes } from "./modes/contract.ts";
+import { activeRunModes, planForMode } from "./modes/contract.ts";
 import { formatTokens } from "./trace.ts";
-import type { BudgetCeiling, DelegationContract, FlowAgentRefInput, FlowError, RunMode } from "./types.ts";
+import type { BudgetCeiling, DelegationContract, FlowError, RunMode } from "./types.ts";
 
 type RecordValue = Record<string, unknown>;
 
@@ -40,105 +40,28 @@ function delegationContract(value: unknown): DelegationContract | undefined {
 	return isRecord(value) ? value as unknown as DelegationContract : undefined;
 }
 
-function agentRef(value: unknown): FlowAgentRefInput | undefined {
-	return isRecord(value) ? value as unknown as FlowAgentRefInput : undefined;
-}
-
-function ownContract(value: unknown): DelegationContract | undefined {
-	return delegationContract(agentRef(value)?.contract);
-}
-
-function resolvedContract(value: unknown, fallback?: DelegationContract): DelegationContract | undefined {
-	return resolveDelegationContract(agentRef(value), fallback);
-}
-
-function contractList(contract: DelegationContract | undefined): DelegationContract[] {
-	return contract ? [contract] : [];
-}
-
 /**
- * Mirror the contracts each mode passes to a child budget. This intentionally
- * omits contract-shaped fields in modes that do not enforce contract budgets.
+ * The contracts hanging off the mode's planned refs — each wave declares
+ * whether its runs carry their own contracts only ("own"), resolve against
+ * the call's fallback ("resolved"), or dispatch with no contract limits at
+ * all (no marker), so a mode that never enforces a contract budget never
+ * advertises one (modes/plan.ts). What used to be a hand-maintained
+ * per-mode switch here now reads the same declaration the handlers plan by;
+ * the missing-entry compile error moved to the table's `plan` member.
  */
-function resolvedContracts(params: RecordValue, mode: RunMode): DelegationContract[] {
+function plannedContracts(params: RecordValue, mode: RunMode): DelegationContract[] {
 	const fallback = delegationContract(params.contract);
-	switch (mode) {
-		case "single":
-			return fallback ? [fallback] : [];
-		case "parallel":
-			return (Array.isArray(params.tasks) ? params.tasks : []).flatMap((task) => resolvedContract(task, fallback) ?? []);
-		case "chain":
-			return (Array.isArray(params.chain) ? params.chain : []).flatMap((step) => resolvedContract(step, fallback) ?? []);
-		case "evaluate": {
-			const spec = isRecord(params.evaluate) ? params.evaluate : {};
-			return contractList(resolvedContract(spec.operator, fallback));
+	const contracts: DelegationContract[] = [];
+	for (const wave of planForMode(mode, params).waves) {
+		if (!wave.contracts) continue;
+		for (const ref of wave.refs) {
+			const contract = wave.contracts === "own"
+				? delegationContract(ref.contract)
+				: resolveDelegationContract({ contract: delegationContract(ref.contract) }, fallback);
+			if (contract) contracts.push(contract);
 		}
-		case "vote": {
-			const spec = isRecord(params.vote) ? params.vote : {};
-			const voters = Array.isArray(spec.voters) && spec.voters.length > 0
-				? spec.voters
-				: typeof spec.agent === "string" ? [{ agent: spec.agent }] : [];
-			return [
-				...voters.flatMap((voter) => resolvedContract(voter, fallback) ?? []),
-				...(agentRef(spec.debrief)?.agent ? contractList(resolvedContract(spec.debrief, fallback)) : []),
-			];
-		}
-		case "orchestrate": {
-			const spec = isRecord(params.orchestrate) ? params.orchestrate : {};
-			return [
-				...([spec.commander, spec.recon, spec.verify].flatMap((ref) => ownContract(ref) ?? [])),
-				...contractList(resolvedContract(spec.debrief ?? { agent: "debrief" }, fallback)),
-			];
-		}
-		case "graph": {
-			const spec = isRecord(params.graph) ? params.graph : {};
-			const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
-			return [
-				...nodes.flatMap((node) => ownContract(node) ?? []),
-				...(agentRef(spec.debrief)?.agent ? contractList(resolvedContract(spec.debrief, fallback)) : []),
-			];
-		}
-		case "workflow": {
-			const spec = isRecord(params.workflow) ? params.workflow : {};
-			const phases = Array.isArray(spec.phases) ? spec.phases : [];
-			return [
-				...phases.flatMap((phase) => ownContract(phase) ?? []),
-				...(agentRef(spec.debrief)?.agent ? contractList(resolvedContract(spec.debrief, fallback)) : []),
-			];
-		}
-		case "worktree": {
-			const spec = isRecord(params.worktree) ? params.worktree : {};
-			const tasks = Array.isArray(spec.tasks) ? spec.tasks : [];
-			const integrator = spec.integrator ?? { agent: "operator" };
-			return [
-				...tasks.flatMap((task) => ownContract(task) ?? []),
-				...contractList(resolvedContract(integrator, fallback)),
-			];
-		}
-		case "debate": {
-			const spec = isRecord(params.debate) ? params.debate : {};
-			const participants = Array.isArray(spec.participants) ? spec.participants : [];
-			const adjudicator = spec.adjudicator ?? { agent: "analyst" };
-			return [
-				...participants.flatMap((participant) => resolvedContract(participant, fallback) ?? []),
-				...contractList(resolvedContract(adjudicator, fallback)),
-			];
-		}
-		case "dossier": {
-			const spec = isRecord(params.dossier) ? params.dossier : {};
-			const sections = Array.isArray(spec.sections) ? spec.sections : [];
-			const debrief = spec.debrief ?? { agent: "debrief" };
-			return [
-				...sections.flatMap((section) => ownContract(section) ?? []),
-				...contractList(resolvedContract(debrief, fallback)),
-			];
-		}
-		case "route":
-		case "loop":
-		case "search":
-		case "monitor":
-			return [];
 	}
+	return contracts;
 }
 
 /**
@@ -162,7 +85,7 @@ export function collectBudgetCeilings(params: unknown): BudgetCeiling[] {
 	};
 
 	add(ceilingFrom("flow", params));
-	for (const contract of resolvedContracts(params, modes[0])) add(ceilingFrom("contract", contract.budget));
+	for (const contract of plannedContracts(params, modes[0])) add(ceilingFrom("contract", contract.budget));
 	return ceilings;
 }
 

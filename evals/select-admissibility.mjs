@@ -9,7 +9,8 @@
 // a bare-node script such as eval:review or eval:pareto.
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentFlowDepth, firstSpawnAgentRefs, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, preSpawnSharedWriteRefusal, spawnJustificationMissing, validateConcurrency, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../extensions/pi-flows/validate.ts";
+import { currentFlowDepth, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, spawnJustificationMissing, validateConcurrency, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../extensions/pi-flows/validate.ts";
+import { firstSpawnAgentRefs, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";

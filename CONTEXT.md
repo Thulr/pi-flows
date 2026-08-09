@@ -11,7 +11,7 @@ Not every part of this repo earns the same depth. This split says where to spend
 `scripts/domain-score.mjs` enforces this split — every module below is checked for placement and for which subdomains it may import from — so the classification cannot quietly go stale as modules are added.
 
 **Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
-_Modules_: `flow.ts`, `run.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
+_Modules_: `flow.ts`, `run.ts`, `settle.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
 **Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
 _Modules_: `modes/*`, `presets.ts`, `preset-review.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
@@ -27,14 +27,14 @@ _Modules_: `index.ts`.
 
 The enforced direction is narrow on purpose: **Core may not import Supporting**, and the shared kernel may import only Core. Core reaching down into Generic plumbing is fine — commodity is there to be used. Core reaching sideways into the modes or the views is not: it would make the differentiator depend on the recombinations of it.
 
-Three placements are worth stating outright, because a first pass tends to put them elsewhere. **Tracing is Core, not reporting**: coordination evidence is what makes a returned finding checkable, which is the whole value proposition above — a flow that cannot show what it did has lost the thing being sold. **Redaction is Core, not plumbing**: `sanitize.ts` implements Capture policy, and what may leave a child is a guardrail, not a formatting concern. **The views are Supporting, not Generic**: they render domain concepts and must speak the glossary's terms, so they are not interchangeable commodity — but they hold no invariants, so they are not Core either.
+Four placements are worth stating outright, because a first pass tends to put them elsewhere. **Tracing is Core, not reporting**: coordination evidence is what makes a returned finding checkable, which is the whole value proposition above — a flow that cannot show what it did has lost the thing being sold. **Redaction is Core, not plumbing**: `sanitize.ts` implements Capture policy, and what may leave a child is a guardrail, not a formatting concern. **The views are Supporting, not Generic**: they render domain concepts and must speak the glossary's terms, so they are not interchangeable commodity — but they hold no invariants, so they are not Core either. **The shared-write gate's fan-out position is plumbing, not policy**: the rule is Core (`validateSharedWriteCwd` in `validate.ts`); `runWave` in Generic `dispatch.ts` invokes it at the one position that knows the concurrent set, so the fan-out enforces the Core-owned predicate without owning it.
 
 ## Language
 
 ### Delegation model
 
 **Flow**:
-One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it has a mode and a settled outcome of its own, and it is the thing a budget, a root span, and a checkpoint attach to when the call configures them. A flow refused before it spawns anything is still a flow. Its lifecycle is an explicit progression — refused → admitted → dispatched → settled — owned by the aggregate root in `flow.ts`.
+One bounded delegation — a single call of the `flow` tool, covering every child it spawns. A flow is not its runs: it has a mode and a settled outcome of its own, and it is the thing a budget, a root span, and a checkpoint attach to when the call configures them. A flow refused before it spawns anything is still a flow. Its lifecycle is an explicit progression — described, or refused → admitted → dispatched → settled — owned by the aggregate root in `flow.ts`. A **described** flow answered a describe surface (`list`, `showConfig`) from inside the admission walk: it spawned nothing and is neither refused nor admitted, and the walk fixes its precedence (list over showConfig over run modes, before preset expansion).
 _Avoid_: job, session
 
 **Admission**:
@@ -76,7 +76,7 @@ The slot in a mode's topology that an agent fills (generator, critic, worker, ad
 _Avoid_: position
 
 **Wave**:
-The set of roles a mode spawns concurrently at one step of its topology. A wave is the planned concurrent set; a stage is the recorded span that step becomes in the trace.
+The set of roles a mode spawns concurrently at one step of its topology. A wave is the planned concurrent set; a stage is the recorded span that step becomes in the trace. Each mode declares its pre-spawn waves once as its plan (`modes/plan.ts` vocabulary, a `plan` member on the mode table beside the handler); requested agents, the shared-write admissibility mirror, and budget disclosure read that declaration rather than re-deriving the topology by hand.
 _Avoid_: batch, group
 
 **Task**:
@@ -97,6 +97,10 @@ _Avoid_: active, in-flight, running
 **Settled**:
 A run (or a whole flow) that has reached a terminal state, whether it completed or failed. The opposite of live.
 _Avoid_: done, finished (both read as "succeeded")
+
+**Settle** (as an object):
+The per-invocation object (`settle.ts`) a mode handler finishes through. It holds the mode identity, fixed from the registry row at construction, and every run tracked so far; its refuse/complete outputs are the only outputs a handler returns, so an error output that drops already-spent runs is not a value a handler can build. Its details decorator and refusal footer are the extension points workflow and worktree use.
+_Avoid_: output builder, result collector
 
 **Replay**:
 The parent re-issuing a flow after it failed. Distinct from a retry, which happens inside a flow against one run. A bounded refusal — budget exhausted, gate failed — is not a signal to replay unchanged.

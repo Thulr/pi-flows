@@ -1,4 +1,5 @@
 import type { Budget, BudgetCeiling } from "./budget.ts";
+import type { Settle } from "./settle.ts";
 import type { ChildMessage } from "./sanitize.ts";
 import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
 import type { HandoffGuard } from "./handoff-types.ts";
@@ -393,6 +394,10 @@ export interface CapturePolicy {
 export { Budget } from "./budget.ts";
 export type { BudgetAuthority, BudgetCeiling, BudgetCeilings, BudgetSnapshot } from "./budget.ts";
 
+/** The settle object for one mode invocation — mode identity, tracked runs, and the invariant that every output carries them. Same arrangement as Budget: the rule lives in settle.ts, the kernel re-exports it. */
+export { Settle, makeSettle, modeSettle } from "./settle.ts";
+export type { SettleDetailsBuilder } from "./settle.ts";
+
 /** Everything the sink needs beyond the run itself to place and describe a child span. */
 export interface ChildSpanContext {
 	scope?: ChildSpanScope;
@@ -479,7 +484,9 @@ export interface ModeDeps {
 	/** Audit label recorded as the approving actor on an approval receipt. An attribution label for the audit trail, not an authenticated identity. */
 	approvalActor?: string;
 	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
-	/** The child-run seam. Handlers reach it via the runner helpers (runAgentRef/runAgentFanout), which execute every child through this — so tests can inject an in-process fake. */
+	/** The mode's settle object (settle.ts): tracked runs and the outputs that carry them. The registry builds it per dispatch from the handler's own table entry (modes/registry.ts), binding mode identity by construction; optional in the type only because the aggregate supplies deps before that binding — every dispatched handler receives one (`modeSettle` is the checked accessor). */
+	settle?: Settle;
+	/** The child-run seam. Handlers reach it via the runner helpers (runAgentRef/runWave/dispatchIntegrationPlan), which execute every child through this — so tests can inject an in-process fake. */
 	runChild: RunChild;
 	/** Fan-out concurrency, validated and defaulted by the dispatch core — handlers never re-derive it. */
 	concurrency: number;

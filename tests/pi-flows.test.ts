@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import registerPiFlows, { __test, PI_FLOWS_VERSION, MAX_FLOW_DEPTH, FLOW_ERROR_CODES } from "../extensions/pi-flows/index.ts";
 import { FlowMonitor } from "../extensions/pi-flows/schema.ts";
 import { makeTraceSink, traceSummaryAttributes } from "../extensions/pi-flows/trace.ts";
+import { criticalPathForMode } from "../extensions/pi-flows/modes/contract.ts";
 
 async function makeTempRepo() {
   const dir = path.join(tmpdir(), `pi-flows-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -545,7 +546,7 @@ test("parallel traces separate elapsed, critical-path, and accumulated worker ti
   const output = { content: [{ type: "text", text: "done" }], details: { results } } as any;
   const sink = makeTraceSink(traceFile, "parallel", { recordContent: false, redactSecrets: true });
   for (const result of results) sink.record(result);
-  await sink.finalize({ ok: true }, traceSummaryAttributes("parallel", { tasks: [{}, {}] }, output));
+  await sink.finalize({ ok: true }, traceSummaryAttributes("parallel", { tasks: [{}, {}] }, output, criticalPathForMode));
   const report = __test.summarizeTraceSpans(__test.parseTraceJsonl(await readFile(traceFile, "utf8")).spans);
   assert.equal(report.workerTimeMs, 22_000);
   assert.equal(report.criticalPathMs, 12_000);
@@ -560,14 +561,14 @@ test("trace summaries calculate known dependency paths and leave unknown paths u
     nodes: [{ id: "a", agent: "a", task: "a" }, { id: "b", agent: "b", task: "b" }, { id: "c", agent: "c", task: "c", dependsOn: ["a", "b"] }],
     debrief: { agent: "debrief" },
   };
-  const graphAttrs = traceSummaryAttributes("graph", { graph }, { content: [], details: { results: graphResults } } as any);
+  const graphAttrs = traceSummaryAttributes("graph", { graph }, { content: [], details: { results: graphResults } } as any, criticalPathForMode);
   assert.equal(graphAttrs["flow.critical_path_available"], true);
   assert.equal(graphAttrs["flow.critical_path_ms"], 280);
-  assert.equal(traceSummaryAttributes("graph", { graph }, { content: [], details: { results: graphResults.slice(0, 2) } } as any)["flow.critical_path_available"], false);
-  assert.equal(traceSummaryAttributes("evaluate", { evaluate: {} }, { content: [], details: { results: graphResults.slice(0, 2) } } as any)["flow.critical_path_ms"], 300);
-  assert.equal(traceSummaryAttributes("vote", { vote: { agent: "a" } }, { content: [], details: { results: graphResults.slice(0, 3) } } as any)["flow.critical_path_ms"], 200);
-  assert.equal(traceSummaryAttributes("debate", { debate: { participants: [{}, {}], rounds: 2 } }, { content: [], details: { results: [result("a", 100), result("b", 200), result("a", 50), result("b", 80), result("judge", 30)] } } as any)["flow.critical_path_ms"], 310);
-  const unknownAttrs = traceSummaryAttributes("orchestrate", { orchestrate: {} }, { content: [], details: { results: [result("commander", 100), result("recon", 200)] } } as any);
+  assert.equal(traceSummaryAttributes("graph", { graph }, { content: [], details: { results: graphResults.slice(0, 2) } } as any, criticalPathForMode)["flow.critical_path_available"], false);
+  assert.equal(traceSummaryAttributes("evaluate", { evaluate: {} }, { content: [], details: { results: graphResults.slice(0, 2) } } as any, criticalPathForMode)["flow.critical_path_ms"], 300);
+  assert.equal(traceSummaryAttributes("vote", { vote: { agent: "a" } }, { content: [], details: { results: graphResults.slice(0, 3) } } as any, criticalPathForMode)["flow.critical_path_ms"], 200);
+  assert.equal(traceSummaryAttributes("debate", { debate: { participants: [{}, {}], rounds: 2 } }, { content: [], details: { results: [result("a", 100), result("b", 200), result("a", 50), result("b", 80), result("judge", 30)] } } as any, criticalPathForMode)["flow.critical_path_ms"], 310);
+  const unknownAttrs = traceSummaryAttributes("orchestrate", { orchestrate: {} }, { content: [], details: { results: [result("commander", 100), result("recon", 200)] } } as any, criticalPathForMode);
   assert.equal(unknownAttrs["flow.critical_path_available"], false);
   assert.equal(unknownAttrs["flow.critical_path_ms"], undefined);
 });

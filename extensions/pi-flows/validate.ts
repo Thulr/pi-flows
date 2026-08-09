@@ -1,8 +1,6 @@
 import * as path from "node:path";
 import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
 import { safePath } from "./sanitize.ts";
-import { searchTopology } from "./topology.ts";
-import { isWorkflowWorkPhase, workflowPhasesRefusal } from "./validate-workflow.ts";
 
 // The workflow phase predicates live in validate-workflow.ts; re-exported here
 // so this module stays the one seam callers validate a call through.
@@ -121,39 +119,8 @@ export function validateSharedWriteCwd(
 	return sharedWriteCwdError(discovery, defaultCwd, mutating);
 }
 
-type SharedWriteRef = { agent: string; cwd?: string; tools?: string; contract?: Record<string, unknown> };
-
-/**
- * Model-controlled params may put anything where a ref list belongs — a
- * non-array, nulls and scalars among the refs, or garbage in a ref's own
- * fields. The mirror sees such args before any schema validation, so it
- * keeps only refs that actually name an agent and rebuilds each with only
- * the string-typed fields the guard path consumes (parseToolsOverride trims
- * tools; resolvedCwd resolves cwd): a malformed list is a smaller (or empty)
- * wave and a malformed field is an absent one, never a crash. Dropping
- * agent-less entries changes no verdict because an unnamed ref can never
- * resolve to a write-capable toolset. The tool itself refuses these calls at
- * its schema layer — a refusal outside this seam's vocabulary.
- */
-function refArray(value: unknown): SharedWriteRef[] {
-	if (!Array.isArray(value)) return [];
-	return value.flatMap((ref): SharedWriteRef[] => {
-		if (!ref || typeof ref !== "object" || Array.isArray(ref)) return [];
-		const { agent, cwd, tools, contract } = ref as { agent?: unknown; cwd?: unknown; tools?: unknown; contract?: unknown };
-		if (typeof agent !== "string") return [];
-		return [{
-			agent,
-			...(typeof cwd === "string" ? { cwd } : {}),
-			...(typeof tools === "string" ? { tools } : {}),
-			// The guard ignores contracts, but the selection eval's budget rule
-			// reads each first-spawn role's contract; keep it when object-shaped.
-			...(contract && typeof contract === "object" && !Array.isArray(contract) ? { contract: contract as Record<string, unknown> } : {}),
-		}];
-	});
-}
-
-/** A present-but-non-array dependsOn is schema-refused before the handler runs; totality over raw model args means treating it as no deps, never iterating a non-iterable. */
-function graphDependsOn(node: any): string[] {
+/** A present-but-non-array dependsOn is schema-refused before the handler runs; totality over raw model args means treating it as no deps, never iterating a non-iterable. Exported for graph's plan declaration (modes/graph.ts). */
+export function graphDependsOn(node: any): string[] {
 	return Array.isArray(node?.dependsOn) ? node.dependsOn : [];
 }
 
@@ -161,11 +128,13 @@ function graphDependsOn(node: any): string[] {
  * handleGraph refuses GRAPH_INVALID for every structural defect before its
  * guard — node count outside 1..MAX_GRAPH_NODES, a node missing string
  * id/agent/task, a duplicated id, a non-array dependsOn, or a dependsOn
- * naming no node. A graph failing any of those yields null (the mirror and
- * the cycle check stay silent behind that earlier refusal, and never iterate
- * a hostile-length list); a structurally valid one yields its nodes.
+ * naming no node. A graph failing any of those yields null (the admissibility
+ * mirror and the cycle check stay silent behind that earlier refusal, and
+ * never iterate a hostile-length list); a structurally valid one yields its
+ * nodes. Exported for graph's plan declaration (modes/graph.ts), so the plan
+ * and this refusal read one structural predicate.
  */
-function validGraphNodes(params: Record<string, any>): any[] | null {
+export function validGraphNodes(params: Record<string, any>): any[] | null {
 	const nodes = params.graph?.nodes;
 	if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) return null;
 	const ids = new Set<string>();
@@ -200,100 +169,6 @@ export function graphCycleRefusal(params: Record<string, any>): FlowError | null
 		"No graph node is dependency-free, so no first wave can ever become runnable.",
 		"Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node.",
 	);
-}
-
-/**
- * The concurrent ref waves a call would run before any child spawns, derived
- * from call params exactly as each guard-bearing mode handler derives the refs
- * it passes to validateSharedWriteCwd ahead of its first spawn. Modes that
- * never run concurrent same-cwd children (single, chain, route, loop,
- * workflow, monitor, worktree — each writer gets its own worktree) contribute
- * nothing, and so does orchestrate, whose guard fires only after its recon
- * child has already run. A call activating several modes at once is refused by
- * the tool (INVALID_MODE) — the selection eval's admissibility seam scores
- * that with detectRunMode itself; a standalone caller of this mirror gets
- * first-activator semantics, in modeOf's order. Refusals that land before a
- * handler's guard stay silent here rather than being mislabeled as the guard:
- * an oversized fan-out (TOO_MANY_TASKS) yields no wave, like an invalid
- * concurrency below. Remaining pre-guard refusals that cannot collide anyway
- * (TOO_FEW_VOTERS and kin) need no special case. Callers feed it
- * model-emitted args verbatim, so every derivation must be total — malformed
- * shapes yield empty waves, not throws. tests/admissibility-scoring.test.ts
- * pins each derivation against the real handler, so a handler edit that moves
- * or reshapes a guard fails a test instead of silently drifting from this
- * mirror.
- */
-export function preSpawnSharedWriteWaves(params: Record<string, any>): SharedWriteRef[][] {
-	if (Array.isArray(params?.tasks) && params.tasks.length > 0) {
-		// The handler refuses TOO_MANY_TASKS before its guard; stay silent
-		// behind that earlier refusal (and never iterate a hostile-length list).
-		return params.tasks.length > MAX_PARALLEL_TASKS ? [] : [refArray(params.tasks)];
-	}
-	if (params?.evaluate !== undefined) {
-		const spec = params.evaluate ?? {};
-		// The schema caps an explicit critic panel at MAX_PARALLEL_TASKS; an
-		// oversized list is refused before the handler runs, so it derives no
-		// wave — and a hostile-length array is never iterated.
-		if (Array.isArray(spec.redteam) && spec.redteam.length > MAX_PARALLEL_TASKS) return [];
-		const evaluators = refArray(Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }])
-			.slice(0, MAX_PARALLEL_TASKS);
-		return [evaluators.length > 0 ? evaluators : [{ agent: "redteam" }]];
-	}
-	if (params?.vote !== undefined) {
-		const spec = params.vote ?? {};
-		if (Array.isArray(spec.voters) && spec.voters.length > 0) {
-			// TOO_MANY_TASKS refuses an oversized voter list before the guard;
-			// stay silent behind it, exactly as for parallel tasks.
-			return spec.voters.length > MAX_PARALLEL_TASKS ? [] : [refArray(spec.voters)];
-		}
-		// Same ref hygiene as refArray: a non-string agent can never name a
-		// toolset (the schema rejects it), so replicating it would only put
-		// non-refs in the wave.
-		if (typeof spec.agent === "string" && spec.agent) {
-			// A present but non-numeric count is schema-refused before the
-			// handler runs, so it derives no wave rather than defaulting. The
-			// handler builds voters before its TOO_MANY_TASKS check, but the
-			// refusal still lands before the guard, so an over-cap count is
-			// silent here too — and a hostile count never allocates.
-			if (spec.count !== undefined && !Number.isFinite(spec.count)) return [];
-			const count = Number.isFinite(spec.count) ? Math.floor(spec.count) : 3;
-			if (count > MAX_PARALLEL_TASKS) return [];
-			return [Array.from({ length: Math.max(count, 0) }, () => ({ agent: spec.agent as string }))];
-		}
-		return [];
-	}
-	if (params?.graph !== undefined) {
-		const nodes = validGraphNodes(params);
-		if (!nodes) return [];
-		// Select the dependency-free wave BEFORE sanitizing: refArray rebuilds
-		// refs without dependsOn, so filtering after it would take every node.
-		return [refArray(nodes.filter((node: any) => graphDependsOn(node).length === 0))];
-	}
-	if (params?.search !== undefined) {
-		const spec = params.search ?? {};
-		// The same object-with-agent rule refArray applies: a garbage ref cannot
-		// name a toolset, so falling back to the handler's default is
-		// verdict-neutral and keeps the emitted waves actual refs.
-		const generator = refArray([spec.generator])[0] ?? { agent: "strategist" };
-		const scorer = refArray([spec.scorer])[0] ?? { agent: "redteam", tools: "none" };
-		const { candidateCount } = searchTopology(spec);
-		return [
-			Array.from({ length: candidateCount }, () => generator),
-			Array.from({ length: candidateCount }, () => scorer),
-		];
-	}
-	if (params?.debate !== undefined) {
-		// The schema caps participants at MAX_PARALLEL_TASKS; an oversized list
-		// is refused before the handler runs, so it derives no wave (and never
-		// iterates a hostile-length array). Same for dossier sections below.
-		const participants = params.debate?.participants;
-		return [Array.isArray(participants) && participants.length > MAX_PARALLEL_TASKS ? [] : refArray(participants)];
-	}
-	if (params?.dossier !== undefined) {
-		const sections = params.dossier?.sections;
-		return [Array.isArray(sections) && sections.length > MAX_PARALLEL_TASKS ? [] : refArray(sections)];
-	}
-	return [];
 }
 
 /**
@@ -346,79 +221,6 @@ export function preSpawnFanoutRefusal(params: Record<string, any>): FlowError | 
 		if (typeof spec.agent === "string" && spec.agent && Number.isFinite(spec.count) && Math.floor(spec.count) > MAX_PARALLEL_TASKS) {
 			return tooMany(Math.floor(spec.count), "voters");
 		}
-	}
-	return null;
-}
-
-/**
- * The refs a call would spawn before anything else: the concurrent first
- * waves for fan-out modes, the opening role for sequential ones. The
- * selection eval uses this for the roster rule — a call whose every
- * first-spawn ref names an unknown agent is refused by the runner
- * (UNKNOWN_AGENT, runner.ts) before any child spawns, so admitting it would
- * credit a selection nothing performed; one known ref among them means real
- * children spawn and the call must count as admitted. Pre-spawn is not
- * always pre-work: workflow's opening role — its first work phase, since
- * approval phases spawn nothing — IS derived here because its roster refusal
- * is statically certain, but handleWorkflow persists fresh state first, to a
- * possibly model-supplied stateFile (workflow.ts), so the harness's play-out
- * policy (actsBeforeRunner, evals/select.mjs) terminates that refusal
- * instead of letting it re-run (#91). A workflow resume derives nothing:
- * which phase spawns first lives in persisted state this static mirror
- * cannot read, and a fresh subject is refused WORKFLOW_STATE_INVALID — a
- * code outside the vocabulary — before any roster check. Two modes stay
- * excluded outright because their roster refusal is not statically certain:
- * monitor spawns its reactor only if the probe ever trips the trigger — a
- * call that never fires completes with zero spawns and no refusal — and
- * worktree's refusal depends on repository state (a dirty source is refused
- * with its own code before any agent resolves, worktree.ts).
- */
-export function firstSpawnAgentRefs(params: Record<string, any>): SharedWriteRef[] {
-	if (params?.workflow !== undefined) {
-		// Behind an invalid phase list the tool refuses WORKFLOW_INVALID first,
-		// so the mirror stays silent there (and never walks a hostile shape).
-		if (params.workflow?.resume || workflowPhasesRefusal(params)) return [];
-		return refArray((params.workflow.phases as any[]).filter(isWorkflowWorkPhase).slice(0, 1));
-	}
-	// Evaluate's guard wave is its critic panel, but its generator spawns
-	// first, so it must be resolved ahead of the wave-derived modes — and
-	// search scores all generators before any scorer runs (SEARCH_NO_CANDIDATES
-	// ends the call when none produced a candidate), so only its generator
-	// wave spawns first.
-	if (params?.evaluate !== undefined && !Array.isArray(params?.tasks)) {
-		return refArray([params.evaluate?.operator ?? { agent: "operator" }]);
-	}
-	if (params?.search !== undefined && !Array.isArray(params?.tasks)) {
-		return preSpawnSharedWriteWaves(params)[0] ?? [];
-	}
-	const fromWaves = preSpawnSharedWriteWaves(params).flat();
-	if (fromWaves.length > 0) return fromWaves;
-	if (params?.agent && (params?.task || params?.contract)) return refArray([{ agent: params.agent }]);
-	if (Array.isArray(params?.chain) && params.chain.length > 0) return refArray([params.chain[0]]);
-	if (params?.route !== undefined) return refArray([params.route?.controller ?? { agent: "controller" }]);
-	// Orchestrate's commander decomposes the goal before any recon worker runs.
-	if (params?.orchestrate !== undefined) return refArray([params.orchestrate?.commander ?? { agent: "commander" }]);
-	if (params?.loop !== undefined) return refArray([params.loop?.body]);
-	return [];
-}
-
-/**
- * Would the shared-write guard refuse this call before any child spawns? The
- * selection eval imports this beside spawnJustificationMissing so "would the
- * tool have refused this call" stays one uniform question across refusal
- * codes, answered by the tool's own guard (validateSharedWriteCwd) over the
- * same waves the handlers check.
- */
-export function preSpawnSharedWriteRefusal(discovery: FlowDiscovery, defaultCwd: string, params: Record<string, any>): FlowError | null {
-	// The dispatch core refuses an invalid concurrency (INVALID_CONCURRENCY)
-	// before any handler guard runs, so the guard can never fire behind one;
-	// answering SHARED_WRITE_CWD for such a call would mislabel the refusal.
-	// The concurrency bound itself is scored by the admissibility seam.
-	if (validateConcurrency(params?.concurrency)) return null;
-	const concurrency = params?.concurrency ?? DEFAULT_CONCURRENCY;
-	for (const wave of preSpawnSharedWriteWaves(params)) {
-		const error = validateSharedWriteCwd(discovery, defaultCwd, wave, params?.allowSharedWriteCwd, concurrency);
-		if (error) return error;
 	}
 	return null;
 }
