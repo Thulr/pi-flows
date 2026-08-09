@@ -152,14 +152,19 @@ test("bashReadonlyEnabled follows the shared env truthiness convention", () => {
 });
 
 test("splitBashReadonly maps bash-ro to bash and yields the marker only without plain bash", () => {
-	assert.deepEqual(splitBashReadonly(["read", "bash-ro"]), { argvTools: ["read", "bash"], readonly: true });
-	assert.deepEqual(splitBashReadonly(["bash", "bash-ro"]), { argvTools: ["bash"], readonly: false });
-	assert.deepEqual(splitBashReadonly(["read", "grep"]), { argvTools: ["read", "grep"], readonly: false });
-	assert.deepEqual(splitBashReadonly([]), { argvTools: [], readonly: false });
-	// A write-capable tool alongside bash-ro is NOT read-only — it must not be
-	// sandboxed (that would break the granted edit/write), matching canMutateWorkspace.
-	assert.equal(splitBashReadonly(["edit", "bash-ro"]).readonly, false);
-	assert.equal(splitBashReadonly(["write", "bash-ro"]).readonly, false);
+	assert.deepEqual(splitBashReadonly(["read", "bash-ro"]), { argvTools: ["read", "bash"], readonly: true, sandboxable: true });
+	assert.deepEqual(splitBashReadonly(["bash", "bash-ro"]), { argvTools: ["bash"], readonly: false, sandboxable: false });
+	assert.deepEqual(splitBashReadonly(["read", "grep"]), { argvTools: ["read", "grep"], readonly: false, sandboxable: false });
+	assert.deepEqual(splitBashReadonly([]), { argvTools: [], readonly: false, sandboxable: false });
+	// edit/write alongside bash-ro: the shell stays allowlist-restricted (never
+	// silently unrestricted), but the process-wide sandbox is skipped so the
+	// granted edit/write still works.
+	for (const mutating of ["edit", "write"]) {
+		const split = splitBashReadonly([mutating, "bash-ro"]);
+		assert.equal(split.readonly, true, `${mutating}+bash-ro keeps the allowlist`);
+		assert.equal(split.sandboxable, false, `${mutating}+bash-ro must not be sandboxed`);
+		assert.deepEqual(split.argvTools, [mutating, "bash"]);
+	}
 });
 
 function registerWithMarker(marker: string | undefined, register: (pi: any) => void = registerPiFlows) {

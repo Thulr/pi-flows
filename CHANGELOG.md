@@ -16,11 +16,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   the pi-flows extension running inside the child via a blocking `tool_call`
   handler. A `bash-ro` toolset is not write-capable, so it passes the
   `SHARED_WRITE_CWD` guard; a toolset carrying both `bash` and `bash-ro`
-  resolves to plain `bash`, and when `PI_FLOWS_CHILD_NO_EXTENSIONS` disables
-  the child-side enforcer the spawn is refused with the new
-  `BASH_READONLY_UNENFORCEABLE` error instead of granted an unrestricted
-  shell. This is coordination safety against ad-hoc mutations of a shared
-  checkout, not a sandbox.
+  resolves to plain `bash`, and a `bash-ro` spawn no layer can enforce is
+  refused with the new `BASH_READONLY_UNENFORCEABLE` error instead of granted
+  an unrestricted shell. This is coordination safety against ad-hoc mutations
+  of a shared checkout.
 
 ### Changed
 
@@ -39,9 +38,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   allowlist is best-effort: off the sandbox it is the default fallback, and a
   caller who needs a kernel-enforced guarantee sets
   `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse instead. Every
-  bash-ro child also runs with repository-configured git helpers
-  (`diff.external`, pager, fsmonitor, hooks) neutralized via `GIT_CONFIG_*`, so
-  a plain `git diff`/`git show` cannot launch a configured external program.
+  bash-ro child also runs with the repository-configured git pager, a
+  command-valued `fsmonitor`, and hooks neutralized via `GIT_CONFIG_*`.
+  `diff.external`/textconv drivers are deliberately not forced off (an empty
+  `diff.external` aborts every diff); their writes are denied on the sandbox
+  path and are a documented residual on the allowlist fallback.
 - The `code-review` preset's two reviewers now run with
   `read,grep,find,ls,bash-ro` at `concurrency: 2` — the two axes review
   concurrently in one checkout instead of serializing. The `scout` preset

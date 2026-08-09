@@ -41,6 +41,21 @@ test("bash-ro: child argv carries bash and the env marker, never the raw token",
 	assert.match(enforcer, /bash-readonly-extension\.ts$/);
 });
 
+test("bash-ro alongside edit still gets the allowlist enforcer, never a bare shell", async () => {
+	const { calls } = await runFlow(
+		{ agent: "operator", task: "fix it", tools: "read,edit,bash-ro" },
+		{ operator: "FIXED" },
+	);
+	assert.equal(calls.length, 1);
+	const toolsFlag = calls[0].args[calls[0].args.indexOf("--tools") + 1];
+	assert.ok(toolsFlag.split(",").includes("edit"), `edit must survive: ${toolsFlag}`);
+	assert.ok(toolsFlag.split(",").includes("bash"), `bash-ro must translate to bash: ${toolsFlag}`);
+	// The bug this pins: translating bash-ro to bash without the marker/enforcer
+	// would silently hand the child an unrestricted shell.
+	assert.equal(calls[0].env.PI_FLOWS_BASH_READONLY, "1");
+	assert.match(calls[0].args[calls[0].args.indexOf("-e") + 1] ?? "", /bash-readonly-extension\.ts$/);
+});
+
 test("bash-ro: plain-tools children do not load the enforcer", async () => {
 	const { calls } = await runFlow({ agent: "recon", task: "plain scan", tools: "read,grep,find,ls,bash" }, { recon: "SCANNED" });
 	assert.equal(calls[0].args.includes("-e"), false);

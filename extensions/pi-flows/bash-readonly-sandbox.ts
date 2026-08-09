@@ -54,8 +54,16 @@ function requireSandbox(): boolean {
  * runner refuses the spawn when `error` is set, otherwise wraps per
  * `enforcement`. A non-readonly toolset resolves to no enforcement and no error.
  */
-export function resolveBashReadonlyEnforcement(readonly: boolean): { enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
+export function resolveBashReadonlyEnforcement(readonly: boolean, sandboxable = true): { enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
 	if (!readonly) return { enforcement: null, error: null };
+	// A toolset that also grants edit/write cannot take the process-wide
+	// sandbox (it would break those tools), but still gets the command
+	// allowlist — and never a silent unrestricted shell, so requireSandbox is
+	// not consulted for it: the allowlist is the only layer on offer.
+	if (!sandboxable) {
+		const enforcement = bashReadonlyEnforcement(bashReadonlyEnforcerAvailable(), false, false);
+		return { enforcement, error: enforcement === null ? bashReadonlyUnenforceableError() : null };
+	}
 	const enforcement = bashReadonlyEnforcement(bashReadonlyEnforcerAvailable(), sandboxUsable(), requireSandbox());
 	return { enforcement, error: enforcement === null ? bashReadonlyUnenforceableError() : null };
 }

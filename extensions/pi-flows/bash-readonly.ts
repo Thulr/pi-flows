@@ -29,27 +29,36 @@ export function bashReadonlyEnabled(value: string | undefined): boolean {
 }
 
 /**
- * Split a resolved toolset for spawning. `readonly` is true only when bash-ro
- * is present and plain bash is absent — a toolset carrying both is already
- * write-capable, so restricting it would misstate the classification; bash
- * wins and no marker is set. `argvTools` maps bash-ro to bash (deduplicated)
- * because the child pi only knows the built-in tool name.
+ * Split a resolved toolset for spawning. Two independent answers, because the
+ * two enforcement layers have different preconditions:
+ *
+ * - `readonly` — does bash-ro's command allowlist apply? True whenever bash-ro
+ *   is present without plain `bash`. Granting `edit`/`write` alongside it does
+ *   not un-restrict the *shell*: the caller asked for a restricted shell and
+ *   gets one, or the translation to plain bash would silently hand over an
+ *   unrestricted one.
+ * - `sandboxable` — may the process-wide OS sandbox wrap the child? Only when
+ *   no other mutating tool is granted, since a filesystem-wide read-only
+ *   boundary would break an explicitly granted `edit`/`write`.
+ *
+ * Plain `bash` alongside `bash-ro` is the documented "bash wins" case: neither
+ * layer applies and the toolset is simply write-capable.
+ *
+ * `argvTools` maps bash-ro to bash (deduplicated) because the child pi only
+ * knows the built-in tool name.
  */
-export function splitBashReadonly(tools: string[]): { argvTools: string[]; readonly: boolean } {
+export function splitBashReadonly(tools: string[]): { argvTools: string[]; readonly: boolean; sandboxable: boolean } {
 	const normalized = tools.map((tool) => tool.toLowerCase());
 	const hasReadonly = normalized.includes(BASH_READONLY_TOOL);
-	// Any other mutating tool (plain bash, edit, write) makes the toolset
-	// write-capable, so it is not read-only and must not be sandboxed — the
-	// process-wide sandbox would break the explicitly granted edit/write. This
-	// mirrors canMutateWorkspace so the two never disagree.
-	const hasMutating = normalized.some((tool) => tool === "bash" || tool === "edit" || tool === "write");
-	if (!hasReadonly) return { argvTools: tools, readonly: false };
+	const hasBash = normalized.includes("bash");
+	const hasOtherMutating = normalized.some((tool) => tool === "edit" || tool === "write");
+	if (!hasReadonly) return { argvTools: tools, readonly: false, sandboxable: false };
 	const argvTools: string[] = [];
 	for (const tool of tools) {
 		const mapped = tool.toLowerCase() === BASH_READONLY_TOOL ? "bash" : tool;
 		if (!argvTools.some((existing) => existing.toLowerCase() === mapped.toLowerCase())) argvTools.push(mapped);
 	}
-	return { argvTools, readonly: !hasMutating };
+	return { argvTools, readonly: !hasBash, sandboxable: !hasBash && !hasOtherMutating };
 }
 
 /**

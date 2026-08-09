@@ -24,7 +24,7 @@ export function buildChildArgs(params: { model?: string; thinking?: string; noEx
 	if (params.thinking) args.push("--thinking", params.thinking);
 	const tools = parseToolsOverride(params.toolsOverride, params.agentTools);
 	const bashRo = splitBashReadonly(tools ?? []);
-	const { enforcement, error } = resolveBashReadonlyEnforcement(bashRo.readonly);
+	const { enforcement, error } = resolveBashReadonlyEnforcement(bashRo.readonly, bashRo.sandboxable);
 	if (error) return { args, tools, enforcement, error };
 	if (tools?.length === 0) args.push("--no-builtin-tools");
 	else if (tools !== undefined) args.push("--tools", bashRo.argvTools.join(","));
