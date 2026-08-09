@@ -32,7 +32,7 @@ Bundled presets:
 |---|---|---|
 | `scout` | One `recon` run | One read-only evidence pass |
 | `map-codebase` | `orchestrate` with at most four recon subtasks | One decomposed map and synthesis |
-| `code-review` | Two sequential `overwatch` runs, roles `standards` and `spec` | Exactly one pass; typed coverage/findings; `CLEAN`, `FINDINGS`, or `PARTIAL` |
+| `code-review` | Two concurrent read-only (`bash-ro`) `overwatch` runs, roles `standards` and `spec` | Exactly one pass; typed coverage/findings; `CLEAN`, `FINDINGS`, or `PARTIAL` |
 
 `code-review` is deliberately one-shot: it never fixes findings, posts review
 comments, or repeats until clean.
@@ -196,7 +196,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. Prefer `tier` unless the user named a concrete model. |
 | `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent; a `fast`/`deep` tier the roster could not resolve falls through to the agent's own pin. |
 | `thinking` | agent/tier | Flow-wide thinking-level fallback (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), overridable per task/phase/role. Independent of `tier`: sets effort without changing which model runs. Lowered automatically to what the resolved model supports, and a child with no level named anywhere leaves pi's own default alone. |
-| `tools` | agent/default | Comma-separated tools, `none`, or `default`. |
+| `tools` | agent/default | Comma-separated tools, `none`, or `default`. `bash-ro` grants bash under a child-enforced read-only allowlist (see [write isolation](#return-requirements-delegation-contracts-and-write-isolation)); a toolset carrying both `bash` and `bash-ro` resolves to plain `bash`. |
 | `cwd` | parent cwd | Child process working directory. |
 
 ### The model roster
@@ -411,9 +411,68 @@ spawning them. A role is write-capable when its effective tools are pi defaults,
 or include `bash`, `edit`, or `write` — the toolset decides, never the role name
 or prompt, and the refusal names the tools that classified each agent. To
 recover, serialize with `concurrency:1`, use agents whose effective tools
-exclude `bash`/`edit`/`write`, or give each writer a separate worktree/cwd. Set
-`allowSharedWriteCwd:true` only as a last resort, after deciding that concurrent
-writes in one shared checkout are intentional.
+exclude `bash`/`edit`/`write`, swap `bash` for `bash-ro`, or give each writer a
+separate worktree/cwd. Set `allowSharedWriteCwd:true` only as a last resort,
+after deciding that concurrent writes in one shared checkout are intentional.
+
+`bash-ro` is not write-capable. It is enforced in two layers:
+
+- **OS sandbox (the security boundary).** On macOS the child runs under
+  `sandbox-exec` with a profile that denies file writes anywhere under the
+  reviewed `cwd` while allowing everything else, so a write into the shared
+  checkout fails at the kernel regardless of what command produced it. Writes
+  outside the checkout (pi's own temp files, npm/node caches) still work.
+  Opt out with `PI_FLOWS_BASH_RO_NO_SANDBOX=1`.
+- **In-child command allowlist (defense-in-depth, and an opt-in fallback).**
+  The child loads an enforcer extension via an explicit `-e` (which survives
+  `--no-extensions`, since pi only drops *discovered* extensions) that blocks
+  bash commands outside a read-only allowlist: git inspection
+  (`log`/`diff`/`show`/`blame`/`status`/...), file inspection
+  (`ls`/`cat`/`grep`/`find`/...), and repo verification (`npm test`,
+  `npm run <script>`, `node --test`). It refuses shell expansion/substitution
+  and known write/exec flags fail-closed. Because command parsing can never be
+  exhaustive (getopt-style option abbreviation alone yields endless new
+  spellings across every tool), the allowlist is **best-effort, not a security
+  boundary**. It is the default fallback where the OS sandbox is unavailable;
+  a caller who needs a kernel-enforced guarantee sets
+  `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1`, which refuses
+  (`BASH_READONLY_UNENFORCEABLE`) instead of falling back.
+
+Every bash-ro child additionally runs with several repository-configured git
+helpers neutralized via `GIT_CONFIG_*` — pager, a command-valued `fsmonitor`,
+and hooks. `diff.external` and textconv drivers are deliberately *not* forced
+off (an empty `diff.external` makes git abort every diff), so a configured
+external-diff/textconv program can still launch on a plain `git diff`/`git
+show`; on the sandbox path its checkout writes are denied at the kernel, and on
+the fallback path it is a documented residual (see the limitations below).
+
+When the sandbox enforces, verification commands that write *into* the checkout
+(a build cache, `*.tsbuildinfo`) will fail — that is the same shared-checkout
+mutation the guard exists to prevent; run those in a non-`bash-ro` role or a
+distinct cwd. A toolset carrying both `bash` and `bash-ro` is write-capable
+(plain bash wins). A `bash-ro` spawn is refused with
+`BASH_READONLY_UNENFORCEABLE` only when no layer can enforce it — the enforcer
+extension cannot be located, or `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX` is set on a
+host without the sandbox — rather than silently granting an unrestricted shell.
+The child span records which layer enforced it (`flow.bash_ro.enforcement` =
+`sandbox` or `allowlist`).
+
+**Known limitations of the best-effort allowlist fallback.** Where the OS
+sandbox does not run (non-macOS, or opted out), a few git behaviors can still
+touch the checkout and are accepted residuals of a path documented as
+best-effort, not a security boundary:
+
+- A repository-configured `diff.external` or textconv driver runs on a plain
+  `git diff`/`git show`. Its command comes from *local* git config, which the
+  untrusted reviewed tree cannot set, and git offers no config/env switch to
+  disable it without breaking internal diff (only per-command `--no-ext-diff`).
+- `git status`/`git diff` may refresh `.git/index` stat data.
+- Command parsing cannot be exhaustive (option abbreviation).
+
+All three are contained on the sandbox path — the writes are denied at the
+kernel and git inspection still succeeds. Set
+`PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse rather than run best-effort where
+the sandbox is unavailable.
 
 ## Evaluate mode (generator-evaluator loop)
 

@@ -16,6 +16,8 @@ import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSub
 import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
+import { bashReadonlyEnabled, bashReadonlyRefusal, splitBashReadonly } from "./bash-readonly.ts";
+import { registerBashReadonlyGuard } from "./bash-readonly-extension.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
 import { resolveChildModel, runFlowAgent } from "./runner.ts";
@@ -107,9 +109,18 @@ export const __test = {
 	discoverFlowPresets,
 	resolveFlowPreset,
 	summarizePresets,
+	bashReadonlyEnabled,
+	bashReadonlyRefusal,
+	splitBashReadonly,
 };
 
 export default function (pi: ExtensionAPI) {
+	// Child-side bash-ro enforcement: the runner sets the marker on a child
+	// whose toolset carried bash-ro and loads bash-readonly-extension.ts via
+	// -e; registering here too covers a discovered install and hand-set
+	// markers. Coordination safety, not a sandbox.
+	registerBashReadonlyGuard(pi);
+
 	const liveFlows = new FlowRegistry();
 	const fleetPanel = createFleetPanelController(liveFlows);
 
@@ -201,7 +212,7 @@ export default function (pi: ExtensionAPI) {
 			"Right-size every child on two independent dials, and set them deliberately rather than by omission. `tier` picks capability: 'fast' for mechanical scouting, extraction, or classification; 'capable' for ordinary work; 'deep' for the hardest reasoning or final adjudication. `thinking` picks effort: 'off'/'minimal'/'low' for mechanical work, 'medium'/'high' for ordinary reasoning, 'xhigh'/'max' for the hardest adjudication. Omitting tier means the child runs your own model, which is the most expensive option available and is usually wrong for scouting, extraction, formatting, or classification — name the tier the task actually needs.",
 			"Tiers are portable: each resolves to a concrete model and level derived from the models this install can run, so never hard-code a model id. Pass an explicit `model` only when the user named one. Set `thinking` when effort is what should change while the model stays the same — most often lowering it for bulk mechanical fan-out, or raising it for a single critic or adjudicator. A level above what the resolved model supports is lowered automatically, so asking for more than exists is safe.",
 			"Use debate only when the user explicitly requests opposing advocates, rebuttal, or adjudication; direct execution has matched its quality with lower cost. Use worktree only for multiple write-capable agents needing a verified integration branch; use ordinary parallel for read-only fan-out. Use monitor only for bounded polling inside one flow call, never as durable scheduling.",
-			"An agent is write-capable when its effective tools include bash, edit, or write, or when tools resolves to pi defaults (omitted or 'default') — regardless of a read-only role name or prompt. For concurrent review or read-only fan-out, use the code-review preset, set concurrency:1, or pick agents whose tools exclude all of bash, edit, and write; after SHARED_WRITE_CWD, a retry must change concurrency, effective tools, or cwd isolation — never set allowSharedWriteCwd:true for work you describe as read-only.",
+			"An agent is write-capable when its effective tools include bash, edit, or write, or when tools resolves to pi defaults (omitted or 'default') — regardless of a read-only role name or prompt. `bash-ro` grants bash under a child-enforced read-only allowlist (git/file inspection plus npm test / npm run / node --test) and stays read-only-classified; a toolset carrying both bash and bash-ro is write-capable. For concurrent review or read-only fan-out, use the code-review preset, pick agents whose tools exclude all of bash, edit, and write, or swap bash for bash-ro; after SHARED_WRITE_CWD, a retry must change concurrency, effective tools (bash -> bash-ro counts), or cwd isolation — never set allowSharedWriteCwd:true for work you describe as read-only.",
 			"Use checkpoint for human approval before spawning children or before finalizing a result; it fails closed in headless contexts.",
 			"When a flow returns retryable:false, treat the unchanged call as terminal. For BUDGET_EXCEEDED, do not automatically replay the same work. Preserve the configured budget unless the user explicitly approves changing it; ask for direction or make a material, visible change that stays within the ceiling by narrowing the task or reducing fan-out before starting another Flow.",
 			"Use flow list:true before delegation if you do not know which flow agents are available, and showConfig:true to inspect effective dirs, what each tier currently resolves to, defaults, and discovery issues.",

@@ -57,7 +57,10 @@ export function writeCapabilityAttribution(discovery: FlowDiscovery, ref: { agen
 	// Covers both an omitted tools field and an explicit tools:"default".
 	if (tools === undefined) return `${ref.agent} (effective tools are pi defaults, which include ${MUTATING_TOOLS.join("/")})`;
 	const mutating = (tools ?? []).filter((tool) => MUTATING_TOOLS.includes(tool.toLowerCase()));
-	if (mutating.length === 0) return `${ref.agent} (not write-capable by its effective tools)`;
+	if (mutating.length === 0) {
+		if ((tools ?? []).some((tool) => tool.toLowerCase() === "bash-ro")) return `${ref.agent} (not write-capable: bash-ro is bash under a child-enforced read-only allowlist)`;
+		return `${ref.agent} (not write-capable by its effective tools)`;
+	}
 	return `${ref.agent} (effective tools include ${mutating.join("/")})`;
 }
 
@@ -97,7 +100,7 @@ export function sharedWriteCwdError(discovery: FlowDiscovery, defaultCwd: string
 				"SHARED_WRITE_CWD",
 				"Multiple write-capable flow agents would share one working directory.",
 				`These agents would run concurrently in ${safePath(cwd)}, which risks conflicting edits in the same checkout: ${attributions.join("; ")}. The effective toolset is what classifies a role as write-capable, so switching to a different agent name changes nothing unless its tools change too.`,
-				`Serialize with concurrency:1, use agents whose effective tools exclude ${MUTATING_TOOLS.join("/")}, or give each writer a distinct cwd/worktree. Pass allowSharedWriteCwd:true only as a last resort, when concurrent writes in one shared checkout are actually intended.`,
+				`Serialize with concurrency:1, use agents whose effective tools exclude ${MUTATING_TOOLS.join("/")} (bash-ro, read-only-allowlisted bash, stays admissible), or give each writer a distinct cwd/worktree. Pass allowSharedWriteCwd:true only as a last resort, when concurrent writes in one shared checkout are actually intended.`,
 			);
 		}
 	}

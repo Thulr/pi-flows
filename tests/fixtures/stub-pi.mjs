@@ -54,7 +54,7 @@ if (stubDir) {
 			callIndex += 1;
 		}
 	}
-	appendFileSync(path.join(stubDir, "calls.jsonl"), `${JSON.stringify({ agent, callIndex, task, systemPrompt, args: argv, cwd: process.cwd() })}\n`);
+	appendFileSync(path.join(stubDir, "calls.jsonl"), `${JSON.stringify({ agent, callIndex, task, systemPrompt, args: argv, cwd: process.cwd(), env: { PI_FLOWS_BASH_READONLY: process.env.PI_FLOWS_BASH_READONLY ?? null } })}\n`);
 }
 
 const plan = process.env.PI_STUB_PLAN ? JSON.parse(process.env.PI_STUB_PLAN) : {};

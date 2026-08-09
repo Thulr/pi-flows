@@ -82,6 +82,17 @@ test("write-capability attribution covers override, bundled, defaulted, and read
 		__test.writeCapabilityAttribution(discovery, { agent: "recon" }),
 		"recon (not write-capable by its effective tools)",
 	);
+	// bash-ro is bash under a child-enforced allowlist; the attribution must
+	// name the token so a reader sees why a shell-carrying role passed.
+	assert.equal(
+		__test.writeCapabilityAttribution(discovery, { agent: "recon", tools: "read,grep,find,ls,bash-ro" }),
+		"recon (not write-capable: bash-ro is bash under a child-enforced read-only allowlist)",
+	);
+	// Carrying plain bash alongside bash-ro is write-capable: bash wins.
+	assert.equal(
+		__test.writeCapabilityAttribution(discovery, { agent: "recon", tools: "bash,bash-ro" }),
+		"recon (effective tools include bash)",
+	);
 });
 
 test("guard verdicts are unchanged: same accepts and refusals as before the message change", async () => {
@@ -91,6 +102,8 @@ test("guard verdicts are unchanged: same accepts and refusals as before the mess
 	assert.equal(__test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], false, 4)?.code, "SHARED_WRITE_CWD");
 	// Accepts: read-only fan-out, serialized writers, isolated cwds, explicit override.
 	assert.equal(__test.validateSharedWriteCwd(discovery, repo, [{ agent: "recon" }, { agent: "recon" }], false, 4), null);
+	// bash-ro fan-out is admissible: the allowlist is enforced in the child.
+	assert.equal(__test.validateSharedWriteCwd(discovery, repo, [{ agent: "overwatch", tools: "read,grep,find,ls,bash-ro" }, { agent: "overwatch", tools: "read,grep,find,ls,bash-ro" }], false, 4), null);
 	assert.equal(__test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], false, 1), null);
 	assert.equal(__test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator", cwd: "wt-a" }, { agent: "operator", cwd: "wt-b" }], false, 4), null);
 	assert.equal(__test.validateSharedWriteCwd(discovery, repo, [{ agent: "operator" }, { agent: "operator" }], true, 4), null);

@@ -11,13 +11,13 @@ Not every part of this repo earns the same depth. This split says where to spend
 `scripts/domain-score.mjs` enforces this split — every module below is checked for placement and for which subdomains it may import from — so the classification cannot quietly go stale as modules are added.
 
 **Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
-_Modules_: `flow.ts`, `run.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
+_Modules_: `flow.ts`, `run.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
 **Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
 _Modules_: `modes/*`, `presets.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
 
 **Generic — plumbing and adapters.** Child-process transport, the anti-corruption layer over a child pi run, fan-out plumbing, param schema and arithmetic, command execution, text parsing. Keep thin, keep replaceable, do not model. `runner.ts` and `jsonl-child.mjs` are where a foreign protocol is allowed to be spoken; everything above them should see domain types only.
-_Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`.
+_Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`, `bash-readonly-extension.ts`, `bash-readonly-sandbox.ts`.
 
 **Shared kernel.** `types.ts` — the vocabulary every subdomain imports, re-exported from the concept modules that own each term. A change here ripples everywhere and nothing above owns it, so keep it declarative: a rule that belongs to one concept belongs in that concept's module (see `budget.ts`), not here. `roster-types.ts` is vocabulary of the same kind, held apart only because the kernel may not import the Generic module that derives a roster.
 _Modules_: `types.ts`, `roster-types.ts`, `preset-types.ts`.
@@ -203,6 +203,10 @@ _Avoid_: simulation, dry run
 **Checkpoint**:
 A human approval point in a flow, before spawning or before finalizing. A checkpoint is not a gate.
 _Avoid_: approval gate, human gate
+
+**Read-only bash (`bash-ro`)**:
+A toolset token granting a child bash that cannot write the reviewed checkout, never requested by prompt. Enforced in two layers: the OS read-only-checkout sandbox (`bash-readonly-sandbox.ts`, macOS `sandbox-exec` denying writes under cwd — the security boundary) and an in-child command allowlist (`bash-readonly.ts` predicate loaded via `bash-readonly-extension.ts`) as defense-in-depth and the fallback where the sandbox is absent. Classified not write-capable for the shared-write guard, and refused (`BASH_READONLY_UNENFORCEABLE`) only when neither layer is available. Coordination safety against ad-hoc mutations of a shared checkout.
+_Avoid_: safe bash (the sandbox is real, but the allowlist fallback is best-effort)
 
 **Approval receipt**:
 A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes.

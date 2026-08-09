@@ -82,7 +82,7 @@ const FlowTaskProperties = {
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(
-		Type.String({ description: 'Optional comma-separated tool override. Use "none" for no built-in tools or "default" for pi defaults.' }),
+		Type.String({ description: 'Optional comma-separated tool override. Use "none" for no built-in tools or "default" for pi defaults. "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' }),
 	),
 	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this agent's task. Use them to specify summary shape, required fields, or max length." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return.", default: false })),
@@ -99,7 +99,7 @@ export const FlowAgentRef = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this role. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
-	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
+	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this role's process" })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -110,7 +110,7 @@ export const FlowEvaluateOperatorRef = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for the generator. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
-	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
+	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the generator process" })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -186,7 +186,7 @@ export const FlowGraphNode = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this node. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
-	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
+	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
 	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this node's task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this node's return.", default: false })),
 	contract: Type.Optional(FlowDelegationContract),
@@ -230,7 +230,7 @@ export const FlowWorkflowPhase = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this phase. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
-	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
+	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
 	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this phase task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this phase output.", default: false })),
 	contract: Type.Optional(FlowDelegationContract),
@@ -253,7 +253,7 @@ export const FlowWorktreeTask = Type.Object({
 	model: Type.Optional(Type.String({ description: "Optional exact-model override for this worker. Prefer tier unless the user named a concrete model." })),
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
-	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default".' })),
+	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
 	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this worker task." })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: "Require evidence in this worker output.", default: true })),
 	contract: Type.Optional(FlowDelegationContract),
@@ -404,7 +404,7 @@ export const FlowParams = Type.Object({
 	tier: Type.Optional(StringEnum(["fast", "capable", "deep"] as const, { description: `Flow-wide capability tier fallback. Applies to every delegated role unless that task or role sets its own tier or model. ${TierDescription}` })),
 	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const, { description: `Flow-wide thinking-level fallback. Applies to every delegated role unless that task or role sets its own thinking. ${ThinkingDescription}` })),
 	tools: Type.Optional(
-		Type.String({ description: 'Comma-separated tool override for single-agent mode. Use "none" or "default".' }),
+		Type.String({ description: 'Comma-separated tool override for single-agent mode. Use "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' }),
 	),
 }, {
 	description: "Prefer a named preset when it matches the intent, e.g. {\"preset\":\"code-review\",\"task\":\"Review changes against main and issue #25\",\"why\":\"author-independent review\"}. Otherwise provide exactly one raw flow mode. Every spawning call must set why.",

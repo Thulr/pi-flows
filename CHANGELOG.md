@@ -8,7 +8,45 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- A `bash-ro` tools token (`extensions/pi-flows/bash-readonly.ts`): bash under
+  a read-only command allowlist — git inspection, file inspection, and repo
+  verification (`npm test`, `npm run <script>`, `node --test`) — enforced by
+  the pi-flows extension running inside the child via a blocking `tool_call`
+  handler. A `bash-ro` toolset is not write-capable, so it passes the
+  `SHARED_WRITE_CWD` guard; a toolset carrying both `bash` and `bash-ro`
+  resolves to plain `bash`, and a `bash-ro` spawn no layer can enforce is
+  refused with the new `BASH_READONLY_UNENFORCEABLE` error instead of granted
+  an unrestricted shell. This is coordination safety against ad-hoc mutations
+  of a shared checkout.
+
 ### Changed
+
+- `bash-ro` is now enforced at the OS level: on macOS a `bash-ro` child runs
+  under `sandbox-exec` with a profile that denies writes anywhere under the
+  reviewed `cwd` (`bash-readonly-sandbox.ts`), so a write into the shared
+  checkout fails at the kernel regardless of the command — the in-child
+  command allowlist becomes defense-in-depth plus the fallback where the
+  sandbox is unavailable. Opt out with `PI_FLOWS_BASH_RO_NO_SANDBOX=1`. The
+  fail-closed refusal (`BASH_READONLY_UNENFORCEABLE`) now fires only when
+  neither layer is available; `PI_FLOWS_CHILD_NO_EXTENSIONS` alone no longer
+  triggers it, because the enforcer loads through an explicit `-e` that
+  survives `--no-extensions`. The child span records the enforcing layer as
+  `flow.bash_ro.enforcement`. Because command parsing can never be an
+  exhaustive boundary (option abbreviation yields endless bypasses), the
+  allowlist is best-effort: off the sandbox it is the default fallback, and a
+  caller who needs a kernel-enforced guarantee sets
+  `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse instead. Every
+  bash-ro child also runs with the repository-configured git pager, a
+  command-valued `fsmonitor`, and hooks neutralized via `GIT_CONFIG_*`.
+  `diff.external`/textconv drivers are deliberately not forced off (an empty
+  `diff.external` aborts every diff); their writes are denied on the sandbox
+  path and are a documented residual on the allowlist fallback.
+- The `code-review` preset's two reviewers now run with
+  `read,grep,find,ls,bash-ro` at `concurrency: 2` — the two axes review
+  concurrently in one checkout instead of serializing. The `scout` preset
+  pins `concurrency: 1` explicitly.
 
 - The flow lifecycle is now owned by a `Flow` aggregate root
   (`extensions/pi-flows/flow.ts`): admission walks every pre-spawn gate in the

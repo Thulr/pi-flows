@@ -1,7 +1,7 @@
 {
   "_comment": "Judgment rows of the domain-model score - the ones no grep settles. Re-record them by running the /domain-driven-design review and editing this file; editing it IS the re-recording, because scripts/domain-score.mjs measures staleness from when this file was last touched relative to the Core modules. A row is reported stale, and drops out of the verified score, when a Core module was touched more recently. Structural rows are not recorded here: they are re-checked from the tree on every run.",
   "reviewedAt": "2026-08-08",
-  "reviewer": "/implement for #100 (re-derived small-aggregates against the ResolvedCall change: capture-policy ownership moved into the Flow aggregate; other verdicts carried from the #97 audit and the 2026-07-31 /domain-driven-design review)",
+  "reviewer": "bash-ro change incl. PR #102 review rounds 1-4 + OS-sandbox pivot (Generic bash-readonly-sandbox.ts wraps bash-ro children in sandbox-exec denying cwd writes as the security boundary; bash-readonly.ts gains the pure enforcement-decision predicate and hardened allowlist screens; runner wraps the invocation and records the enforcing layer) (re-derived against the Core module bash-readonly.ts: a zero-import vocabulary object owning the bash-ro token — env marker, toolset split, and allowlist predicate — so parent classification and child enforcement cannot drift; validate.ts changes are message-only (attribution and fix text name the token, verdicts unchanged, pinned by tests/shared-write-guidance.test.ts). Other verdicts carried from the #100 re-record and the 2026-07-31 /domain-driven-design review)",
   "judgment": {
     "small-aggregates": {
       "label": "Aggregates are small (one root + minimal cluster)",

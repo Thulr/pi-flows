@@ -18,6 +18,13 @@ import registerPiFlows from "../extensions/pi-flows/index.ts";
 
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 
+// The stub pi writes its calls.jsonl into the child cwd, which the real
+// bash-ro OS sandbox (deny writes under cwd) would block — so every
+// stub-driven flow opts out of it and exercises the default allowlist
+// fallback. The sandbox's own behavior is covered against real sandbox-exec
+// in tests/bash-readonly-sandbox.test.ts.
+process.env.PI_FLOWS_BASH_RO_NO_SANDBOX = "1";
+
 export const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
 
@@ -27,7 +34,7 @@ export function flowTool(api: Record<string, any> = {}) {
 	return tools.get("flow");
 }
 
-export type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[]; cwd: string };
+export type Call = { agent: string; callIndex: number; task: string; systemPrompt: string; args: string[]; cwd: string; env: Record<string, string | null> };
 
 export async function freshDir() {
 	return mkdtemp(path.join(tmpdir(), "stub-pi-"));

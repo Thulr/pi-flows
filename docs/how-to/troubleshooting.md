@@ -513,11 +513,31 @@ it, so retrying with a different agent name and the same tools refuses again.
 The refusal names each agent with the tools that classified it.
 
 Fix: serialize with `concurrency:1` (the guard only applies to concurrent
-writers), use agents whose effective tools exclude `bash`/`edit`/`write`, or
-give each writer a distinct `cwd`/worktree. For review fan-out specifically,
-prefer the `code-review` preset, which already serializes its shell-capable
-reviewers. Pass `allowSharedWriteCwd:true` only as a last resort, when
+writers), use agents whose effective tools exclude `bash`/`edit`/`write`, swap
+`bash` for `bash-ro` (bash under a child-enforced read-only allowlist, which is
+not write-capable), or give each writer a distinct `cwd`/worktree. For review
+fan-out specifically, prefer the `code-review` preset, which runs its reviewers
+under `bash-ro`. Pass `allowSharedWriteCwd:true` only as a last resort, when
 concurrent writes in one checkout are actually intended.
+
+### `BASH_READONLY_UNENFORCEABLE`
+
+Cause: a role's tools included `bash-ro`, but no layer can enforce it — the OS
+read-only-checkout sandbox is unavailable or opted out
+(`PI_FLOWS_BASH_RO_NO_SANDBOX`, or a non-macOS host) *and* the command-allowlist
+fallback is unavailable, because `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX` is set or the
+enforcer extension could not be located. Spawning anyway would grant the child
+unrestricted bash in the shared checkout, so the spawn is refused before any
+process starts. (Note `PI_FLOWS_CHILD_NO_EXTENSIONS` alone does not trigger
+this: the enforcer loads via an explicit `-e`, which pi keeps under
+`--no-extensions`. And by default, off the sandbox, the allowlist fallback runs
+rather than refusing.)
+
+Fix: run on macOS (without `PI_FLOWS_BASH_RO_NO_SANDBOX`) so the sandbox
+enforces it; unset `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX` to allow the best-effort
+allowlist fallback; or change the role's tools — `bash` if write-capable
+classification (and the shared-write guard) is acceptable, or `read,grep,find,ls`
+if the child does not need a shell.
 
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`
 

@@ -92,5 +92,12 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // (run.ts) that took the execute() lifecycle and the child-result lifecycle
 // out of index.ts (#97), plus their changelog entry. Same verification:
 // 95 files, none from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 975_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 990_000 for the bash-ro vocabulary module (bash-readonly.ts) and
+// its reference/troubleshooting/changelog entries and the standalone
+// enforcer entry (bash-readonly-extension.ts). Same verification:
+// 97 files, none from tests/, scripts/, or evals/.
+// Raised to 1_010_000 for the OS read-only-checkout sandbox module
+// (bash-readonly-sandbox.ts) and its docs. Same verification:
+// 98 files, none from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 1_010_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

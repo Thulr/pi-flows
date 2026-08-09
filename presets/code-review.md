@@ -10,7 +10,7 @@ result: code-review-v1
       "agent": "overwatch",
       "role": "standards",
       "task": "Perform exactly one read-only Standards review for this request:\n\n{task}\n\nFreeze and report the base and head commit identities before reviewing. Derive one changed-file manifest from that fixed range, inspect every path in it, and return one coverage record per path. Review only against repository-authored standards (AGENTS.md, CONTRIBUTING.md, documented architecture and test rules) and semantic correctness. Do not invoke /code-review, call flow, spawn agents, edit files, post to GitHub, or retry the review. A missing fixed point, unreadable path, or uncertain scope must be represented as skipped coverage or an unresolved question, never silently treated as clean.",
-      "tools": "read,grep,find,ls,bash",
+      "tools": "read,grep,find,ls,bash-ro",
       "contract": {
         "objective": "Complete one author-independent Standards review of the fixed change set described by: {task}",
         "constraints": [
@@ -103,7 +103,7 @@ result: code-review-v1
       "agent": "overwatch",
       "role": "spec",
       "task": "Perform exactly one read-only Spec review for this request:\n\n{task}\n\nFreeze and report the base and head commit identities before reviewing. Derive one changed-file manifest from that fixed range, inspect every path in it, and return one coverage record per path. Verify the change against the issue, PR intent, acceptance criteria, and review-comment follow-ups named in the request. Do not invoke /code-review, call flow, spawn agents, edit files, post to GitHub, or retry the review. A missing specification, unreadable path, or uncertain scope must be represented as skipped coverage or an unresolved question, never silently treated as clean.",
-      "tools": "read,grep,find,ls,bash",
+      "tools": "read,grep,find,ls,bash-ro",
       "contract": {
         "objective": "Complete one author-independent Spec review of the fixed change set described by: {task}",
         "constraints": [
@@ -196,7 +196,7 @@ result: code-review-v1
   "tier": "capable",
   "thinking": "high",
   "incompleteHandoffPolicy": "include",
-  "concurrency": 1,
+  "concurrency": 2,
   "timeoutMs": 1800000,
   "maxTokens": 200000,
   "maxGeneratedTokens": 16000
