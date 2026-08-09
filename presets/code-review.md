@@ -45,8 +45,8 @@ result: code-review-v1
         "sideEffectClass": "read-only",
         "budget": {
           "timeoutMs": 1800000,
-          "maxTokens": 100000,
-          "maxGeneratedTokens": 8000
+          "maxTokens": 300000,
+          "maxGeneratedTokens": 12000
         },
         "acceptanceChecks": [
           "axis is standards",
@@ -138,8 +138,8 @@ result: code-review-v1
         "sideEffectClass": "read-only",
         "budget": {
           "timeoutMs": 1800000,
-          "maxTokens": 100000,
-          "maxGeneratedTokens": 8000
+          "maxTokens": 300000,
+          "maxGeneratedTokens": 12000
         },
         "acceptanceChecks": [
           "axis is spec",
@@ -198,6 +198,6 @@ result: code-review-v1
   "incompleteHandoffPolicy": "include",
   "concurrency": 2,
   "timeoutMs": 1800000,
-  "maxTokens": 200000,
-  "maxGeneratedTokens": 16000
+  "maxTokens": 750000,
+  "maxGeneratedTokens": 30000
 }

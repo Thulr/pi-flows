@@ -27,6 +27,7 @@ export class Run {
 	readonly #result: FlowRunResult;
 	#envelopeCandidate?: string;
 	#validatedReturnEnvelope?: DelegationReturnEnvelope;
+	#rejectedReturnEnvelope?: DelegationReturnEnvelope;
 
 	private constructor(result: FlowRunResult) {
 		this.#result = result;
@@ -76,5 +77,23 @@ export class Run {
 	/** The one transition through which a prepared handoff reaches the result. */
 	acceptHandoff(handoff: DelegationHandoffEnvelope): void {
 		this.#result.handoff = handoff;
+	}
+
+	/**
+	 * Retain a shape-valid envelope that failed contract validation, in stored
+	 * (capture-policy) form. It never reaches `result.envelope` — that field
+	 * means "validated" — but the child's own claims are the evidence of what
+	 * the spend produced, and a harness formatter may surface them as
+	 * unvalidated rather than zeroing out the run (issue #104).
+	 */
+	retainRejectedEnvelope(stored: DelegationReturnEnvelope): void {
+		this.#rejectedReturnEnvelope = structuredClone(stored);
+	}
+
+	/** Consume the retained rejected envelope, as an isolated clone. */
+	takeRejectedReturnEnvelope(): DelegationReturnEnvelope | undefined {
+		const envelope = this.#rejectedReturnEnvelope;
+		this.#rejectedReturnEnvelope = undefined;
+		return envelope === undefined ? undefined : structuredClone(envelope);
 	}
 }

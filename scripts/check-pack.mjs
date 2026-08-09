@@ -99,5 +99,12 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Raised to 1_010_000 for the OS read-only-checkout sandbox module
 // (bash-readonly-sandbox.ts) and its docs. Same verification:
 // 98 files, none from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 1_010_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_040_000 for the budget wrap-up channel (#104): three new public
+// runtime modules — wrapup.ts (the parent/child file channel), runner-budget.ts
+// (the budget half of the child-run seam, split when runner.ts crossed its
+// line cap), and preset-review.ts (the code-review result unit, same split
+// from presets.ts) — plus the budget wrap-up sections in flow-reference and
+// troubleshooting and the changelog entries. Same verification: 101 files,
+// none from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 1_040_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

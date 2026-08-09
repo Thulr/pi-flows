@@ -370,10 +370,19 @@ test("a validated axis keeps its findings when the other axis fails validation",
 		retry: { retryable: false },
 		data,
 	});
+	const rejectedFinding = { id: "rejected", path: "a.ts", startLine: 2, endLine: 2, severity: "medium", category: "correctness", claim: "schema-rejected-claim", evidence: "a.ts:2", suggestion: "fix it" };
 	const good = envelope(0, "standards", { axis: "standards", base, head, coverage: [{ path: "a.ts", status: "reviewed", evidence: "a.ts:1" }], findings: [finding] });
-	const malformed = envelope(1, "spec", { axis: "spec", base, head, coverage: "not-an-array", findings: [] });
+	const malformed = envelope(1, "spec", { axis: "spec", base, head, coverage: "not-an-array", findings: [rejectedFinding] });
 	// Bound by task text, not call order: the preset runs both axes concurrently.
 	const { result } = await runFlow({ preset: "code-review", task }, { overwatch: [{ whenTaskIncludes: "Standards review", reply: good }, { whenTaskIncludes: "Spec review", reply: malformed }] }, { cwd: repo });
 	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
 	assert.match(result.content[0].text, /surviving-axis-claim/, "the validated axis's finding must not be hidden by the other axis's error");
+	// A strict-schema miss must not zero out the rejected axis's spend either:
+	// its shape-valid envelope is surfaced, labeled as unvalidated.
+	assert.match(result.content[0].text, /failed schema validation \(unvalidated/, "the rejected envelope is surfaced as such");
+	assert.match(result.content[0].text, /schema-rejected-claim/, "the rejected axis's own findings are still worth reading");
+	// The fix line is delivered to the parent, so it must speak to the parent
+	// first — the incident behind issue #104 was a parent replaying a
+	// non-retryable flow because the fix text addressed the child.
+	assert.match(result.content[0].text, /Do not automatically replay this flow/);
 });

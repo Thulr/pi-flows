@@ -14,10 +14,10 @@ Not every part of this repo earns the same depth. This split says where to spend
 _Modules_: `flow.ts`, `run.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
 **Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
-_Modules_: `modes/*`, `presets.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
+_Modules_: `modes/*`, `presets.ts`, `preset-review.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
 
 **Generic — plumbing and adapters.** Child-process transport, the anti-corruption layer over a child pi run, fan-out plumbing, param schema and arithmetic, command execution, text parsing. Keep thin, keep replaceable, do not model. `runner.ts` and `jsonl-child.mjs` are where a foreign protocol is allowed to be spoken; everything above them should see domain types only.
-_Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`, `bash-readonly-extension.ts`, `bash-readonly-sandbox.ts`.
+_Modules_: `runner.ts`, `runner-budget.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`, `bash-readonly-extension.ts`, `bash-readonly-sandbox.ts`, `wrapup.ts`.
 
 **Shared kernel.** `types.ts` — the vocabulary every subdomain imports, re-exported from the concept modules that own each term. A change here ripples everywhere and nothing above owns it, so keep it declarative: a rule that belongs to one concept belongs in that concept's module (see `budget.ts`), not here. `roster-types.ts` is vocabulary of the same kind, held apart only because the kernel may not import the Generic module that derives a roster.
 _Modules_: `types.ts`, `roster-types.ts`, `preset-types.ts`.
@@ -231,6 +231,10 @@ _Avoid_: cap, limit
 **Budget authority**:
 Which budget a ceiling belongs to — flow or contract. Carried wherever a ceiling is shown or a refusal is reported, so a refusal is never attributed to a budget the run never had.
 _Avoid_: budget owner, budget scope
+
+**Wrap-up notice**:
+The steer a budget delivers into a live child at 80% of a ceiling it would stop that run for: stop working and emit the return envelope now, recording unfinished work as skipped coverage and unresolved questions. Owned by the budget — the notice must name the authority and spend of the ceiling about to bind — and delivered over the file channel in `wrapup.ts`. A ceiling crossed after the notice settles the run gracefully (`budget_wrap_up`) instead of forfeiting it; a ceiling crossed before any notice could be honored keeps the hard stop.
+_Avoid_: soft limit, warning threshold, grace period
 
 **Capture policy**:
 The pair of switches that decide what child content may appear in returned content, details, and spans. It governs disclosure, not execution: a redacted span is still a recorded span.

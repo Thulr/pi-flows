@@ -1,4 +1,4 @@
-import type { Budget, BudgetAuthority } from "./budget.ts";
+import type { Budget, BudgetCeiling } from "./budget.ts";
 import type { ChildMessage } from "./sanitize.ts";
 import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
 import type { HandoffGuard } from "./handoff-types.ts";
@@ -230,24 +230,14 @@ export interface FlowRunResult {
 	stopReason?: string;
 	errorMessage?: string;
 	error?: FlowError;
+	/** True when a budget nearing its ceiling steered this child to wrap up and emit its envelope early. */
+	wrapUpRequested?: boolean;
 	step?: number;
 	durationMs?: number;
 	stdoutParseErrors?: number;
 	stdoutSample?: string;
 	envelope?: DelegationReturnEnvelope;
 	handoff?: DelegationHandoffEnvelope;
-}
-
-/**
- * One configured cost/token ceiling, paired with the authority that owns it, for
- * disclosure in compact UI surfaces. Not `BudgetCeilings` (budget.ts), which is
- * the unlabelled *set* of ceilings a budget is constructed with and enforces.
- */
-export interface BudgetCeiling {
-	authority: BudgetAuthority;
-	maxCostUsd?: number;
-	maxTokens?: number;
-	maxGeneratedTokens?: number;
 }
 
 /**
@@ -401,7 +391,7 @@ export interface CapturePolicy {
  * one with `Budget.forFlow` or `Budget.forContract` — see budget.ts.
  */
 export { Budget } from "./budget.ts";
-export type { BudgetAuthority, BudgetCeilings, BudgetSnapshot } from "./budget.ts";
+export type { BudgetAuthority, BudgetCeiling, BudgetCeilings, BudgetSnapshot } from "./budget.ts";
 
 /** Everything the sink needs beyond the run itself to place and describe a child span. */
 export interface ChildSpanContext {

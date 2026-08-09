@@ -246,14 +246,21 @@ or `maxGeneratedTokens` ceiling. Cost and generated-output ceilings
 stop the active child after its completed model response; the legacy total-token
 ceiling preserves that response. All three prevent further child spawns. This
 bounds the **cost** dimension of runaway delegation that the iteration, fan-out,
-and time caps do not cover.
+and time caps do not cover. A child that was already steered to wrap up (the
+80% wrap-up notice) does not produce this error when it crosses the ceiling —
+it settles gracefully with `stopReason: "budget_wrap_up"` and its envelope is
+validated normally — so seeing `BUDGET_EXCEEDED` means the ceiling was crossed
+before any wrap-up could be requested or honored.
 
 Fix: do not automatically replay the same Flow unchanged. Ask for direction, or
 make a material, visible change that stays within the configured ceiling:
 narrow the task or reduce fan-out (fewer voters, subtasks, or `maxIterations`).
 Preserve the owning flow/contract budget unless the user explicitly approves
 raising or removing it. The partial results produced before the ceiling was hit
-are still in `details`.
+are still in `details`. When a ceiling binds inside the *normal* cost range of
+the task (roughly half of comparable runs breach it), the ceiling is missized:
+resize it as a runaway backstop (~3x the observed normal spend) rather than
+narrowing the task further.
 
 ### `BUDGET_UNOBSERVABLE`
 
@@ -572,9 +579,16 @@ Cause: a child governed by a delegation contract returned prose or malformed JSO
 its `data` did not satisfy `contract.returnSchema`, or an artifact reference was
 missing or escaped the child working directory.
 
-Fix: return one `pi-flows.return-envelope.v1` JSON object with every required
+Fix: for the parent — do not automatically replay the flow; an unchanged retry
+re-spends its budget to produce the same invalid envelope. Report the failure
+to the user, and retry only with a material change to the child's return
+instructions or `contract.returnSchema`. The requirement the child must meet:
+return one `pi-flows.return-envelope.v1` JSON object with every required
 field, keep artifact paths inside the child `cwd`, and make `data` satisfy the
-declared JSON Schema. The handoff is not passed downstream until it validates.
+declared JSON Schema. The handoff is not passed downstream until it validates;
+where the rejected envelope was at least structurally valid, its unvalidated
+claims are still surfaced (e.g. by the code-review formatter) so the spend is
+not lost with the validation.
 
 ### `RETURN_CONTRACT_MISMATCH`
 

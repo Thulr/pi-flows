@@ -54,7 +54,7 @@ if (stubDir) {
 			callIndex += 1;
 		}
 	}
-	appendFileSync(path.join(stubDir, "calls.jsonl"), `${JSON.stringify({ agent, callIndex, task, systemPrompt, args: argv, cwd: process.cwd(), env: { PI_FLOWS_BASH_READONLY: process.env.PI_FLOWS_BASH_READONLY ?? null } })}\n`);
+	appendFileSync(path.join(stubDir, "calls.jsonl"), `${JSON.stringify({ agent, callIndex, task, systemPrompt, args: argv, cwd: process.cwd(), env: { PI_FLOWS_BASH_READONLY: process.env.PI_FLOWS_BASH_READONLY ?? null, PI_FLOWS_WRAPUP_FILE: process.env.PI_FLOWS_WRAPUP_FILE ?? null } })}\n`);
 }
 
 const plan = process.env.PI_STUB_PLAN ? JSON.parse(process.env.PI_STUB_PLAN) : {};
@@ -71,6 +71,7 @@ let errorMessage;
 let extraEvents = [];
 let omitCost = false;
 let omitUsage = false;
+let wrapUpReply;
 if (reply && typeof reply === "object") {
 	for (const [relativePath, content] of Object.entries(reply.writes ?? {})) {
 		const target = path.resolve(process.cwd(), relativePath);
@@ -91,6 +92,7 @@ if (reply && typeof reply === "object") {
 	if (Array.isArray(reply.extraEvents)) extraEvents = reply.extraEvents;
 	omitCost = reply.omitCost === true;
 	omitUsage = reply.omitUsage === true;
+	wrapUpReply = reply.wrapUpReply;
 	reply = reply.reply;
 }
 if (reply === undefined) reply = `stub reply for ${agent}`;
@@ -114,6 +116,31 @@ for (const extra of extraEvents) {
 	const delayMs = Number.isFinite(extra?.delayMs) ? Math.max(0, Number(extra.delayMs)) : 0;
 	if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
 	process.stdout.write(`${JSON.stringify(extra?.event ?? {})}\n`);
+}
+// Deterministic stand-in for the wrap-up steer round-trip: poll the wrap-up
+// file the runner announced in the env, and when the notice lands, answer it
+// with the scripted wrap-up reply (a second, final assistant turn) — the same
+// shape a real child produces when the steered notice reaches its session.
+if (wrapUpReply !== undefined && process.env.PI_FLOWS_WRAPUP_FILE) {
+	const wrapUpFile = process.env.PI_FLOWS_WRAPUP_FILE;
+	const deadline = Date.now() + (holdOpenMs > 0 ? holdOpenMs : 2000);
+	while (Date.now() < deadline && !existsSync(wrapUpFile)) {
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	if (existsSync(wrapUpFile)) {
+		if (stubDir) writeFileSync(path.join(stubDir, "wrapup-notice.txt"), readFileSync(wrapUpFile, "utf8"));
+		process.stdout.write(`${JSON.stringify({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: String(wrapUpReply) }],
+				usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, cost: { total: 0.0001 }, totalTokens: 20 },
+				model,
+				stopReason: "endTurn",
+			},
+		})}\n`);
+	}
+	process.exit(0);
 }
 if (holdOpenMs > 0) await new Promise((resolve) => setTimeout(resolve, holdOpenMs));
 process.exit(exitCode);

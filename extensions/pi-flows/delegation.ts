@@ -22,11 +22,15 @@ export interface PersistedHandoffAttestation {
 }
 
 function envelopeError(reason: string): FlowError {
+	// The fix is read by the PARENT, which cannot repair the envelope itself: an
+	// unchanged replay re-spends the whole flow to receive the same invalid
+	// envelope, so the parent-facing sentence comes first and the child-facing
+	// requirement is quoted as what a changed retry must instruct.
 	return flowError(
 		"RETURN_ENVELOPE_INVALID",
 		"Child return envelope is invalid.",
 		reason,
-		"Return the documented pi-flows.return-envelope.v1 JSON object and ensure `data` satisfies contract.returnSchema.",
+		"Do not automatically replay this flow — an unchanged retry re-spends its budget to produce the same invalid envelope. Report the failure to the user, then retry only with a material change to the child's return instructions or contract.returnSchema. The requirement the child must meet: return the documented pi-flows.return-envelope.v1 JSON object whose `data` satisfies contract.returnSchema.",
 	);
 }
 
@@ -151,7 +155,13 @@ function validateReturnEnvelope(
 	const parsed = extractLastJsonBlock(run.takeEnvelopeCandidate() ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
 	const validationError = validateEnvelopeAgainstContract(parsed, contract, cwd);
-	if (validationError) return { error: storedError(validationError, policy), rejected: storedEnvelope(parsed, policy) };
+	if (validationError) {
+		const rejected = storedEnvelope(parsed, policy);
+		// Retained on the run so a harness-owned formatter can surface the
+		// child's unvalidated claims instead of losing the whole spend with them.
+		run.retainRejectedEnvelope(rejected);
+		return { error: storedError(validationError, policy), rejected };
+	}
 	const validated = { ...parsed, usage: result.usage };
 	const envelope = storedEnvelope(validated, policy);
 	run.acceptReturnEnvelope(validated, envelope);
