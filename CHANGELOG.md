@@ -10,6 +10,26 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- A budget **wrap-up notice** (#104): at 80% of any ceiling that would stop the
+  live run (cost, generated output, or a contract's total tokens), the runner
+  delivers a steered message into the child — stop working and emit the return
+  envelope now, marking unfinished work as skipped coverage and
+  `unresolvedQuestions`. The channel is a per-child wrap-up file announced in
+  the child's environment and watched by the pi-flows extension inside the
+  child (`extensions/pi-flows/wrapup.ts`); the threshold transition belongs to
+  the ceiling, so it steers every live child governed by a shared budget at
+  the same moment, and a child spawned while a shared ceiling is already
+  inside the window is steered at spawn. Requesting is not
+  receiving: the runner treats the notice as delivered only when it is seen
+  echoed back into the child session as a user message. A child that crosses
+  the ceiling after a delivered notice is still terminated, but settles
+  gracefully (`stopReason: "budget_wrap_up"`, exit 0) and its final envelope
+  is validated normally, converting a breach from total loss into a valid
+  partial envelope; an undelivered notice keeps the hard stop. The wrap-up
+  request (`child.wrap_up`, with `flow.budget.wrapup_delivered`) and a
+  graceful exhaustion (`flow.budget.graceful`) are recorded as budget events
+  on the trace.
+
 - A `bash-ro` tools token (`extensions/pi-flows/bash-readonly.ts`): bash under
   a read-only command allowlist — git inspection, file inspection, and repo
   verification (`npm test`, `npm run <script>`, `node --test`) — enforced by
@@ -30,6 +50,21 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   request describes as read-only.
 
 ### Changed
+
+- The bundled `code-review` preset's ceilings are resized as runaway backstops
+  instead of governors inside the normal cost range (#104): per-axis contract
+  `maxTokens` 100k → 300k and `maxGeneratedTokens` 8k → 12k, flow `maxTokens`
+  200k → 750k and `maxGeneratedTokens` 16k → 30k. The observed normal spend of
+  a read-heavy reviewer (~80–105k total tokens) sat astride the old 100k
+  contract ceiling, so roughly half of routine runs forfeited their whole spend.
+- `RETURN_ENVELOPE_INVALID`'s fix text now addresses the parent it is delivered
+  to — do not automatically replay the flow; report to the user; retry only
+  with changed return instructions or schema — with the child-facing envelope
+  requirement quoted rather than issued as if the parent could perform it
+  (#104). The code-review formatter also surfaces shape-valid envelopes that
+  failed strict schema validation, labeled unvalidated, beside the findings a
+  validated axis anchored, so a strict-schema miss no longer zeroes out the
+  entire spend.
 
 - `bash-ro` is now enforced at the OS level: on macOS a `bash-ro` child runs
   under `sandbox-exec` with a profile that denies writes anywhere under the

@@ -1,7 +1,37 @@
-import type { BudgetCeiling, FlowError, UsageStats } from "./types.ts";
+import type { FlowError, UsageStats } from "./types.ts";
 
 /** Which budget a ceiling belongs to. See CONTEXT.md — a refusal must never be attributed to a budget the run never had. */
 export type BudgetAuthority = "flow" | "contract";
+
+/**
+ * One configured cost/token ceiling, paired with the authority that owns it, for
+ * disclosure in compact UI surfaces. Not `BudgetCeilings` below, which is the
+ * unlabelled *set* of ceilings a budget is constructed with and enforces.
+ */
+export interface BudgetCeiling {
+	authority: BudgetAuthority;
+	maxCostUsd?: number;
+	maxTokens?: number;
+	maxGeneratedTokens?: number;
+}
+
+/**
+ * The fraction of a mid-stream-enforceable ceiling at which a live child is
+ * asked to wrap up: stop working and emit its return envelope while there is
+ * still headroom to pay for the envelope turn. Sized so the remaining fifth of
+ * the ceiling covers the final turn(s) of a read-heavy child; a ceiling small
+ * enough that one turn jumps from below the threshold past the ceiling itself
+ * gets no wrap-up, because there was never a moment it could have been asked.
+ */
+export const WRAP_UP_FRACTION = 0.8;
+
+/**
+ * First line of every wrap-up notice. A steered notice re-enters the child's
+ * event stream as a user message, and the runner recognizes that echo by this
+ * marker — the proof the notice actually reached the child session, without
+ * which an exhaustion may not settle gracefully.
+ */
+export const WRAP_UP_NOTICE_MARKER = "[pi-flows budget notice]";
 
 /**
  * The spend ceilings a budget is constructed with. An absent ceiling is uncapped
@@ -98,6 +128,33 @@ export class Budget {
 		return this.costReached() || this.generatedReached() || (this.authority === "contract" && this.totalReached());
 	}
 
+	/**
+	 * Spend has crossed the wrap-up fraction of a ceiling this budget would stop
+	 * the live run for. Deliberately the same ceiling set as `stopsLiveRun`, at
+	 * `WRAP_UP_FRACTION` instead of 1: a ceiling that only gates the next spawn
+	 * (a flow's total-token ceiling) never asks a live run to wrap up, because
+	 * the run it would interrupt is not the thing it bounds.
+	 */
+	nearsLiveStop(): boolean {
+		return this.costReached(WRAP_UP_FRACTION) || this.generatedReached(WRAP_UP_FRACTION) || (this.authority === "contract" && this.totalReached(WRAP_UP_FRACTION));
+	}
+
+	/**
+	 * The steer delivered into a child nearing a ceiling: stop now and emit the
+	 * return envelope, using the envelope schema's own graceful-degradation
+	 * vocabulary (`partial`, skipped coverage, `unresolvedQuestions`). Owned by
+	 * the budget for the same reason its refusals are — the sentence must name
+	 * the authority and spend of the ceiling that is actually about to bind.
+	 */
+	wrapUpNotice(): string {
+		return [
+			`${WRAP_UP_NOTICE_MARKER} ${this.authorityLabel} budget is nearly exhausted (${this.crossed(WRAP_UP_FRACTION)?.spend ?? "approaching a configured ceiling"}).`,
+			"Stop working now and return your final answer in this turn; do not start new tool calls.",
+			'If this task requires a pi-flows.return-envelope.v1 JSON object, emit it now with status "partial":',
+			"record work you did not finish as skipped coverage entries and unresolvedQuestions instead of continuing past the budget.",
+		].join(" ");
+	}
+
 	/** Whether this budget makes provider cost telemetry mandatory: a cost ceiling cannot be enforced without it. */
 	get enforcesCost(): boolean {
 		return this.maxCostUsd !== undefined;
@@ -115,16 +172,17 @@ export class Budget {
 		};
 	}
 
-	private costReached(): boolean {
-		return this.maxCostUsd !== undefined && this.spentCost >= this.maxCostUsd;
+	/** `fraction` scales the ceiling being tested: 1 is the hard stop, WRAP_UP_FRACTION the soft one. */
+	private costReached(fraction = 1): boolean {
+		return this.maxCostUsd !== undefined && this.spentCost >= this.maxCostUsd * fraction;
 	}
 
-	private generatedReached(): boolean {
-		return this.maxGeneratedTokens !== undefined && this.spentGeneratedTokens >= this.maxGeneratedTokens;
+	private generatedReached(fraction = 1): boolean {
+		return this.maxGeneratedTokens !== undefined && this.spentGeneratedTokens >= this.maxGeneratedTokens * fraction;
 	}
 
-	private totalReached(): boolean {
-		return this.maxTokens !== undefined && this.spentTokens >= this.maxTokens;
+	private totalReached(fraction = 1): boolean {
+		return this.maxTokens !== undefined && this.spentTokens >= this.maxTokens * fraction;
 	}
 
 	/** "Flow" or "Contract", so every sentence about this budget names the right one from a single decision. */
@@ -133,16 +191,19 @@ export class Budget {
 	}
 
 	/**
-	 * The one ceiling that actually bound, with the spend line describing it.
-	 * Resolved together in a single cascade so an error's reported ceiling and its
-	 * reported spend can never name different ceilings — as two independent
-	 * cascades, they could drift apart the moment either was edited.
+	 * The one ceiling that actually bound (or, at `WRAP_UP_FRACTION`, is about
+	 * to), with the spend line describing it. Resolved together in a single
+	 * cascade so an error's reported ceiling and its reported spend can never
+	 * name different ceilings — as two independent cascades, they could drift
+	 * apart the moment either was edited. The wrap-up notice reads the same
+	 * cascade at its fraction, so the notice and a later exhaustion error
+	 * describe the same ceiling in the same words.
 	 */
-	private crossed(): { ceiling: BudgetCeilings; spend: string } | undefined {
+	private crossed(fraction = 1): { ceiling: BudgetCeilings; spend: string } | undefined {
 		const { maxCostUsd, maxTokens, maxGeneratedTokens } = this;
-		if (maxCostUsd !== undefined && this.costReached()) return { ceiling: { maxCostUsd }, spend: `$${this.spentCost.toFixed(4)} of $${maxCostUsd.toFixed(4)}` };
-		if (maxGeneratedTokens !== undefined && this.generatedReached()) return { ceiling: { maxGeneratedTokens }, spend: `${this.spentGeneratedTokens} of ${maxGeneratedTokens} generated tokens` };
-		if (maxTokens !== undefined && this.totalReached()) return { ceiling: { maxTokens }, spend: `${this.spentTokens} of ${maxTokens} total tokens` };
+		if (maxCostUsd !== undefined && this.costReached(fraction)) return { ceiling: { maxCostUsd }, spend: `$${this.spentCost.toFixed(4)} of $${maxCostUsd.toFixed(4)}` };
+		if (maxGeneratedTokens !== undefined && this.generatedReached(fraction)) return { ceiling: { maxGeneratedTokens }, spend: `${this.spentGeneratedTokens} of ${maxGeneratedTokens} generated tokens` };
+		if (maxTokens !== undefined && this.totalReached(fraction)) return { ceiling: { maxTokens }, spend: `${this.spentTokens} of ${maxTokens} total tokens` };
 		return undefined;
 	}
 

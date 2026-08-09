@@ -18,6 +18,7 @@ import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruc
 import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
 import { bashReadonlyEnabled, bashReadonlyRefusal, splitBashReadonly } from "./bash-readonly.ts";
 import { registerBashReadonlyGuard } from "./bash-readonly-extension.ts";
+import { registerWrapUpSteering } from "./wrapup.ts";
 import { discoverFlowAgents } from "./agents.ts";
 import { createAgentCatalog, projectAgentsForRequest, requestedAgentNames, summarizeAgents } from "./agent-catalog.ts";
 import { resolveChildModel, runFlowAgent } from "./runner.ts";
@@ -120,6 +121,12 @@ export default function (pi: ExtensionAPI) {
 	// -e; registering here too covers a discovered install and hand-set
 	// markers. Coordination safety, not a sandbox.
 	registerBashReadonlyGuard(pi);
+
+	// Child-side half of the budget wrap-up channel: when the runner spawned
+	// this pi with a wrap-up file path, watch for the parent's notice and steer
+	// it into the live session so the child can emit a partial envelope before
+	// the hard ceiling binds.
+	registerWrapUpSteering(pi);
 
 	const liveFlows = new FlowRegistry();
 	const fleetPanel = createFleetPanelController(liveFlows);

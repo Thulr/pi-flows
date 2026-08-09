@@ -27,6 +27,7 @@ import { makeTraceSink, strictTraceError, traceEvidenceIssue } from "../extensio
 import { Budget, type DelegationContract, type FlowErrorCode, type FlowTraceLink, type ModeOutput } from "../extensions/pi-flows/types.ts";
 import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule, type ReplyScript } from "./fault-adapter.ts";
 import { flowLifecycleScenarios } from "./fault-flow-scenarios.ts";
+import { wrapUpScenarios } from "./fault-wrapup-scenarios.ts";
 import { handoffPolicyScenarios } from "./fault-handoff-scenarios.ts";
 
 export const FAULT_SUITE = "fault-injection";
@@ -131,7 +132,7 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
  * deliberately does not accept a clean answer as containment, which is what a
  * duplicated ballot or a persuasive-but-wrong claim relies on.
  */
-function observe(output: ModeOutput, ledger: FaultLedger, watched: string[], options: { attack: boolean }): FaultChecks {
+export function observe(output: ModeOutput, ledger: FaultLedger, watched: string[], options: { attack: boolean }): FaultChecks {
 	const errorCode = (output.details.error?.code as FlowErrorCode | undefined) ?? null;
 	const surfaced = errorCode !== null || output.details.results.some((result) => result.exitCode !== 0 || result.error);
 	return {
@@ -392,11 +393,14 @@ function exhaustedBudgetScenario(): FaultScenario {
 		benignOpportunities: 1,
 		expected: {
 			outcome: { errorCode: null },
-			// The ceiling bites between children: the second is refused before it spawns.
+			// The first child's own turn crosses the cost ceiling mid-run (cost
+			// ceilings stop the live run, see Budget.stopsLiveRun); the second is
+			// refused before it spawns.
 			process: { dispatched: 1, refused: 1, unreached: ["debrief"] },
 			policy: { contained: true, falselyBlocked: false },
-			// The child that ran before the ceiling is kept; the refused one banks nothing.
-			residualState: { retryable: false, acceptedHandoffs: 1 },
+			// The turn that crossed jumped straight past the wrap-up window, so the
+			// stopped child forfeits its work and the refused one banks nothing.
+			residualState: { retryable: false, acceptedHandoffs: 0 },
 		},
 		run: async () => {
 			const adapter = makeFaultAdapter({ replies: { recon: "finding" }, usage: { input: 100, output: 100, cost: 0.4 } });
@@ -777,6 +781,7 @@ export function faultScenarios(): FaultScenario[] {
 		evaluateRetryControlScenario(),
 		...flowLifecycleScenarios(),
 		...handoffPolicyScenarios(),
+		...wrapUpScenarios(),
 	];
 }
 

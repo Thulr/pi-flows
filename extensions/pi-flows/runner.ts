@@ -10,6 +10,8 @@ import { Run } from "./run.ts";
 import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
 import { BASH_READONLY_ENV, bashReadonlyGitEnv } from "./bash-readonly.ts";
+import { WRAPUP_FILE_ENV, requestWrapUp } from "./wrapup.ts";
+import { ChildBudgets } from "./runner-budget.ts";
 import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
 import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
 import { buildChildArgs, getPiInvocation } from "./commands.ts";
@@ -180,27 +182,16 @@ function sanitizeRole(role: string | undefined, policy: CapturePolicy): string |
 export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunResult> {
 	const policy: CapturePolicy = { recordContent: options.recordContent ?? true, redactSecrets: options.redactSecrets ?? true };
 	const capturedRole = sanitizeRole(options.role, policy);
-	const budgets = [options.budget, options.contractBudget].filter((budget): budget is Budget => Boolean(budget));
-	// Flow or contract ceiling: refuse to spawn once the applicable budget is spent.
-	// Everything downstream — the event's authority, its attribute prefix, the
-	// error's label and ceiling — comes from the budget that refused, so a
-	// contract-bound refusal can never be reported as a flow-budget one.
-	const exhaustedBudget = budgets.find((budget) => budget.refusesSpawn());
-	if (exhaustedBudget) {
-		// A budget refusal spawns nothing, so it produces no child span. Without an
-		// event the trace would simply be missing a child and look like loss.
-		options.recordEvent?.({
-			kind: "budget",
-			name: "child.refused",
-			ok: false,
-			scope: options.scope,
-			attributes: {
-				"flow.budget.refused_agent": options.agentName,
-				"flow.budget.authority": exhaustedBudget.authority,
-				...budgetAttributes(exhaustedBudget.snapshot()),
-			},
-		});
-		const result = makeEmptyRunResult(options.agentName, options.task, policy, exhaustedBudget.exhaustedError());
+	// Every budget decision — refusal, hard stop, wrap-up, settle, trace events —
+	// lives in ChildBudgets (runner-budget.ts); this adapter only asks it.
+	const childBudgets = new ChildBudgets(
+		[options.budget, options.contractBudget].filter((budget): budget is Budget => Boolean(budget)),
+		options.recordEvent,
+		options.scope,
+	);
+	const refusal = childBudgets.refuseSpawn(options.agentName);
+	if (refusal) {
+		const result = makeEmptyRunResult(options.agentName, options.task, policy, refusal);
 		result.role = capturedRole;
 		return result;
 	}
@@ -263,14 +254,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
 	let wasAborted = false;
 	let timedOut = false;
-	/**
-	 * The budget decision that stopped this run: which budget, and whether it was
-	 * exhausted or could not be enforced at all. One value rather than a flag pair
-	 * plus a separate budget reference, because those three could disagree — a
-	 * turn arriving between `terminate()` and the child actually exiting used to
-	 * be able to clear the budget while the flag stayed latched.
-	 */
-	let budgetStop: { budget: Budget; reason: "exhausted" | "unobservable"; error: FlowError } | undefined;
+	/** Set when the budget refused this child after async setup: the child never ran, so no span or budget outcome is recorded for it. */
+	let refusedLate: FlowRunResult | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -281,6 +266,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		const taskPrompt = await writePromptToTempFile(agent.name, `Task: ${options.task}\n`, "task");
 		tempFiles.push(taskPrompt);
 		args.push(`@${taskPrompt.filePath}`);
+		// The wrap-up channel rides in the task's temp dir so it shares its
+		// lifetime; it is offered only to a child that runs under some budget.
+		const wrapUpFile = path.join(taskPrompt.dir, "wrap-up.md");
 
 		const childCwd = path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd);
 		let invocation = getPiInvocation(args);
@@ -290,6 +278,24 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			invocation = sandboxed.invocation;
 			tempFiles.push(sandboxed.tempFile);
 		}
+		// Siblings sharing a budget kept settling turns during the awaited prompt
+		// and sandbox setup above; a ceiling crossed in that window must refuse
+		// this child now — nearsLiveStop stays true past 100%, so checking only
+		// the soft threshold here would steer and spawn a child the budget
+		// already refuses.
+		const lateRefusal = childBudgets.refuseSpawn(options.agentName);
+		if (lateRefusal) {
+			refusedLate = Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, lateRefusal), { role: capturedRole });
+			return refusedLate;
+		}
+		// Join the wrap-up channel: a shared ceiling already inside the window
+		// steers this child now, and a threshold any sibling's turn crosses later
+		// steers it the same way — the transition belongs to the budget, not to
+		// whichever child's settled turn happened to cross it.
+		childBudgets.arm((notice) => {
+			result.wrapUpRequested = true;
+			requestWrapUp(wrapUpFile, notice);
+		});
 		emitUpdate("starting child pi process...");
 		const rawGrace = Number(process.env.PI_FLOWS_ERROR_GRACE_MS);
 		const errorGraceMs = Number.isFinite(rawGrace) && rawGrace >= 0 ? rawGrace : DEFAULT_CHILD_ERROR_GRACE_MS;
@@ -301,7 +307,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			args: invocation.args,
 			cwd: childCwd,
 			// "" not an omitted key: the spread must not leak a parent's marker into grandchildren. Git-helper neutralization rides along for bash-ro children.
-			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1), [BASH_READONLY_ENV]: enforcement ? "1" : "", ...(enforcement ? bashReadonlyGitEnv() : {}) },
+			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1), [BASH_READONLY_ENV]: enforcement ? "1" : "", [WRAPUP_FILE_ENV]: childBudgets.governed ? wrapUpFile : "", ...(enforcement ? bashReadonlyGitEnv() : {}) },
 
 			timeoutMs,
 			signal: options.signal,
@@ -313,30 +319,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						const turnUsage = emptyUsage();
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
-						for (const budget of budgets) budget.charge(turnUsage);
-						// Latched on the first decision to stop: a turn that arrives after
-						// terminate() must not overwrite the budget that caused it. Named
-						// against the budget that actually bound, so a contract-only ceiling
-						// is never reported as a flow-budget one.
-						if (!budgetStop && !message.errorMessage) {
-							const unenforceable = turnUsage.costKnown === false ? budgets.find((budget) => budget.enforcesCost) : undefined;
-							// Which ceilings bite mid-stream depends on the budget's authority;
-							// the budget decides, this loop only asks. See Budget.stopsLiveRun.
-							const stopped = unenforceable ?? budgets.find((budget) => budget.stopsLiveRun());
-							if (stopped) {
-								// The error is built HERE, not at the end. A budget keeps charging
-								// for turns that arrive between terminate() and the child actually
-								// exiting, so a ceiling crossed only afterwards could otherwise
-								// out-rank the one that caused the stop and be reported as the
-								// cause. This freezes the reason at the moment it became true.
-								budgetStop = {
-									budget: stopped,
-									reason: unenforceable ? "unobservable" : "exhausted",
-									error: unenforceable ? stopped.unobservableError() : stopped.exhaustedError(),
-								};
-								controls.terminate();
-							}
-						}
+						if (childBudgets.chargeTurn(turnUsage, !message.errorMessage).terminate) controls.terminate();
 						if (!result.model && message.model) result.model = message.model;
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
@@ -345,6 +328,13 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						// turn (no errorMessage) proves recovery and clears the mark.
 						if (message.errorMessage && message.stopReason === "error") terminalErrorSeen = true;
 						else if (!message.errorMessage) terminalErrorSeen = false;
+					}
+					// The steered wrap-up notice re-enters the child's stream as a user
+					// message; seeing it echoed verbatim is the proof of delivery that
+					// lets a later exhaustion settle gracefully instead of forfeiting
+					// the run. ChildBudgets does the exact comparison.
+					if (message.role === "user" && Array.isArray(message.content)) {
+						childBudgets.confirmDelivery(message.content.map((part: any) => part?.type === "text" && typeof part.text === "string" ? part.text : "").join("\n"));
 					}
 					result.messages.push(storeMessage(toChildMessage(message), policy));
 					emitUpdate();
@@ -381,14 +371,17 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			},
 		});
 		if (terminalErrorTimer) clearTimeout(terminalErrorTimer);
+		// The child is gone: leave the channel now so a sibling's later
+		// transition cannot mark this settled run as steered. The finally-block
+		// release stays for the paths that never reach here.
+		childBudgets.release();
 		timedOut = run.timedOut;
 		wasAborted = run.aborted;
 
-		result.exitCode = budgetStop ? 1 : run.exitCode;
-		if (budgetStop) {
-			result.stopReason = budgetStop.reason === "unobservable" ? "budget_unobservable" : "budget_exceeded";
-			result.error = budgetStop.error;
-			result.errorMessage = result.error.message;
+		result.exitCode = run.exitCode;
+		if (childBudgets.settle(result)) {
+			// The budget owned the outcome — graceful wrap-up or hard stop — so the
+			// ordinary exit-code cascade below must not reinterpret it.
 		} else if (timedOut) {
 			result.stopReason = "timeout";
 			result.error = flowError(
@@ -467,27 +460,17 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		if (isFailed(result)) Run.of(result).discardEnvelopeCandidate();
 		return result;
 	} finally {
-		result.durationMs = Date.now() - started;
-		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
-		if (budgetStop) {
-			// Its own unit, depending on the child. Reusing the child's key would
-			// leave the event unable to rebind it — the span already owns it — so the
-			// termination would carry the same name with no link to what caused it.
-			const terminationScope = options.scope?.key
-				? { stage: options.scope.stage, key: `${options.scope.key}.budget`, dependsOn: [options.scope.key] }
-				: options.scope;
-			options.recordEvent?.({
-				kind: "budget",
-				name: budgetStop.reason === "unobservable" ? "child.unobservable" : "child.exhausted",
-				ok: false,
-				scope: terminationScope,
-				attributes: {
-					"flow.budget.terminated_agent": agent.name,
-					"flow.budget.authority": budgetStop.budget.authority,
-					...budgetAttributes(budgetStop.budget.snapshot()),
-				},
-			});
+		// A late refusal spawned nothing: like the pre-setup refusal it records
+		// only its budget event (already emitted by refuseSpawn), never a child
+		// span for a child that did not run.
+		if (!refusedLate) {
+			result.durationMs = Date.now() - started;
+			options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
+			childBudgets.recordOutcome(agent.name);
 		}
+		// Leave the channel before the temp dir goes: a sibling's later
+		// transition must not write into a reclaimed directory.
+		childBudgets.release();
 		await Promise.all(tempFiles.map((tmp) => fs.rm(tmp.dir, { recursive: true, force: true }).catch(() => undefined)));
 	}
 }

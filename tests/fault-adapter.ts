@@ -23,8 +23,8 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
-import { budgetAttributes } from "../extensions/pi-flows/trace-attributes.ts";
-import { emptyUsage, flowError, type Budget, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions } from "../extensions/pi-flows/types.ts";
+import { ChildBudgets } from "../extensions/pi-flows/runner-budget.ts";
+import { emptyUsage, flowError, type Budget, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions, type UsageStats } from "../extensions/pi-flows/types.ts";
 
 export type FaultKind = "delay" | "loss" | "duplicate" | "reorder" | "failure" | "stale";
 
@@ -89,6 +89,12 @@ export class FaultLedger {
 export interface ScriptedReply {
 	reply: string;
 	writes?: Record<string, string>;
+	/** Charged turns this reply costs (default 1), so a budget scenario can put its soft and hard threshold crossings on different turns. */
+	turns?: number;
+	/** How the child answers a delivered wrap-up notice: one further charged turn whose text becomes the final body. Absent means the notice is never honored (or never received). */
+	wrapUpReply?: string;
+	/** The scripted turns end in a terminal provider error: their metered usage is still charged, but the child fails with CHILD_PROVIDER_ERROR instead of settling. */
+	turnErrored?: boolean;
 }
 
 export type ReplyScript = string | ScriptedReply | Array<string | ScriptedReply>;
@@ -168,28 +174,18 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 		const occurrence = (occurrences.get(agent) ?? 0) + 1;
 		occurrences.set(agent, occurrence);
 
-		// The seam's own pre-spawn policy, modelled faithfully: the real adapter
-		// refuses to spawn once a ceiling is spent, and a fake that ignored budgets
-		// would let a budget-exhaustion scenario "pass" without a budget ever biting.
+		// The seam's own budget policy, modelled through the same object the real
+		// runner uses (runner-budget.ts) so refusal, wrap-up, and settle semantics
+		// cannot drift between the fake and production. A fake that ignored
+		// budgets would let a budget-exhaustion scenario "pass" without a budget
+		// ever biting.
 		const budgets = [childOptions.budget, childOptions.contractBudget].filter((budget): budget is Budget => Boolean(budget));
-		const exhausted = budgets.find((budget) => budget.refusesSpawn());
-			if (exhausted) {
-				// The same event the real adapter emits, so a scenario can observe the
-				// refusal that leaves no child span behind.
-				childOptions.recordEvent?.({
-				kind: "budget",
-				name: "child.refused",
-				ok: false,
-				scope: childOptions.scope,
-					attributes: {
-						"flow.budget.refused_agent": agent,
-						"flow.budget.authority": exhausted.authority,
-						...budgetAttributes(exhausted.snapshot()),
-					},
-				});
-				const refused = baseResult(childOptions, "", { input: 0, output: 0, cost: 0 });
-				refused.exitCode = 1;
-				refused.error = exhausted.exhaustedError();
+		const childBudgets = new ChildBudgets(budgets, childOptions.recordEvent, childOptions.scope);
+		const refusalError = childBudgets.refuseSpawn(agent);
+		if (refusalError) {
+			const refused = baseResult(childOptions, "", { input: 0, output: 0, cost: 0 });
+			refused.exitCode = 1;
+			refused.error = refusalError;
 			refused.errorMessage = refused.error.message;
 			refused.stopReason = "budget_exceeded";
 			refused.durationMs = 0;
@@ -286,7 +282,57 @@ export function makeFaultAdapter(options: FaultAdapterOptions): FaultAdapter {
 			? failedResult(childOptions, failure.code, failure.message, failure.cause, failure.retryable)
 			: baseResult(childOptions, body, options.usage);
 		result.durationMs = durationMs;
-		for (const budget of budgets) budget.charge(result.usage);
+		// The wrap-up round-trip, at the fidelity the real runner has: the child
+		// joins the wrap-up channel (so a shared ceiling near its stop — or a
+		// sibling's crossing turn — steers it), each scripted turn is charged as
+		// it settles, an honored notice costs one further turn whose text is the
+		// final body, and the budget settles the outcome — graceful only when
+		// the notice was actually delivered.
+		if (failure) {
+			childBudgets.chargeTurn(result.usage, false);
+		} else {
+			const spend = options.usage ?? DEFAULT_USAGE;
+			const turnUsage = (): UsageStats => ({ ...emptyUsage(), input: spend.input, output: spend.output, cost: spend.cost, turns: 1 });
+			let notice: string | undefined;
+			childBudgets.arm((text) => {
+				notice = text;
+				result.wrapUpRequested = true;
+			});
+			// One yield so concurrently dispatched siblings join the channel before
+			// this child's first turn settles — the seam's only async boundary,
+			// mirroring the real runner's awaited setup between arm and spawn.
+			await new Promise((resolve) => setImmediate(resolve));
+			let decision: ReturnType<ChildBudgets["chargeTurn"]> = {};
+			// Count the turns actually charged: a mid-script termination must not
+			// report usage the budget never saw. A child scripted to honor the
+			// notice breaks off its remaining work the moment the steer lands; a
+			// child with no wrapUpReply plays every scripted turn regardless —
+			// that is the undelivered/ignored-notice fault.
+			let turnsCharged = 0;
+			for (let turn = 0; turn < Math.max(1, scripted.turns ?? 1) && !decision.terminate && !(notice !== undefined && scripted.wrapUpReply !== undefined); turn++) {
+				decision = childBudgets.chargeTurn(turnUsage(), scripted.turnErrored !== true);
+				turnsCharged++;
+			}
+			result.usage = { ...result.usage, input: spend.input * turnsCharged, output: spend.output * turnsCharged, cost: spend.cost * turnsCharged, turns: turnsCharged };
+			// The errored child's metered spend was charged above; it fails with
+			// the provider error instead of settling, exactly as the real runner
+			// reports a terminal errored turn.
+			if (scripted.turnErrored === true) {
+				result.exitCode = 1;
+				result.stopReason = "error";
+				result.error = flowError("CHILD_PROVIDER_ERROR", `Flow agent "${agent}" hit a terminal provider error.`, "The scripted turn ended in a terminal provider error.", "Narrow the task or pick a larger-context model, then retry.", true);
+				result.errorMessage = result.error.message;
+			} else if (notice !== undefined && scripted.wrapUpReply !== undefined && !decision.terminate) {
+				childBudgets.confirmDelivery(notice);
+				body = scripted.wrapUpReply;
+				result.messages.push({ role: "assistant", content: [{ type: "text", text: body }] } as any);
+				childBudgets.chargeTurn(turnUsage(), true);
+				result.usage = { ...result.usage, input: result.usage.input + spend.input, output: result.usage.output + spend.output, cost: result.usage.cost + spend.cost, turns: result.usage.turns + 1 };
+			}
+			childBudgets.settle(result);
+		}
+		childBudgets.recordOutcome(agent);
+		childBudgets.release();
 		if (!failure) servedByAgent.set(agent, [...(servedByAgent.get(agent) ?? []), body]);
 
 		ledger.dispatches.push({
