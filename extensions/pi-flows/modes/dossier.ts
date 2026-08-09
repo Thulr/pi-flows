@@ -1,4 +1,4 @@
-import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";

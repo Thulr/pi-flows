@@ -84,6 +84,16 @@ export type ModePlanFn = (params: any) => ModePlan;
 export type ModeCriticalPathFn = (params: any, results: FlowRunResult[]) => number | undefined;
 
 /**
+ * Whether a fan-out list stays inside MAX_PARALLEL_TASKS — the one shape of
+ * every plan's guarded marker for a cap-refusable wave. An over-cap fan-out is
+ * refused (TOO_MANY_TASKS, or at the schema layer) before the shared-write
+ * guard runs, so its wave stays declared but unguarded.
+ */
+export function withinFanoutCap(list: unknown): boolean {
+	return !(Array.isArray(list) && list.length > MAX_PARALLEL_TASKS);
+}
+
+/**
  * Model-controlled params may put anything where a ref list belongs — a
  * non-array, nulls and scalars among the refs, or garbage in a ref's own
  * fields. Plans see such args before any schema validation, so this keeps
@@ -95,16 +105,6 @@ export type ModeCriticalPathFn = (params: any, results: FlowRunResult[]) => numb
  * resolve to a write-capable toolset. The tool itself refuses these calls at
  * its schema layer — a refusal outside the plan's vocabulary.
  */
-/**
- * Whether a fan-out list stays inside MAX_PARALLEL_TASKS — the one shape of
- * every plan's guarded marker for a cap-refusable wave. An over-cap fan-out is
- * refused (TOO_MANY_TASKS, or at the schema layer) before the shared-write
- * guard runs, so its wave stays declared but unguarded.
- */
-export function withinFanoutCap(list: unknown): boolean {
-	return !(Array.isArray(list) && list.length > MAX_PARALLEL_TASKS);
-}
-
 export function plannedRefs(value: unknown): PlannedRef[] {
 	if (!Array.isArray(value)) return [];
 	return value.flatMap((ref): PlannedRef[] => {

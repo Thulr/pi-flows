@@ -123,7 +123,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 	].join("\n");
 	// The reactor's whole input is the triggering observation, so the diagnosis
 	// must not export as independent of what it diagnosed.
-	const reacted = await runAgentRef(deps, reactor, reactTask, settle.mode, settle.results.length + 1, [...settle.results], { scope: { key: "reactor", dependsOn: [prepared.dependencyKey!] } });
+	const reacted = await runAgentRef(deps, reactor, reactTask, settle.mode, settle.nextStep, [...settle.results], { scope: { key: "reactor", dependsOn: [prepared.dependencyKey!] } });
 	settle.track(reacted);
 	if (isFailed(reacted)) return settle.complete(sanitizeText(`Flow monitor triggered on check ${triggered.check}, but reactor ${reactor.agent} failed.\n\n${resultText(reacted)}`, policy));
 	return settle.complete(capModelVisibleText(`Flow monitor: trigger "${trigger}" fired on check ${triggered.check}/${maxChecks}; reactor ${reactor.agent} completed.${prepared.warnings.length ? " Probe output contained injection-like text and was treated as data." : ""}\n\n${sanitizeText(resultText(reacted), policy)}`));

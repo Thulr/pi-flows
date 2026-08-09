@@ -75,7 +75,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		`Pick the single best-fit agent for this task. ${routeProtocolInstruction()}`,
 	].join("\n");
-	const routed = await runAgentRef(deps, routerRef, routerTask, settle.mode, settle.results.length + 1, [...settle.results], { scope: { key: ROUTER_KEY } });
+	const routed = await runAgentRef(deps, routerRef, routerTask, settle.mode, settle.nextStep, [...settle.results], { scope: { key: ROUTER_KEY } });
 	settle.track(routed);
 	if (isFailed(routed)) {
 		return settle.complete(sanitizeText(`Flow route: router "${routerRef.agent}" failed.\n\n${resultText(routed)}`, policy));
@@ -95,7 +95,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [routingMetadata.dependencyKey!] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(routingMetadata.text, candidates), "flow.handoff.policy": deps.handoffs.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
-	const selected = await runAgentRef(deps, { agent: choice }, contractedGoal, settle.mode, settle.results.length + 1, [...settle.results], { scope: { key: "selected", dependsOn: [SELECTION_KEY] } });
+	const selected = await runAgentRef(deps, { agent: choice }, contractedGoal, settle.mode, settle.nextStep, [...settle.results], { scope: { key: "selected", dependsOn: [SELECTION_KEY] } });
 	settle.track(selected);
 	if (isFailed(selected)) {
 		return settle.complete(sanitizeText(`Flow route: ${routerRef.agent} → ${choice}, but "${choice}" failed.\n\n${resultText(selected)}`, policy));

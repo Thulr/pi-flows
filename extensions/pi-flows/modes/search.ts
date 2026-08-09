@@ -179,7 +179,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		"\n## Your job",
 		"Return the best final answer/artifact. Mention the score and any important caveats.",
 	].join("\n");
-	const final = await runAgentRef(deps, debriefRef, finalTask, settle.mode, settle.results.length + 1, [...settle.results], { scope: { key: "debrief", dependsOn: beam.map((candidate) => candidate.scoreKey) } });
+	const final = await runAgentRef(deps, debriefRef, finalTask, settle.mode, settle.nextStep, [...settle.results], { scope: { key: "debrief", dependsOn: beam.map((candidate) => candidate.scoreKey) } });
 	settle.track(final);
 	if (isFailed(final)) return settle.complete(sanitizeText(`Flow search: debrief "${debriefRef.agent}" failed.\n\n${resultText(final)}`, policy));
 	return settle.complete(capModelVisibleText(`Flow search: ${rounds} round(s), beam ${beamWidth}, best score ${beam[0]?.score ?? 0}; finalized by ${debriefRef.agent}.${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(final), policy)}`));
