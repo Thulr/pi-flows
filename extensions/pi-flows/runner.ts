@@ -9,10 +9,10 @@ import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { Run } from "./run.ts";
 import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
-import { BASH_READONLY_ENV, bashReadonlyUnenforceableError, splitBashReadonly } from "./bash-readonly.ts";
-import { bashReadonlyEnforcerArgs } from "./bash-readonly-extension.ts";
-import { currentFlowDepth, normalizeTimeout, parseToolsOverride } from "./validate.ts";
-import { getPiInvocation } from "./commands.ts";
+import { BASH_READONLY_ENV } from "./bash-readonly.ts";
+import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
+import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
+import { buildChildArgs, getPiInvocation } from "./commands.ts";
 
 /**
  * The ACL translation for child transcript messages: project the child
@@ -145,8 +145,9 @@ export async function writePromptToTempFile(agentName: string, prompt: string, l
  * where the budget stood afterwards. Built here because this is the only place
  * that knows the *resolved* agent and tool allowlist rather than the request.
  */
-function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefined, allowedTools: string[] | undefined, policy: CapturePolicy, choice: ChildModelChoice): Record<string, unknown> {
+function childSpanAttributes(options: RunChildOptions, agent: FlowAgent | undefined, allowedTools: string[] | undefined, policy: CapturePolicy, choice: ChildModelChoice, bashRoEnforcement?: string): Record<string, unknown> {
 	return {
+		"flow.bash_ro.enforcement": bashRoEnforcement,
 		// Sibling of the span's `llm.model_name`, and recorded here for the same
 		// reason as the rest of this block: it is the *resolved* level, after tier
 		// and clamping, not the one the call asked for. Without it two children of
@@ -253,21 +254,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		});
 	};
 
-	const args = ["--mode", "json", "-p", "--no-session"];
-	if (childExtensionsDisabled()) args.push("--no-extensions");
-	if (choice.model) args.push("--model", choice.model);
-	// Its own flag rather than a `model:level` suffix, so a level still reaches a child running the user's default model.
-	if (choice.thinking) args.push("--thinking", choice.thinking);
-
-	const tools = parseToolsOverride(options.tools, agent.tools);
-	const bashRo = splitBashReadonly(tools ?? []);
-	if (bashRo.readonly && childExtensionsDisabled()) {
-		options.recordEvent?.({ kind: "validation", name: "dispatch.bash_readonly_unenforceable", ok: false, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": "BASH_READONLY_UNENFORCEABLE" } });
-		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, bashReadonlyUnenforceableError()), { role: capturedRole });
+	const { args, tools, enforcement, error: bashRoError } = buildChildArgs({ model: choice.model, thinking: choice.thinking, noExtensions: childExtensionsDisabled(), toolsOverride: options.tools, agentTools: agent.tools });
+	if (bashRoError) {
+		options.recordEvent?.({ kind: "validation", name: "dispatch.bash_readonly_unenforceable", ok: false, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": bashRoError.code } });
+		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, bashRoError), { role: capturedRole });
 	}
-	if (tools?.length === 0) args.push("--no-builtin-tools");
-	else if (tools !== undefined) args.push("--tools", bashRo.argvTools.join(","));
-	if (bashRo.readonly) args.push(...bashReadonlyEnforcerArgs()); // explicit -e: discovery alone can miss the enforcer (see its header)
 
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
 	let wasAborted = false;
@@ -291,7 +282,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		tempFiles.push(taskPrompt);
 		args.push(`@${taskPrompt.filePath}`);
 
-		const invocation = getPiInvocation(args);
+		const childCwd = path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd);
+		let invocation = getPiInvocation(args);
+		// null wrap only if the host lost the sandbox since the check; the -e allowlist enforcer already rode along, so the child stays enforced.
+		const sandboxed = enforcement === "sandbox" ? await applyReadonlySandbox(invocation, childCwd) : null;
+		if (sandboxed) {
+			invocation = sandboxed.invocation;
+			tempFiles.push(sandboxed.tempFile);
+		}
 		emitUpdate("starting child pi process...");
 		const rawGrace = Number(process.env.PI_FLOWS_ERROR_GRACE_MS);
 		const errorGraceMs = Number.isFinite(rawGrace) && rawGrace >= 0 ? rawGrace : DEFAULT_CHILD_ERROR_GRACE_MS;
@@ -301,8 +299,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		const run = await runJsonlProcess({
 			command: invocation.command,
 			args: invocation.args,
-			cwd: path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd),
-			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1), [BASH_READONLY_ENV]: bashRo.readonly ? "1" : "" }, // "" not an omitted key: the spread must not leak a parent's marker into grandchildren
+			cwd: childCwd,
+			env: { ...process.env, PI_FLOWS_DEPTH: String(currentFlowDepth() + 1), [BASH_READONLY_ENV]: enforcement ? "1" : "" }, // "" not an omitted key: the spread must not leak a parent's marker into grandchildren
 
 			timeoutMs,
 			signal: options.signal,
@@ -469,7 +467,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		return result;
 	} finally {
 		result.durationMs = Date.now() - started;
-		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice) });
+		options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
 		if (budgetStop) {
 			// Its own unit, depending on the child. Reusing the child's key would
 			// leave the event unable to rebind it — the span already owns it — so the

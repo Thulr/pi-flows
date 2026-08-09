@@ -18,6 +18,12 @@ import registerPiFlows from "../extensions/pi-flows/index.ts";
 
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 
+// The stub pi writes its calls.jsonl into the child cwd, which the real
+// bash-ro OS sandbox (deny writes under cwd) would block — so every
+// stub-driven flow opts out of it. The sandbox's own behavior is covered
+// against real sandbox-exec in tests/bash-readonly-sandbox.test.ts.
+process.env.PI_FLOWS_BASH_RO_NO_SANDBOX = "1";
+
 export const stubPi = fileURLToPath(new URL("./fixtures/stub-pi.mjs", import.meta.url));
 process.argv[1] = stubPi;
 

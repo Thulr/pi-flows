@@ -4,7 +4,7 @@
 // lives in tests/bash-readonly-integration.test.ts against the stub pi.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BASH_READONLY_ENV, bashReadonlyEnabled, bashReadonlyRefusal, splitBashReadonly } from "../extensions/pi-flows/bash-readonly.ts";
+import { BASH_READONLY_ENV, bashReadonlyEnabled, bashReadonlyEnforcement, bashReadonlyRefusal, splitBashReadonly } from "../extensions/pi-flows/bash-readonly.ts";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 import { bashReadonlyEnforcerArgs, registerBashReadonlyGuard } from "../extensions/pi-flows/bash-readonly-extension.ts";
 
@@ -64,6 +64,11 @@ const REFUSED = [
 	"env sh -c 'rm -rf .'",
 	"git reflog expire --expire=now --all",
 	"git reflog delete HEAD@{0}",
+	"sort --out=generated.txt README.md",
+	"sort --output=generated.txt README.md",
+	"sort --compress-program=./mutator -S 1b README.md",
+	"git cat-file --filters HEAD:path",
+	"git grep --textconv pattern",
 	"git grep -Ovi pattern",
 	"git grep --open-files-in-pager=vi pattern",
 	"sort -o generated.txt README.md",
@@ -112,6 +117,13 @@ test("bash-ro refusal names the offending segment, not just the whole command", 
 	assert.ok(reason);
 	assert.match(reason, /npm/);
 	assert.doesNotMatch(reason.split(":")[0] + reason.split(":")[1], /git status/);
+});
+
+test("bashReadonlyEnforcement prefers the sandbox, falls back to the allowlist, else refuses", () => {
+	assert.equal(bashReadonlyEnforcement(true, true), "sandbox");
+	assert.equal(bashReadonlyEnforcement(false, true), "sandbox");
+	assert.equal(bashReadonlyEnforcement(true, false), "allowlist");
+	assert.equal(bashReadonlyEnforcement(false, false), null);
 });
 
 test("bashReadonlyEnabled follows the shared env truthiness convention", () => {

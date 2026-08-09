@@ -522,14 +522,18 @@ concurrent writes in one checkout are actually intended.
 
 ### `BASH_READONLY_UNENFORCEABLE`
 
-Cause: a role's tools included `bash-ro`, but `PI_FLOWS_CHILD_NO_EXTENSIONS` is
-set, so the child would run without the pi-flows extension that enforces the
-read-only allowlist inside it. Spawning anyway would silently grant the child
-unrestricted bash while the parent had already classified it read-only, so the
-spawn is refused before any process starts.
+Cause: a role's tools included `bash-ro`, but neither enforcement layer is
+available on this host — the OS read-only-checkout sandbox is absent or opted
+out (`PI_FLOWS_BASH_RO_NO_SANDBOX`), *and* the in-child allowlist enforcer
+extension could not be located. Spawning anyway would grant the child
+unrestricted bash in the shared checkout while the parent had classified it
+read-only, so the spawn is refused before any process starts. (Note
+`PI_FLOWS_CHILD_NO_EXTENSIONS` alone no longer triggers this: the enforcer is
+loaded with an explicit `-e`, which pi keeps even under `--no-extensions`.)
 
-Fix: unset `PI_FLOWS_CHILD_NO_EXTENSIONS`, or change the role's tools — `bash`
-if write-capable classification (and the shared-write guard) is acceptable, or
+Fix: run on a host where the sandbox is available (macOS, without
+`PI_FLOWS_BASH_RO_NO_SANDBOX`), or change the role's tools — `bash` if
+write-capable classification (and the shared-write guard) is acceptable, or
 `read,grep,find,ls` if the child does not actually need a shell.
 
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`

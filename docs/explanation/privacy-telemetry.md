@@ -52,6 +52,10 @@ Consult pi documentation for provider/session behavior. Useful environment contr
   it spawns (`1` for a `bash-ro` toolset, empty otherwise, so a parent's value
   never leaks into grandchildren). Setting it by hand in your own shell makes
   that pi session's bash allowlist-restricted too.
+- `PI_FLOWS_BASH_RO_NO_SANDBOX=1` opts `bash-ro` children out of the OS
+  read-only-checkout sandbox (macOS `sandbox-exec`), falling back to the
+  in-child command allowlist alone. Use it if the sandbox interferes with a
+  toolchain; the allowlist is best-effort, not a kernel-enforced boundary.
 
 ## Retention
 

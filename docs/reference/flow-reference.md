@@ -415,20 +415,32 @@ exclude `bash`/`edit`/`write`, swap `bash` for `bash-ro`, or give each writer a
 separate worktree/cwd. Set `allowSharedWriteCwd:true` only as a last resort,
 after deciding that concurrent writes in one shared checkout are intentional.
 
-`bash-ro` is not write-capable: the child is spawned with bash, a marker
-(`PI_FLOWS_BASH_READONLY=1`), and an explicitly loaded enforcer extension
-(`-e .../bash-readonly-extension.ts`, so enforcement does not depend on
-pi-flows being discoverable in the child) that together
-block any bash command outside a read-only allowlist — git inspection
-(`log`/`diff`/`show`/`blame`/`status`/...), file inspection
-(`ls`/`cat`/`grep`/`find`/...), and repo verification (`npm test`,
-`npm run <script>`, `node --test`). This is coordination safety against ad-hoc
-mutations of a shared checkout, not a sandbox: allowed verification commands
-execute repo-authored scripts and may write caches. A toolset carrying both
-`bash` and `bash-ro` is write-capable (plain bash wins), and when
-`PI_FLOWS_CHILD_NO_EXTENSIONS` disables child extensions a `bash-ro` spawn is
-refused with `BASH_READONLY_UNENFORCEABLE` rather than silently granted an
-unrestricted shell.
+`bash-ro` is not write-capable. It is enforced in two layers:
+
+- **OS sandbox (the security boundary).** On macOS the child runs under
+  `sandbox-exec` with a profile that denies file writes anywhere under the
+  reviewed `cwd` while allowing everything else, so a write into the shared
+  checkout fails at the kernel regardless of what command produced it. Writes
+  outside the checkout (pi's own temp files, npm/node caches) still work.
+  Opt out with `PI_FLOWS_BASH_RO_NO_SANDBOX=1`.
+- **In-child command allowlist (defense-in-depth, and the fallback where the
+  sandbox is unavailable).** The child loads an enforcer extension via an
+  explicit `-e` (which survives `--no-extensions`, since pi only drops
+  *discovered* extensions) that blocks bash commands outside a read-only
+  allowlist: git inspection (`log`/`diff`/`show`/`blame`/`status`/...), file
+  inspection (`ls`/`cat`/`grep`/`find`/...), and repo verification
+  (`npm test`, `npm run <script>`, `node --test`). It refuses shell
+  expansion/substitution and known write/exec flags fail-closed.
+
+When the sandbox enforces, verification commands that write *into* the checkout
+(a build cache, `*.tsbuildinfo`) will fail — that is the same shared-checkout
+mutation the guard exists to prevent; run those in a non-`bash-ro` role or a
+distinct cwd. A toolset carrying both `bash` and `bash-ro` is write-capable
+(plain bash wins). A `bash-ro` spawn is refused with
+`BASH_READONLY_UNENFORCEABLE` only when *neither* layer is available (no
+sandbox and the enforcer extension cannot be located) rather than silently
+granted an unrestricted shell. The child span records which layer enforced it
+(`flow.bash_ro.enforcement` = `sandbox` or `allowlist`).
 
 ## Evaluate mode (generator-evaluator loop)
 

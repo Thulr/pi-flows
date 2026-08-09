@@ -48,13 +48,29 @@ export function splitBashReadonly(tools: string[]): { argvTools: string[]; reado
 	return { argvTools, readonly: !hasBash };
 }
 
-/** The fail-closed refusal: never spawn a bash-ro child whose enforcer cannot load. */
+/**
+ * Which layer will enforce a bash-ro child's read-only-ness, given what the
+ * host offers. The OS sandbox (writes to the checkout denied at the kernel) is
+ * the security boundary when available; the in-child command allowlist (loaded
+ * via an explicit `-e`, which survives `--no-extensions`) is the fallback and,
+ * when the sandbox is present, defense-in-depth. `null` means neither is
+ * available — the caller must refuse rather than grant an unrestricted shell.
+ */
+export type BashReadonlyEnforcement = "sandbox" | "allowlist";
+
+export function bashReadonlyEnforcement(enforcerLoadable: boolean, sandboxUsable: boolean): BashReadonlyEnforcement | null {
+	if (sandboxUsable) return "sandbox";
+	if (enforcerLoadable) return "allowlist";
+	return null;
+}
+
+/** The fail-closed refusal: never spawn a bash-ro child no layer can enforce. */
 export function bashReadonlyUnenforceableError(): FlowError {
 	return flowError(
 		"BASH_READONLY_UNENFORCEABLE",
-		"bash-ro cannot be enforced with child extensions disabled.",
-		"PI_FLOWS_CHILD_NO_EXTENSIONS is set, so the child would run without the pi-flows extension that blocks non-read-only bash commands — spawning would silently grant unrestricted bash.",
-		"Unset PI_FLOWS_CHILD_NO_EXTENSIONS, or change the role's tools to bash (accepting write-capable classification) or to read,grep,find,ls.",
+		"bash-ro cannot be enforced on this host.",
+		"Neither the OS read-only-checkout sandbox nor the in-child command allowlist is available (no sandbox-exec / opted out, and the enforcer extension could not be located), so spawning would grant the child unrestricted bash in the shared checkout.",
+		"Run on a host with the sandbox available (macOS, without PI_FLOWS_BASH_RO_NO_SANDBOX), or change the role's tools to bash (accepting write-capable classification) or to read,grep,find,ls.",
 	);
 }
 
@@ -65,8 +81,13 @@ export function bashReadonlySummary(): string {
 
 const GIT_SUBCOMMANDS = new Set(["log", "diff", "show", "blame", "status", "rev-parse", "ls-files", "ls-tree", "merge-base", "shortlog", "describe", "cat-file", "grep", "name-rev", "branch", "tag", "remote", "reflog"]);
 
-/** git flags that redirect output to files or inject config-named commands. */
-const GIT_FORBIDDEN_FLAGS = ["-c", "-o", "--output", "--output-directory", "--ext-diff", "--open-files-in-pager"];
+/**
+ * git flags that redirect output to files, inject config-named commands, or run
+ * repository-configured conversion filters (smudge/textconv) as external
+ * programs. These are the OS sandbox's job to contain; screened here so the
+ * allowlist fallback has no known write/exec hole either.
+ */
+const GIT_FORBIDDEN_FLAGS = ["-c", "-o", "--output", "--output-directory", "--ext-diff", "--open-files-in-pager", "--filters", "--textconv"];
 
 const GIT_LIST_ONLY: Record<string, (args: string[]) => boolean> = {
 	branch: (args) => args.every((arg) => arg.startsWith("-") && ["--list", "-a", "-r", "-v", "-vv", "--contains"].some((ok) => arg === ok || arg.startsWith("--contains"))),
@@ -102,7 +123,8 @@ function hasShortFlag(letter: string, longForm: string | null): (args: string[])
 	return (args) => args.some((arg) => cluster.test(arg) || (longForm !== null && (arg === longForm || arg.startsWith(`${longForm}=`))));
 }
 
-const SORT_WRITES = hasShortFlag("o", "--output");
+// --out is a GNU abbreviation of --output; --compress-program runs a program.
+const SORT_WRITES = (args: string[]) => hasShortFlag("o", "--output")(args) || args.some((arg) => /^--out(p(u(t)?)?)?(=|$)/.test(arg) || arg === "--compress-program" || arg.startsWith("--compress-program="));
 const FILE_COMPILES = hasShortFlag("C", null);
 // Leading `-s` only, not the cluster: `date -Iseconds` is a read the cluster
 // regex would misread as carrying `s`.

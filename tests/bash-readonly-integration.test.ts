@@ -1,12 +1,18 @@
 // Offline integration tests for the bash-ro spawn path against the stub pi:
 // argv translation, the env marker (including the explicit clear that stops
-// grandchild inheritance), the fail-closed refusal when child extensions are
-// disabled, and the SHARED_WRITE_CWD interplay. The allowlist predicate's
-// unit tests live in tests/bash-readonly.test.ts.
+// grandchild inheritance), and the SHARED_WRITE_CWD interplay. These run with
+// the OS sandbox opted out (PI_FLOWS_BASH_RO_NO_SANDBOX): the stub writes its
+// calls.jsonl into the child cwd, which a real read-only-checkout sandbox
+// would (correctly) block — the sandbox's own behavior is covered directly in
+// tests/bash-readonly-sandbox.test.ts, and the enforcement decision in
+// tests/bash-readonly.test.ts. The allowlist predicate lives there too.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runFlow } from "./stub-harness.ts";
 
+// The stub harness opts out of the OS sandbox (it writes calls.jsonl into cwd);
+// these tests therefore exercise the argv/marker/allowlist path. The sandbox
+// itself is covered in tests/bash-readonly-sandbox.test.ts.
 function withEnv(name: string, value: string | undefined, run: () => Promise<void>) {
 	const previous = process.env[name];
 	const restore = () => {
@@ -48,20 +54,20 @@ test("bash-ro: a parent's marker is cleared for children whose toolset never ask
 	});
 });
 
-test("bash-ro: refused fail-closed when child extensions are disabled", async () => {
+test("bash-ro: child extensions disabled still spawns — the -e enforcer survives --no-extensions", async () => {
+	// pi drops only *discovered* extensions under --no-extensions; an explicit
+	// -e still loads, so the allowlist enforcer is present and the child is
+	// enforced. (Refusal now needs neither sandbox nor enforcer available, which
+	// is covered as a pure decision in tests/bash-readonly.test.ts.)
 	await withEnv("PI_FLOWS_CHILD_NO_EXTENSIONS", "1", async () => {
-		const refused = await runFlow(
+		const { calls } = await runFlow(
 			{ agent: "recon", task: "review", tools: "read,grep,find,ls,bash-ro" },
-			{ recon: "should not run" },
+			{ recon: "REVIEWED" },
 		);
-		assert.equal(refused.calls.length, 0, "an unenforceable bash-ro child must never spawn");
-		assert.equal(refused.result.details.results[0]?.error?.code, "BASH_READONLY_UNENFORCEABLE");
-
-		const plainBash = await runFlow(
-			{ agent: "recon", task: "review", tools: "read,grep,find,ls,bash" },
-			{ recon: "RAN" },
-		);
-		assert.equal(plainBash.calls.length, 1, "plain bash is unaffected by the extension isolation");
+		assert.equal(calls.length, 1);
+		assert.ok(calls[0].args.includes("--no-extensions"));
+		const enforcer = calls[0].args[calls[0].args.indexOf("-e") + 1] ?? "";
+		assert.match(enforcer, /bash-readonly-extension\.ts$/);
 	});
 });
 

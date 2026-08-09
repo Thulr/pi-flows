@@ -1,8 +1,37 @@
 import { spawn } from "node:child_process";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, type CapturePolicy } from "./types.ts";
+import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, type CapturePolicy, type FlowError } from "./types.ts";
 import { capBytes, sanitizeText } from "./sanitize.ts";
+import { parseToolsOverride } from "./validate.ts";
+import { splitBashReadonly, type BashReadonlyEnforcement } from "./bash-readonly.ts";
+import { bashReadonlyEnforcerArgs, bashReadonlyEnforcerAvailable } from "./bash-readonly-extension.ts";
+import { resolveBashReadonlyEnforcement } from "./bash-readonly-sandbox.ts";
+
+/**
+ * Assemble the base argv for a child pi process and resolve how its bash-ro
+ * toolset (if any) will be enforced. Kept beside getPiInvocation because it is
+ * the same concern — how the child is invoked — and to keep the runner's
+ * per-run body under its size budget. Returns the parsed tools (for span
+ * attribution), the enforcement layer, and a fail-closed error when a bash-ro
+ * child can be enforced by no layer; on error the args are not usable.
+ */
+export function buildChildArgs(params: { model?: string; thinking?: string; noExtensions: boolean; toolsOverride?: string; agentTools?: string[] }): { args: string[]; tools: string[] | undefined; enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
+	const args = ["--mode", "json", "-p", "--no-session"];
+	if (params.noExtensions) args.push("--no-extensions");
+	if (params.model) args.push("--model", params.model);
+	// Its own flag rather than a `model:level` suffix, so a level still reaches a child running the user's default model.
+	if (params.thinking) args.push("--thinking", params.thinking);
+	const tools = parseToolsOverride(params.toolsOverride, params.agentTools);
+	const bashRo = splitBashReadonly(tools ?? []);
+	const { enforcement, error } = resolveBashReadonlyEnforcement(bashRo.readonly);
+	if (error) return { args, tools, enforcement, error };
+	if (tools?.length === 0) args.push("--no-builtin-tools");
+	else if (tools !== undefined) args.push("--tools", bashRo.argvTools.join(","));
+	// The -e allowlist enforcer rides along whenever loadable (defense-in-depth under the sandbox); the OS sandbox is applied to the invocation separately.
+	if (bashRo.readonly && bashReadonlyEnforcerAvailable()) args.push(...bashReadonlyEnforcerArgs());
+	return { args, tools, enforcement, error: null };
+}
 
 export function resolveFlowCommandTimeoutMs(commandTimeoutMs?: number, flowTimeoutMs?: number): number {
 	const value = commandTimeoutMs ?? flowTimeoutMs;

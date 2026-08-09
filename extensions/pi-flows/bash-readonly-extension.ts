@@ -10,17 +10,26 @@
  * Typed structurally instead of importing the pi extension types: this module
  * must stay off the foreign-import ledger, and the guard only needs `on`.
  */
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { BASH_READONLY_ENV, bashReadonlyEnabled, bashReadonlyRefusal } from "./bash-readonly.ts";
 
+function enforcerPath(): string {
+	return fileURLToPath(import.meta.url);
+}
+
 /**
- * The argv that loads this enforcer into a bash-ro child. Always passed for
- * bash-ro spawns; if this file is somehow absent at spawn time (e.g. a
- * bundled binary), the child fails to start — loud, and safer than running
- * with the marker unenforced.
+ * The argv that loads this enforcer into a bash-ro child. `-e` extensions
+ * survive `--no-extensions` (pi only drops discovered ones), so this is the
+ * enforcement layer even when child extension discovery is disabled.
  */
 export function bashReadonlyEnforcerArgs(): string[] {
-	return ["-e", fileURLToPath(import.meta.url)];
+	return ["-e", enforcerPath()];
+}
+
+/** Whether the enforcer file exists to be loaded — false only in exotic bundles without source on disk. */
+export function bashReadonlyEnforcerAvailable(): boolean {
+	return existsSync(enforcerPath());
 }
 
 type BlockResult = { block: true; reason: string } | undefined;

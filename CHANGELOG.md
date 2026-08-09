@@ -24,6 +24,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- `bash-ro` is now enforced at the OS level: on macOS a `bash-ro` child runs
+  under `sandbox-exec` with a profile that denies writes anywhere under the
+  reviewed `cwd` (`bash-readonly-sandbox.ts`), so a write into the shared
+  checkout fails at the kernel regardless of the command — the in-child
+  command allowlist becomes defense-in-depth plus the fallback where the
+  sandbox is unavailable. Opt out with `PI_FLOWS_BASH_RO_NO_SANDBOX=1`. The
+  fail-closed refusal (`BASH_READONLY_UNENFORCEABLE`) now fires only when
+  neither layer is available; `PI_FLOWS_CHILD_NO_EXTENSIONS` alone no longer
+  triggers it, because the enforcer loads through an explicit `-e` that
+  survives `--no-extensions`. The child span records the enforcing layer as
+  `flow.bash_ro.enforcement`.
 - The `code-review` preset's two reviewers now run with
   `read,grep,find,ls,bash-ro` at `concurrency: 2` — the two axes review
   concurrently in one checkout instead of serializing. The `scout` preset

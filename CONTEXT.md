@@ -17,7 +17,7 @@ _Modules_: `flow.ts`, `run.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts
 _Modules_: `modes/*`, `presets.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
 
 **Generic — plumbing and adapters.** Child-process transport, the anti-corruption layer over a child pi run, fan-out plumbing, param schema and arithmetic, command execution, text parsing. Keep thin, keep replaceable, do not model. `runner.ts` and `jsonl-child.mjs` are where a foreign protocol is allowed to be spoken; everything above them should see domain types only.
-_Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`, `bash-readonly-extension.ts`.
+_Modules_: `runner.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`, `bash-readonly-extension.ts`, `bash-readonly-sandbox.ts`.
 
 **Shared kernel.** `types.ts` — the vocabulary every subdomain imports, re-exported from the concept modules that own each term. A change here ripples everywhere and nothing above owns it, so keep it declarative: a rule that belongs to one concept belongs in that concept's module (see `budget.ts`), not here. `roster-types.ts` is vocabulary of the same kind, held apart only because the kernel may not import the Generic module that derives a roster.
 _Modules_: `types.ts`, `roster-types.ts`, `preset-types.ts`.
@@ -205,8 +205,8 @@ A human approval point in a flow, before spawning or before finalizing. A checkp
 _Avoid_: approval gate, human gate
 
 **Read-only bash (`bash-ro`)**:
-A toolset token granting a child bash restricted to a read-only command allowlist — git and file inspection plus repo verification — enforced inside the child by an explicitly loaded enforcer extension (with the discovered pi-flows extension as a second registration), never requested by prompt. Classified not write-capable for the shared-write guard, and refused (`BASH_READONLY_UNENFORCEABLE`) when the child cannot load the enforcer. Coordination safety against ad-hoc mutations of a shared checkout, not a sandbox.
-_Avoid_: sandboxed bash, safe bash
+A toolset token granting a child bash that cannot write the reviewed checkout, never requested by prompt. Enforced in two layers: the OS read-only-checkout sandbox (`bash-readonly-sandbox.ts`, macOS `sandbox-exec` denying writes under cwd — the security boundary) and an in-child command allowlist (`bash-readonly.ts` predicate loaded via `bash-readonly-extension.ts`) as defense-in-depth and the fallback where the sandbox is absent. Classified not write-capable for the shared-write guard, and refused (`BASH_READONLY_UNENFORCEABLE`) only when neither layer is available. Coordination safety against ad-hoc mutations of a shared checkout.
+_Avoid_: safe bash (the sandbox is real, but the allowlist fallback is best-effort)
 
 **Approval receipt**:
 A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes.
