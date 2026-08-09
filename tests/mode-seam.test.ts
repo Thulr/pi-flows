@@ -7,10 +7,11 @@ import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { handleGraph } from "../extensions/pi-flows/modes/graph.ts";
+import { handleOrchestrate } from "../extensions/pi-flows/modes/orchestrate.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleSingle } from "../extensions/pi-flows/modes/single.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
-import { emptyUsage, makeSettle, type FlowDiscovery, type FlowRunResult, type ModeDeps, type RunChildOptions } from "../extensions/pi-flows/types.ts";
+import { MODEL_VISIBLE_OUTPUT_CAP, emptyUsage, makeSettle, type FlowDiscovery, type FlowRunResult, type ModeDeps, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
 const discovery: FlowDiscovery = {
 	agents: [
@@ -167,4 +168,26 @@ test("graph cycle error keeps the runs that already completed", async () => {
 	// The wave-1 run already spent tokens; the error path must not discard it.
 	assert.equal(output.details.results.length, 1);
 	assert.equal(output.details.results[0].usage.cost, 0.01);
+});
+
+test("orchestrate verification refusal is capped as a whole, formatted error included", async () => {
+	const deps = makeDeps(
+		{ task: "assess the system end to end", orchestrate: { verify: { agent: "recon" }, verifyPolicy: "fail" } },
+		async (options) => {
+			if (options.task.includes("JSON array")) return fakeResult(options, '["inspect the one subtask"]');
+			if (options.task.includes("Assigned subtask")) return fakeResult(options, "worker findings");
+			if (options.task.includes("Judge whether")) return fakeResult(options, "VERDICT: REVISE");
+			// The synthesized answer alone overflows the model-visible cap, so an
+			// uncapped prefix would push the refusal past it.
+			return fakeResult(options, "S".repeat(MODEL_VISIBLE_OUTPUT_CAP + 10_000));
+		},
+	);
+	const output = await handleOrchestrate(deps);
+	assert.equal(output.details.error?.code, "ORCHESTRATE_VERIFY_FAILED");
+	// The visibility cap applies over the complete refusal — formatted error
+	// plus footer — exactly as the hand-assembled return capped it.
+	assert.ok(
+		output.content[0].text.length <= MODEL_VISIBLE_OUTPUT_CAP + 200,
+		`refusal exceeds the model-visible cap: ${output.content[0].text.length}`,
+	);
 });

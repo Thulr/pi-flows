@@ -1,4 +1,4 @@
-import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, formatFlowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { runWave } from "../runner.ts";
@@ -213,8 +213,15 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			cause,
 			'Set orchestrate.verifyPolicy:"note" to keep verifier output as advisory, raise verifyMaxIterations for revise policy, narrow the task, or address the verifier critique and rerun.',
 		);
-	const verificationFooter = (header: string) =>
-		capModelVisibleText(`\n\n${header}${deps.handoffs.warningSummary()}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`);
+	// The visibility cap applies over the whole refusal, formatted error
+	// included, exactly as the hand-assembled return capped it — so the footer
+	// is the capped text minus the formatted prefix refuse re-prepends.
+	const verificationRefusal = (error: FlowError, header: string) => {
+		const formatted = formatFlowError(error);
+		return settle.refuse(error, {
+			footer: capModelVisibleText(`${formatted}\n\n${header}${deps.handoffs.warningSummary()}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`).slice(formatted.length),
+		});
+	};
 
 	// 4. Optional composability: verify the synthesized answer against the goal. The
 	// verifier can be advisory ("note"), a hard gate ("fail"), or a synthesize→verify
@@ -246,9 +253,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					`Orchestrate verifier "${verifyRef.agent}" failed.`,
 					`The verifier child run failed or returned no usable verdict, so the ${verifyPolicy} policy cannot prove the synthesized answer passed.`,
 				);
-				return settle.refuse(error, {
-					footer: verificationFooter(`Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification failed.`),
-				});
+				return verificationRefusal(error, `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification failed.`);
 			}
 			if (verifyDispatch.status === "refused") return verifyDispatch.output;
 			const verified = verifyDispatch.result;
@@ -270,9 +275,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					"Orchestrate verification returned REVISE.",
 					`Verifier "${verifyRef.agent}" returned REVISE after ${round} verification round${round === 1 ? "" : "s"} under verifyPolicy "${verifyPolicy}".`,
 				);
-				return settle.refuse(error, {
-					footer: verificationFooter(`Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`),
-				});
+				return verificationRefusal(error, `Flow orchestrate: ${subtasks.length} subtask${subtasks.length === 1 ? "" : "s"}, ${successfulWorkers.length} succeeded, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`);
 			}
 
 			// The verdict crossed as a terminal report above; the critique crossing
