@@ -131,10 +131,51 @@ const INSPECTOR_SCREENS: Record<string, (args: string[]) => string | null> = {
 	rg: (args) => args.some((arg) => arg === "--pre" || arg.startsWith("--pre=")) ? "rg --pre launches a preprocessor command" : null,
 };
 
-const FIND_FORBIDDEN = ["-delete", "-exec", "-execdir", "-ok", "-okdir"];
+const FIND_FORBIDDEN = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls"];
+
+/**
+ * Tokenize one segment the way bash would hand words to the command, so the
+ * allowlist validates what actually executes: quotes are stripped ("--output"
+ * must match the forbidden flag), and the transformations that could disguise
+ * a flag — backslash escapes and unquoted `$` expansion — are refused rather
+ * than modeled. Single-quoted content is literal in bash, so anything inside
+ * it (including `$`) is safe to pass through.
+ */
+function tokenizeSegment(segment: string): { tokens: string[] } | { refusal: string } {
+	const tokens: string[] = [];
+	let current = "";
+	let index = 0;
+	const flush = () => {
+		if (current) tokens.push(current);
+		current = "";
+	};
+	while (index < segment.length) {
+		const char = segment[index];
+		if (char === "\\") return { refusal: "backslash escaping can disguise a forbidden flag" };
+		if (char === "$") return { refusal: "unquoted $ expands before the command runs" };
+		if (char === "'" || char === '"') {
+			const end = segment.indexOf(char, index + 1);
+			if (end === -1) return { refusal: "unterminated quote" };
+			const inner = segment.slice(index + 1, end);
+			if (char === '"' && /[\\$]/.test(inner)) return { refusal: "expansion inside double quotes" };
+			current += inner;
+			index = end + 1;
+		} else if (/\s/.test(char)) {
+			flush();
+			index += 1;
+		} else {
+			current += char;
+			index += 1;
+		}
+	}
+	flush();
+	return { tokens };
+}
 
 function segmentRefusal(segment: string): string | null {
-	const tokens = segment.split(/\s+/).filter(Boolean);
+	const tokenized = tokenizeSegment(segment);
+	if ("refusal" in tokenized) return tokenized.refusal;
+	const tokens = tokenized.tokens;
 	if (tokens.length === 0) return "empty command segment";
 	const command = tokens[0];
 	if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(command)) return `env-assignment prefix "${command}" is not allowed`;
@@ -161,7 +202,7 @@ export function bashReadonlyRefusal(command: string): string | null {
 	if (typeof command !== "string" || command.trim().length === 0) return refusalText("(empty)", "empty command");
 	if (command.includes("$(") || command.includes("`")) return refusalText(command, "command substitution");
 	if (command.includes("<(") || command.includes(">(")) return refusalText(command, "process substitution");
-	const stripped = command.replace(/\d?>&\d/g, " ").replace(/\d?>>?\s*\/dev\/null/g, " ");
+	const stripped = command.replace(/\d?>&\d/g, " ").replace(/\d?>>?\s*\/dev\/null(?=\s|$)/g, " ");
 	if (stripped.includes(">")) return refusalText(command, "output redirection");
 	// eval/exec/source/. need no dedicated check: as a segment's command they
 	// fail the allowlist below, and as arguments they execute nothing.
