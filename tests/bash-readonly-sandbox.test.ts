@@ -20,6 +20,12 @@ test("buildReadonlyProfile denies writes under the checkout and escapes the path
 	assert.match(buildReadonlyProfile('/w"x\\y'), /subpath "\/w\\"x\\\\y"/);
 });
 
+test("buildReadonlyProfile also denies extra paths (a linked worktree's git dir)", () => {
+	const profile = buildReadonlyProfile("/wt", ["/main/.git/worktrees/wt"]);
+	assert.match(profile, /subpath "\/wt"/);
+	assert.match(profile, /subpath "\/main\/.git\/worktrees\/wt"/);
+});
+
 test("readonlySandboxDisabled follows the shared env truthiness convention", () => {
 	for (const v of ["1", "true", "YES "]) assert.equal(readonlySandboxDisabled(v), true, v);
 	for (const v of ["", "0", "no", undefined]) assert.equal(readonlySandboxDisabled(v as string | undefined), false, String(v));

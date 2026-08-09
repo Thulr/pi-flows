@@ -70,13 +70,20 @@ export function bashReadonlyEnforcement(enforcerLoadable: boolean, sandboxUsable
 
 /**
  * Child env that neutralizes repository-configured git helpers which would
- * otherwise launch external programs on a plain inspection command
- * (diff.external, pager, fsmonitor, hooks). Applied to every bash-ro child so
- * the guarantee does not depend on the command string. Uses git's
- * GIT_CONFIG_COUNT override mechanism (git >= 2.31).
+ * otherwise launch external programs on a plain inspection command (pager, a
+ * command-valued fsmonitor, hooks). Applied to every bash-ro child so the
+ * guarantee does not depend on the command string. Uses git's GIT_CONFIG_COUNT
+ * override mechanism (git >= 2.31).
+ *
+ * diff.external / textconv are deliberately *not* forced off here: setting
+ * diff.external to an empty string makes git try to exec "" and aborts the
+ * diff. A configured external-diff launcher is contained by the OS sandbox
+ * (its writes to the checkout are denied) and, on the best-effort allowlist
+ * path, is a documented residual — its command comes from local git config the
+ * reviewed content cannot set, not from the untrusted tree.
  */
 export function bashReadonlyGitEnv(): Record<string, string> {
-	const pairs: Array<[string, string]> = [["diff.external", ""], ["core.pager", "cat"], ["core.fsmonitor", "false"], ["core.hooksPath", "/dev/null"]];
+	const pairs: Array<[string, string]> = [["core.pager", "cat"], ["core.fsmonitor", "false"], ["core.hooksPath", "/dev/null"]];
 	const env: Record<string, string> = { GIT_CONFIG_COUNT: String(pairs.length) };
 	pairs.forEach(([key, value], index) => {
 		env[`GIT_CONFIG_KEY_${index}`] = key;
@@ -108,7 +115,7 @@ const GIT_SUBCOMMANDS = new Set(["log", "diff", "show", "blame", "status", "rev-
  * programs. These are the OS sandbox's job to contain; screened here so the
  * allowlist fallback has no known write/exec hole either.
  */
-const GIT_FORBIDDEN_FLAGS = ["-c", "-o", "--output", "--output-directory", "--ext-diff", "--open-files-in-pager", "--filters", "--textconv"];
+const GIT_FORBIDDEN_FLAGS = ["-c", "--config-env", "-o", "--output", "--output-directory", "--ext-diff", "--open-files-in-pager", "--filters", "--textconv"];
 
 const GIT_LIST_ONLY: Record<string, (args: string[]) => boolean> = {
 	branch: (args) => args.every((arg) => arg.startsWith("-") && ["--list", "-a", "-r", "-v", "-vv", "--contains"].some((ok) => arg === ok || arg.startsWith("--contains"))),

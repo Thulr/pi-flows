@@ -43,11 +43,11 @@ Consult pi documentation for provider/session behavior. Useful environment contr
 - `PI_TELEMETRY=0` to disable pi install telemetry where supported.
 - `PI_OFFLINE=1` to disable startup network operations where supported.
 - `PI_FLOWS_CHILD_NO_EXTENSIONS=1` to make pi-flows spawn child agents with
-  `--no-extensions` when you need to isolate installed user extensions. With it
-  set, roles whose tools include `bash-ro` are refused
-  (`BASH_READONLY_UNENFORCEABLE`) rather than spawned with an unrestricted
-  shell, because the allowlist is enforced by the pi-flows extension inside the
-  child.
+  `--no-extensions` when you need to isolate installed user extensions. This
+  only suppresses *discovered* extensions; `bash-ro` children still load the
+  allowlist enforcer through an explicit `-e` (which pi keeps under
+  `--no-extensions`), so they remain enforced and are not refused by this
+  setting alone.
 - `PI_FLOWS_BASH_READONLY` is an internal marker pi-flows sets on every child
   it spawns (`1` for a `bash-ro` toolset, empty otherwise, so a parent's value
   never leaks into grandchildren). Setting it by hand in your own shell makes

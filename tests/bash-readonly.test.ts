@@ -72,6 +72,7 @@ const REFUSED = [
 	"sort --o generated.txt README.md",
 	"git cat-file --filters HEAD:path",
 	"git grep --textconv pattern",
+	"git --config-env=diff.external=SHELL diff",
 	"git grep -Ovi pattern",
 	"git grep --open-files-in-pager=vi pattern",
 	"sort -o generated.txt README.md",
@@ -137,9 +138,11 @@ test("bashReadonlyGitEnv neutralizes repository-configured git exec helpers", ()
 	const count = Number(env.GIT_CONFIG_COUNT);
 	const pairs = new Map<string, string>();
 	for (let i = 0; i < count; i += 1) pairs.set(env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]);
-	assert.equal(pairs.get("diff.external"), "");
 	assert.equal(pairs.get("core.pager"), "cat");
+	assert.equal(pairs.get("core.fsmonitor"), "false");
 	assert.equal(pairs.get("core.hooksPath"), "/dev/null");
+	// diff.external is deliberately NOT forced off: an empty value makes git try to exec "" and aborts the diff.
+	assert.equal(pairs.has("diff.external"), false);
 });
 
 test("bashReadonlyEnabled follows the shared env truthiness convention", () => {

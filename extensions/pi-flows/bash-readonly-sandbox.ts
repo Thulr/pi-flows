@@ -18,10 +18,12 @@
  * checkout, which are exactly the conflict the SHARED_WRITE_CWD guard exists
  * for, are what fails.
  */
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import { bashReadonlyEnforcement, bashReadonlyUnenforceableError, type BashReadonlyEnforcement } from "./bash-readonly.ts";
 import { bashReadonlyEnforcerAvailable } from "./bash-readonly-extension.ts";
 import type { FlowError } from "./types.ts";
@@ -65,10 +67,27 @@ function profilePath(dir: string): string {
 
 /**
  * The Seatbelt profile: allow everything the child normally does, then deny
- * writes anywhere under the reviewed checkout. Pure and unit-testable.
+ * writes under the reviewed checkout and under any extra paths (a linked
+ * worktree's git dir lives outside the checkout, so its index must be denied
+ * too). Duplicates and paths already inside the checkout are harmless. Pure
+ * and unit-testable.
  */
-export function buildReadonlyProfile(realCwd: string): string {
-	return ["(version 1)", "(allow default)", `(deny file-write* (subpath ${profilePath(realCwd)}))`, ""].join("\n");
+export function buildReadonlyProfile(realCwd: string, extraDenies: string[] = []): string {
+	const denies = [realCwd, ...extraDenies];
+	return ["(version 1)", "(allow default)", ...denies.map((dir) => `(deny file-write* (subpath ${profilePath(dir)}))`), ""].join("\n");
+}
+
+const runGit = promisify(execFile);
+
+/** Absolute, realpath-resolved git dir + common dir for a checkout, for denial; empty when not a git repo. */
+async function gitMetadataDirs(cwd: string): Promise<string[]> {
+	try {
+		const { stdout } = await runGit("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], { encoding: "utf8" });
+		const dirs = stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+		return await Promise.all(dirs.map((dir) => fs.realpath(dir).catch(() => path.resolve(dir))));
+	} catch {
+		return [];
+	}
 }
 
 /**
@@ -81,9 +100,10 @@ export function buildReadonlyProfile(realCwd: string): string {
 export async function wrapWithReadonlySandbox(command: string, args: string[], cwd: string): Promise<{ command: string; args: string[]; dir: string } | null> {
 	if (!readonlySandboxAvailable()) return null;
 	const realCwd = await fs.realpath(cwd).catch(() => path.resolve(cwd));
+	const gitDirs = (await gitMetadataDirs(realCwd)).filter((dir) => !dir.startsWith(`${realCwd}${path.sep}`) && dir !== realCwd);
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-flow-sb-"));
 	const filePath = path.join(dir, "readonly.sb");
-	await fs.writeFile(filePath, buildReadonlyProfile(realCwd), "utf8");
+	await fs.writeFile(filePath, buildReadonlyProfile(realCwd, gitDirs), "utf8");
 	return { command: SANDBOX_EXEC, args: ["-f", filePath, command, ...args], dir };
 }
 
