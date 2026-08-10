@@ -108,6 +108,14 @@ test("identicons are deterministic per agent, shared by a fan-out, and never bla
 		{ agent: "reviewer", exitCode: 0, durationMs: 6000, startedAtMs: 500 },
 	], theme)!;
 	assert.deepEqual(avatarStrip(otherFlow, 1), avatarStrip(fanOut, 0), "the same agent wears the same mark in every flow");
+
+	// "agent-3000" hashes every pattern bit to zero — the one name family that
+	// would wear no mark without the center-cell fallback.
+	const blankPattern = flowGanttPng([
+		{ agent: "agent-3000", exitCode: 0, durationMs: 4000, startedAtMs: 0 },
+		{ agent: "scout", exitCode: 0, durationMs: 6000, startedAtMs: 500 },
+	], theme)!;
+	assert.ok(avatarStrip(blankPattern, 0).some((byte) => byte !== 0), "an all-zero hash pattern still wears the center cell");
 });
 
 test("every allowed avatar hue stays ≥30° from the status hues — unconditionally, not just for hashed samples", () => {

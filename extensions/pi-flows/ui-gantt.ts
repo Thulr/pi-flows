@@ -162,10 +162,14 @@ const AVATAR_PX = 5 * AVATAR_CELL;
 function drawAvatar(raster: Raster, x: number, y: number, agent: string, dark: boolean): void {
 	const hash = hash32(agent);
 	const color = hslToRgb(AVATAR_HUES[hash % AVATAR_HUES.length]!, 0.55, dark ? 0.62 : 0.42);
+	// A name whose 15 pattern bits all hash to zero (e.g. "agent-3000") would
+	// otherwise wear no mark at all; an empty pattern falls back to the center
+	// cell (bit 8: row 2, column 2) so every agent stays visibly marked.
+	const pattern = ((hash >>> 8) & 0x7fff) || 1 << 8;
 	for (let row = 0; row < 5; row++) {
 		for (let column = 0; column < 5; column++) {
 			const bit = row * 3 + (column < 3 ? column : 4 - column);
-			if ((hash >> (bit + 8)) & 1) fillRect(raster, x + column * AVATAR_CELL, y + row * AVATAR_CELL, AVATAR_CELL, AVATAR_CELL, color);
+			if ((pattern >> bit) & 1) fillRect(raster, x + column * AVATAR_CELL, y + row * AVATAR_CELL, AVATAR_CELL, AVATAR_CELL, color);
 		}
 	}
 }
