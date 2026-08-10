@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import * as path from "node:path";
 import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type FlowError, type FlowRunResult } from "./types.ts";
 
 /**
@@ -29,6 +30,25 @@ export function safePath(candidate: string | null | undefined): string | null {
 	const home = os.homedir();
 	if (home && candidate.startsWith(home)) return `~${candidate.slice(home.length)}`;
 	return candidate;
+}
+
+/**
+ * Inverse of {@link safePath}, for *local* addressing only: persisted paths
+ * arrive in their redacted `~/…` form, and a `file://` URL built from that
+ * form does not open. Returns the absolute path, or null when the input is
+ * not absolute in either form — a caller with a null gets no link, never a
+ * guessed path.
+ */
+export function expandSafePath(candidate: string | null | undefined): string | null {
+	if (!candidate) return null;
+	// Platform-aware: POSIX `/…` and, on Windows, `C:\…`/UNC forms pass through.
+	if (path.isAbsolute(candidate)) return candidate;
+	// safePath preserves the platform separator after `~`, so accept both.
+	if (candidate === "~" || candidate.startsWith("~/") || candidate.startsWith("~\\")) {
+		const home = os.homedir();
+		return home ? `${home}${candidate.slice(1)}` : null;
+	}
+	return null;
 }
 
 export function escapeRegExp(value: string): string {

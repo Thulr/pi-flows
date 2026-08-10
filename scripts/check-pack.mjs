@@ -112,5 +112,16 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // in the admission walk (flow.ts), and the declared mode plans + settle
 // object the mode table gained. Same verification: no files from tests/,
 // scripts/, or evals/.
-assert.ok(pack.unpackedSize < 1_100_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_110_000 for the shared UI vocabulary (ui-style.ts): one new
+// public runtime module holding the state icons/colors, meters, per-run
+// state bars, badges, tree guides, and box frames the four view surfaces
+// now share. Same verification: 105 files, none from tests/, scripts/, or
+// evals/.
+// Raised to 1_130_000 for the settled card's Gantt timeline: ui-gantt.ts
+// (layout + bitmap-font rasterizer) over png.ts (dependency-free RGBA→PNG
+// encoder), gated on terminal image capability with the text card as the
+// fallback, plus the PR-review hardening round (expandSafePath, time-grid
+// spend resampling). Same verification: 107 files, none from tests/,
+// scripts/, or evals/.
+assert.ok(pack.unpackedSize < 1_130_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

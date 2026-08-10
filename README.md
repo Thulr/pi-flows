@@ -56,6 +56,10 @@ While children run you get a live tool row, and after the flow settles a durable
 
 <img alt="The durable flow card in the pi transcript: status, per-run duration bars, cost rollup, and configured ceilings" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-run-card.gif" width="100%">
 
+In terminals that speak an inline-image protocol (Ghostty, Kitty, iTerm2, WezTerm), the settled card upgrades its timing story to a rendered Gantt timeline of the run — per-child bars offset by real start times, failures in the theme's error color — and falls back to the text card everywhere else:
+
+<img alt="The settled card's Gantt timeline: per-child bars offset by real start times, a failed child in red, quarter gridlines and a duration axis" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-gantt.png" width="100%">
+
 For common shapes, pi can choose a named [workflow preset](./docs/reference/flow-reference.md#workflow-presets) — `scout`, `map-codebase`, or the one-shot, typed `code-review` — instead of assembling raw mode parameters. And when you ask for a *verified* result, pi reaches for a stronger mode on its own:
 
 ```text

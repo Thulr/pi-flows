@@ -17,7 +17,7 @@ import { clearFlowUi, flowProgressText } from "../extensions/pi-flows/ui.ts";
  * string, so a surface that starts formatting its own ratio again fails here.
  */
 
-const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
 function result(overrides: Record<string, unknown> = {}): any {
@@ -75,7 +75,7 @@ test("a live flow between stages reports settled runs, not a verdict", () => {
 	assert.match(board[0]!, /flow evaluate 2\/2 settled/);
 	assert.equal(board[0]!.includes("2 ok"), false, "the next stage has not run yet");
 	assert.equal(board[0]!.startsWith("✓"), false, "a ✓ beside 'settled so far' contradicts itself");
-	assert.doesNotMatch(board[0]!, /▰|▱/, "the bar measures outstanding runs, and between stages there are none");
+	assert.doesNotMatch(board[0]!, /█|░/, "the bar measures outstanding runs, and between stages there are none");
 	assert.match(board.join("\n"), /F8 fleet panel/, "a live flow still points at the fleet panel");
 
 	assert.match(fleetFlowLines({ mode: "evaluate", redactSecrets: true, details: betweenStages } as any, theme, 0, { live: true })[0]!, /flow evaluate 2\/2 settled/);
@@ -108,11 +108,11 @@ test("the fleet panel treats registered flows as live and the last settled flow 
 
 test("the live tool row labels the ratio while running and shows the verdict on settle", () => {
 	assert.match(boardHeader(inFlight), /flow parallel 0\/2 settled/);
-	assert.match(boardHeader(inFlight), /▱/, "the labeled counter travels with the progress bar");
+	assert.match(boardHeader(inFlight), /██/, "the per-run state cells travel with the labeled counter");
 
 	assert.match(boardHeader(allFailed), /flow parallel 2 failed/);
 	assert.doesNotMatch(boardHeader(allFailed), /2\/2/, "the ratio must not outlive the run it measured");
-	assert.doesNotMatch(boardHeader(allFailed), /▰|▱/, "a settled flow has nothing outstanding to bar-chart");
+	assert.doesNotMatch(boardHeader(allFailed), /█|░/, "a settled flow has nothing outstanding to bar-chart");
 
 	assert.match(boardHeader(allOk), /flow parallel 2 ok/);
 	assert.doesNotMatch(boardHeader(allOk), /2\/2/);

@@ -46,6 +46,8 @@
       "reflexion.ts",
       "trace-sink.ts",
       "ui.ts",
+      "ui-style.ts",
+      "ui-gantt.ts",
       "ui-live-row.ts",
       "ui-flow-card.ts",
       "fleet-panel.ts",

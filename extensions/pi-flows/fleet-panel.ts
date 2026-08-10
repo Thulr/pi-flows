@@ -1,11 +1,11 @@
 import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
 import { budgetDisclosureLines, exhaustedBudgetText } from "./budget-disclosure.ts";
 import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRegistry, type InspectorContext, type LiveFlow } from "./inspector.ts";
 import { formatUsage } from "./trace.ts";
-import { runDisplayName, spinnerFrame } from "./ui-live-row.ts";
 import type { BudgetSnapshot, FlowRunResult } from "./types.ts";
 import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
+import { boxFrame, meterBar, meterColor, runDisplayName, runStateBar, sparkline, stateColor, stateIcon, treeGuide } from "./ui-style.ts";
 
 /**
  * The mission-control fleet panel: a persistent, *non-capturing* overlay that
@@ -23,43 +23,66 @@ export function budgetLine(budget: BudgetSnapshot | undefined, theme: Theme): st
 	const spent = budget.spentCost;
 	const max = budget.maxCostUsd;
 	const ratio = Math.min(1, max > 0 ? spent / max : 1);
-	const width = 12;
-	const filled = Math.round(ratio * width);
-	const color = ratio >= 0.9 ? "error" : ratio >= 0.6 ? "warning" : "success";
-	return `${theme.fg(color, "▰".repeat(filled) + "▱".repeat(width - filled))} ${theme.fg("muted", `$${spent.toFixed(4)} / $${max.toFixed(2)} budget`)}`;
+	return `${theme.fg(meterColor(ratio), meterBar(ratio))} ${theme.fg("muted", `$${spent.toFixed(4)} / $${max.toFixed(2)} budget`)}`;
 }
 
-function agentStateColor(state: ReturnType<typeof flowAgentState>): "error" | "success" | "muted" | "warning" {
-	return state === "failed" ? "error" : state === "completed" ? "success" : state === "queued" ? "muted" : "warning";
+/**
+ * Burn-rate line: the sampled spend curve, so a viewer sees *acceleration*
+ * (one child suddenly burning tokens) and not only the level the meter
+ * already shows. With a cost ceiling the amount lives on the budget line and
+ * only the curve is added; without one, this line is the only spend surface,
+ * so it carries the total too.
+ */
+export function spendSparkLine(history: number[] | undefined, hasBudgetLine: boolean, theme: Theme): string | undefined {
+	if (!history || history.length < 2) return undefined;
+	const latest = history[history.length - 1] ?? 0;
+	if (latest <= 0) return undefined;
+	const curve = theme.fg("accent", sparkline(history));
+	return hasBudgetLine ? `${curve} ${theme.fg("muted", "spend")}` : `${curve} ${theme.fg("muted", `$${latest.toFixed(4)} spent`)}`;
+}
+
+export interface FleetLineOptions extends FlowProgressOptions {
+	/** Sampled spend totals for the sparkline, oldest first. */
+	spendHistory?: number[];
 }
 
 /** Panel body lines for one flow (no borders). Exported for offline tests. */
-export function fleetFlowLines(flow: LiveFlow, theme: Theme, tick: number, options: FlowProgressOptions = {}): string[] {
+export function fleetFlowLines(flow: LiveFlow, theme: Theme, tick: number, options: FleetLineOptions = {}): string[] {
 	// Same rule as the live tool row: state text only earns its place on a fan-out;
 	// for one child it reads as "0/1 = stuck". This header carries no status icon,
 	// so that text is its only state signal — all the more reason it comes from the
 	// shared helper rather than a locally formatted ratio.
 	const total = flow.details.results.length;
+	const states = flow.details.results.map(flowAgentState);
+	const outstanding = flow.details.results.some((result) => result.exitCode === -1);
 	const progress = total > 1 ? ` ${theme.fg("accent", flowProgressText(flow.details, options))}` : "";
-	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${flow.details.preset?.name ?? flow.mode}`))}${progress}`];
+	// Same rule as the live tool row: the per-run cell bar measures settled-ness,
+	// so it belongs to outstanding runs.
+	const bar = total > 1 && outstanding ? ` ${runStateBar(theme, states)}` : "";
+	const lines = [`${theme.fg("toolTitle", theme.bold(`flow ${flow.details.preset?.name ?? flow.mode}`))}${progress}${bar}`];
 	lines.push(...budgetDisclosureLines(flow.details.budgetCeilings).map((line) => theme.fg("muted", line)));
 	const budget = budgetLine(flow.budget?.snapshot(), theme);
 	if (budget) lines.push(budget);
+	const spendSpark = spendSparkLine(options.spendHistory, budget !== undefined, theme);
+	if (spendSpark) lines.push(spendSpark);
 
 	const nameWidth = Math.min(28, Math.max(4, ...flow.details.results.map((result: FlowRunResult) => runDisplayName(result).length)));
 	flow.details.results.forEach((result, index) => {
 		const state = flowAgentState(result);
-		const icon = state === "running" ? theme.fg("warning", spinnerFrame(tick, index * 2)) : state === "queued" ? theme.fg("muted", "◌") : state === "failed" ? theme.fg("error", "✗") : theme.fg("success", "✓");
+		const icon = stateIcon(theme, state, tick, index * 2);
 		const usage = oneLine(formatUsage(result.usage, undefined, result.durationMs), 40, flow.redactSecrets);
-		lines.push(`${icon} ${theme.fg("accent", oneLine(runDisplayName(result), nameWidth, flow.redactSecrets).padEnd(nameWidth))} ${theme.fg(agentStateColor(state), state.padEnd(9))}${usage ? ` ${theme.fg("dim", usage)}` : ""}`);
+		lines.push(`${theme.fg("dim", treeGuide(index, total))} ${icon} ${theme.fg("accent", oneLine(runDisplayName(result), nameWidth, flow.redactSecrets).padEnd(nameWidth))} ${theme.fg(stateColor(state), state.padEnd(9))}${usage ? ` ${theme.fg("dim", usage)}` : ""}`);
+		// Sub-lines hang off their row; a `│` continuation keeps rows below visually
+		// attached to the tree instead of floating between two agents.
+		const continuation = `${index === total - 1 ? " " : theme.fg("dim", "│")}  ${theme.fg("dim", "└")}`;
 		if (state === "running") {
 			const items = flowAgentActivity(result, flow.redactSecrets);
 			const last = items[items.length - 1];
-			if (last) lines.push(`  ${theme.fg("muted", `└ ${last.kind === "tool" ? "→ " : last.kind === "result" ? "← " : ""}${oneLine(last.text, 64, flow.redactSecrets)}`)}`);
+			if (last) lines.push(`${continuation} ${theme.fg("muted", `${last.kind === "tool" ? "→ " : last.kind === "result" ? "← " : ""}${oneLine(last.text, 64, flow.redactSecrets)}`)}`);
 		}
 		if (state === "failed") {
 			const bindingBudget = exhaustedBudgetText(result.error);
-			lines.push(`  ${theme.fg("error", `└ ${result.error?.code ?? result.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}`)}`);
+			lines.push(`${continuation} ${theme.fg("error", `${result.error?.code ?? result.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}`)}`);
 		}
 	});
 	if (flow.details.error) lines.push(theme.fg("error", `error: ${flow.details.error.code}`));
@@ -101,36 +124,31 @@ export class FleetPanel {
 	render(width: number): string[] {
 		if (width <= 0) return [];
 		if (width < 3) return [truncateToWidth("…", width, "")];
-		const innerWidth = width - 2;
-		const border = (text: string) => this.theme.fg("border", text);
-		const row = (content = "") => {
-			const clipped = truncateToWidth(` ${content}`, innerWidth, "…");
-			return `${border("│")}${clipped}${" ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)))}${border("│")}`;
-		};
-		const separator = () => `${border("├")}${border("─".repeat(innerWidth))}${border("┤")}`;
-		const lines = [border(`╭${"─".repeat(innerWidth)}╮`)];
+		const frame = boxFrame(this.theme, width - 2);
 
 		const active = this.registry.activeFlows();
+		const title = active.length > 0 ? `flows · ${active.length} live` : "flows";
+		const lines = [frame.top(title)];
 		if (active.length === 0) {
 			const last = this.registry.lastSettledFlow();
 			if (last) {
-				lines.push(row(this.theme.fg("muted", "no live flows · last flow:")));
+				lines.push(frame.row(this.theme.fg("muted", "no live flows · last flow:")));
 				// The registry is the liveness authority here: a flow it still holds has a
 				// handler that may spawn another stage, and the one it settled cannot.
-				for (const line of fleetFlowLines(last, this.theme, this.tick, { live: false })) lines.push(row(line));
+				for (const line of fleetFlowLines(last, this.theme, this.tick, { live: false, spendHistory: this.registry.spendHistory(last) })) lines.push(frame.row(line));
 			} else {
-				lines.push(row(this.theme.fg("muted", "no live flows")));
+				lines.push(frame.row(this.theme.fg("muted", "no live flows")));
 			}
 		} else {
 			active.forEach((flow, index) => {
-				if (index > 0) lines.push(separator());
-				for (const line of fleetFlowLines(flow, this.theme, this.tick, { live: true })) lines.push(row(line));
+				if (index > 0) lines.push(frame.separator());
+				for (const line of fleetFlowLines(flow, this.theme, this.tick, { live: true, spendHistory: this.registry.spendHistory(flow) })) lines.push(frame.row(line));
 			});
 		}
 
-		lines.push(separator());
-		lines.push(row(this.theme.fg("dim", `F8 or ${this.cancelKeyText()} close · /flows inspect to drill into a child`)));
-		lines.push(border(`╰${"─".repeat(innerWidth)}╯`));
+		lines.push(frame.separator());
+		lines.push(frame.row(this.theme.fg("dim", `F8 or ${this.cancelKeyText()} close · /flows inspect to drill into a child`)));
+		lines.push(frame.bottom());
 		return lines;
 	}
 

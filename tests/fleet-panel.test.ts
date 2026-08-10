@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { FleetPanel, budgetLine, createFleetPanelController, fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
+import { FleetPanel, budgetLine, createFleetPanelController, fleetFlowLines, spendSparkLine } from "../extensions/pi-flows/fleet-panel.ts";
 import { FlowRegistry } from "../extensions/pi-flows/inspector.ts";
 import { Budget } from "../extensions/pi-flows/types.ts";
 
-const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
 /** A flow budget already burned down to `spentCost`, for views that render a partly spent ceiling. */
@@ -47,14 +47,100 @@ test("budgetLine renders burn-down only when a cost ceiling exists", () => {
 	const quarterSpent = Budget.forFlow({ maxCostUsd: 2 })!;
 	quarterSpent.charge({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.5, contextTokens: 0, turns: 1 });
 	const line = budgetLine(quarterSpent.snapshot(), theme)!;
-	assert.match(line, /▰{3}▱{9}/, "a quarter spent fills a quarter of the bar");
+	assert.match(line, /█{3}░{9}/, "a quarter spent fills a quarter of the bar");
 	assert.match(line, /\$0\.5000 \/ \$2\.00 budget/);
 
 	// A $0 ceiling refuses every run, so it is the one a viewer most needs shown.
 	// A falsy check would hide exactly that case.
 	const zero = budgetLine(Budget.forFlow({ maxCostUsd: 0 })!.snapshot(), theme)!;
-	assert.match(zero, /▰{12}/, "a zero ceiling reads as fully spent, not as absent");
+	assert.match(zero, /█{12}/, "a zero ceiling reads as fully spent, not as absent");
 	assert.match(zero, /\$0\.0000 \/ \$0\.00 budget/);
+});
+
+test("the registry samples the spend curve on update traffic, resampled onto a uniform time grid", () => {
+	let clock = 0;
+	const registry = new FlowRegistry(1000, () => clock);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	clock = 1000;
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
+	clock = 2000;
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.5 } })]));
+
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series.length, 24, "readers get a fixed-width series where equal spacing means equal time");
+	assert.equal(series[0], 0.1);
+	assert.equal(series[series.length - 1]!, 0.5, "the curve ends on the true settle total");
+	assert.ok(series.includes(0.3), "intermediate samples appear at their place on the time grid");
+	assert.equal(registry.lastSettledFlow(), flow, "the curve survives into the last-settled view");
+});
+
+test("spend sampling decimates inside the interval and holds quiet time flat on the grid", () => {
+	let clock = 0;
+	const registry = new FlowRegistry(60_000, () => clock);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	clock = 1000;
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.2 } })]));
+	clock = 2000;
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
+	// Decimation drops the raw samples, but the live endpoint is synthesized
+	// from the current details, so the reader still sees the true level.
+	const midFlight = registry.spendHistory(flow)!;
+	assert.equal(midFlight[0], 0.1);
+	assert.equal(midFlight[midFlight.length - 1]!, 0.3, "an in-interval paid update must not leave the curve stale");
+	assert.ok(!midFlight.includes(0.2), "the decimated intermediate sample is not retained");
+	clock = 3000;
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.4 } })]));
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series[0], 0.1);
+	assert.equal(series[series.length - 1]!, 0.4, "settle skips decimation so the curve ends on the true total");
+	assert.ok(!series.includes(0.2) && !series.includes(0.3), "decimated samples never reach a reader");
+});
+
+test("a live flow's grid extends to now, so stopped spend renders as a flat tail", () => {
+	let clock = 0;
+	const registry = new FlowRegistry(1000, () => clock);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	clock = 1000;
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
+	clock = 11_000; // ten quiet seconds, no events
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series[series.length - 1]!, 0.3);
+	assert.ok(series.filter((value) => value === 0.3).length >= 20, "the quiet time must dominate the grid as a flat tail, not vanish");
+
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.3 } })]));
+	clock = 60_000;
+	const settled = registry.spendHistory(flow)!;
+	assert.equal(settled[settled.length - 1]!, 0.3, "a settled flow's grid ends on its final sample, not a marching now");
+});
+
+test("a wall clock stepping backwards neither suppresses sampling nor disorders the series", () => {
+	let clock = 10_000;
+	const registry = new FlowRegistry(1000, () => clock);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	clock = 0; // e.g. NTP correction
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.2 } })]));
+	clock = 500;
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.3 } })]));
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series[series.length - 1]!, 0.3, "the curve still ends on the true total after a backwards step");
+});
+
+test("spend sparkline shows the burn curve, and carries the total only without a budget line", () => {
+	assert.equal(spendSparkLine(undefined, false, theme), undefined);
+	assert.equal(spendSparkLine([0.1], false, theme), undefined, "one sample has no curve to draw");
+	assert.equal(spendSparkLine([0, 0, 0], false, theme), undefined, "no spend yet, no line");
+	assert.match(spendSparkLine([0, 0.1, 0.3], false, theme)!, /▁.*█ \$0\.3000 spent/, "without a budget line this is the only spend surface");
+	assert.match(spendSparkLine([0, 0.1, 0.3], true, theme)!, /spend$/, "the budget line already shows the amount");
+});
+
+test("fleetFlowLines renders the spend sparkline from sampled history", () => {
+	const run = { mode: "parallel" as const, redactSecrets: true, details: details([result(), result({ agent: "analyst" })]) };
+	const lines = fleetFlowLines(run as any, theme, 0, { spendHistory: [0, 0.05, 0.2] });
+	assert.match(lines.join("\n"), /\$0\.2000 spent/);
 });
 
 test("fleetFlowLines shows every agent with state, activity, and failures", () => {

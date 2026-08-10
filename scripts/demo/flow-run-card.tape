@@ -9,6 +9,6 @@ Set Framerate 20
 Hide
 Type "node --import tsx scripts/demo-ui.ts card"
 Enter
-Wait+Screen@30s /collapsed run-card/
+Wait+Screen@30s /collapsed flow card/
 Show
 Sleep 9s
