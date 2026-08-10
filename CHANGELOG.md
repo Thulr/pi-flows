@@ -38,7 +38,9 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   (including older pi runtimes without the property) keeps the
   all-available-models behavior, `capable` still mirrors the session's active
   model even outside the cycling scope, and explicit model pins remain
-  deliberate overrides. (#108)
+  deliberate overrides. A scope whose models are all unusable for delegation
+  anchors the automatic tiers to the session's own model instead of falling
+  through to pi's configured default. (#108)
 - A child that reported a terminal provider error and then exited on its own
   was misclassified as `CHILD_EXIT_NONZERO`, replacing the provider's
   diagnostic with a generic exit message; it is now `CHILD_PROVIDER_ERROR` on

@@ -225,11 +225,25 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	};
 
 	if (pool.length === 0) {
-		// Two distinct empty states share the fallback but not the explanation. A
-		// scope whose models are all unusable must NOT widen back to the registry
-		// — that would run the exact models the user scoped out.
+		// A scope whose models are all unusable must NOT widen back to the
+		// registry — that would run the exact models the user scoped out — and it
+		// must not leave the tiers unresolved either: an unanswered tier falls
+		// through to a child with no `--model`, which loads pi's *configured*
+		// default, a model the scope may exclude. The session's own model is the
+		// one anchor that is always a deliberate choice (the same argument that
+		// justifies `capable`), so the automatic tiers stay on it.
+		if (scoped && parentModel) {
+			const stranded = (tier: "fast" | "deep"): RosterAssignment => ({
+				model: parentModel,
+				thinking: clampThinking(TIER_THINKING[tier], parent),
+				why: `no usable model is inside this session's model scope, so ${tier} stays on the model this session is running`,
+				origin: { model: "derived", thinking: "derived" },
+			});
+			return { fast: stranded("fast"), capable, deep: stranded("deep"), available: inputs.available, sessionModel: parentModel, source: "derived", issues: [] };
+		}
+		// Two distinct empty states share this fallback but not the explanation.
 		const unknown = scoped
-			? "no usable model is inside this session's model scope, so every tier runs your pi default"
+			? "no usable model is inside this session's model scope and the session model is unknown, so every tier runs your pi default"
 			: "no model registry was available, so every tier runs your pi default";
 		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: inputs.available, sessionModel: parentModel, source: "unavailable", issues: [] };
 	}

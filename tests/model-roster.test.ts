@@ -268,18 +268,33 @@ test("the parent model outside the scope still resolves as capable", () => {
 	assert.equal(roster.deep.model, "acme/mini");
 });
 
-test("a scope whose models are all unusable leaves the tiers unresolved rather than escaping it", () => {
+test("a scope whose models are all unusable anchors the tiers to the session model rather than escaping it", () => {
 	// Every scoped model is below the context floor. Falling back to the full
-	// registry here would silently run the exact models the user scoped out.
+	// registry would silently run the exact models the user scoped out — and
+	// leaving the tiers unresolved would too, one step later: an unanswered tier
+	// spawns a child with no --model, which loads pi's *configured* default.
+	// The session's own model is the one anchor that is always a deliberate
+	// choice, so the automatic tiers stay on it.
 	const roster = deriveModelRoster({
 		available: [model("tiny", { contextWindow: 8_000 }), ...INSTALL],
 		parent: { model: "acme/standard" },
 		scoped: ["acme/tiny"],
 	});
-	assert.equal(roster.fast.model, undefined);
-	assert.equal(roster.deep.model, undefined);
+	assert.equal(roster.fast.model, "acme/standard", "fast must not fall through to a model the scope may exclude");
+	assert.equal(roster.deep.model, "acme/standard");
+	assert.equal(roster.deep.thinking, "max", "the tier still means something: it differs by thinking level");
 	assert.equal(roster.capable.model, "acme/standard", "capable still names the session's model");
 	assert.match(describeModelRoster(roster).join("\n"), /model scope/, "and the disclosure names the scope, not a missing registry");
+
+	// With no session model there is nothing in-scope to anchor to, so the
+	// tiers stay honestly unresolved rather than inventing a model.
+	const anchorless = deriveModelRoster({
+		available: [model("tiny", { contextWindow: 8_000 }), ...INSTALL],
+		parent: {},
+		scoped: ["acme/tiny"],
+	});
+	assert.equal(anchorless.fast.model, undefined);
+	assert.equal(anchorless.deep.model, undefined);
 });
 
 test("an explicit config pin outside the scope is not silently substituted", () => {

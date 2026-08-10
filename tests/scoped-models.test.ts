@@ -79,6 +79,26 @@ test("no automatically tiered child receives a model excluded from the session s
 	assert.equal(modelOf(fast.calls[0]), "test-provider/scoped", "fast dispatched a child to a model outside the session scope");
 });
 
+test("a scope with no usable model keeps a tiered child on the session model's argv", async () => {
+	// The stranded-scope edge: the only scoped model is below the context floor.
+	// An unresolved tier would spawn the child with no --model at all — pi's
+	// configured default, which the scope may exclude — so the tier pins the
+	// session's own model instead.
+	const registry = {
+		getAvailable: () => [
+			{ id: "tiny-scoped", provider: "test-provider", reasoning: true, contextWindow: 8_000, maxTokens: 8192, cost: { input: 0.1, output: 0.4 } },
+			{ id: "session-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 3, output: 12 } },
+			{ id: "outside-strong", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 15, output: 60 } },
+		],
+	};
+	const { calls } = await runFlow(
+		{ agent: "operator", task: "adjudicate the design", tier: "deep" },
+		{ operator: "done" },
+		{ registry, model: { provider: "test-provider", id: "session-model" }, scopedModels: [{ model: { provider: "test-provider", id: "tiny-scoped" } }] },
+	);
+	assert.equal(modelOf(calls[0]), "test-provider/session-model", "a stranded scope anchors the tier to the session model, never to an unpinned default");
+});
+
 test("the scoped roster is what showConfig reports", async () => {
 	const { text } = await runFlow(
 		{ showConfig: true, why: undefined },
