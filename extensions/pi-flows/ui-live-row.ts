@@ -6,7 +6,7 @@ import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
 import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
-import { runStateBar, spinnerFrame, stateIcon, treeGuide } from "./ui-style.ts";
+import { runDisplayName, runStateBar, spinnerFrame, stateIcon, treeGuide } from "./ui-style.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -20,10 +20,6 @@ import { runStateBar, spinnerFrame, stateIcon, treeGuide } from "./ui-style.ts";
 
 /** Rows shown for agents in the collapsed view before "+n more". */
 export const COLLAPSED_AGENT_ROWS = 8;
-
-export function runDisplayName(result: Pick<FlowRunResult, "agent" | "role">): string {
-	return result.role ? `${result.role} (${result.agent})` : result.agent;
-}
 
 /**
  * The one-line "what is this child doing right now" summary for a running

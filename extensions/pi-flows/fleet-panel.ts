@@ -3,10 +3,9 @@ import { Key, matchesKey, truncateToWidth, type KeyId, type TUI } from "@earendi
 import { budgetDisclosureLines, exhaustedBudgetText } from "./budget-disclosure.ts";
 import { flowAgentActivity, flowAgentState, oneLine, supportsTui, type FlowRegistry, type InspectorContext, type LiveFlow } from "./inspector.ts";
 import { formatUsage } from "./trace.ts";
-import { runDisplayName } from "./ui-live-row.ts";
 import type { BudgetSnapshot, FlowRunResult } from "./types.ts";
 import { flowProgressText, type FlowProgressOptions } from "./ui.ts";
-import { boxFrame, meterBar, meterColor, runStateBar, sparkline, stateColor, stateIcon, treeGuide } from "./ui-style.ts";
+import { boxFrame, meterBar, meterColor, runDisplayName, runStateBar, sparkline, stateColor, stateIcon, treeGuide } from "./ui-style.ts";
 
 /**
  * The mission-control fleet panel: a persistent, *non-capturing* overlay that
@@ -25,11 +24,6 @@ export function budgetLine(budget: BudgetSnapshot | undefined, theme: Theme): st
 	const max = budget.maxCostUsd;
 	const ratio = Math.min(1, max > 0 ? spent / max : 1);
 	return `${theme.fg(meterColor(ratio), meterBar(ratio))} ${theme.fg("muted", `$${spent.toFixed(4)} / $${max.toFixed(2)} budget`)}`;
-}
-
-/** The flow's total recorded cost right now — the quantity the spend sparkline samples. */
-export function flowSpentCost(flow: LiveFlow): number {
-	return flow.details.results.reduce((sum, result) => sum + (result.usage?.cost || 0), 0);
 }
 
 /**
@@ -99,13 +93,6 @@ export class FleetPanel {
 	private readonly unsubscribe: () => void;
 	private readonly timer: ReturnType<typeof setInterval>;
 	private tick = 0;
-	/**
-	 * Sampled spend per live flow, keyed by the flow object itself: the registry
-	 * mutates one LiveFlow in place across updates, and keying weakly means a
-	 * flow's curve survives into the last-settled view yet never outlives the
-	 * flow. Sampling stops naturally when a flow leaves activeFlows().
-	 */
-	private readonly spendHistory = new WeakMap<LiveFlow, number[]>();
 
 	constructor(
 		private readonly tui: TUI,
@@ -117,16 +104,6 @@ export class FleetPanel {
 		this.unsubscribe = registry.subscribe(() => this.tui.requestRender());
 		this.timer = setInterval(() => {
 			this.tick = (this.tick + 1) % 100000;
-			// ~1s sampling over a 120ms repaint clock: the sparkline is a burn-rate
-			// read, and sampling faster would only smear one flat curve per second.
-			if (this.tick % 8 === 0) {
-				for (const flow of this.registry.activeFlows()) {
-					const history = this.spendHistory.get(flow) ?? [];
-					history.push(flowSpentCost(flow));
-					if (history.length > 24) history.shift();
-					this.spendHistory.set(flow, history);
-				}
-			}
 			if (this.registry.activeFlows().some((flow) => flow.details.results.some((result) => result.exitCode === -1))) this.tui.requestRender();
 		}, 120);
 		this.timer.unref?.();
@@ -158,14 +135,14 @@ export class FleetPanel {
 				lines.push(frame.row(this.theme.fg("muted", "no live flows · last flow:")));
 				// The registry is the liveness authority here: a flow it still holds has a
 				// handler that may spawn another stage, and the one it settled cannot.
-				for (const line of fleetFlowLines(last, this.theme, this.tick, { live: false, spendHistory: this.spendHistory.get(last) })) lines.push(frame.row(line));
+				for (const line of fleetFlowLines(last, this.theme, this.tick, { live: false, spendHistory: this.registry.spendHistory(last) })) lines.push(frame.row(line));
 			} else {
 				lines.push(frame.row(this.theme.fg("muted", "no live flows")));
 			}
 		} else {
 			active.forEach((flow, index) => {
 				if (index > 0) lines.push(frame.separator());
-				for (const line of fleetFlowLines(flow, this.theme, this.tick, { live: true, spendHistory: this.spendHistory.get(flow) })) lines.push(frame.row(line));
+				for (const line of fleetFlowLines(flow, this.theme, this.tick, { live: true, spendHistory: this.registry.spendHistory(flow) })) lines.push(frame.row(line));
 			});
 		}
 

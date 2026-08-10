@@ -8,6 +8,9 @@ import { deflateSync } from "node:zlib";
  * raster image costs no package weight beyond this file.
  */
 
+/** One RGBA color, 0-255 per channel. */
+export type Rgba = [number, number, number, number];
+
 /** A mutable RGBA raster. Pixels are row-major, 4 bytes per pixel. */
 export interface Raster {
 	width: number;
@@ -15,7 +18,7 @@ export interface Raster {
 	pixels: Uint8Array;
 }
 
-export function createRaster(width: number, height: number, fill: [number, number, number, number] = [0, 0, 0, 0]): Raster {
+export function createRaster(width: number, height: number, fill: Rgba = [0, 0, 0, 0]): Raster {
 	const pixels = new Uint8Array(width * height * 4);
 	if (fill.some((channel) => channel !== 0)) {
 		for (let offset = 0; offset < pixels.length; offset += 4) pixels.set(fill, offset);
@@ -24,12 +27,12 @@ export function createRaster(width: number, height: number, fill: [number, numbe
 }
 
 /** Set one pixel; out-of-bounds writes are ignored so drawing needs no edge math. */
-export function setPixel(raster: Raster, x: number, y: number, rgba: [number, number, number, number]): void {
+export function setPixel(raster: Raster, x: number, y: number, rgba: Rgba): void {
 	if (x < 0 || y < 0 || x >= raster.width || y >= raster.height) return;
 	raster.pixels.set(rgba, (y * raster.width + x) * 4);
 }
 
-export function fillRect(raster: Raster, x: number, y: number, width: number, height: number, rgba: [number, number, number, number]): void {
+export function fillRect(raster: Raster, x: number, y: number, width: number, height: number, rgba: Rgba): void {
 	const x0 = Math.max(0, Math.floor(x));
 	const y0 = Math.max(0, Math.floor(y));
 	const x1 = Math.min(raster.width, Math.floor(x + width));

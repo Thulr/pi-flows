@@ -24,19 +24,39 @@ export interface FlowActivityItem {
 	text: string;
 }
 
+/** The flow's total recorded cost right now — the quantity the spend sparkline samples. */
+export function flowSpentCost(details: FlowDetails): number {
+	return details.results.reduce((sum, result) => sum + (result.usage?.cost || 0), 0);
+}
+
+/** Spend samples the sparkline can draw; enough for a ~24s window at the default cadence. */
+const SPEND_SAMPLES = 24;
+
 /**
  * The live-flow registry. Its unit is a **flow** — one `flow` tool call and
  * every run under it — not a run: a flow the registry still holds has a handler
  * that may open another stage, which is exactly the liveness question the fleet
  * panel and the progress header ask. See CONTEXT.md.
+ *
+ * The registry also samples each flow's spend curve. It has to live here, not
+ * in the fleet panel: the panel is constructed on F8 and discarded on close,
+ * so a panel-owned history would start empty mid-flow and forget everything
+ * between openings. Sampling piggybacks on the update traffic children already
+ * stream (decimated to one sample per `spendSampleIntervalMs`), so no timer
+ * exists and the curve accrues whether or not any observer is watching.
  */
 export class FlowRegistry {
 	private readonly flows = new Map<string, LiveFlow>();
 	private readonly listeners = new Set<() => void>();
+	private readonly spendSamples = new WeakMap<LiveFlow, { at: number; history: number[] }>();
 	private lastSettled: LiveFlow | undefined;
 
+	constructor(private readonly spendSampleIntervalMs = 1000) {}
+
 	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true, budget?: Budget): void {
-		this.flows.set(id, { mode, details, redactSecrets, budget });
+		const flow = { mode, details, redactSecrets, budget };
+		this.flows.set(id, flow);
+		this.sampleSpend(flow);
 		this.notify();
 	}
 
@@ -44,6 +64,7 @@ export class FlowRegistry {
 		const flow = this.flows.get(id);
 		if (!flow) return;
 		flow.details = details;
+		this.sampleSpend(flow);
 		this.notify();
 	}
 
@@ -51,9 +72,26 @@ export class FlowRegistry {
 		const flow = this.flows.get(id);
 		if (!flow) return;
 		flow.details = details;
+		// The final sample skips decimation: the curve must end on the true total.
+		this.sampleSpend(flow, true);
 		this.lastSettled = flow;
 		this.flows.delete(id);
 		this.notify();
+	}
+
+	/** The sampled spend curve for a flow this registry has seen, oldest first. */
+	spendHistory(flow: LiveFlow): number[] | undefined {
+		return this.spendSamples.get(flow)?.history;
+	}
+
+	private sampleSpend(flow: LiveFlow, force = false): void {
+		const now = Date.now();
+		const sample = this.spendSamples.get(flow) ?? { at: Number.NEGATIVE_INFINITY, history: [] };
+		if (!force && now - sample.at < this.spendSampleIntervalMs) return;
+		sample.at = now;
+		sample.history.push(flowSpentCost(flow.details));
+		if (sample.history.length > SPEND_SAMPLES) sample.history.shift();
+		this.spendSamples.set(flow, sample);
 	}
 
 	activeFlows(): LiveFlow[] {

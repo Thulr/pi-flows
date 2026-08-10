@@ -17,6 +17,11 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 /** The four states a child run can be in, as every surface names them. */
 export type RunState = "queued" | "running" | "completed" | "failed";
 
+/** The one display form for a run: `role (agent)` when a role exists, the agent name alone otherwise. Every surface labels a run through this. */
+export function runDisplayName(result: { agent: string; role?: string }): string {
+	return result.role ? `${result.role} (${result.agent})` : result.agent;
+}
+
 export const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] as const;
 
 export function spinnerFrame(tick: number, offset = 0): string {

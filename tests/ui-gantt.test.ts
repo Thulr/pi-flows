@@ -94,17 +94,20 @@ test("renderFlowCard embeds the Gantt image only when the terminal declares an i
 	assert.doesNotMatch(texts.map((text: any) => text.text).join("\n"), /█/, "the chart owns the timing story; rows must not restate the bars");
 });
 
-test("the Gantt image and its Kitty ID are cached per entry, per theme", (t) => {
+test("the Gantt image and its Kitty ID are cached per entry, invalidated by palette — not object identity", (t) => {
 	t.after(() => resetCapabilitiesCache());
 	setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
 
+	// pi hands renderers one stable theme proxy whose target swaps on a theme
+	// switch, so the cache must key on a resolved color, never the reference.
+	const green = { ...theme, getFgAnsi: () => "[38;2;158;206;106m" };
 	const data = entry();
-	const first = renderFlowCard(data, false, theme) as Container;
-	const second = renderFlowCard(data, true, theme) as Container;
+	const first = renderFlowCard(data, false, green) as Container;
+	const second = renderFlowCard(data, true, { ...theme, getFgAnsi: () => "[38;2;158;206;106m" }) as Container;
 	const imageOf = (container: Container) => (container as any).children.find((child: unknown) => !(child instanceof Text));
-	assert.equal(imageOf(first), imageOf(second), "the same entry must reuse one Image component across repaints");
+	assert.equal(imageOf(first), imageOf(second), "same palette, same entry: one Image component across repaints, even across theme object identities");
 
-	const otherTheme = { ...theme };
-	const retinted = renderFlowCard(data, false, otherTheme) as Container;
-	assert.notEqual(imageOf(retinted), imageOf(first), "a theme switch re-rasterizes with the new colors");
+	const red = { ...theme, getFgAnsi: () => "[38;2;247;118;142m" };
+	const retinted = renderFlowCard(data, false, red) as Container;
+	assert.notEqual(imageOf(retinted), imageOf(first), "a palette change re-rasterizes with the new colors");
 });

@@ -57,6 +57,27 @@ test("budgetLine renders burn-down only when a cost ceiling exists", () => {
 	assert.match(zero, /\$0\.0000 \/ \$0\.00 budget/);
 });
 
+test("the registry samples the spend curve on update traffic, so it exists before any panel opens", () => {
+	const registry = new FlowRegistry(0);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.5 } })]));
+	assert.deepEqual(registry.spendHistory(flow), [0.1, 0.3, 0.5], "start, each update, and the final settle each leave a sample");
+	assert.equal(registry.lastSettledFlow(), flow, "the curve survives into the last-settled view");
+});
+
+test("spend sampling decimates to its interval but always records the settle total", () => {
+	const registry = new FlowRegistry(60_000);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.2 } })]));
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
+	assert.deepEqual(registry.spendHistory(flow), [0.1], "updates inside the interval are decimated");
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.4 } })]));
+	assert.deepEqual(registry.spendHistory(flow), [0.1, 0.4], "the curve must end on the true total");
+});
+
 test("spend sparkline shows the burn curve, and carries the total only without a budget line", () => {
 	assert.equal(spendSparkLine(undefined, false, theme), undefined);
 	assert.equal(spendSparkLine([0.1], false, theme), undefined, "one sample has no curve to draw");

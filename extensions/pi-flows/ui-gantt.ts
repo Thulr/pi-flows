@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { createRaster, encodePng, fillRect, type Raster } from "./png.ts";
-import { formatDuration } from "./ui-style.ts";
+import { createRaster, encodePng, fillRect, type Raster, type Rgba } from "./png.ts";
+import { formatDuration, runDisplayName } from "./ui-style.ts";
 
 /**
  * The settled flow card's concurrency timeline, rendered as a real raster
@@ -65,7 +65,7 @@ export const LABEL_CHARS = 16;
  * too long for the gutter.
  */
 function ganttLabel(result: GanttResultLike): string {
-	const full = result.role ? `${result.role} (${result.agent})` : result.agent;
+	const full = runDisplayName(result);
 	const label = full.length <= LABEL_CHARS ? full : result.role ?? result.agent;
 	return label.toUpperCase();
 }
@@ -119,8 +119,6 @@ const GLYPHS: Record<string, number[]> = {
 	" ": [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
 	"?": [0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
 };
-
-type Rgba = [number, number, number, number];
 
 function drawText(raster: Raster, x: number, y: number, text: string, color: Rgba, scale: number): void {
 	let cursor = x;

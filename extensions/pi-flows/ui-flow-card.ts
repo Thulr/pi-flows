@@ -5,7 +5,7 @@ import { safePath } from "./sanitize.ts";
 import { formatTokens } from "./trace.ts";
 import type { BudgetCeiling, FlowMode, UsageStats } from "./types.ts";
 import { flowGanttPng, type GanttImage } from "./ui-gantt.ts";
-import { chip, formatDuration, treeGuide } from "./ui-style.ts";
+import { chip, formatDuration, runDisplayName, treeGuide } from "./ui-style.ts";
 
 /**
  * The durable flow card: the `pi-flows.run` session entry (the entry type
@@ -94,14 +94,13 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		...budgetDisclosureLines(data.budgetCeilings).map((line) => theme.fg("muted", line)),
 	];
 
-	const name = (result: FlowRunEntryResult) => result.role ? `${result.role} (${result.agent})` : result.agent;
-	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => name(result).length)));
+	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => runDisplayName(result).length)));
 	data.results.forEach((result, index) => {
 		const failed = entryResultFailed(result);
 		const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
 		// The duration track carries the row's outcome color so a failed child
 		// reads as a red bar at a glance, not only as a trailing error code.
-		let line = `${theme.fg("dim", treeGuide(index, data.results.length))} ${icon} ${theme.fg("accent", name(result).padEnd(nameWidth))}`;
+		let line = `${theme.fg("dim", treeGuide(index, data.results.length))} ${icon} ${theme.fg("accent", runDisplayName(result).padEnd(nameWidth))}`;
 		if (!options.omitDurationBars) line += ` ${theme.fg(failed ? "error" : "muted", durationBar(result.durationMs ?? 0, maxDuration))}`;
 		const meta: string[] = [];
 		if (result.durationMs) meta.push(formatDuration(result.durationMs));
@@ -126,6 +125,13 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		// The displayed path stays home-redacted; an absolute path additionally
 		// becomes an OSC 8 file:// hyperlink, which supporting terminals open on
 		// click and every other terminal renders as the plain text.
+		//
+		// Deliberate: the URL carries the real path. The redaction invariant
+		// protects returned content/details — what leaves the flow — while this
+		// link exists only in the local terminal stream, and a file:// URL built
+		// from the redacted `~` form would not open. The cost is that raw
+		// terminal captures (asciinema, script) record the un-redacted path
+		// inside the invisible escape.
 		const display = safePath(data.trace.traceFile) ?? data.trace.traceFile;
 		const link = data.trace.traceFile.startsWith("/") ? hyperlink(display, `file://${encodeURI(data.trace.traceFile)}`) : display;
 		lines.push(`${theme.fg("muted", "trace:")} ${theme.fg("dim", link)} ${theme.fg(healthColor, `(${data.trace.health})`)}`);
@@ -135,19 +141,29 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 }
 
 /**
- * Per-entry cache of the rendered chart. Keyed weakly by the entry data
- * object so a session's cards encode their PNG once, and keyed on the theme
- * reference so a theme switch re-rasterizes with the new colors. Caching the
- * Image component keeps its Kitty image ID stable across repaints, which is
- * what stops the terminal from re-receiving the bitmap every frame.
+ * Per-entry cache of the rendered chart, weakly keyed by the entry data
+ * object so a session's cards encode their PNG once. Caching the Image
+ * component keeps its Kitty image ID stable across repaints, which is what
+ * stops the terminal from re-receiving the bitmap every frame.
+ *
+ * Staleness is keyed on a resolved theme *color*, not the theme reference:
+ * pi hands every renderer one stable proxy whose target swaps on a theme
+ * switch, so object identity would neither invalidate on switch nor ever
+ * miss between repaints. One color's ANSI is the cheapest observable that
+ * changes exactly when the palette does.
  */
-const ganttCache = new WeakMap<object, { theme: Theme; gantt: GanttImage | undefined; image?: Image }>();
+const ganttCache = new WeakMap<object, { colorKey: string; gantt: GanttImage | undefined; image?: Image }>();
+
+function themeColorKey(theme: Theme): string {
+	return (theme as { getFgAnsi?: (color: string) => string }).getFgAnsi?.("success") ?? "";
+}
 
 function ganttImageFor(data: FlowRunEntryData, theme: Theme): Image | undefined {
 	if (!getCapabilities().images) return undefined;
+	const colorKey = themeColorKey(theme);
 	let cached = ganttCache.get(data);
-	if (!cached || cached.theme !== theme) {
-		cached = { theme, gantt: flowGanttPng(data.results, theme) };
+	if (!cached || cached.colorKey !== colorKey) {
+		cached = { colorKey, gantt: flowGanttPng(data.results, theme) };
 		ganttCache.set(data, cached);
 	}
 	if (!cached.gantt) return undefined;
