@@ -566,7 +566,13 @@ test("code-review: every dishonored wrap-up in the batch is demoted, not only th
 		{ preset: "code-review", task, maxGeneratedTokens: 10, concurrency: 2, timeoutMs: 8_000 },
 		{
 			overwatch: [
-				{ whenTaskIncludes: "Standards review", reply: "ack", wrapUpReply: "standards wrapped up in prose", holdOpenMs: 6_000 },
+				// Standards' first turn is delayed so spec's zero-usage ack always
+				// settles while the shared budget is untouched. Without the delay, a
+				// slow runner can process the ack inside the past-ceiling window that
+				// standards' own prose turn opens, hard-stopping spec before its
+				// notice echo — BUDGET_EXCEEDED instead of the validation path this
+				// test exists to pin.
+				{ whenTaskIncludes: "Standards review", reply: "ack", delayBeforeReplyMs: 500, wrapUpReply: "standards wrapped up in prose", holdOpenMs: 6_000 },
 				{ whenTaskIncludes: "Spec review", omitUsage: true, reply: "ack", wrapUpReply: "spec wrapped up in prose", holdOpenMs: 6_000 },
 			],
 		},
