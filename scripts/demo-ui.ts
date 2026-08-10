@@ -75,9 +75,12 @@ function timeline(t: number): any {
 			steps: [tool("read", { path: "src/auth/tokens.ts" }), tool("grep", { pattern: "clockSkew" }), say("Checked rotation edge cases; no regression found.")],
 			finalUsage: usage(15200, 2900, 0.11),
 		},
+		// Everyone succeeds: these recordings lead the README and PRs, and a
+		// scripted failure there reads as a buggy extension, not as a feature.
+		// The failure treatment is covered by tests and the offline snapshots.
 		{
-			agent: "strategist", start: 8, end: 12, fail: true,
-			steps: [say("Drafting the rollout sequence…")],
+			agent: "strategist", start: 8, end: 12, fail: false,
+			steps: [say("Drafting the rollout sequence…"), say("Rollout: stage by auth-surface risk, canary first.")],
 			finalUsage: usage(2100, 300, 0.02),
 		},
 	];
@@ -150,7 +153,7 @@ async function cardDemo(): Promise<void> {
 	const data: FlowRunEntryData = {
 		version: "demo",
 		mode: "parallel",
-		status: "partial",
+		status: "ok",
 		results: final.results.map((result: any) => ({
 			agent: result.agent,
 			agentSource: result.agentSource,
