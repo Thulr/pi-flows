@@ -92,16 +92,20 @@ export function runStateBar(theme: Theme, states: RunState[], maxWidth = 16): st
 const SPARK_LEVELS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 
 /**
- * Block-character sparkline of a small series, scaled to the window's own
- * maximum — the shape of the curve is the signal (is spend accelerating?),
- * not its absolute height. A flat-zero series renders as a baseline rather
- * than nothing, so "sampled and idle" stays distinguishable from "no data".
+ * Block-character sparkline of a small series, normalized to the window's
+ * own min–max range — the shape of the curve is the signal (is spend
+ * accelerating?), not its absolute height. Min-relative, not zero-relative,
+ * because the series is cumulative and the retained window eventually rolls
+ * past its zero baseline: $10.00 → $10.10 must still show its slope, not
+ * saturate at the top. A window with no growth sits on the baseline, so
+ * "sampled and idle" stays distinguishable from "no data".
  */
 export function sparkline(values: number[], width = 24): string {
 	const window = values.slice(-Math.max(0, width));
 	if (window.length === 0) return "";
-	const max = Math.max(...window);
-	return window.map((value) => SPARK_LEVELS[max <= 0 ? 0 : Math.round((Math.min(Math.max(value, 0), max) / max) * (SPARK_LEVELS.length - 1))]).join("");
+	const min = Math.min(...window);
+	const span = Math.max(...window) - min;
+	return window.map((value) => SPARK_LEVELS[span <= 0 ? 0 : Math.round(((Math.min(Math.max(value, min), min + span) - min) / span) * (SPARK_LEVELS.length - 1))]).join("");
 }
 
 /**
