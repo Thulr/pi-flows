@@ -61,6 +61,11 @@ test("an absolute trace path renders as an OSC 8 file:// hyperlink; a relative o
 	const absolute = flowCardLines(entryData({ trace: { traceFile: "/work/audit/flow trace.jsonl", health: "complete" } }), theme, false).join("\n");
 	assert.match(absolute, /\]8;;file:\/\/\/work\/audit\/flow%20trace\.jsonl/, "the URL is the real path, URI-encoded");
 
+	// URL delimiters in a filename must be percent-encoded or the terminal's
+	// handler opens a fragment/query on the wrong path.
+	const tricky = flowCardLines(entryData({ trace: { traceFile: "/work/run #2?.jsonl", health: "complete" } }), theme, false).join("\n");
+	assert.match(tricky, /\]8;;file:\/\/\/work\/run%20%232%3F\.jsonl/, "# and ? are escaped in the href");
+
 	// The trace sink persists paths already home-redacted (`~/...`), so the
 	// common case must expand back to the real home for the URL while the
 	// display keeps the redacted form.

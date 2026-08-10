@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Image, Text, getCapabilities, hyperlink } from "@earendil-works/pi-tui";
 import { budgetDisclosureLines, formatBudgetCeiling } from "./budget-disclosure.ts";
@@ -134,9 +135,12 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		// file:// URL built from the redacted `~` form would not open. The cost
 		// is that raw terminal captures (asciinema, script) record the
 		// un-redacted path inside the invisible escape.
+		// pathToFileURL, not encodeURI: the latter leaves URL delimiters like
+		// `#` and `?` bare, and a trace filename containing one would open as a
+		// fragment/query on the wrong path.
 		const display = safePath(data.trace.traceFile) ?? data.trace.traceFile;
 		const target = expandSafePath(data.trace.traceFile);
-		const link = target ? hyperlink(display, `file://${encodeURI(target)}`) : display;
+		const link = target ? hyperlink(display, pathToFileURL(target).href) : display;
 		lines.push(`${theme.fg("muted", "trace:")} ${theme.fg("dim", link)} ${theme.fg(healthColor, `(${data.trace.health})`)}`);
 	}
 	if (!expanded && data.results.some(entryResultFailed)) lines.push(theme.fg("muted", "ctrl+o for failure detail"));

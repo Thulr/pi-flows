@@ -96,17 +96,24 @@ export class FlowRegistry {
 	 * uniform time grid (oldest first) so equal spacing means equal time.
 	 * Between samples the curve holds the last known total — spend is a step
 	 * function, not an interpolation.
+	 *
+	 * For a flow that is still live the grid ends at *now*, not at the last
+	 * sample: a child that spends and then goes quiet must render as a long
+	 * flat tail, or stopped spend keeps looking like current spend at the
+	 * right edge. A settled flow's grid ends on its forced final sample.
 	 */
 	spendHistory(flow: LiveFlow): number[] | undefined {
 		const samples = this.spendSamples.get(flow);
 		if (!samples || samples.length === 0) return undefined;
 		const first = samples[0]!;
 		const last = samples[samples.length - 1]!;
-		if (samples.length === 1 || last.at <= first.at) return [last.cost];
+		const live = [...this.flows.values()].includes(flow);
+		const end = live ? Math.max(this.now(), last.at) : last.at;
+		if (end <= first.at) return [last.cost];
 		const series: number[] = [];
 		let index = 0;
 		for (let point = 0; point < SPEND_SERIES_POINTS; point++) {
-			const time = first.at + ((last.at - first.at) * point) / (SPEND_SERIES_POINTS - 1);
+			const time = first.at + ((end - first.at) * point) / (SPEND_SERIES_POINTS - 1);
 			while (index + 1 < samples.length && samples[index + 1]!.at <= time) index++;
 			series.push(samples[index]!.cost);
 		}

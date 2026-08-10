@@ -84,13 +84,31 @@ test("spend sampling decimates inside the interval and holds quiet time flat on 
 	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.2 } })]));
 	clock = 2000;
 	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
-	assert.deepEqual(registry.spendHistory(flow), [0.1], "updates inside the interval are decimated");
+	assert.deepEqual([...new Set(registry.spendHistory(flow))], [0.1], "updates inside the interval are decimated; the live grid holds the one sample flat");
 	clock = 3000;
 	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.4 } })]));
 	const series = registry.spendHistory(flow)!;
 	assert.equal(series[0], 0.1);
 	assert.equal(series[series.length - 1]!, 0.4, "settle skips decimation so the curve ends on the true total");
 	assert.ok(!series.includes(0.2) && !series.includes(0.3), "decimated samples never reach a reader");
+});
+
+test("a live flow's grid extends to now, so stopped spend renders as a flat tail", () => {
+	let clock = 0;
+	const registry = new FlowRegistry(1000, () => clock);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	clock = 1000;
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
+	clock = 11_000; // ten quiet seconds, no events
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series[series.length - 1]!, 0.3);
+	assert.ok(series.filter((value) => value === 0.3).length >= 20, "the quiet time must dominate the grid as a flat tail, not vanish");
+
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.3 } })]));
+	clock = 60_000;
+	const settled = registry.spendHistory(flow)!;
+	assert.equal(settled[settled.length - 1]!, 0.3, "a settled flow's grid ends on its final sample, not a marching now");
 });
 
 test("a wall clock stepping backwards neither suppresses sampling nor disorders the series", () => {
