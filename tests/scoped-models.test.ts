@@ -45,16 +45,29 @@ test("currentModelRoster derives fast and deep from the session scope, not the w
 	assert.equal(unscoped.deep.model, "test-provider/outside-scope");
 	assert.equal(unscoped.fast.model, "test-provider/outside-cheap");
 
-	// Older pi runtimes have no `scopedModels` at all; entries whose shape is
-	// foreign are skipped rather than trusted.
+	// Older pi runtimes have no `scopedModels` at all: genuinely unscoped.
 	const absent = currentModelRoster({ modelRegistry: WIDE_REGISTRY, model: { provider: "test-provider", id: "scoped" } });
 	assert.equal(absent.deep.model, "test-provider/outside-scope");
+
+	// A NON-empty scope whose entries this version cannot read is a scope the
+	// user configured, not "no scope": it must fail closed onto the session
+	// model, never widen back to the full registry (version-skew safety).
 	const malformed = currentModelRoster({
 		modelRegistry: WIDE_REGISTRY,
 		model: { provider: "test-provider", id: "scoped" },
 		scopedModels: [null, { model: { provider: 7, id: "scoped" } }] as never,
 	});
-	assert.equal(malformed.deep.model, "test-provider/outside-scope", "a scope with no readable entry falls back to unscoped");
+	assert.equal(malformed.deep.model, "test-provider/scoped", "an unreadable scope anchors to the session model rather than escaping");
+	assert.equal(malformed.fast.model, "test-provider/scoped");
+
+	// Entries that do decode still scope precisely; unreadable siblings are
+	// skipped without widening or blanking the scope.
+	const partial = currentModelRoster({
+		modelRegistry: WIDE_REGISTRY,
+		model: { provider: "test-provider", id: "scoped" },
+		scopedModels: [null, { model: { provider: 7, id: "x" } }, { model: { provider: "test-provider", id: "scoped" } }] as never,
+	});
+	assert.equal(partial.deep.model, "test-provider/scoped");
 });
 
 test("no automatically tiered child receives a model excluded from the session scope", async () => {

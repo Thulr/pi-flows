@@ -136,15 +136,27 @@ interface RosterContext {
 }
 
 /**
+ * Stands in for a scope entry whose shape this version could not read. It can
+ * match no registry reference (those are always `provider/id`), so a scope
+ * that decodes to nothing still constrains derivation — the stranded-scope
+ * branch anchors the automatic tiers to the session model — instead of
+ * silently widening back to the full registry.
+ */
+export const UNREADABLE_SCOPED_MODEL = "(unreadable scoped-model entry)";
+
+/**
  * The scope's model references, in the `provider/id` form the roster ranks by.
  *
  * Entries whose shape is foreign are skipped rather than trusted — this reads a
- * property that only newer pi runtimes expose, so a partial or unexpected shape
- * degrades to "unscoped" (the pre-scope behavior) instead of throwing or, worse,
- * deriving a roster from values that are not model references.
+ * property that only newer pi runtimes expose. An absent or empty list means no
+ * scoping is configured. A NON-empty list whose entries all fail to decode is
+ * different: the user configured a scope, this version just cannot read it, and
+ * returning [] would fail open — ranking the full registry and dispatching
+ * automatic tiers to models the scope may exclude. The sentinel keeps the scope
+ * fact alive while decoding nothing.
  */
 export function scopedModelReferences(scopedModels: RosterContext["scopedModels"]): string[] {
-	if (!Array.isArray(scopedModels)) return [];
+	if (!Array.isArray(scopedModels) || scopedModels.length === 0) return [];
 	const references: string[] = [];
 	for (const entry of scopedModels) {
 		const model = entry?.model;
@@ -152,7 +164,7 @@ export function scopedModelReferences(scopedModels: RosterContext["scopedModels"
 			references.push(`${model.provider}/${model.id}`);
 		}
 	}
-	return references;
+	return references.length ? references : [UNREADABLE_SCOPED_MODEL];
 }
 
 /**
