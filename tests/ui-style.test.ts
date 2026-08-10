@@ -102,9 +102,10 @@ test("treeGuide closes the tree on the last row", () => {
 	assert.equal(treeGuide(0, 1), "└");
 });
 
-test("formatDuration switches to minutes past one minute", () => {
+test("formatDuration switches to minutes past one minute and carries rounded seconds", () => {
 	assert.equal(formatDuration(1500), "1.5s");
 	assert.equal(formatDuration(73000), "1m 13s");
+	assert.equal(formatDuration(119500), "2m 0s", "rounding must carry into minutes, never emit 1m 60s");
 });
 
 test("boxFrame keeps every line at the outer width, with and without a title", () => {

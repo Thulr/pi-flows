@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import os from "node:os";
 import { after, test } from "node:test";
 import { Text, resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
+import { expandSafePath } from "../extensions/pi-flows/sanitize.ts";
 import { appendFlowSessionEntry } from "../extensions/pi-flows/ui.ts";
 import { durationBar, flowCardLines, renderFlowCard, type FlowRunEntryData } from "../extensions/pi-flows/ui-flow-card.ts";
 
@@ -58,8 +60,26 @@ test("flow card expanded view spells out failures; trace pointer is linked with 
 test("an absolute trace path renders as an OSC 8 file:// hyperlink; a relative one stays plain", () => {
 	const absolute = flowCardLines(entryData({ trace: { traceFile: "/work/audit/flow trace.jsonl", health: "complete" } }), theme, false).join("\n");
 	assert.match(absolute, /\]8;;file:\/\/\/work\/audit\/flow%20trace\.jsonl/, "the URL is the real path, URI-encoded");
+
+	// The trace sink persists paths already home-redacted (`~/...`), so the
+	// common case must expand back to the real home for the URL while the
+	// display keeps the redacted form.
+	const home = os.homedir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const redacted = flowCardLines(entryData({ trace: { traceFile: "~/audit/flow-trace.jsonl", health: "complete" } }), theme, false).join("\n");
+	assert.match(redacted, new RegExp(`\\]8;;file://${home}/audit/flow-trace\\.jsonl`), "the redacted form expands to the real home in the URL");
+	assert.match(redacted, /~\/audit\/flow-trace\.jsonl/, "the visible text stays redacted");
+
 	const relative = flowCardLines(entryData({ trace: { traceFile: "audit/flow-trace.jsonl", health: "complete" } }), theme, false).join("\n");
 	assert.doesNotMatch(relative, /\]8;;/, "a relative path has no resolvable file URL to link");
+});
+
+test("expandSafePath inverts only the two absolute forms, never guessing", () => {
+	assert.equal(expandSafePath("/work/trace.jsonl"), "/work/trace.jsonl");
+	assert.equal(expandSafePath("~/trace.jsonl"), `${os.homedir()}/trace.jsonl`);
+	assert.equal(expandSafePath("~"), os.homedir());
+	assert.equal(expandSafePath("~other/trace.jsonl"), null, "another user's home is not ours to expand");
+	assert.equal(expandSafePath("audit/trace.jsonl"), null);
+	assert.equal(expandSafePath(undefined), null);
 });
 
 test("flow card marks error status with the flow error code", () => {

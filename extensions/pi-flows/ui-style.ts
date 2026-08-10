@@ -120,8 +120,10 @@ export function treeGuide(index: number, total: number): string {
 
 export function formatDuration(durationMs: number): string {
 	if (durationMs >= 60000) {
-		const minutes = Math.floor(durationMs / 60000);
-		return `${minutes}m ${Math.round((durationMs - minutes * 60000) / 1000)}s`;
+		// Round to whole seconds first so the carry lands in minutes: rounding
+		// the remainder alone turns 119.5s into the impossible "1m 60s".
+		const totalSeconds = Math.round(durationMs / 1000);
+		return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 	}
 	return `${(durationMs / 1000).toFixed(1)}s`;
 }

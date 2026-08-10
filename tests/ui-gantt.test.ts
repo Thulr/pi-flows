@@ -110,4 +110,12 @@ test("the Gantt image and its Kitty ID are cached per entry, invalidated by pale
 	const red = { ...theme, getFgAnsi: () => "[38;2;247;118;142m" };
 	const retinted = renderFlowCard(data, false, red) as Container;
 	assert.notEqual(imageOf(retinted), imageOf(first), "a palette change re-rasterizes with the new colors");
+
+	// The key must watch every color the chart draws with, not just one:
+	// success stays identical here and only error moves.
+	const errorOnly = { ...theme, getFgAnsi: (color: string) => (color === "error" ? "[38;2;200;0;0m" : "[38;2;158;206;106m") };
+	const greenish = { ...theme, getFgAnsi: () => "[38;2;158;206;106m" };
+	const base = renderFlowCard(data, false, greenish) as Container;
+	const errorShift = renderFlowCard(data, false, errorOnly) as Container;
+	assert.notEqual(imageOf(errorShift), imageOf(base), "a change to a non-success chart color must also invalidate");
 });

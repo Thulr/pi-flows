@@ -29,8 +29,11 @@ export function flowSpentCost(details: FlowDetails): number {
 	return details.results.reduce((sum, result) => sum + (result.usage?.cost || 0), 0);
 }
 
-/** Spend samples the sparkline can draw; enough for a ~24s window at the default cadence. */
-const SPEND_SAMPLES = 24;
+/** Points in the resampled spend series a reader gets — the sparkline's width. */
+const SPEND_SERIES_POINTS = 24;
+
+/** Raw timestamped samples retained per flow (~4 minutes at the default cadence). */
+const SPEND_RAW_SAMPLES = 240;
 
 /**
  * The live-flow registry. Its unit is a **flow** — one `flow` tool call and
@@ -44,14 +47,23 @@ const SPEND_SAMPLES = 24;
  * between openings. Sampling piggybacks on the update traffic children already
  * stream (decimated to one sample per `spendSampleIntervalMs`), so no timer
  * exists and the curve accrues whether or not any observer is watching.
+ *
+ * Because that traffic is irregular, samples keep their timestamps and
+ * {@link spendHistory} resamples onto a uniform time grid before anyone
+ * plots them: a sparkline renders points at equal horizontal spacing, so
+ * without the grid a quiet ten seconds and a busy one would look identical
+ * and the burn-rate reading would lie.
  */
 export class FlowRegistry {
 	private readonly flows = new Map<string, LiveFlow>();
 	private readonly listeners = new Set<() => void>();
-	private readonly spendSamples = new WeakMap<LiveFlow, { at: number; history: number[] }>();
+	private readonly spendSamples = new WeakMap<LiveFlow, Array<{ at: number; cost: number }>>();
 	private lastSettled: LiveFlow | undefined;
 
-	constructor(private readonly spendSampleIntervalMs = 1000) {}
+	constructor(
+		private readonly spendSampleIntervalMs = 1000,
+		private readonly now: () => number = Date.now,
+	) {}
 
 	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true, budget?: Budget): void {
 		const flow = { mode, details, redactSecrets, budget };
@@ -79,19 +91,41 @@ export class FlowRegistry {
 		this.notify();
 	}
 
-	/** The sampled spend curve for a flow this registry has seen, oldest first. */
+	/**
+	 * The spend curve for a flow this registry has seen, resampled onto a
+	 * uniform time grid (oldest first) so equal spacing means equal time.
+	 * Between samples the curve holds the last known total — spend is a step
+	 * function, not an interpolation.
+	 */
 	spendHistory(flow: LiveFlow): number[] | undefined {
-		return this.spendSamples.get(flow)?.history;
+		const samples = this.spendSamples.get(flow);
+		if (!samples || samples.length === 0) return undefined;
+		const first = samples[0]!;
+		const last = samples[samples.length - 1]!;
+		if (samples.length === 1 || last.at <= first.at) return [last.cost];
+		const series: number[] = [];
+		let index = 0;
+		for (let point = 0; point < SPEND_SERIES_POINTS; point++) {
+			const time = first.at + ((last.at - first.at) * point) / (SPEND_SERIES_POINTS - 1);
+			while (index + 1 < samples.length && samples[index + 1]!.at <= time) index++;
+			series.push(samples[index]!.cost);
+		}
+		return series;
 	}
 
 	private sampleSpend(flow: LiveFlow, force = false): void {
-		const now = Date.now();
-		const sample = this.spendSamples.get(flow) ?? { at: Number.NEGATIVE_INFINITY, history: [] };
-		if (!force && now - sample.at < this.spendSampleIntervalMs) return;
-		sample.at = now;
-		sample.history.push(flowSpentCost(flow.details));
-		if (sample.history.length > SPEND_SAMPLES) sample.history.shift();
-		this.spendSamples.set(flow, sample);
+		const samples = this.spendSamples.get(flow) ?? [];
+		const latest = samples[samples.length - 1];
+		// Clamped to the last sample so a wall clock stepping backwards cannot
+		// produce out-of-order timestamps, which the resampler's step walk
+		// requires monotone. Non-forced samples stay decimated until the clock
+		// recovers past the old time plus the interval — an accepted gap; the
+		// forced settle sample still lands, so the curve always ends true.
+		const at = Math.max(this.now(), latest?.at ?? Number.NEGATIVE_INFINITY);
+		if (!force && latest !== undefined && at - latest.at < this.spendSampleIntervalMs) return;
+		samples.push({ at, cost: flowSpentCost(flow.details) });
+		if (samples.length > SPEND_RAW_SAMPLES) samples.shift();
+		this.spendSamples.set(flow, samples);
 	}
 
 	activeFlows(): LiveFlow[] {

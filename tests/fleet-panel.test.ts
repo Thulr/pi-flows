@@ -57,25 +57,53 @@ test("budgetLine renders burn-down only when a cost ceiling exists", () => {
 	assert.match(zero, /\$0\.0000 \/ \$0\.00 budget/);
 });
 
-test("the registry samples the spend curve on update traffic, so it exists before any panel opens", () => {
-	const registry = new FlowRegistry(0);
+test("the registry samples the spend curve on update traffic, resampled onto a uniform time grid", () => {
+	let clock = 0;
+	const registry = new FlowRegistry(1000, () => clock);
 	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
 	const flow = registry.activeFlows()[0]!;
+	clock = 1000;
 	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
+	clock = 2000;
 	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.5 } })]));
-	assert.deepEqual(registry.spendHistory(flow), [0.1, 0.3, 0.5], "start, each update, and the final settle each leave a sample");
+
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series.length, 24, "readers get a fixed-width series where equal spacing means equal time");
+	assert.equal(series[0], 0.1);
+	assert.equal(series[series.length - 1]!, 0.5, "the curve ends on the true settle total");
+	assert.ok(series.includes(0.3), "intermediate samples appear at their place on the time grid");
 	assert.equal(registry.lastSettledFlow(), flow, "the curve survives into the last-settled view");
 });
 
-test("spend sampling decimates to its interval but always records the settle total", () => {
-	const registry = new FlowRegistry(60_000);
+test("spend sampling decimates inside the interval and holds quiet time flat on the grid", () => {
+	let clock = 0;
+	const registry = new FlowRegistry(60_000, () => clock);
 	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
 	const flow = registry.activeFlows()[0]!;
+	clock = 1000;
 	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.2 } })]));
+	clock = 2000;
 	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
 	assert.deepEqual(registry.spendHistory(flow), [0.1], "updates inside the interval are decimated");
+	clock = 3000;
 	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.4 } })]));
-	assert.deepEqual(registry.spendHistory(flow), [0.1, 0.4], "the curve must end on the true total");
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series[0], 0.1);
+	assert.equal(series[series.length - 1]!, 0.4, "settle skips decimation so the curve ends on the true total");
+	assert.ok(!series.includes(0.2) && !series.includes(0.3), "decimated samples never reach a reader");
+});
+
+test("a wall clock stepping backwards neither suppresses sampling nor disorders the series", () => {
+	let clock = 10_000;
+	const registry = new FlowRegistry(1000, () => clock);
+	registry.start("flow-1", "parallel", details([result({ usage: { ...usage, cost: 0.1 } })]));
+	const flow = registry.activeFlows()[0]!;
+	clock = 0; // e.g. NTP correction
+	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.2 } })]));
+	clock = 500;
+	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.3 } })]));
+	const series = registry.spendHistory(flow)!;
+	assert.equal(series[series.length - 1]!, 0.3, "the curve still ends on the true total after a backwards step");
 });
 
 test("spend sparkline shows the burn curve, and carries the total only without a budget line", () => {

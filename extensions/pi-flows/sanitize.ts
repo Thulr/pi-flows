@@ -31,6 +31,23 @@ export function safePath(candidate: string | null | undefined): string | null {
 	return candidate;
 }
 
+/**
+ * Inverse of {@link safePath}, for *local* addressing only: persisted paths
+ * arrive in their redacted `~/…` form, and a `file://` URL built from that
+ * form does not open. Returns the absolute path, or null when the input is
+ * not absolute in either form — a caller with a null gets no link, never a
+ * guessed path.
+ */
+export function expandSafePath(candidate: string | null | undefined): string | null {
+	if (!candidate) return null;
+	if (candidate.startsWith("/")) return candidate;
+	if (candidate === "~" || candidate.startsWith("~/")) {
+		const home = os.homedir();
+		return home ? `${home}${candidate.slice(1)}` : null;
+	}
+	return null;
+}
+
 export function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

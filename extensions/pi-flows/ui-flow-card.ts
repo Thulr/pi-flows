@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Image, Text, getCapabilities, hyperlink } from "@earendil-works/pi-tui";
 import { budgetDisclosureLines, formatBudgetCeiling } from "./budget-disclosure.ts";
-import { safePath } from "./sanitize.ts";
+import { expandSafePath, safePath } from "./sanitize.ts";
 import { formatTokens } from "./trace.ts";
 import type { BudgetCeiling, FlowMode, UsageStats } from "./types.ts";
 import { flowGanttPng, type GanttImage } from "./ui-gantt.ts";
@@ -122,18 +122,21 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 
 	if (data.trace) {
 		const healthColor = data.trace.health === "complete" ? "success" : "warning";
-		// The displayed path stays home-redacted; an absolute path additionally
-		// becomes an OSC 8 file:// hyperlink, which supporting terminals open on
-		// click and every other terminal renders as the plain text.
+		// The displayed path stays home-redacted; a path that is absolute in
+		// either form — `/…`, or the `~/…` shape the trace sink persists —
+		// additionally becomes an OSC 8 file:// hyperlink, which supporting
+		// terminals open on click and every other terminal renders as the
+		// plain text.
 		//
-		// Deliberate: the URL carries the real path. The redaction invariant
-		// protects returned content/details — what leaves the flow — while this
-		// link exists only in the local terminal stream, and a file:// URL built
-		// from the redacted `~` form would not open. The cost is that raw
-		// terminal captures (asciinema, script) record the un-redacted path
-		// inside the invisible escape.
+		// Deliberate: the URL carries the real, expanded path. The redaction
+		// invariant protects returned content/details — what leaves the flow —
+		// while this link exists only in the local terminal stream, and a
+		// file:// URL built from the redacted `~` form would not open. The cost
+		// is that raw terminal captures (asciinema, script) record the
+		// un-redacted path inside the invisible escape.
 		const display = safePath(data.trace.traceFile) ?? data.trace.traceFile;
-		const link = data.trace.traceFile.startsWith("/") ? hyperlink(display, `file://${encodeURI(data.trace.traceFile)}`) : display;
+		const target = expandSafePath(data.trace.traceFile);
+		const link = target ? hyperlink(display, `file://${encodeURI(target)}`) : display;
 		lines.push(`${theme.fg("muted", "trace:")} ${theme.fg("dim", link)} ${theme.fg(healthColor, `(${data.trace.health})`)}`);
 	}
 	if (!expanded && data.results.some(entryResultFailed)) lines.push(theme.fg("muted", "ctrl+o for failure detail"));
@@ -146,16 +149,19 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
  * component keeps its Kitty image ID stable across repaints, which is what
  * stops the terminal from re-receiving the bitmap every frame.
  *
- * Staleness is keyed on a resolved theme *color*, not the theme reference:
- * pi hands every renderer one stable proxy whose target swaps on a theme
- * switch, so object identity would neither invalidate on switch nor ever
- * miss between repaints. One color's ANSI is the cheapest observable that
- * changes exactly when the palette does.
+ * Staleness is keyed on the resolved theme *colors*, not the theme
+ * reference: pi hands every renderer one stable proxy whose target swaps on
+ * a theme switch, so object identity would neither invalidate on switch nor
+ * ever miss between repaints. The key concatenates every color the chart
+ * actually draws with, so any palette change that could alter the bitmap
+ * re-rasterizes and no other change can.
  */
 const ganttCache = new WeakMap<object, { colorKey: string; gantt: GanttImage | undefined; image?: Image }>();
 
 function themeColorKey(theme: Theme): string {
-	return (theme as { getFgAnsi?: (color: string) => string }).getFgAnsi?.("success") ?? "";
+	const getFgAnsi = (theme as { getFgAnsi?: (color: string) => string }).getFgAnsi;
+	if (!getFgAnsi) return "";
+	return ["success", "error", "muted", "dim"].map((color) => getFgAnsi.call(theme, color)).join("|");
 }
 
 function ganttImageFor(data: FlowRunEntryData, theme: Theme): Image | undefined {
