@@ -76,6 +76,7 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 			budgetCeiling: result.error?.budgetCeiling,
 			model: result.model,
 			durationMs: result.durationMs,
+			startedAtMs: result.startedAtMs,
 			usage: result.usage,
 		})),
 	});

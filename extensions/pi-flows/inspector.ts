@@ -1,9 +1,10 @@
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
 import { isFailed, redactText } from "./sanitize.ts";
 import { formatUsage } from "./trace.ts";
 import type { Budget, FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
+import { boxFrame, chip, stateColor } from "./ui-style.ts";
 
 export interface LiveFlow {
 	mode: FlowMode;
@@ -185,29 +186,24 @@ class FlowAgentViewer {
 		if (width <= 0) return [];
 		if (width < 3) return [truncateToWidth("…", width, "")];
 		const result = this.currentResult();
-		const innerWidth = width - 2;
-		const border = (text: string) => this.theme.fg("border", text);
-		const row = (content = "") => {
-			const clipped = truncateToWidth(content, innerWidth, "…");
-			return `${border("│")}${clipped}${" ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)))}${border("│")}`;
-		};
-		const separator = () => `${border("├")}${border("─".repeat(innerWidth))}${border("┤")}`;
-		const lines = [border(`╭${"─".repeat(innerWidth)}╮`)];
+		const frame = boxFrame(this.theme, width - 2);
+		const row = frame.row;
+		const separator = frame.separator;
+		const lines = [frame.top("flow inspect")];
 
 		if (!result) {
-			lines.push(row(" Child details are unavailable."), border(`╰${"─".repeat(innerWidth)}╯`));
+			lines.push(row("Child details are unavailable."), frame.bottom());
 			return lines;
 		}
 
 		const state = flowAgentState(result);
-		const stateColor = state === "failed" ? "error" : state === "completed" ? "success" : state === "queued" ? "muted" : "warning";
 		const usage = oneLine(formatUsage(result.usage, result.model, result.durationMs), 120, this.target.flow.redactSecrets);
-		lines.push(row(` ${this.theme.fg("accent", this.theme.bold(oneLine(result.agent, 70, this.target.flow.redactSecrets)))} ${this.theme.fg(stateColor, state)}`));
-		lines.push(row(` ${this.theme.fg("dim", `${this.target.flow.mode}${usage ? ` · ${usage}` : ""}`)}`));
+		lines.push(row(`${this.theme.fg("accent", this.theme.bold(oneLine(result.agent, 70, this.target.flow.redactSecrets)))} ${chip(this.theme, stateColor(state), state)}`));
+		lines.push(row(this.theme.fg("dim", `${this.target.flow.mode}${usage ? ` · ${usage}` : ""}`)));
 		lines.push(separator());
-		lines.push(row(` ${this.theme.fg("muted", "Task ·")} ${this.theme.fg("dim", oneLine(result.task || "(no task)", 200, this.target.flow.redactSecrets))}`));
+		lines.push(row(`${this.theme.fg("muted", "Task ·")} ${this.theme.fg("dim", oneLine(result.task || "(no task)", 200, this.target.flow.redactSecrets))}`));
 		lines.push(separator());
-		lines.push(row(` ${this.theme.fg("muted", "Recent activity")}`));
+		lines.push(row(this.theme.fg("muted", "Recent activity")));
 
 		const activity = this.activity();
 		const capacity = 5;
@@ -215,18 +211,18 @@ class FlowAgentViewer {
 		const end = Math.max(0, activity.length - this.scrollFromBottom);
 		const start = Math.max(0, end - capacity);
 		const visible = activity.slice(start, end);
-		if (visible.length === 0) lines.push(row(` ${this.theme.fg("dim", state === "queued" ? "Waiting to start…" : "Waiting for activity…")}`));
+		if (visible.length === 0) lines.push(row(this.theme.fg("dim", state === "queued" ? "Waiting to start…" : "Waiting for activity…")));
 		for (const item of visible) {
 			const prefix = item.kind === "tool" ? "→" : item.kind === "result" ? "←" : "•";
-			lines.push(row(` ${this.theme.fg(item.kind === "tool" ? "accent" : "muted", `${prefix} ${item.text}`)}`));
+			lines.push(row(this.theme.fg(item.kind === "tool" ? "accent" : "muted", `${prefix} ${item.text}`)));
 		}
-		if (activity.length > capacity) lines.push(row(` ${this.theme.fg("dim", `${start + 1}-${end} of ${activity.length}`)}`));
+		if (activity.length > capacity) lines.push(row(this.theme.fg("dim", `${start + 1}-${end} of ${activity.length}`)));
 		lines.push(separator());
 		const up = this.keyText("tui.select.up", "↑");
 		const down = this.keyText("tui.select.down", "↓");
 		const close = this.keyText("tui.select.cancel", "Esc");
-		lines.push(row(` ${this.theme.fg("dim", `${up}/${down} scroll · End latest · ${close} close`)}`));
-		lines.push(border(`╰${"─".repeat(innerWidth)}╯`));
+		lines.push(row(this.theme.fg("dim", `${up}/${down} scroll · End latest · ${close} close`)));
+		lines.push(frame.bottom());
 		return lines;
 	}
 

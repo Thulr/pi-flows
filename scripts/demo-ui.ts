@@ -128,12 +128,14 @@ async function liveDemo(): Promise<void> {
 
 async function fleetDemo(): Promise<void> {
 	const registry = new FlowRegistry();
-	const budget = { maxCostUsd: 1.0, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
+	const snapshot = { maxCostUsd: 1.0, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
+	// Budget-shaped: the panel reads burn-down through snapshot(), never the fields.
+	const budget = { snapshot: () => ({ ...snapshot }) } as any;
 	registry.start("demo-flow", "parallel", timeline(0), true, budget);
 	const panel = new FleetPanel({ requestRender: () => {} } as any, theme, { matches: () => false, getKeys: () => ["esc"] } as any, registry, () => {});
 	for (let t = 0; t <= LAST_FRAME; t++) {
 		const details = timeline(t);
-		budget.spentCost = details.results.reduce((sum: number, result: any) => sum + (result.usage.cost || 0), 0);
+		snapshot.spentCost = details.results.reduce((sum: number, result: any) => sum + (result.usage.cost || 0), 0);
 		registry.update("demo-flow", details);
 		clear();
 		process.stdout.write(panel.render(74).join("\n") + "\n");
@@ -169,7 +171,27 @@ async function cardDemo(): Promise<void> {
 	await sleep(4000);
 }
 
+/** Write the settled card's Gantt PNG (the docs/PR asset) from the same fictional timeline. */
+async function ganttDemo(): Promise<void> {
+	const { flowGanttPng } = await import("../extensions/pi-flows/ui-gantt.ts");
+	const { writeFileSync } = await import("node:fs");
+	const final = timeline(LAST_FRAME);
+	const image = flowGanttPng(
+		final.results.map((result: any, index: number) => ({
+			agent: result.agent,
+			exitCode: result.exitCode,
+			errorCode: result.error?.code,
+			durationMs: result.durationMs,
+			startedAtMs: [0, 1400, 2800, 4200, 5600][index],
+		})),
+		theme,
+	)!;
+	const out = process.argv[3] ?? "docs/images/flow-gantt.png";
+	writeFileSync(out, Buffer.from(image.base64, "base64"));
+	process.stdout.write(`wrote ${out} (${image.dimensions.widthPx}x${image.dimensions.heightPx})\n`);
+}
+
 const mode = process.argv[2];
 process.stdout.write("\x1b[?25l");
-const run = mode === "fleet" ? fleetDemo : mode === "card" ? cardDemo : liveDemo;
+const run = mode === "fleet" ? fleetDemo : mode === "card" ? cardDemo : mode === "gantt" ? ganttDemo : liveDemo;
 run().finally(() => process.stdout.write("\x1b[?25h"));

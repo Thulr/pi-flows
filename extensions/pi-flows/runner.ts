@@ -420,6 +420,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		// span for a child that did not run.
 		if (!refusedLate) {
 			result.durationMs = Date.now() - started;
+			result.startedAtMs = started;
 			options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
 			childBudgets.recordOutcome(agent.name);
 		}

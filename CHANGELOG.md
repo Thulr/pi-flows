@@ -8,7 +8,28 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- The settled flow card renders a **Gantt timeline** of the run — per-child
+  bars offset by real start times, failures in the theme's error color — as an
+  inline image in terminals that speak the Kitty or iTerm2 graphics protocol
+  (Ghostty, Kitty, iTerm2, WezTerm). Every other terminal keeps the text card
+  unchanged; the chart is rasterized dependency-free (`ui-gantt.ts` over
+  `png.ts`) with the active theme's own colors on a transparent background.
+  Child results now record `startedAtMs` so the chart shows which runs
+  actually overlapped.
+- The fleet panel samples each live flow's spend once a second and draws a
+  **burn-rate sparkline** beside the budget meter, so acceleration is visible,
+  not just the level. The flow card's trace path is now an **OSC 8 `file://`
+  hyperlink** (clickable in supporting terminals, plain text elsewhere).
+
 ### Changed
+
+- The four view surfaces (live tool row, fleet panel, flow card, inspector)
+  now share one visual vocabulary (`ui-style.ts`): per-run state-cell progress
+  bars that show *which* runs are out, smooth eighth-block budget meters with
+  green/amber/red thresholds, inverse-video verdict badges, tree-guide
+  connectors, and titled box frames.
 
 - Every mode now declares its **plan** — its pre-spawn **waves** of agent refs —
   once, beside its handler, and the four surfaces that used to re-derive the

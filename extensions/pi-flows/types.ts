@@ -236,6 +236,8 @@ export interface FlowRunResult {
 	wrapUpRequested?: boolean;
 	step?: number;
 	durationMs?: number;
+	/** Epoch ms when the child spawned. With durationMs this gives each run its interval, so settled views can draw the real concurrency timeline (which waves overlapped) instead of only per-run lengths. */
+	startedAtMs?: number;
 	stdoutParseErrors?: number;
 	stdoutSample?: string;
 	envelope?: DelegationReturnEnvelope;

@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { Text } from "@earendil-works/pi-tui";
+import { after, test } from "node:test";
+import { Text, resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import { appendFlowSessionEntry } from "../extensions/pi-flows/ui.ts";
 import { durationBar, flowCardLines, renderFlowCard, type FlowRunEntryData } from "../extensions/pi-flows/ui-flow-card.ts";
 
-const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
+// This file tests the text card; the Gantt-image path is covered by
+// tests/ui-gantt.test.ts. Pinning "no image protocol" keeps these
+// assertions from depending on whichever terminal runs the suite.
+setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+after(() => resetCapabilitiesCache());
+
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
 
 function entryData(overrides: Partial<FlowRunEntryData> = {}): FlowRunEntryData {
 	return {
@@ -29,7 +35,8 @@ test("durationBar scales against the longest child and stays in-bounds", () => {
 
 test("flow card header rolls up status, agents, tokens, cost, and duration", () => {
 	const lines = flowCardLines(entryData(), theme, false);
-	assert.match(lines[0]!, /flow evaluate ok/);
+	assert.match(lines[0]!, /✓ ok/, "the verdict badge leads the header");
+	assert.match(lines[0]!, /flow evaluate/);
 	assert.match(lines[0]!, /3 agents/);
 	assert.match(lines[0]!, /59k tok/);
 	assert.match(lines[0]!, /\$0\.7200/);
@@ -48,9 +55,16 @@ test("flow card expanded view spells out failures; trace pointer is linked with 
 	assert.doesNotMatch(text, /ctrl\+o for failure detail/, "the hint disappears once expanded");
 });
 
+test("an absolute trace path renders as an OSC 8 file:// hyperlink; a relative one stays plain", () => {
+	const absolute = flowCardLines(entryData({ trace: { traceFile: "/work/audit/flow trace.jsonl", health: "complete" } }), theme, false).join("\n");
+	assert.match(absolute, /\]8;;file:\/\/\/work\/audit\/flow%20trace\.jsonl/, "the URL is the real path, URI-encoded");
+	const relative = flowCardLines(entryData({ trace: { traceFile: "audit/flow-trace.jsonl", health: "complete" } }), theme, false).join("\n");
+	assert.doesNotMatch(relative, /\]8;;/, "a relative path has no resolvable file URL to link");
+});
+
 test("flow card marks error status with the flow error code", () => {
 	const lines = flowCardLines(entryData({ status: "error", errorCode: "BUDGET_EXCEEDED" }), theme, false);
-	assert.match(lines[0]!, /error:BUDGET_EXCEEDED/);
+	assert.match(lines[0]!, /✗ BUDGET_EXCEEDED/);
 });
 
 test("non-clean preset outcomes persist and render as warnings, never green success", () => {
@@ -68,17 +82,16 @@ test("non-clean preset outcomes persist and render as warnings, never green succ
 	} as any);
 	assert.equal(entries[0]?.data.status, "partial");
 
-	const coloredTheme = { fg: (color: string, text: string) => `[${color}]${text}[/${color}]`, bold: (text: string) => text } as any;
+	const coloredTheme = { fg: (color: string, text: string) => `[${color}]${text}[/${color}]`, bold: (text: string) => text, inverse: (text: string) => `[inv]${text}[/inv]` } as any;
 	const legacyInconsistentEntry = entryData({ status: "ok", preset: "code-review", presetOutcome: "PARTIAL", results: [] });
 	const header = flowCardLines(legacyInconsistentEntry, coloredTheme, false)[0]!;
-	assert.match(header, /\[warning\]▣\[\/warning\]/);
-	assert.match(header, /\[warning\]PARTIAL\[\/warning\]/);
-	assert.doesNotMatch(header, /\[success\](?:▣|PARTIAL)/);
+	assert.match(header, /\[inv\]\[warning\] ◐ PARTIAL \[\/warning\]\[\/inv\]/, "the badge renders in warning, as inverse video");
+	assert.doesNotMatch(header, /\[success\]/);
 
 	// A verdict reached before the run failed is not the headline; the error is.
 	const failedAfterVerdict = entryData({ status: "error", errorCode: "CHECKPOINT_DENIED", preset: "code-review", presetOutcome: "CLEAN", results: [] });
 	const failedHeader = flowCardLines(failedAfterVerdict, coloredTheme, false)[0]!;
-	assert.match(failedHeader, /\[error\]error:CHECKPOINT_DENIED\[\/error\]/);
+	assert.match(failedHeader, /\[error\] ✗ CHECKPOINT_DENIED \[\/error\]/);
 	assert.doesNotMatch(failedHeader, /CLEAN/);
 });
 

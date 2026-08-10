@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { FleetPanel, budgetLine, createFleetPanelController, fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
+import { FleetPanel, budgetLine, createFleetPanelController, fleetFlowLines, spendSparkLine } from "../extensions/pi-flows/fleet-panel.ts";
 import { FlowRegistry } from "../extensions/pi-flows/inspector.ts";
 import { Budget } from "../extensions/pi-flows/types.ts";
 
-const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
 /** A flow budget already burned down to `spentCost`, for views that render a partly spent ceiling. */
@@ -47,14 +47,28 @@ test("budgetLine renders burn-down only when a cost ceiling exists", () => {
 	const quarterSpent = Budget.forFlow({ maxCostUsd: 2 })!;
 	quarterSpent.charge({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0.5, contextTokens: 0, turns: 1 });
 	const line = budgetLine(quarterSpent.snapshot(), theme)!;
-	assert.match(line, /▰{3}▱{9}/, "a quarter spent fills a quarter of the bar");
+	assert.match(line, /█{3}░{9}/, "a quarter spent fills a quarter of the bar");
 	assert.match(line, /\$0\.5000 \/ \$2\.00 budget/);
 
 	// A $0 ceiling refuses every run, so it is the one a viewer most needs shown.
 	// A falsy check would hide exactly that case.
 	const zero = budgetLine(Budget.forFlow({ maxCostUsd: 0 })!.snapshot(), theme)!;
-	assert.match(zero, /▰{12}/, "a zero ceiling reads as fully spent, not as absent");
+	assert.match(zero, /█{12}/, "a zero ceiling reads as fully spent, not as absent");
 	assert.match(zero, /\$0\.0000 \/ \$0\.00 budget/);
+});
+
+test("spend sparkline shows the burn curve, and carries the total only without a budget line", () => {
+	assert.equal(spendSparkLine(undefined, false, theme), undefined);
+	assert.equal(spendSparkLine([0.1], false, theme), undefined, "one sample has no curve to draw");
+	assert.equal(spendSparkLine([0, 0, 0], false, theme), undefined, "no spend yet, no line");
+	assert.match(spendSparkLine([0, 0.1, 0.3], false, theme)!, /▁.*█ \$0\.3000 spent/, "without a budget line this is the only spend surface");
+	assert.match(spendSparkLine([0, 0.1, 0.3], true, theme)!, /spend$/, "the budget line already shows the amount");
+});
+
+test("fleetFlowLines renders the spend sparkline from sampled history", () => {
+	const run = { mode: "parallel" as const, redactSecrets: true, details: details([result(), result({ agent: "analyst" })]) };
+	const lines = fleetFlowLines(run as any, theme, 0, { spendHistory: [0, 0.05, 0.2] });
+	assert.match(lines.join("\n"), /\$0\.2000 spent/);
 });
 
 test("fleetFlowLines shows every agent with state, activity, and failures", () => {

@@ -6,6 +6,7 @@ import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
 import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
+import { runStateBar, spinnerFrame, stateIcon, treeGuide } from "./ui-style.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -17,24 +18,11 @@ import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
  * thin.
  */
 
-export const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] as const;
-
 /** Rows shown for agents in the collapsed view before "+n more". */
 export const COLLAPSED_AGENT_ROWS = 8;
 
 export function runDisplayName(result: Pick<FlowRunResult, "agent" | "role">): string {
 	return result.role ? `${result.role} (${result.agent})` : result.agent;
-}
-
-export function spinnerFrame(tick: number, offset = 0): string {
-	const index = (Math.trunc(tick) + Math.trunc(offset)) % SPINNER_FRAMES.length;
-	return SPINNER_FRAMES[(index + SPINNER_FRAMES.length) % SPINNER_FRAMES.length] as string;
-}
-
-export function progressBar(settled: number, total: number, width = 12): string {
-	if (total <= 0 || width <= 0) return "";
-	const filled = Math.min(width, Math.max(0, Math.round((settled / total) * width)));
-	return "▰".repeat(filled) + "▱".repeat(width - filled);
 }
 
 /**
@@ -83,10 +71,7 @@ export function ensureRowTicker(
 }
 
 function agentIcon(result: FlowRunResult, index: number, tick: number, theme: Theme): string {
-	const state = flowAgentState(result);
-	if (state === "queued") return theme.fg("muted", "◌");
-	if (state === "running") return theme.fg("warning", spinnerFrame(tick, index * 2));
-	return state === "failed" ? theme.fg("error", "✗") : theme.fg("success", "✓");
+	return stateIcon(theme, flowAgentState(result), tick, index * 2);
 }
 
 function headerIcon(details: FlowDetails, settled: number, failed: number, tick: number, theme: Theme, live = false): string {
@@ -141,9 +126,9 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	if (total > 1) {
 		header += ` ${theme.fg("accent", flowProgressText(details, { live: options.live }))}`;
 		// The bar measures settled-ness, so it belongs to outstanding runs — not to a
-		// flow that is between stages with nothing currently running.
-		const bar = progressBar(settled, total);
-		if (bar && outstanding) header += ` ${theme.fg("dim", bar)}`;
+		// flow that is between stages with nothing currently running. Each cell is
+		// one run in its state color, so the bar also says *which* runs are out.
+		if (outstanding) header += ` ${runStateBar(theme, details.results.map(flowAgentState))}`;
 		const totals = totalsText(details);
 		if (totals) header += ` ${theme.fg("muted", totals)}`;
 	}
@@ -152,9 +137,10 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		...budgetDisclosureLines(details.budgetCeilings).map((line) => theme.fg("muted", line)),
 	];
 
+	const visibleRows = Math.min(total, COLLAPSED_AGENT_ROWS) + (total > COLLAPSED_AGENT_ROWS ? 1 : 0);
 	const nameWidth = Math.min(28, Math.max(4, ...details.results.map((item) => runDisplayName(item).length)));
 	details.results.slice(0, COLLAPSED_AGENT_ROWS).forEach((item, index) => {
-		let line = `${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", runDisplayName(item).padEnd(nameWidth))}`;
+		let line = `${theme.fg("dim", treeGuide(index, visibleRows))} ${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", runDisplayName(item).padEnd(nameWidth))}`;
 		const usage = formatUsage(item.usage, item.model, item.durationMs);
 		if (usage) line += ` ${theme.fg("dim", usage)}`;
 		const state = flowAgentState(item);
@@ -167,7 +153,7 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		}
 		lines.push(line);
 	});
-	if (total > COLLAPSED_AGENT_ROWS) lines.push(theme.fg("muted", `... +${total - COLLAPSED_AGENT_ROWS} more`));
+	if (total > COLLAPSED_AGENT_ROWS) lines.push(`${theme.fg("dim", "└")} ${theme.fg("muted", `+${total - COLLAPSED_AGENT_ROWS} more`)}`);
 	if (details.error) lines.push(theme.fg("error", `error: ${details.error.code}`));
 	lines.push(theme.fg("muted", running ? "ctrl+o expand · F8 fleet panel" : "ctrl+o expand"));
 	return lines;

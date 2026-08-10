@@ -83,7 +83,7 @@ test("F8 opens the fleet panel over a live child and closing it does not abort t
 		let renderRequests = 0;
 		let closed = false;
 		let lines: string[] = [];
-		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text };
 		const keybindings = {
 			matches: (data: string, binding: string) => binding === "tui.select.cancel" && data === "x",
 			getKeys: (binding: string) => binding === "tui.select.cancel" ? ["x"] : [],

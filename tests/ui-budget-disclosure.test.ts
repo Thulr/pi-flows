@@ -8,7 +8,7 @@ import { flowCallLines, flowLiveBoardLines } from "../extensions/pi-flows/ui-liv
 import { Budget, MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { flowTool, integrationContract, integrationEnvelope, runFlow } from "./stub-harness.ts";
 
-const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
 function contract(budget: Record<string, number>): any {

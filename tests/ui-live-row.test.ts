@@ -3,17 +3,14 @@ import { test } from "node:test";
 import { Container, Text } from "@earendil-works/pi-tui";
 import {
 	COLLAPSED_AGENT_ROWS,
-	SPINNER_FRAMES,
 	currentActivityText,
 	ensureRowTicker,
 	flowLiveBoardLines,
-	progressBar,
 	renderFlowResultRow,
-	spinnerFrame,
 	type RowTickerState,
 } from "../extensions/pi-flows/ui-live-row.ts";
 
-const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text } as any;
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
 
 function result(overrides: Record<string, unknown> = {}): any {
@@ -23,21 +20,6 @@ function result(overrides: Record<string, unknown> = {}): any {
 function details(results: any[], overrides: Record<string, unknown> = {}): any {
 	return { mode: "parallel", version: "test", agentScope: "user", config: { redactSecretsDefault: true }, agentsDir: {}, results, ...overrides };
 }
-
-test("progressBar is proportional and safe at the edges", () => {
-	assert.equal(progressBar(0, 0), "");
-	assert.equal(progressBar(3, 5, 0), "");
-	assert.equal(progressBar(0, 4, 4), "▱▱▱▱");
-	assert.equal(progressBar(2, 4, 4), "▰▰▱▱");
-	assert.equal(progressBar(4, 4, 4), "▰▰▰▰");
-	assert.equal(progressBar(9, 4, 4), "▰▰▰▰", "overshoot must clamp");
-});
-
-test("spinnerFrame cycles deterministically and offsets stagger agents", () => {
-	assert.equal(spinnerFrame(0), SPINNER_FRAMES[0]);
-	assert.equal(spinnerFrame(SPINNER_FRAMES.length), SPINNER_FRAMES[0]);
-	assert.notEqual(spinnerFrame(0, 2), spinnerFrame(0, 0));
-});
 
 test("currentActivityText surfaces the child's latest tool call", () => {
 	const running = result({
@@ -70,7 +52,7 @@ test("flowLiveBoardLines shows progress, per-agent state, and activity while run
 	]), theme, { tick: 0, redactSecrets: true });
 
 	assert.match(board[0]!, /flow parallel 2\/4/);
-	assert.match(board[0]!, /▰+▱+/, "running header should carry a progress bar");
+	assert.match(board[0]!, /██░█/, "running header should carry per-run state cells (completed, running, queued, failed)");
 	assert.match(board[0]!, /tok/, "header should roll up token totals");
 	assert.match(board[0]!, /\$0\.01/);
 	const text = board.join("\n");
@@ -85,7 +67,7 @@ test("single-child runs drop the settled/total counter, bar, and rollup from the
 		result({ usage: { ...usage, input: 2000, output: 300, cost: 0.94 } }),
 	], { mode: "single" }), theme, { tick: 0, redactSecrets: true });
 	assert.doesNotMatch(board[0]!, /0\/1/, "a 0/1 counter reads as stuck, not as progress");
-	assert.doesNotMatch(board[0]!, /▰|▱/);
+	assert.doesNotMatch(board[0]!, /█|░/);
 	assert.doesNotMatch(board[0]!, /tok|\$/, "the rollup would only restate the single agent line");
 	assert.match(board[0]!, /flow single/);
 	assert.match(board.join("\n"), /recon/);
