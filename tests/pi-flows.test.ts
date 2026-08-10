@@ -54,15 +54,14 @@ test("/flows argument parsing rejects typos instead of silently falling back", (
   if (parsed.kind === "error") assert.match(parsed.message, /Unknown \/flows argument/);
 });
 
-test("F8 and /flows inspect expose the fleet panel and live inspector", async () => {
+test("/flows inspect exposes the live inspector and no F8 surface remains", async () => {
   const { commands, shortcuts } = registerForTest();
   const notices: string[] = [];
   const ctx = { hasUI: true, mode: "tui", ui: { notify: (message: string) => notices.push(message) } };
-  await shortcuts.get("f8").handler(ctx);
   await commands.get("flows").handler("inspect", ctx);
-  assert.equal(notices.filter((message) => /No flows yet in this session/.test(message)).length, 1);
   assert.equal(notices.filter((message) => /No child flow agent is queued or running/.test(message)).length, 1);
-  assert.match(__test.flowsHelpText(), /F8/);
+  assert.equal(shortcuts.size, 0, "the fleet panel is gone; no shortcut may be registered in its place");
+  assert.doesNotMatch(__test.flowsHelpText(), /F8|fleet/i, "help must not advertise a removed surface");
 });
 
 test("concurrency validation rejects fractional and out-of-range values", () => {

@@ -299,7 +299,6 @@ export function flowsHelpText(): string {
 		"  /flows status [user|project|all] Show dirs, defaults, and discovery issues",
 		"  /flows models                   Show what each tier resolves to, and override a tier",
 		"  /flows inspect                  Drill into one running child",
-		"  F8                              Toggle the live fleet panel overlay",
 		"  /flows report [trace-file]       Summarize a flow trace JSONL file",
 		"  /flows version                  Show pi-flows version",
 		"",

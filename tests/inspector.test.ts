@@ -22,14 +22,14 @@ function details(results: any[]): any {
 }
 
 function runtime() {
-	const shortcuts = new Map<string, any>();
+	const commands = new Map<string, any>();
 	const tools = new Map<string, any>();
 	registerPiFlows({
-		registerCommand() {},
-		registerShortcut(key: string, shortcut: any) { shortcuts.set(key, shortcut); },
+		registerCommand(name: string, command: any) { commands.set(name, command); },
+		registerShortcut() {},
 		registerTool(tool: any) { tools.set(tool.name, tool); },
 	} as any);
-	return { flow: tools.get("flow"), shortcuts };
+	return { flow: tools.get("flow"), commands };
 }
 
 async function waitForCall(dir: string): Promise<void> {
@@ -71,7 +71,7 @@ test("registry exposes queued and running children", () => {
 	assert.equal(registry.inspectableAgents().length, 0);
 });
 
-test("F8 opens the fleet panel over a live child and closing it does not abort the run", async () => {
+test("/flows inspect opens the viewer over a live child and closing it does not abort the run", async () => {
 	const cwd = await mkdtemp(path.join(tmpdir(), "pi-flow-inspector-"));
 	const previousDir = process.env.PI_STUB_DIR;
 	const previousPlan = process.env.PI_STUB_PLAN;
@@ -79,7 +79,7 @@ test("F8 opens the fleet panel over a live child and closing it does not abort t
 	process.env.PI_STUB_PLAN = JSON.stringify({ recon: { reply: "LIVE_ACTIVITY", delayBeforeReplyMs: 80, holdOpenMs: 80 } });
 
 	try {
-		const { flow, shortcuts } = runtime();
+		const { flow, commands } = runtime();
 		let renderRequests = 0;
 		let closed = false;
 		let lines: string[] = [];
@@ -109,10 +109,10 @@ test("F8 opens the fleet panel over a live child and closing it does not abort t
 				component.dispose();
 			},
 		};
-		const ctx = { cwd, hasUI: true, ui } as any;
+		const ctx = { cwd, hasUI: true, mode: "tui", ui } as any;
 		const running = flow.execute("live-flow", { agent: "recon", task: "inspect auth", why: "inspector test needs a live child" }, new AbortController().signal, undefined, ctx);
 		await waitForCall(cwd);
-		await shortcuts.get("f8").handler(ctx);
+		await commands.get("flows").handler("inspect", ctx);
 		const output = await running;
 
 		assert.match(lines.join("\n"), /LIVE_ACTIVITY/);

@@ -9,7 +9,6 @@ import {
 	meterBar,
 	meterColor,
 	runStateBar,
-	sparkline,
 	spinnerFrame,
 	stateIcon,
 	treeGuide,
@@ -80,17 +79,6 @@ test("runStateBar compresses to proportional segments above maxWidth", () => {
 	assert.match(colored, /\[success\]█{5}\[\/success\]/);
 	assert.match(colored, /\[warning\]█{3}\[\/warning\]/);
 	assert.match(colored, /\[muted\]░{2}\[\/muted\]/);
-});
-
-test("sparkline normalizes to the window's min–max so rolled-over cumulative series keep their slope", () => {
-	assert.equal(sparkline([]), "");
-	assert.equal(sparkline([0, 0, 0]), "▁▁▁", "sampled-and-idle must not vanish");
-	assert.equal(sparkline([0, 1, 2, 4]), "▁▃▅█", "a window that includes zero reads as before");
-	assert.equal(sparkline([1, 1, 1]), "▁▁▁", "a window with no growth sits on the baseline — no recent burn");
-	// Once the raw history rolls past its zero baseline, a cumulative series
-	// must not saturate flat: $10.00 → $10.10 still shows its shape.
-	assert.equal(sparkline([10.0, 10.02, 10.05, 10.1]), "▁▂▅█", "min-relative normalization keeps the slope visible");
-	assert.equal(sparkline([1, 2, 3, 4], 2), "▁█", "the window keeps the most recent samples");
 });
 
 test("chip wraps the label in inverse video over its color", () => {

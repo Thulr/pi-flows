@@ -1,13 +1,19 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { createRaster, encodePng, fillRect, type Raster, type Rgba } from "./png.ts";
+import { createRaster, encodePng, fillRect, hatchRect, hslToRgb, withAlpha, type Raster, type Rgba } from "./png.ts";
 import { formatDuration, runDisplayName } from "./ui-style.ts";
 
 /**
  * The settled flow card's concurrency timeline, rendered as a real raster
- * image (Gantt bars) for terminals that speak an inline-image protocol. The
- * card gates on capability detection and keeps the text bars as the
- * fallback, so this module can assume it is drawing — never deciding
- * whether images are appropriate.
+ * image for terminals that speak an inline-image protocol. The card gates on
+ * capability detection and keeps the text bars as the fallback, so this
+ * module can assume it is drawing — never deciding whether images are
+ * appropriate.
+ *
+ * The drawing is an "editorial rails" layout: each run is two lines — an
+ * identicon and the full run name with the duration right-aligned, then a
+ * thin rail from start to finish over a faint full-width track. Failure is
+ * never encoded by color alone (the theme's red/green pair is a deuteranopia
+ * collision): failed rails are hatched and the label says FAILED.
  *
  * Everything through {@link ganttLayout} is pure math over entry results;
  * {@link flowGanttPng} rasterizes that layout with the theme's own colors.
@@ -24,7 +30,10 @@ export interface GanttResultLike {
 }
 
 export interface GanttRow {
+	/** The full `role (agent)` display form; the drawing truncates to fit. */
 	label: string;
+	/** The agent name alone — the identicon seed, so a fan-out over one agent visibly shares one mark. */
+	agent: string;
 	/** Offset from the earliest recorded start, ms. Entries written before start times were recorded collapse to 0 — the chart then still compares durations. */
 	offsetMs: number;
 	durationMs: number;
@@ -38,7 +47,7 @@ export interface GanttLayout {
 
 /**
  * A chart needs at least two timed runs: with one, the text card already
- * says everything a single bar could, and an image would be decoration.
+ * says everything a single rail could, and an image would be decoration.
  */
 export function ganttLayout(results: GanttResultLike[]): GanttLayout | undefined {
 	const timed = results.filter((result) => (result.durationMs ?? 0) > 0);
@@ -46,28 +55,14 @@ export function ganttLayout(results: GanttResultLike[]): GanttLayout | undefined
 	const starts = timed.filter((result) => result.startedAtMs !== undefined).map((result) => result.startedAtMs!);
 	const base = starts.length ? Math.min(...starts) : 0;
 	const rows = timed.map((result) => ({
-		label: ganttLabel(result),
+		label: runDisplayName(result),
+		agent: result.agent,
 		offsetMs: result.startedAtMs !== undefined ? result.startedAtMs - base : 0,
 		durationMs: result.durationMs!,
 		failed: result.exitCode !== 0 || result.errorCode !== undefined,
 	}));
 	const totalMs = Math.max(...rows.map((row) => row.offsetMs + row.durationMs));
 	return totalMs > 0 ? { rows, totalMs } : undefined;
-}
-
-/** Longest label the gutter reserves; longer labels truncate in the drawing. */
-export const LABEL_CHARS = 16;
-
-/**
- * The row label, sized for the gutter: the full `role (agent)` form when it
- * fits, the role alone when it does not — a whole word beats a form cut
- * mid-parenthesis — and a hard truncation only when a single name is itself
- * too long for the gutter.
- */
-function ganttLabel(result: GanttResultLike): string {
-	const full = runDisplayName(result);
-	const label = full.length <= LABEL_CHARS ? full : result.role ?? result.agent;
-	return label.toUpperCase();
 }
 
 /** 5×7 bitmap glyphs, one number per row, bit 4 leftmost. Labels fold to uppercase; anything uncovered renders as '?'. */
@@ -120,16 +115,62 @@ const GLYPHS: Record<string, number[]> = {
 	"?": [0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
 };
 
-function drawText(raster: Raster, x: number, y: number, text: string, color: Rgba, scale: number): void {
+const SCALE = 2;
+const CHAR_W = 6 * SCALE;
+
+function drawText(raster: Raster, x: number, y: number, text: string, color: Rgba): void {
 	let cursor = x;
 	for (const character of text.toUpperCase()) {
 		const glyph = GLYPHS[character] ?? GLYPHS["?"]!;
 		for (let row = 0; row < 7; row++) {
 			for (let column = 0; column < 5; column++) {
-				if (glyph[row]! & (1 << (4 - column))) fillRect(raster, cursor + column * scale, y + row * scale, scale, scale, color);
+				if (glyph[row]! & (1 << (4 - column))) fillRect(raster, cursor + column * SCALE, y + row * SCALE, SCALE, SCALE, color);
 			}
 		}
-		cursor += 6 * scale;
+		cursor += CHAR_W;
+	}
+}
+
+const textW = (text: string): number => text.length * CHAR_W;
+
+/** The one failure marker every failed row draws and reserves width for. The bitmap font has no ✗, so the letter X carries it. */
+const FAILED_LABEL = "X FAILED";
+
+function hash32(seed: string): number {
+	let hash = 2166136261;
+	for (const character of seed) {
+		hash ^= character.charCodeAt(0);
+		hash = Math.imul(hash, 16777619);
+	}
+	return hash >>> 0;
+}
+
+/** Hues an identicon may take: none near the reserved status colors (success green ~100°, error red ~345°), so no agent's mark can read as pass/fail. Exported so the test can hold every entry to that rule — hashing samples only some of them. */
+export const AVATAR_HUES = [205, 262, 30, 178, 300, 52];
+
+const AVATAR_CELL = 3;
+/** Identicon footprint in px; the label column starts after it. */
+const AVATAR_PX = 5 * AVATAR_CELL;
+
+/**
+ * Each agent's own mark: a 5×5 sprite mirrored around its center column, in
+ * a hue hashed from the agent name — deterministic, so an agent wears the
+ * same mark in every flow, and a fan-out over one agent visibly shares it.
+ * Shape is the primary identity signal; the hue list is small on purpose and
+ * only lightness adapts to the theme.
+ */
+function drawAvatar(raster: Raster, x: number, y: number, agent: string, dark: boolean): void {
+	const hash = hash32(agent);
+	const color = hslToRgb(AVATAR_HUES[hash % AVATAR_HUES.length]!, 0.55, dark ? 0.62 : 0.42);
+	// A name whose 15 pattern bits all hash to zero (e.g. "agent-3000") would
+	// otherwise wear no mark at all; an empty pattern falls back to the center
+	// cell (bit 8: row 2, column 2) so every agent stays visibly marked.
+	const pattern = ((hash >>> 8) & 0x7fff) || 1 << 8;
+	for (let row = 0; row < 5; row++) {
+		for (let column = 0; column < 5; column++) {
+			const bit = row * 3 + (column < 3 ? column : 4 - column);
+			if ((pattern >> bit) & 1) fillRect(raster, x + column * AVATAR_CELL, y + row * AVATAR_CELL, AVATAR_CELL, AVATAR_CELL, color);
+		}
 	}
 }
 
@@ -151,6 +192,16 @@ export function themeRgb(theme: Theme, color: "success" | "error" | "muted" | "d
 	return [Number(match[1]), Number(match[2]), Number(match[3]), alpha];
 }
 
+/**
+ * Dark terminals set light muted text and vice versa, so the text color's
+ * luminance is the one theme-background signal available to a renderer that
+ * only ever sees foreground colors.
+ */
+function isDarkTheme(theme: Theme): boolean {
+	const [r, g, b] = themeRgb(theme, "muted");
+	return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.45;
+}
+
 export interface GanttImage {
 	base64: string;
 	dimensions: { widthPx: number; heightPx: number };
@@ -160,6 +211,9 @@ export interface GanttImage {
 
 const WIDTH_CELLS = 56;
 
+/** Sub-minute values as e.g. `42s`, longer ones rounded to whole minutes — axis labels, where `formatDuration`'s precision would be noise. */
+const shortDuration = (ms: number): string => (ms >= 60000 ? `${Math.round(ms / 60000)}m` : `${Math.round(ms / 1000)}s`);
+
 /**
  * Rasterize the timeline at 2× cell density (crisp on retina-scaled
  * terminals). Transparent background: the terminal composites the chart over
@@ -168,50 +222,57 @@ const WIDTH_CELLS = 56;
 export function flowGanttPng(results: GanttResultLike[], theme: Theme): GanttImage | undefined {
 	const layout = ganttLayout(results);
 	if (!layout) return undefined;
-	const scale = 2;
-	const charW = 6 * scale;
-	const pad = 6 * scale;
-	const rowPitch = 15 * scale;
-	const barH = 9 * scale;
-	const gutter = pad + LABEL_CHARS * charW + charW;
-	const width = WIDTH_CELLS * 9 * scale;
-	const chartW = width - gutter - pad;
-	const axisH = 12 * scale;
-	const height = pad * 2 + layout.rows.length * rowPitch + axisH;
+	const pad = 7 * SCALE;
+	const rowPitch = 21 * SCALE;
+	const axisH = 12 * SCALE;
+	const width = WIDTH_CELLS * 9 * SCALE;
+	const chartW = width - 2 * pad;
+	const height = pad + layout.rows.length * rowPitch + axisH + pad;
 
 	const raster = createRaster(width, height);
 	const success = themeRgb(theme, "success");
 	const error = themeRgb(theme, "error");
-	const text = themeRgb(theme, "muted");
-	const grid = themeRgb(theme, "dim", 70);
-
-	// Quarter gridlines give the eye a scale without axis clutter.
-	for (const fraction of [0.25, 0.5, 0.75, 1]) {
-		fillRect(raster, gutter + chartW * fraction - scale / 2, pad, scale, layout.rows.length * rowPitch, grid);
-	}
+	const muted = themeRgb(theme, "muted");
+	const dim = themeRgb(theme, "dim");
+	const dark = isDarkTheme(theme);
+	const xAt = (ms: number): number => pad + (ms / layout.totalMs) * chartW;
 
 	layout.rows.forEach((row, index) => {
 		const y = pad + index * rowPitch;
-		drawText(raster, pad, y + (rowPitch - 7 * scale) / 2, row.label.slice(0, LABEL_CHARS), text, scale);
-		const x = gutter + (row.offsetMs / layout.totalMs) * chartW;
-		const barW = Math.max(2 * scale, (row.durationMs / layout.totalMs) * chartW);
-		fillRect(raster, x, y + (rowPitch - barH) / 2, barW, barH, row.failed ? error : success);
-		// Duration label rides after the bar when it fits, else tucks inside its end.
 		const duration = formatDuration(row.durationMs);
-		const durationW = duration.length * charW;
-		const after = x + barW + charW / 2;
-		const textY = y + (rowPitch - 7 * scale) / 2;
-		if (after + durationW <= gutter + chartW) drawText(raster, after, textY, duration, text, scale);
-		else drawText(raster, Math.max(gutter, x + barW - durationW - charW / 2), textY, duration, [0, 0, 0, 255], scale);
+		drawAvatar(raster, pad, y, row.agent, dark);
+
+		// label line: identicon, name, FAILED marker, duration right-aligned —
+		// the name truncates before it can reach the duration column
+		const labelX = pad + AVATAR_PX + 4 * SCALE;
+		const suffix = row.failed ? ` ${FAILED_LABEL}` : "";
+		const labelChars = Math.floor((width - pad - textW(duration) - CHAR_W - labelX) / CHAR_W) - suffix.length;
+		const label = row.label.length <= labelChars ? row.label : row.label.slice(0, Math.max(1, labelChars));
+		drawText(raster, labelX, y, label, row.failed ? error : muted);
+		if (row.failed) drawText(raster, labelX + textW(label) + CHAR_W, y, FAILED_LABEL, error);
+		drawText(raster, width - pad - textW(duration), y, duration, dim);
+
+		// rail line: a faint full-width track, the run's span, a start dot and
+		// an end tick
+		const railY = y + 11 * SCALE;
+		fillRect(raster, pad, railY + SCALE, chartW, SCALE, withAlpha(dim, 45));
+		const xs = xAt(row.offsetMs);
+		const xe = Math.max(xs + 2 * SCALE, xAt(row.offsetMs + row.durationMs));
+		const color = row.failed ? error : success;
+		if (row.failed) hatchRect(raster, xs, railY, xe - xs, 3 * SCALE, error);
+		else fillRect(raster, xs, railY, xe - xs, 3 * SCALE, color);
+		fillRect(raster, xs - SCALE, railY - 2 * SCALE, 3 * SCALE, 7 * SCALE, color);
+		fillRect(raster, xe - SCALE, railY - 2 * SCALE, 2 * SCALE, 7 * SCALE, color);
 	});
 
-	// Axis: a baseline with 0 at the left and the total at the right edge.
-	const axisY = pad + layout.rows.length * rowPitch + 2 * scale;
-	fillRect(raster, gutter, axisY, chartW, scale, grid);
-	drawText(raster, gutter, axisY + 2 * scale, "0", text, scale);
+	// Axis: a baseline with 0 at the left, the midpoint, and the total.
+	const axisY = pad + layout.rows.length * rowPitch + 2 * SCALE;
+	fillRect(raster, pad, axisY, chartW, SCALE, withAlpha(dim, 60));
+	drawText(raster, pad, axisY + 2 * SCALE, "0", dim);
+	const mid = shortDuration(layout.totalMs / 2);
+	drawText(raster, pad + chartW / 2 - textW(mid) / 2, axisY + 2 * SCALE, mid, dim);
 	const total = formatDuration(layout.totalMs);
-	drawText(raster, gutter + chartW - total.length * charW, axisY + 2 * scale, total, text, scale);
+	drawText(raster, pad + chartW - textW(total), axisY + 2 * SCALE, total, dim);
 
 	return { base64: encodePng(raster), dimensions: { widthPx: width, heightPx: height }, maxWidthCells: WIDTH_CELLS };
 }
-

@@ -56,9 +56,9 @@ While children run you get a live tool row, and after the flow settles a durable
 
 <img alt="The durable flow card in the pi transcript: status, per-run duration bars, cost rollup, and configured ceilings" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-run-card.gif" width="100%">
 
-In terminals that speak an inline-image protocol (Ghostty, Kitty, iTerm2, WezTerm), the settled card upgrades its timing story to a rendered Gantt timeline of the run — per-child bars offset by real start times, failures in the theme's error color — and falls back to the text card everywhere else:
+In terminals that speak an inline-image protocol (Ghostty, Kitty, iTerm2, WezTerm), the settled card upgrades its timing story to a rendered timeline of the run — one rail per child offset by real start times, a per-agent identicon so repeated agents visibly share a mark, failures hatched in the theme's error color — and falls back to the text card everywhere else:
 
-<img alt="The settled card's Gantt timeline: per-child bars offset by real start times, a failed child in red, quarter gridlines and a duration axis" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-gantt.png" width="100%">
+<img alt="The settled card's timeline: one rail per child offset by real start times, a per-agent identicon beside each label, and a duration axis" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-gantt.png" width="100%">
 
 For common shapes, pi can choose a named [workflow preset](./docs/reference/flow-reference.md#workflow-presets) — `scout`, `map-codebase`, or the one-shot, typed `code-review` — instead of assembling raw mode parameters. And when you ask for a *verified* result, pi reaches for a stronger mode on its own:
 
@@ -99,7 +99,7 @@ To hack on pi-flows or try unreleased `main`, work from a checkout: `git clone h
 ## What it adds
 
 - The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`, plus machine-checked [delegation contracts](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation) and validated return envelopes.
-- The `/flows` command and [live TUI monitoring](./docs/reference/flow-reference.md#live-tui-monitoring): a live tool row, the `F8` fleet panel, `/flows inspect`, and a durable flow card — every configured cost/token ceiling is disclosed with its authority before work starts.
+- The `/flows` command and [live TUI monitoring](./docs/reference/flow-reference.md#live-tui-monitoring): a live tool row, `/flows inspect`, and a durable flow card — every configured cost/token ceiling is disclosed with its authority before work starts.
 - Nine bundled agents in [`agents/`](./agents/) and three workflow presets in [`presets/`](./presets/).
 - Your own agents and presets, no code required — one markdown file each, user- or project-scoped, trust-gated and shadowed with visible diagnostics. See [Custom agents](./docs/how-to/custom-agents.md).
 

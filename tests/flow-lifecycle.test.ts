@@ -294,7 +294,7 @@ test("a handler failure still settles the flow's live presence before the failur
 	const admission = await Flow.admit(h.ports);
 	assert.ok("admitted" in admission);
 	await assert.rejects(() => admission.admitted.dispatch(), /handler exploded/);
-	assert.ok(h.order.includes("presence.settle"), "the fleet registry must not leak a dead flow");
+	assert.ok(h.order.includes("presence.settle"), "the live-flow registry must not leak a dead flow");
 });
 
 test("a thrown handler still finalizes the trace: a closed, refusable tree instead of an unrootable fragment", async () => {

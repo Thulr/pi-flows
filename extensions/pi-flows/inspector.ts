@@ -24,51 +24,18 @@ export interface FlowActivityItem {
 	text: string;
 }
 
-/** The flow's total recorded cost right now — the quantity the spend sparkline samples. */
-export function flowSpentCost(details: FlowDetails): number {
-	return details.results.reduce((sum, result) => sum + (result.usage?.cost || 0), 0);
-}
-
-/** Points in the resampled spend series a reader gets — the sparkline's width. */
-const SPEND_SERIES_POINTS = 24;
-
-/** Raw timestamped samples retained per flow (~4 minutes at the default cadence). */
-const SPEND_RAW_SAMPLES = 240;
-
 /**
  * The live-flow registry. Its unit is a **flow** — one `flow` tool call and
  * every run under it — not a run: a flow the registry still holds has a handler
- * that may open another stage, which is exactly the liveness question the fleet
- * panel and the progress header ask. See CONTEXT.md.
- *
- * The registry also samples each flow's spend curve. It has to live here, not
- * in the fleet panel: the panel is constructed on F8 and discarded on close,
- * so a panel-owned history would start empty mid-flow and forget everything
- * between openings. Sampling piggybacks on the update traffic children already
- * stream (decimated to one sample per `spendSampleIntervalMs`), so no timer
- * exists and the curve accrues whether or not any observer is watching.
- *
- * Because that traffic is irregular, samples keep their timestamps and
- * {@link spendHistory} resamples onto a uniform time grid before anyone
- * plots them: a sparkline renders points at equal horizontal spacing, so
- * without the grid a quiet ten seconds and a busy one would look identical
- * and the burn-rate reading would lie.
+ * that may open another stage, which is exactly the liveness question the
+ * progress header asks. See CONTEXT.md.
  */
 export class FlowRegistry {
 	private readonly flows = new Map<string, LiveFlow>();
 	private readonly listeners = new Set<() => void>();
-	private readonly spendSamples = new WeakMap<LiveFlow, Array<{ at: number; cost: number }>>();
-	private lastSettled: LiveFlow | undefined;
-
-	constructor(
-		private readonly spendSampleIntervalMs = 1000,
-		private readonly now: () => number = Date.now,
-	) {}
 
 	start(id: string, mode: FlowMode, details: FlowDetails, redactSecrets = true, budget?: Budget): void {
-		const flow = { mode, details, redactSecrets, budget };
-		this.flows.set(id, flow);
-		this.sampleSpend(flow);
+		this.flows.set(id, { mode, details, redactSecrets, budget });
 		this.notify();
 	}
 
@@ -76,7 +43,6 @@ export class FlowRegistry {
 		const flow = this.flows.get(id);
 		if (!flow) return;
 		flow.details = details;
-		this.sampleSpend(flow);
 		this.notify();
 	}
 
@@ -84,69 +50,8 @@ export class FlowRegistry {
 		const flow = this.flows.get(id);
 		if (!flow) return;
 		flow.details = details;
-		// The final sample skips decimation: the curve must end on the true total.
-		this.sampleSpend(flow, true);
-		this.lastSettled = flow;
 		this.flows.delete(id);
 		this.notify();
-	}
-
-	/**
-	 * The spend curve for a flow this registry has seen, resampled onto a
-	 * uniform time grid (oldest first) so equal spacing means equal time.
-	 * Between samples the curve holds the last known total — spend is a step
-	 * function, not an interpolation.
-	 *
-	 * For a flow that is still live the grid ends at *now*, not at the last
-	 * sample: a child that spends and then goes quiet must render as a long
-	 * flat tail, or stopped spend keeps looking like current spend at the
-	 * right edge. A settled flow's grid ends on its forced final sample.
-	 */
-	spendHistory(flow: LiveFlow): number[] | undefined {
-		const samples = this.spendSamples.get(flow);
-		if (!samples || samples.length === 0) return undefined;
-		const live = [...this.flows.values()].includes(flow);
-		const recorded = samples[samples.length - 1]!;
-		const end = live ? Math.max(this.now(), recorded.at) : recorded.at;
-		// A live flow's endpoint is synthesized from the current details rather
-		// than the last recorded sample: a paid update landing inside the
-		// decimation interval would otherwise stay invisible until the next
-		// event, and the details already hold the true total.
-		const points = live ? [...samples, { at: end, cost: flowSpentCost(flow.details) }] : samples;
-		const first = points[0]!;
-		if (end <= first.at) return [points[points.length - 1]!.cost];
-		const series: number[] = [];
-		let index = 0;
-		for (let point = 0; point < SPEND_SERIES_POINTS; point++) {
-			const time = first.at + ((end - first.at) * point) / (SPEND_SERIES_POINTS - 1);
-			while (index + 1 < points.length && points[index + 1]!.at <= time) index++;
-			series.push(points[index]!.cost);
-		}
-		return series;
-	}
-
-	private sampleSpend(flow: LiveFlow, force = false): void {
-		const samples = this.spendSamples.get(flow) ?? [];
-		const latest = samples[samples.length - 1];
-		// Clamped to the last sample so a wall clock stepping backwards cannot
-		// produce out-of-order timestamps, which the resampler's step walk
-		// requires monotone. Non-forced samples stay decimated until the clock
-		// recovers past the old time plus the interval — an accepted gap; the
-		// forced settle sample still lands, so the curve always ends true.
-		const at = Math.max(this.now(), latest?.at ?? Number.NEGATIVE_INFINITY);
-		if (!force && latest !== undefined && at - latest.at < this.spendSampleIntervalMs) return;
-		samples.push({ at, cost: flowSpentCost(flow.details) });
-		if (samples.length > SPEND_RAW_SAMPLES) samples.shift();
-		this.spendSamples.set(flow, samples);
-	}
-
-	activeFlows(): LiveFlow[] {
-		return [...this.flows.values()];
-	}
-
-	/** The most recently settled flow, kept so the fleet panel can show a final state after the last child exits. */
-	lastSettledFlow(): LiveFlow | undefined {
-		return this.lastSettled;
 	}
 
 	inspectableAgents(): FlowAgentTarget[] {

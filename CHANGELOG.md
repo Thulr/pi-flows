@@ -10,22 +10,22 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
-- The settled flow card renders a **Gantt timeline** of the run — per-child
-  bars offset by real start times, failures in the theme's error color — as an
-  inline image in terminals that speak the Kitty or iTerm2 graphics protocol
-  (Ghostty, Kitty, iTerm2, WezTerm). Every other terminal keeps the text card
-  unchanged; the chart is rasterized dependency-free (`ui-gantt.ts` over
-  `png.ts`) with the active theme's own colors on a transparent background.
-  Child results now record `startedAtMs` so the chart shows which runs
-  actually overlapped.
-- The fleet panel samples each live flow's spend once a second and draws a
-  **burn-rate sparkline** beside the budget meter, so acceleration is visible,
-  not just the level. The flow card's trace path is now an **OSC 8 `file://`
-  hyperlink** (clickable in supporting terminals, plain text elsewhere).
+- The settled flow card renders a **timeline** of the run as an inline image
+  in terminals that speak the Kitty or iTerm2 graphics protocol (Ghostty,
+  Kitty, iTerm2, WezTerm): one rail per child offset by real start times, a
+  deterministic **per-agent identicon** beside each label (hashed sprite and
+  hue, so repeated agents visibly share one mark), and failures hatched with
+  an `X FAILED` label — never encoded by color alone. Every other terminal
+  keeps the text card unchanged; the chart is rasterized dependency-free
+  (`ui-gantt.ts` over `png.ts`) with the active theme's own colors on a
+  transparent background. Child results now record `startedAtMs` so the chart
+  shows which runs actually overlapped.
+- The flow card's trace path is now an **OSC 8 `file://` hyperlink**
+  (clickable in supporting terminals, plain text elsewhere).
 
 ### Changed
 
-- The four view surfaces (live tool row, fleet panel, flow card, inspector)
+- The view surfaces (live tool row, flow card, inspector)
   now share one visual vocabulary (`ui-style.ts`): per-run state-cell progress
   bars that show *which* runs are out, smooth eighth-block budget meters with
   green/amber/red thresholds, inverse-video verdict badges, tree-guide
@@ -49,6 +49,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   rather than by statement order in the composition root; their precedence
   (list over showConfig over run modes, before preset resolution) is now a
   stated, tested rule.
+
+### Removed
+
+- The **F8 fleet panel** (and its spend-sampling machinery, burn-rate
+  sparkline, and shortcut) is gone: it overlaid the chat rather than sitting
+  under it and did not earn its keep. The live tool row remains the primary
+  progress surface and `/flows inspect` remains the per-child drill-down.
 
 ### Fixed
 
