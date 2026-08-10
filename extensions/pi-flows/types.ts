@@ -28,7 +28,7 @@ export type { FlowPreset, FlowPresetDiscovery, FlowPresetDiscoveryIssue, FlowPre
 // Model-selection vocabulary, same arrangement: the terms live in a
 // dependency-free module and the policy that produces a roster lives in
 // model-roster.ts, which the kernel may not import.
-export { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL } from "./roster-types.ts";
+export { ROSTER_CONFIG_FILE, THINKING_LEVELS, UNREADABLE_SCOPED_MODEL, USE_DEFAULT_MODEL } from "./roster-types.ts";
 export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterLayer, RosterOverride, ThinkingLevel } from "./roster-types.ts";
 
 export const PI_FLOWS_VERSION = "0.7.1";
@@ -139,6 +139,7 @@ export const FLOW_ERROR_CODES = [
 	"CHECKPOINT_APPROVAL_DENIED",
 	"SHARED_WRITE_CWD",
 	"BASH_READONLY_UNENFORCEABLE",
+	"MODEL_SCOPE_UNSATISFIABLE",
 	"PROJECT_AGENT_APPROVAL_REQUIRED",
 	"PROJECT_AGENT_APPROVAL_DENIED",
 	"INVALID_DELEGATION_CONTRACT",

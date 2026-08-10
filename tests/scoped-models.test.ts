@@ -1,0 +1,136 @@
+// The session's effective model scope (`/scoped-models`, `--models`) must
+// constrain automatically derived tiers. The regression these guard against:
+// `fast`/`deep` dispatching a child to a model the user disabled, because the
+// roster ranked everything `modelRegistry.getAvailable()` returned (#108).
+//
+// The scope constrains *automatic* derivation only — explicit pins remain
+// explicit overrides, and `capable` mirrors the active parent model even when
+// that model sits outside the cycling scope.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { currentModelRoster } from "../extensions/pi-flows/roster-source.ts";
+import { runFlow } from "./stub-harness.ts";
+
+/** A registry whose strongest and cheapest models both sit outside the scope. */
+const WIDE_REGISTRY = {
+	getAvailable: () => [
+		{ id: "scoped", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 3, output: 12 } },
+		{ id: "outside-scope", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 15, output: 60 } },
+		{ id: "outside-cheap", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 0.1, output: 0.4 } },
+	],
+};
+
+const modelOf = (call: { args: string[] }) => {
+	const flag = call.args.indexOf("--model");
+	return flag === -1 ? undefined : call.args[flag + 1];
+};
+
+test("currentModelRoster derives fast and deep from the session scope, not the whole registry", () => {
+	// The issue's deterministic repro: the out-of-scope model ranks strongest,
+	// so an unconstrained roster hands `deep` to it.
+	const roster = currentModelRoster({
+		modelRegistry: WIDE_REGISTRY,
+		model: { provider: "test-provider", id: "scoped" },
+		scopedModels: [{ model: { provider: "test-provider", id: "scoped" } }],
+	});
+	assert.equal(roster.deep.model, "test-provider/scoped", "deep escaped the effective session scope");
+	assert.equal(roster.fast.model, "test-provider/scoped", "fast escaped the effective session scope");
+
+	// An empty scoped list means no scoping is configured: current behavior.
+	const unscoped = currentModelRoster({
+		modelRegistry: WIDE_REGISTRY,
+		model: { provider: "test-provider", id: "scoped" },
+		scopedModels: [],
+	});
+	assert.equal(unscoped.deep.model, "test-provider/outside-scope");
+	assert.equal(unscoped.fast.model, "test-provider/outside-cheap");
+
+	// Older pi runtimes have no `scopedModels` at all: genuinely unscoped.
+	const absent = currentModelRoster({ modelRegistry: WIDE_REGISTRY, model: { provider: "test-provider", id: "scoped" } });
+	assert.equal(absent.deep.model, "test-provider/outside-scope");
+
+	// A NON-empty scope whose entries this version cannot read is a scope the
+	// user configured, not "no scope": it must fail closed onto the session
+	// model, never widen back to the full registry (version-skew safety).
+	const malformed = currentModelRoster({
+		modelRegistry: WIDE_REGISTRY,
+		model: { provider: "test-provider", id: "scoped" },
+		scopedModels: [null, { model: { provider: 7, id: "scoped" } }] as never,
+	});
+	assert.equal(malformed.deep.model, "test-provider/scoped", "an unreadable scope anchors to the session model rather than escaping");
+	assert.equal(malformed.fast.model, "test-provider/scoped");
+
+	// Entries that do decode still scope precisely; unreadable siblings are
+	// skipped without widening or blanking the scope.
+	const partial = currentModelRoster({
+		modelRegistry: WIDE_REGISTRY,
+		model: { provider: "test-provider", id: "scoped" },
+		scopedModels: [null, { model: { provider: 7, id: "x" } }, { model: { provider: "test-provider", id: "scoped" } }] as never,
+	});
+	assert.equal(partial.deep.model, "test-provider/scoped");
+});
+
+test("no automatically tiered child receives a model excluded from the session scope", async () => {
+	// Execution path: the wider registry offers a stronger and a cheaper model,
+	// both excluded from the effective scope. Neither tier may reach them.
+	const scopedModels = [{ model: { provider: "test-provider", id: "scoped" } }];
+	const deep = await runFlow(
+		{ agent: "operator", task: "adjudicate the design", tier: "deep" },
+		{ operator: "done" },
+		{ registry: WIDE_REGISTRY, model: { provider: "test-provider", id: "scoped" }, scopedModels },
+	);
+	assert.equal(deep.calls.length, 1);
+	// The exact in-scope model, not merely "not the strongest outsider": any
+	// out-of-scope model on the argv would break the session-scope contract.
+	assert.equal(modelOf(deep.calls[0]), "test-provider/scoped", "deep dispatched a child to a model outside the session scope");
+
+	const fast = await runFlow(
+		{ agent: "operator", task: "scout the repo", tier: "fast" },
+		{ operator: "done" },
+		{ registry: WIDE_REGISTRY, model: { provider: "test-provider", id: "scoped" }, scopedModels },
+	);
+	assert.equal(modelOf(fast.calls[0]), "test-provider/scoped", "fast dispatched a child to a model outside the session scope");
+});
+
+test("a scope with no usable model keeps a tiered child on the session model's argv", async () => {
+	// The stranded-scope edge: the only scoped model is below the context floor.
+	// An unresolved tier would spawn the child with no --model at all — pi's
+	// configured default, which the scope may exclude — so the tier pins the
+	// session's own model instead.
+	const registry = {
+		getAvailable: () => [
+			{ id: "tiny-scoped", provider: "test-provider", reasoning: true, contextWindow: 8_000, maxTokens: 8192, cost: { input: 0.1, output: 0.4 } },
+			{ id: "session-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 3, output: 12 } },
+			{ id: "outside-strong", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 15, output: 60 } },
+		],
+	};
+	const { calls } = await runFlow(
+		{ agent: "operator", task: "adjudicate the design", tier: "deep" },
+		{ operator: "done" },
+		{ registry, model: { provider: "test-provider", id: "session-model" }, scopedModels: [{ model: { provider: "test-provider", id: "tiny-scoped" } }] },
+	);
+	assert.equal(modelOf(calls[0]), "test-provider/session-model", "a stranded scope anchors the tier to the session model, never to an unpinned default");
+});
+
+test("an unreadable scope with no session model refuses the automatic tier before any spawn", async () => {
+	// The last rung of the fail-closed ladder: nothing decoded, nothing to
+	// anchor to. Spawning would launch the child unpinned — pi's configured
+	// default, possibly outside the scope — so the dispatch is refused with a
+	// structured error instead.
+	const { result, calls } = await runFlow(
+		{ agent: "operator", task: "adjudicate the design", tier: "deep" },
+		{ operator: "done" },
+		{ registry: WIDE_REGISTRY, model: null, scopedModels: [{ model: { provider: 7, id: "x" } }] },
+	);
+	assert.equal(calls.length, 0, "no child process may spawn unpinned into an unsatisfiable scope");
+	assert.equal(result.details.results[0]?.error?.code, "MODEL_SCOPE_UNSATISFIABLE");
+});
+
+test("the scoped roster is what showConfig reports", async () => {
+	const { text } = await runFlow(
+		{ showConfig: true, why: undefined },
+		{},
+		{ registry: WIDE_REGISTRY, model: { provider: "test-provider", id: "scoped" }, scopedModels: [{ model: { provider: "test-provider", id: "scoped" } }] },
+	);
+	assert.doesNotMatch(text, /modelTier\.(fast|deep): test-provider\/outside/, "the disclosure must describe the constrained roster");
+});

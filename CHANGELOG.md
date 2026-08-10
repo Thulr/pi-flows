@@ -31,6 +31,32 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- The automatically derived model roster now honors pi's effective session
+  scope (`/scoped-models`, `--models`): a non-empty `ctx.scopedModels`
+  constrains the `fast`/`deep` candidates, so an automatically tiered child can
+  no longer dispatch to a model the user disabled. An empty or absent scope
+  (including older pi runtimes without the property) keeps the
+  all-available-models behavior, `capable` still mirrors the session's active
+  model even outside the cycling scope, and explicit model pins remain
+  deliberate overrides. A non-empty scope that leaves the tiers nothing
+  rankable fails closed down a ladder instead of falling through: anchor to
+  the session model, else bind a decoded scoped reference directly, else
+  refuse the automatic tier with the new `MODEL_SCOPE_UNSATISFIABLE` error —
+  an unpinned child would load pi's configured default, which the scope may
+  exclude. (#108)
+- A child that reported a terminal provider error and then exited on its own
+  was misclassified as `CHILD_EXIT_NONZERO`, replacing the provider's
+  diagnostic with a generic exit message; it is now `CHILD_PROVIDER_ERROR` on
+  both the prompt-exit and stalled-then-terminated paths, with a cause that
+  says which of the two happened. A later healthy turn still clears the
+  terminal-error state. (#110)
+- A contracted child's budget wrap-up is no longer marked successful on notice
+  delivery alone: a wrap-up response that fails envelope validation revokes the
+  provisional `budget_wrap_up` success, so the run (and the live row and
+  durable flow card) reports the validation error — naming the failing role —
+  instead of rendering `✓`/`N ok` beside `RETURN_ENVELOPE_INVALID`. The
+  contracted wrap-up notice now also states the exact `contractId` and
+  return-envelope format the final message must carry. (#112)
 - A flow whose router settled without naming a valid candidate
   (`ROUTE_UNRESOLVED`) reported no runs: the router child that had already
   spent tokens vanished from `details.results`, so the flow card read

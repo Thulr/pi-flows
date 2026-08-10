@@ -12,6 +12,7 @@ import { WRAP_UP_NOTICE_MARKER } from "../extensions/pi-flows/budget.ts";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { ChildBudgets } from "../extensions/pi-flows/runner-budget.ts";
 import { parseTraceJsonl } from "../extensions/pi-flows/trace.ts";
+import { flowProgressText } from "../extensions/pi-flows/ui.ts";
 import { WRAPUP_FILE_ENV, registerWrapUpSteering, requestWrapUp } from "../extensions/pi-flows/wrapup.ts";
 import { runFlow } from "./stub-harness.ts";
 
@@ -140,6 +141,42 @@ test("a child steered to wrap up returns a partial envelope instead of forfeitin
 	assert.ok(exhausted, "crossing the ceiling after the wrap-up is still recorded");
 	assert.equal(exhausted!.attributes!["flow.budget.graceful"], true);
 	assert.equal(wrapUp!.attributes!["flow.budget.wrapup_delivered"], true, "the echo of the steered notice is the delivery proof");
+});
+
+test("a delivered wrap-up answered with prose is not marked successful before envelope validation", async () => {
+	// Issue #112: settle() used to treat notice *delivery* as notice *compliance*
+	// — a child that ignored the instruction and returned prose still rendered as
+	// exitCode 0 / budget_wrap_up beside the flow's RETURN_ENVELOPE_INVALID.
+	const contract = contractWithBudget({ maxTokens: 25 });
+	const { result, stubDir } = await runFlow(
+		{ agent: "recon", contract, timeoutMs: 5_000, traceFile: "wrapup-invalid-trace.jsonl" },
+		{ recon: { reply: "still reading", wrapUpReply: "ran out of budget; here are my notes in plain prose.", holdOpenMs: 4_000 } },
+	);
+	const child = result.details.results[0];
+	assert.equal(child.wrapUpRequested, true, "the wrap-up was requested and delivered");
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.notEqual(child.exitCode, 0, `invalid wrap-up was marked successful (${child.stopReason}) before envelope validation`);
+	assert.equal(child.error?.code, "RETURN_ENVELOPE_INVALID", "the failing run itself carries the validation cause");
+	assert.equal(child.usage.cost, 0.0002, "usage accrued before the failure stays on the ledger");
+	assert.equal(flowProgressText(result.details), "1 failed", "the board must never report ok beside RETURN_ENVELOPE_INVALID");
+
+	// The strengthened contracted notice: the generic ask alone has failed in a
+	// real run, so the child is told the exact identity and format its final
+	// envelope needs.
+	const notice = readFileSync(path.join(stubDir, "wrapup-notice.txt"), "utf8");
+	assert.match(notice, /pi-flows\.return-envelope\.v1/);
+	assert.ok(notice.includes(delegationContractId(contract as never)), "the notice names the contract identity the envelope must carry");
+
+	// The child span was exported (status OK) before validation ran, and an
+	// exported span is immutable — the revocation is recorded on the linked
+	// rejection event as the correction a trace consumer applies.
+	const spans = parseTraceJsonl(await readFile(path.join(stubDir, "wrapup-invalid-trace.jsonl"), "utf8")).spans;
+	const rejection = spans.find((span) => span.attributes?.["flow.event_name"] === "envelope.rejected");
+	assert.ok(rejection, "the envelope rejection is coordination evidence");
+	assert.equal(rejection!.attributes!["flow.budget.wrapup_revoked"], true, "the rejection event marks the revoked provisional wrap-up success");
+	assert.equal(rejection!.attributes!["flow.error_code"], "RETURN_ENVELOPE_INVALID");
+	const childSpan = spans.find((span) => span.attributes?.["flow.span_role"] === "child");
+	assert.ok(String(rejection!.attributes!["flow.depends_on_span_ids"] ?? "").split(",").includes(childSpan!.span_id), "the revocation links to the child span it corrects");
 });
 
 test("a notice that never reaches the child keeps exhaustion fatal", async () => {

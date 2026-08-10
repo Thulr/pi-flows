@@ -40,6 +40,25 @@ export function delegationContractId(contract: DelegationContract): string {
 	return canonicalSha256(contract);
 }
 
+/** The envelope's field list as prose, stated once so every instruction that teaches the shape teaches the same shape. */
+const ENVELOPE_REQUIRED_FIELDS = "schemaVersion, contractId, status, summary, evidence, artifactReferences, digests, changedState, unresolvedQuestions, retry, and data";
+
+/**
+ * The contract-specific half of a budget wrap-up notice. The generic ask
+ * ("emit the envelope now") has failed in a real code-review run (#112): a
+ * near-ceiling child needs the exact identity and format its final message
+ * must carry, or it wraps up in prose and forfeits the flow's result at
+ * validation. Lives beside `renderTask` because both teach the same return
+ * protocol, and drifting apart is exactly what a child cannot recover from.
+ */
+export function contractWrapUpRequirement(contract: DelegationContract): string {
+	return [
+		`This task is contracted: your final message must be exactly one JSON object in a fenced json block using schemaVersion "${ENVELOPE_VERSION}", with contractId set to exactly "${delegationContractId(contract)}".`,
+		`Use status "partial" unless the work is truly complete, keep \`data\` conforming to the contract's returnSchema, and include the required fields (${ENVELOPE_REQUIRED_FIELDS}).`,
+		"Prose, another format, or further tool calls will invalidate this run.",
+	].join(" ");
+}
+
 export function storedError(error: FlowError, policy: CapturePolicy): FlowError {
 	return { ...error, cause: redactValue(error.cause, policy) as string };
 }
@@ -159,7 +178,7 @@ export class ResolvedDelegationContract {
 			"\n## Required return protocol",
 			`Return one JSON object in a fenced \`json\` block using schemaVersion "${ENVELOPE_VERSION}".`,
 			`Set contractId to exactly "${this.id}" so downstream consumers can reject missing or stale returns.`,
-			"Required fields: schemaVersion, contractId, status, summary, evidence, artifactReferences, digests, changedState, unresolvedQuestions, retry, and data.",
+			`Required fields: ${ENVELOPE_REQUIRED_FIELDS}.`,
 			"`data` must satisfy contract.returnSchema. Evidence items use {claim, source}. Artifact references use {path}. Digests use {artifact, algorithm:\"sha256\", value}.",
 			"Use empty arrays when no evidence, artifacts, digests, changed state, or unresolved questions exist. Do not report success as prose outside the envelope.",
 		].join("\n");

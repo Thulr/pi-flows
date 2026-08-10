@@ -8,7 +8,7 @@ import { capModelVisibleText, isFailed, redactValue, resultText } from "./saniti
 import { flowError, type CapturePolicy, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 
 // Contract identity/admission live in contract-resolution.ts; re-exported here.
-export { ResolvedDelegationContract, canonicalJsonValue, canonicalSha256, delegationContractId, isRecord, validateDelegationContract } from "./contract-resolution.ts";
+export { ResolvedDelegationContract, canonicalJsonValue, canonicalSha256, contractWrapUpRequirement, delegationContractId, isRecord, validateDelegationContract } from "./contract-resolution.ts";
 
 const ENVELOPE_STATUSES = new Set(["completed", "partial", "blocked", "failed"]);
 

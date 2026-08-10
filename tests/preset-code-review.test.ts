@@ -9,6 +9,7 @@ import { Run } from "../extensions/pi-flows/run.ts";
 import { attachPresetTraceAttributes } from "../extensions/pi-flows/preset-catalog.ts";
 import { formatPresetResult, loadPresetsFromDir, packagePresetsDir, preparePresetRun, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
 import { emptyUsage, type FlowPreset, type FlowRunResult } from "../extensions/pi-flows/types.ts";
+import { appendFlowSessionEntry, flowProgressText } from "../extensions/pi-flows/ui.ts";
 import { runFlow } from "./stub-harness.ts";
 
 function reviewRun(
@@ -469,4 +470,119 @@ test("a validated axis keeps its findings when the other axis fails validation",
 	// first — the incident behind issue #104 was a parent replaying a
 	// non-retryable flow because the fix text addressed the child.
 	assert.match(result.content[0].text, /Do not automatically replay this flow/);
+});
+
+// ---------------------------------------------------------------------------
+// Budget wrap-up at the preset seam (#112): a contracted reviewer near its
+// ceiling is steered to return a partial envelope. Delivery is not compliance —
+// an axis that answers the notice with prose must fail, named, while an axis
+// that honors it with a valid partial envelope stays graceful.
+// ---------------------------------------------------------------------------
+
+/** The code-review preset's real contracts, resolved exactly as runFlow resolves them for `task`. */
+function reviewContracts(task: string): { standards: unknown; spec: unknown } {
+	const loaded = loadPresetsFromDir(packagePresetsDir, "package");
+	const discovery = { presets: loaded.presets, issues: [], packagePresetsDir, userPresetsDir: "", projectPresetsDir: null };
+	const resolved = resolveFlowPreset({ preset: "code-review", task }, discovery);
+	assert.ok(!("error" in resolved));
+	const tasks = (resolved as any).params.tasks as any[];
+	return { standards: tasks[0].contract, spec: tasks[1].contract };
+}
+
+/** One code-review run whose spec axis is steered to wrap up and answers with `specWrapUpReply`. */
+async function runWrapUpReview(specWrapUpReply: (contracts: { standards: unknown; spec: unknown }) => string) {
+	const task = "Review the pending change.";
+	const contracts = reviewContracts(task);
+	return runFlow(
+		{ preset: "code-review", task, maxGeneratedTokens: 10, concurrency: 2, timeoutMs: 8_000 },
+		{
+			overwatch: [
+				{ whenTaskIncludes: "Standards review", reply: reviewEnvelope(contracts.standards, "standards", "completed") },
+				{ whenTaskIncludes: "Spec review", omitUsage: true, reply: "ack", wrapUpReply: specWrapUpReply(contracts), holdOpenMs: 6_000 },
+			],
+		},
+	);
+}
+
+const reviewEnvelope = (contract: unknown, axis: "standards" | "spec", status: "completed" | "partial", overrides: Record<string, unknown> = {}) => JSON.stringify({
+	schemaVersion: "pi-flows.return-envelope.v1",
+	contractId: delegationContractId(contract as never),
+	status,
+	summary: `${axis} ${status}`,
+	evidence: [],
+	artifactReferences: [],
+	digests: [],
+	changedState: [],
+	unresolvedQuestions: status === "partial" ? ["budget exhausted before full coverage"] : [],
+	retry: { retryable: false },
+	data: { axis, base: "a".repeat(40), head: "b".repeat(40), coverage: [], findings: [] },
+	...overrides,
+});
+
+test("code-review: a delivered wrap-up answered with prose fails the flow and names the axis", async () => {
+	// The incident behind #112: both reviewers crossed the ceiling after the
+	// notice, one returned an invalid response, and the UI still said `2 ok`
+	// beside error:RETURN_ENVELOPE_INVALID.
+	const { result } = await runWrapUpReview(() => "wrapped up in prose instead of the required envelope");
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.match(result.details.error?.cause ?? "", /spec/, "the error names the axis whose envelope failed validation");
+	const spec = result.details.results.find((item: any) => item.role === "spec");
+	const standards = result.details.results.find((item: any) => item.role === "standards");
+	assert.ok(spec && standards);
+	assert.equal(spec.wrapUpRequested, true, "the spec axis was steered");
+	assert.notEqual(spec.exitCode, 0, "a delivered-but-invalid wrap-up must not render as a success");
+	assert.equal(spec.error?.code, "RETURN_ENVELOPE_INVALID");
+	assert.equal(standards.exitCode, 0, "the validated axis keeps its success");
+	assert.equal(flowProgressText(result.details), "1 failed", "the compact row must never say `2 ok` beside RETURN_ENVELOPE_INVALID");
+
+	// The durable flow card persists the same demoted state: status error, and
+	// the failed axis's row carries the validation code rather than a success.
+	const entries: any[] = [];
+	appendFlowSessionEntry({ appendEntry: (_type: string, data: any) => entries.push(data) } as any, result.details);
+	assert.equal(entries[0].status, "error");
+	const cardSpec = entries[0].results.find((item: any) => item.role === "spec");
+	assert.notEqual(cardSpec.exitCode, 0, "the persisted card row for the spec axis must not read as ✓");
+	assert.equal(cardSpec.errorCode, "RETURN_ENVELOPE_INVALID");
+});
+
+test("code-review: a wrap-up honored with a valid partial envelope settles graceful and PARTIAL", async () => {
+	const { result } = await runWrapUpReview((contracts) => reviewEnvelope(contracts.spec, "spec", "partial"));
+	assert.equal(result.details.error, undefined, "an honored wrap-up is not a flow failure");
+	const spec = result.details.results.find((item: any) => item.role === "spec");
+	assert.equal(spec?.exitCode, 0);
+	assert.equal(spec?.stopReason, "budget_wrap_up");
+	assert.equal(spec?.envelope?.status, "partial");
+	assert.equal(result.details.presetOutcome, "PARTIAL", "an accepted partial envelope is a PARTIAL verdict, not an error");
+	assert.match(result.content[0].text, /Code review: PARTIAL/);
+});
+
+test("code-review: every dishonored wrap-up in the batch is demoted, not only the first", async () => {
+	// The incident shape exactly: BOTH axes cross after the notice and neither
+	// returns an envelope. Consumption must validate (and revoke) both before
+	// surfacing the first error — a short-circuit left the second axis ✓.
+	const task = "Review the pending change.";
+	reviewContracts(task); // preset resolvable; contracts irrelevant, both axes return prose
+	const { result } = await runFlow(
+		{ preset: "code-review", task, maxGeneratedTokens: 10, concurrency: 2, timeoutMs: 8_000 },
+		{
+			overwatch: [
+				// Standards' first turn is delayed so spec's zero-usage ack always
+				// settles while the shared budget is untouched. Without the delay, a
+				// slow runner can process the ack inside the past-ceiling window that
+				// standards' own prose turn opens, hard-stopping spec before its
+				// notice echo — BUDGET_EXCEEDED instead of the validation path this
+				// test exists to pin.
+				{ whenTaskIncludes: "Standards review", reply: "ack", delayBeforeReplyMs: 500, wrapUpReply: "standards wrapped up in prose", holdOpenMs: 6_000 },
+				{ whenTaskIncludes: "Spec review", omitUsage: true, reply: "ack", wrapUpReply: "spec wrapped up in prose", holdOpenMs: 6_000 },
+			],
+		},
+	);
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	for (const axis of ["standards", "spec"]) {
+		const run = result.details.results.find((item: any) => item.role === axis);
+		assert.ok(run, `${axis} axis ran`);
+		assert.notEqual(run.exitCode, 0, `${axis}: a dishonored wrap-up after the first error must still be demoted`);
+		assert.equal(run.error?.code, "RETURN_ENVELOPE_INVALID", `${axis}: carries its own validation cause`);
+	}
+	assert.equal(flowProgressText(result.details), "2 failed", "no dishonored axis may count as ok");
 });

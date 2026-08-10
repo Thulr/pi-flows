@@ -253,6 +253,10 @@ produce this error when it crosses the ceiling — it settles gracefully with
 seeing `BUDGET_EXCEEDED` means the ceiling was crossed before any wrap-up
 could be requested, or the notice never reached the child (for example when
 child extensions are disabled, or one turn jumped from below 80% past 100%).
+Note the graceful settlement is provisional for a contracted child: if its
+wrap-up response then fails envelope validation, the run is reported failed
+with that validation error (`RETURN_ENVELOPE_INVALID`, naming the role) —
+notice delivery alone never renders as a success.
 
 Fix: do not automatically replay the same Flow unchanged. Ask for direction, or
 make a material, visible change that stays within the configured ceiling:
@@ -548,6 +552,21 @@ allowlist fallback; or change the role's tools — `bash` if write-capable
 classification (and the shared-write guard) is acceptable, or `read,grep,find,ls`
 if the child does not need a shell.
 
+### `MODEL_SCOPE_UNSATISFIABLE`
+
+Cause: the child asked for an automatic tier (`fast`/`deep`), but the session's
+model scope (`/scoped-models`, `--models`) admits no model the tier could name —
+no scoped model is readable or present, the context supplied no session model to
+anchor to, and nothing explicit (call `model`, agent pin, or pi-flows config)
+named one. Spawning anyway would launch the child with no `--model`, loading
+pi's configured default — possibly a model or provider the scope excludes — so
+the spawn is refused before any process starts. (When the session model *is*
+known, or the scope contains readable references, the tiers anchor or bind
+instead of refusing; see the model-roster section of the flow reference.)
+
+Fix: widen the session's model scope, name a model explicitly on the call,
+agent, or `pi-flows.json`, or run the flow from a session with a current model.
+
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`
 
 Cause: a headless (non-UI) run requested a project-local agent from
@@ -679,13 +698,17 @@ stuck auth/provider cases, run a smaller no-model smoke check first.
 ### `CHILD_PROVIDER_ERROR`
 
 Cause: the child's model provider returned a terminal error (for example
-"input exceeds the context window of this model") and the child process then
-stalled instead of exiting, so pi-flows terminated it after a short grace
-period rather than letting it hang until `timeoutMs`.
+"input exceeds the context window of this model"). Usually the child process
+then exits on its own; if it stalls instead, pi-flows terminates it after a
+short grace period rather than letting it hang until `timeoutMs`. The error's
+`cause` says which of the two happened, and the provider's own diagnostic is
+preserved in the error message — this is not a generic `CHILD_EXIT_NONZERO`
+even though the process exited non-zero.
 
 Fix: narrow the task or the material the child reads (a smaller issue thread,
 fewer files), or pick a larger-context model via `tier`/`model`, then retry.
-`PI_FLOWS_ERROR_GRACE_MS` tunes the grace period (default 30000ms).
+For the stalled case, `PI_FLOWS_ERROR_GRACE_MS` tunes the grace period
+(default 30000ms).
 
 ### `TRACE_INCOMPLETE`
 

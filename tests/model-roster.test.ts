@@ -13,6 +13,7 @@ import * as path from "node:path";
 import test from "node:test";
 import { availableModelsFromRegistry } from "../extensions/pi-flows/roster-source.ts";
 import { resolveChildModel } from "../extensions/pi-flows/runner.ts";
+import { UNREADABLE_SCOPED_MODEL } from "../extensions/pi-flows/types.ts";
 import {
 	clampThinking,
 	deriveModelRoster,
@@ -227,6 +228,143 @@ test("deep falls back to a reasoning model before a pricier one that cannot reas
 	const roster = deriveModelRoster({ available: [cheapCapped, reasoningCapped, pricierPlain], parent: {} });
 	assert.equal(roster.deep.model, "acme/capped", "a model that can still think beats one that cannot");
 	assert.equal(roster.deep.thinking, "medium", "clamped to what it offers, rather than collapsed to off");
+});
+
+test("a non-empty session scope constrains the automatically derived fast and deep rungs", () => {
+	// The user narrowed the session to a subset of models (`/scoped-models`,
+	// `--models`). Deriving from the full registry would let `fast`/`deep`
+	// dispatch a child to a model they explicitly disabled.
+	const scopedOnly = deriveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		scoped: ["acme/standard"],
+	});
+	assert.equal(scopedOnly.deep.model, "acme/standard", "deep must not escape to the stronger out-of-scope flagship");
+	assert.equal(scopedOnly.fast.model, "acme/standard", "fast must not escape to the cheaper out-of-scope mini");
+
+	const twoInScope = deriveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		scoped: ["acme/mini", "acme/standard"],
+	});
+	assert.equal(twoInScope.fast.model, "acme/mini", "within the scope, ranking still applies");
+	assert.equal(twoInScope.deep.model, "acme/standard");
+
+	// An empty or absent scope means no scoping is configured, not "no models".
+	const unscoped = deriveModelRoster({ available: INSTALL, parent: { model: "acme/standard" }, scoped: [] });
+	assert.equal(unscoped.fast.model, "acme/mini");
+	assert.equal(unscoped.deep.model, "acme/flagship");
+});
+
+test("the parent model outside the scope still resolves as capable", () => {
+	// The active parent model is already the session's explicit execution
+	// context; the cycling scope constrains automatic derivation, not it.
+	const roster = deriveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/flagship", thinking: "high" },
+		scoped: ["acme/mini"],
+	});
+	assert.equal(roster.capable.model, "acme/flagship");
+	assert.equal(roster.fast.model, "acme/mini");
+	assert.equal(roster.deep.model, "acme/mini");
+});
+
+test("a scope whose models are all unusable anchors the tiers to the session model rather than escaping it", () => {
+	// Every scoped model is below the context floor. Falling back to the full
+	// registry would silently run the exact models the user scoped out — and
+	// leaving the tiers unresolved would too, one step later: an unanswered tier
+	// spawns a child with no --model, which loads pi's *configured* default.
+	// The session's own model is the one anchor that is always a deliberate
+	// choice, so the automatic tiers stay on it.
+	const roster = deriveModelRoster({
+		available: [model("tiny", { contextWindow: 8_000 }), ...INSTALL],
+		parent: { model: "acme/standard" },
+		scoped: ["acme/tiny"],
+	});
+	assert.equal(roster.fast.model, "acme/standard", "fast must not fall through to a model the scope may exclude");
+	assert.equal(roster.deep.model, "acme/standard");
+	assert.equal(roster.deep.thinking, "max", "the tier still means something: it differs by thinking level");
+	assert.equal(roster.capable.model, "acme/standard", "capable still names the session's model");
+	assert.match(describeModelRoster(roster).join("\n"), /model scope/, "and the disclosure names the scope, not a missing registry");
+
+	// With no session model, the scope's own decoded reference is the next-best
+	// anchor: the user enabled exactly that model, and an unresolved tier would
+	// fall through to an unpinned child — pi's configured default, which the
+	// scope may exclude.
+	const anchorless = deriveModelRoster({
+		available: [model("tiny", { contextWindow: 8_000, thinkingLevels: ["off", "low"] }), ...INSTALL],
+		parent: {},
+		scoped: ["acme/tiny"],
+	});
+	assert.equal(anchorless.fast.model, "acme/tiny", "the scoped model is bound even below the ranking floor");
+	assert.equal(anchorless.deep.model, "acme/tiny");
+	assert.equal(anchorless.deep.thinking, "low", "clamped to what the bound model actually offers");
+});
+
+test("a scope with nothing readable and no session model refuses the automatic tiers", () => {
+	// The last resort is an explicit refusal, never a silent fall-through: with
+	// no decoded reference and no session model, any model an automatic tier
+	// named would be a guess, and an unpinned child would load pi's configured
+	// default — possibly outside the scope.
+	const roster = deriveModelRoster({
+		available: INSTALL,
+		parent: {},
+		scoped: [UNREADABLE_SCOPED_MODEL],
+	});
+	assert.ok(roster.fast.refusal, "fast refuses rather than answering or staying silent");
+	assert.ok(roster.deep.refusal);
+	assert.equal(roster.fast.model, undefined);
+	assert.equal(roster.capable.model, null, "capable still answers: the pi default is the session's explicit context");
+	assert.match(describeModelRoster(roster).join("\n"), /refused — model scope unsatisfiable/, "the disclosure must not claim the pi default will run");
+
+	// A config layer naming a model is a deliberate choice that answers the rung.
+	const overridden = resolveModelRoster({
+		available: INSTALL,
+		parent: {},
+		scoped: [UNREADABLE_SCOPED_MODEL],
+		config: { deep: { model: "acme/flagship" } },
+	});
+	assert.equal(overridden.deep.refusal, undefined);
+	assert.equal(overridden.deep.model, "acme/flagship");
+	assert.ok(overridden.fast.refusal, "a rung no layer answered keeps refusing");
+
+	// resolveChildModel surfaces the refusal to the dispatcher — unless an
+	// explicit pin overrides it, which is a stated model and therefore wins.
+	const refused = resolveModelRoster({ available: INSTALL, parent: {}, scoped: [UNREADABLE_SCOPED_MODEL] });
+	assert.ok(resolveChildModel({ tier: "deep" }, {}, refused).refusal, "a refused call tier reaches the dispatcher as a refusal");
+	assert.ok(resolveChildModel({}, { tier: "fast" }, refused).refusal);
+	assert.equal(resolveChildModel({ tier: "deep" }, { model: "acme/standard" }, refused).refusal, undefined, "a call-site pin clears it");
+	assert.equal(resolveChildModel({ model: "acme/standard", tier: "deep" }, {}, refused).refusal, undefined, "an agent pin clears its own tier's refusal");
+	assert.equal(resolveChildModel({ model: "acme/standard" }, { tier: "deep" }, refused).refusal, undefined, "an agent pin also backstops a refused call tier");
+	assert.equal(resolveChildModel({ tier: "capable" }, {}, refused).refusal, undefined, "capable is the session's explicit context, never refused");
+
+	// Any CONCRETE model the chain lands on clears the refusal — here a refused
+	// call tier falls through to an agent tier a config layer answered. Refusing
+	// a deliberately configured model would over-refuse; only a chain ending
+	// unpinned (the configured-default escape) keeps the refusal.
+	const configAnswered = resolveModelRoster({
+		available: INSTALL,
+		parent: {},
+		scoped: [UNREADABLE_SCOPED_MODEL],
+		config: { deep: { model: "acme/flagship" } },
+	});
+	const backstopped = resolveChildModel({ tier: "deep" }, { tier: "fast" }, configAnswered);
+	assert.equal(backstopped.refusal, undefined, "a config-answered agent tier backstops the refused call tier");
+	assert.equal(backstopped.model, "acme/flagship");
+	assert.ok(resolveChildModel({ tier: "capable" }, { tier: "fast" }, refused).refusal, "falling through to an unpinned capable answer is still the escape, so the refusal stands");
+});
+
+test("an explicit config pin outside the scope is not silently substituted", () => {
+	// This ticket constrains *automatic* derivation only. A pin is a deliberate
+	// override, and swapping another model in under it would be worse.
+	const roster = resolveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		scoped: ["acme/mini", "acme/standard"],
+		config: { deep: { model: "acme/flagship" } },
+	});
+	assert.equal(roster.deep.model, "acme/flagship", "the user's explicit pin still wins");
+	assert.equal(roster.deep.thinking, "max", "and is clamped against the pinned model's real limits");
 });
 
 test("a rung names the layer that settled it, so an edit cannot be silently shadowed", () => {

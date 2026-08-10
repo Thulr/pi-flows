@@ -31,7 +31,7 @@
  * Everything here is a pure function over plain values. A live pi runtime is not
  * required to derive, describe, or test a roster.
  */
-import { ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, type AvailableModel, type ModelRoster, type RosterAssignment, type RosterConfig, type RosterLayer, type RosterOverride, type ThinkingLevel } from "./types.ts";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, UNREADABLE_SCOPED_MODEL, USE_DEFAULT_MODEL, type AvailableModel, type ModelRoster, type RosterAssignment, type RosterConfig, type RosterLayer, type RosterOverride, type ThinkingLevel } from "./types.ts";
 
 /**
  * Thinking level each tier asks for before clamping.
@@ -165,6 +165,14 @@ export interface RosterInputs {
 	available: AvailableModel[];
 	/** The parent's own model reference and current thinking level. */
 	parent: { model?: string; thinking?: ThinkingLevel };
+	/**
+	 * Model references in the session's effective scope (`/scoped-models`,
+	 * `--models`). Non-empty constrains which models automatic derivation may
+	 * assign to `fast`/`deep`; empty or absent means no scoping is configured.
+	 * `available` stays the full registry — capability metadata and the clamping
+	 * of explicit pins still need models the scope excludes.
+	 */
+	scoped?: string[];
 }
 
 /**
@@ -179,7 +187,19 @@ export interface RosterInputs {
  * capable — reasoning-capable first, then price as the capability proxy.
  */
 export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
-	const pool = usableModels(inputs.available);
+	// A non-empty session scope (`/scoped-models`, `--models`) is the model set
+	// the user actually enabled, so automatic derivation ranks within it rather
+	// than the whole catalogue — otherwise `fast`/`deep` dispatch children to
+	// models the user explicitly disabled. Filtered here and not in the registry
+	// adapter because only *derivation* is scoped: explicit pins and clamping
+	// still read the full registry.
+	const scoped = inputs.scoped?.length ? new Set(inputs.scoped) : undefined;
+	const usable = usableModels(inputs.available);
+	const pool = scoped ? usable.filter((model) => scoped.has(model.reference)) : usable;
+	// Where a rung says its candidates came from. Naming the scope matters: a
+	// user reading `/flows models` after narrowing the session should see that
+	// the narrowing took effect.
+	const poolLabel = scoped ? "in this session's model scope" : "this install can run";
 	const parentModel = inputs.parent.model;
 	// Identified from the FULL registry, not the assignable pool. A parent model
 	// too small to be assigned a tier is still the parent, and losing it here
@@ -205,6 +225,50 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	};
 
 	if (pool.length === 0) {
+		// A scope whose models are all unusable must NOT widen back to the
+		// registry — that would run the exact models the user scoped out — and it
+		// must not leave the tiers unresolved either: an unanswered tier falls
+		// through to a child with no `--model`, which loads pi's *configured*
+		// default, a model the scope may exclude. The anchor preference, most to
+		// least deliberate: the session's own model (the same argument that
+		// justifies `capable`); the scope's own decoded references, even below
+		// the ranking floor — the user enabled exactly those; and when neither
+		// exists, an explicit REFUSAL, never a silent fall-through.
+		if (scoped && parentModel) {
+			const stranded = (tier: "fast" | "deep"): RosterAssignment => ({
+				model: parentModel,
+				thinking: clampThinking(TIER_THINKING[tier], parent),
+				why: `no usable model is inside this session's model scope, so ${tier} stays on the model this session is running`,
+				origin: { model: "derived", thinking: "derived" },
+			});
+			return { fast: stranded("fast"), capable, deep: stranded("deep"), available: inputs.available, sessionModel: parentModel, source: "derived", issues: [] };
+		}
+		if (scoped) {
+			const decoded = (inputs.scoped ?? []).filter((reference) => reference !== UNREADABLE_SCOPED_MODEL);
+			if (decoded.length) {
+				// Ranked among the scoped registry entries when any exist (they are
+				// merely below the usability floor, not unknown); a reference the
+				// registry cannot see is still the user's stated choice, pinned as-is
+				// so pi resolves it or fails the run inside the scope.
+				const registryScoped = inputs.available.filter((model) => decoded.includes(model.reference));
+				const bind = (choose: (candidates: AvailableModel[]) => AvailableModel, tier: "fast" | "deep"): RosterAssignment => {
+					const reference = registryScoped.length ? choose(registryScoped).reference : [...decoded].sort()[0];
+					return {
+						model: reference,
+						thinking: clampThinking(TIER_THINKING[tier], inputs.available.find((model) => model.reference === reference)),
+						why: `the session's model scope offers nothing rankable and the session model is unknown, so ${tier} binds to a scoped model directly`,
+						origin: { model: "derived", thinking: "derived" },
+					};
+				};
+				return { fast: bind(cheapest, "fast"), capable, deep: bind(strongest, "deep"), available: inputs.available, sessionModel: parentModel, source: "derived", issues: [] };
+			}
+			// Nothing decoded and nothing to anchor to: refusing is the only way to
+			// stay inside a scope that cannot be read. resolveChildModel surfaces
+			// this to the dispatcher; an explicit pin or config model clears it.
+			const refusal = "this session's model scope has no readable model and the session model is unknown, so an automatically tiered child cannot be kept inside the scope";
+			const refused = (): RosterAssignment => ({ refusal, why: refusal, origin: { model: "derived", thinking: "derived" } });
+			return { fast: refused(), capable, deep: refused(), available: inputs.available, sessionModel: parentModel, source: "derived", issues: [] };
+		}
 		const unknown = "no model registry was available, so every tier runs your pi default";
 		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: inputs.available, sessionModel: parentModel, source: "unavailable", issues: [] };
 	}
@@ -236,7 +300,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	const fast: RosterAssignment = sameOrDefault(cheapModel, parentModel, {
 		model: cheapModel.reference,
 		thinking: clampThinking(TIER_THINKING.fast, cheapModel),
-		why: `cheapest model this install can run${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
+		why: `cheapest model ${poolLabel}${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
 		origin: { model: "derived", thinking: "derived" },
 	}, `the model this session is running is already the cheapest available, so fast reruns it at ${TIER_THINKING.fast} thinking`);
 
@@ -244,8 +308,8 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		model: strongModel.reference,
 		thinking: clampThinking(TIER_THINKING.deep, strongModel),
 		why: supportsExtendedThinking(strongModel)
-			? "most capable model this install can run that supports extended thinking"
-			: "most capable model this install can run (none offer extended thinking)",
+			? `most capable model ${poolLabel} that supports extended thinking`
+			: `most capable model ${poolLabel} (none offer extended thinking)`,
 		origin: { model: "derived", thinking: "derived" },
 	}, supportsExtendedThinking(strongModel)
 		? `the model this session is running is already the most capable available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`
@@ -372,7 +436,11 @@ export function resolveModelRoster(inputs: ResolveRosterInputs): ModelRoster {
 		// rather than the assignable pool: a pin may name a model ranking excluded,
 		// and it still has real limits.
 		const known = layered.model ? inputs.available.find((candidate) => candidate.reference === layered.model) : undefined;
-		return [tier, { model: layered.model, thinking: clampThinking(layered.requested, known), why: layered.why, origin: layered.origin }] as const;
+		// A derived refusal stands only while no layer states a model — env or
+		// config naming one (including the explicit null for "the pi default") is
+		// a deliberate choice that answers the rung.
+		const refusal = layered.model === undefined ? derived[tier].refusal : undefined;
+		return [tier, { model: layered.model, thinking: clampThinking(layered.requested, known), why: layered.why, origin: layered.origin, ...(refusal ? { refusal } : {}) }] as const;
 	});
 	const roster = Object.fromEntries(rungs) as Pick<ModelRoster, "fast" | "capable" | "deep">;
 	return {
@@ -413,7 +481,9 @@ export function describeModelRoster(roster: ModelRoster | undefined): string[] {
 	if (!roster) return ["modelTier: (unresolved — no pi model registry was reachable from this context)"];
 	const rungs = (["fast", "capable", "deep"] as const).map((tier) => {
 		const assignment = roster[tier];
-		const model = assignment.model ?? "(your pi default model)";
+		// A refused rung must not read as "the pi default" — that is the exact
+		// fall-through the refusal exists to prevent.
+		const model = assignment.refusal ? "(refused — model scope unsatisfiable)" : assignment.model ?? "(your pi default model)";
 		const thinking = assignment.thinking ? `, thinking ${assignment.thinking}` : "";
 		return `modelTier.${tier}: ${model}${thinking} — ${assignment.why}`;
 	});

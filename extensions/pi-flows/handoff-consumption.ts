@@ -1,4 +1,5 @@
 import { canonicalEnvelope, prepareIntegrationHandoff } from "./delegation.ts";
+import { Run } from "./run.ts";
 import { createHandoffGuard, HandoffWarnings, prepareResultHandoff, prepareTextHandoff, resolveHandoffPolicy, withInjectionNotice } from "./handoff.ts";
 import { artifactAttributes, handoffAttributes, type ArtifactSource } from "./trace-attributes.ts";
 import { resultText } from "./sanitize.ts";
@@ -120,8 +121,20 @@ export class HandoffConsumer {
 			validation: this.validatedResults.get(options.result),
 		});
 		if (accepted.error) {
-			this.recordRejected({ ...options, contract, scope }, accepted.error, accepted.rejected);
-			return { text: "", warnings: [], action: "fail", error: accepted.error };
+			// The flow-level error names which child's envelope was rejected — in a
+			// multi-axis preset the axis role is the only thing that makes the
+			// failure diagnosable — while the specific validation cause is kept.
+			const from = options.result.role ? `${options.result.role} (${options.result.agent})` : options.result.agent;
+			const named = { ...accepted.error, cause: `Return envelope from ${from} was rejected: ${accepted.error.cause}` };
+			// A budget wrap-up settled this run graceful on notice delivery alone;
+			// a rejected envelope proves the notice was not honored, and the run
+			// must not render as a success beside the flow error it caused (#112).
+			// The revocation rides on the rejection event below: the child span was
+			// already exported with the provisional OK, so this linked event is the
+			// correction a trace consumer applies.
+			const revoked = Run.of(options.result).refuseWrapUpSettlement(named);
+			this.recordRejected({ ...options, contract, scope }, named, accepted.rejected, revoked);
+			return { text: "", warnings: [], action: "fail", error: named };
 		}
 		if (accepted.validation) this.validatedResults.set(options.result, accepted.validation);
 		if (terminal) {
@@ -154,12 +167,19 @@ export class HandoffConsumer {
 
 	consumeResults(options: ConsumeResultOptions[]): HandoffConsumptions {
 		const items: HandoffConsumption[] = [];
+		let error: FlowError | undefined;
 		for (const item of options) {
 			const consumption = this.consumeResult(item);
 			items.push(consumption);
-			if (consumption.error) return { items, error: consumption.error };
+			// Every result is consumed before the first error surfaces: validation
+			// is what demotes a dishonored budget wrap-up (#112), so stopping at
+			// the first failure would leave a second invalid wrap-up in the same
+			// batch rendered as a success beside the flow error — and would drop
+			// the later results' validation evidence from the trace, which is
+			// recorded unconditionally everywhere else.
+			error ??= consumption.error;
 		}
-		return { items };
+		return error ? { items, error } : { items };
 	}
 
 	consumeText(options: ConsumeTextOptions): HandoffConsumption {
@@ -337,6 +357,7 @@ export class HandoffConsumer {
 		options: ConsumeResultOptions,
 		rejection: FlowError,
 		rejected: ReturnType<typeof prepareIntegrationHandoff>["rejected"],
+		wrapUpRevoked = false,
 	): void {
 		if (!this.options.recordEvent) return;
 		// Terminal rejections live in the validation slot for the same reason
@@ -359,6 +380,10 @@ export class HandoffConsumer {
 				"flow.error_code": rejection.code,
 				"flow.handoff.retryable": rejection.retryable,
 				"flow.handoff.artifact_count": rejected?.artifactReferences.length ?? 0,
+				// This rejection revoked a provisional budget_wrap_up success. The
+				// child span already exported status OK; this linked event is the
+				// correction a trace consumer applies (#112).
+				...(wrapUpRevoked ? { "flow.budget.wrapup_revoked": true } : {}),
 			},
 		});
 		if (!rejected) return;

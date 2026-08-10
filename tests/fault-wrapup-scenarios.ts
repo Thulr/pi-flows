@@ -149,6 +149,54 @@ function wrapUpHonoredControlScenario(): FaultScenario {
 }
 
 /**
+ * The dishonored wrap-up notice (#112): the notice is delivered — the graceful
+ * settlement is latched — but the child answers it with prose instead of the
+ * contracted envelope. Delivery is not compliance: envelope validation must
+ * revoke the provisional success, so the run carries the validation cause and
+ * never renders as `✓` beside the flow's RETURN_ENVELOPE_INVALID.
+ */
+function wrapUpDishonoredScenario(): FaultScenario {
+	const cwd = workspace();
+	const contract = boundedContract();
+	return {
+		id: "wrapup-delivered-dishonored",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		// No adapter rule: the fault is the child ignoring the delivered notice's
+		// envelope requirement while its graceful settlement is already latched.
+		faults: [],
+		faultKind: "none",
+		description: "A steered child answers the delivered wrap-up notice with prose; the provisional graceful settlement must be revoked at envelope validation.",
+		attackOpportunities: 1,
+		benignOpportunities: 1,
+		expected: {
+			outcome: { errorCode: "RETURN_ENVELOPE_INVALID" },
+			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
+			policy: { contained: true, falselyBlocked: false },
+			// The clean sibling's handoff is banked; the dishonored wrap-up is not.
+			residualState: { retryable: false, acceptedHandoffs: 1 },
+		},
+		run: async () => {
+			const adapter = makeFaultAdapter({
+				replies: { recon: [{ reply: envelopeFor(contract) }, { reply: "reading", turns: 2, wrapUpReply: "wrapped up in confident prose instead of the contracted envelope" }] },
+				usage: { input: 10, output: 10, cost: 0.001 },
+			});
+			const deps = faultDeps(
+				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }], concurrency: 1, incompleteHandoffPolicy: "include" },
+				adapter,
+				cwd,
+			);
+			const output = await handleParallel(deps);
+			const dishonored = output.details.results.find((result) => result.stopReason === "budget_wrap_up");
+			if (!dishonored?.wrapUpRequested) throw new Error("the wrap-up must have been requested and delivered before the breach");
+			if (dishonored.exitCode === 0) throw new Error("a delivered-but-dishonored wrap-up must not settle as a success");
+			if (dishonored.error?.code !== "RETURN_ENVELOPE_INVALID") throw new Error("the dishonored wrap-up must carry the validation cause");
+			return observe(output, adapter.ledger, ["debrief"], { attack: true });
+		},
+	};
+}
+
+/**
  * The concurrent-live-sibling case: one child's settled turn crosses 80% of a
  * SHARED flow ceiling while a sibling is still mid-run. The transition must
  * steer the live sibling at that moment — not at its own next settled turn,
@@ -312,5 +360,5 @@ function wrapUpErroredTurnScenario(): FaultScenario {
 }
 
 export function wrapUpScenarios(): FaultScenario[] {
-	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario(), wrapUpBroadcastControlScenario(), wrapUpMixedCeilingControlScenario(), wrapUpErroredTurnScenario()];
+	return [wrapUpUndeliveredScenario(), wrapUpHonoredControlScenario(), wrapUpDishonoredScenario(), wrapUpBroadcastControlScenario(), wrapUpMixedCeilingControlScenario(), wrapUpErroredTurnScenario()];
 }

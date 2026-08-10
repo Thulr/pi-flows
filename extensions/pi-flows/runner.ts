@@ -4,13 +4,14 @@ import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_CHILD_ERROR_GRACE_MS, STDOUT_SAMPLE_CAP, emptyUsage, flowError, type Budget, type CapturePolicy, type ChildMessage, type ChildMessageBlock, type FlowError, type ChildSpanScope, type DelegationContract, type FlowAgent, type FlowAgentRefInput, type FlowMode, type FlowRunResult, type ModeDeps, type ModelRoster, type RunChildOptions, type SpanStage, type ThinkingLevel } from "./types.ts";
-import { clampThinking, knownModel, parseModelSpec, rosterAssignment } from "./model-roster.ts";
+import { resolveChildModel, type ChildModelChoice } from "./child-model.ts";
 import { accumulatePiUsage, runJsonlProcess } from "./jsonl-child.mjs";
 import { Run } from "./run.ts";
 import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunResult, sanitizeText, storeMessage } from "./sanitize.ts";
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
 import { BASH_READONLY_ENV, bashReadonlyGitEnv } from "./bash-readonly.ts";
 import { WRAPUP_FILE_ENV, requestWrapUp } from "./wrapup.ts";
+import { contractWrapUpRequirement } from "./contract-resolution.ts";
 import { ChildBudgets } from "./runner-budget.ts";
 import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
 import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
@@ -54,82 +55,9 @@ function childExtensionsDisabled(): boolean {
 	return /^(1|true|yes)$/i.test(process.env.PI_FLOWS_CHILD_NO_EXTENSIONS?.trim() ?? "");
 }
 
-/** What one child will actually run as. */
-export interface ChildModelChoice {
-	/** undefined = omit --model, so the child uses the user's default. */
-	model?: string;
-	/** The level passed on `--thinking`. undefined = omit it, so pi's configured level applies. */
-	thinking?: ThinkingLevel;
-	/**
-	 * Whether that level was checked against the model it will run on.
-	 *
-	 * False when the child names no model: it then loads pi's *configured*
-	 * default, which an extension cannot read, so pi may lower the level
-	 * internally and this value is a request rather than an outcome. Reporting it
-	 * as the effective level would corrupt any experiment that reads the field as
-	 * what actually ran.
-	 */
-	thinkingVerified: boolean;
-}
-
-/**
- * Model and thinking level for a child run.
- *
- * Model: flow model override > flow tier > agent pin > agent tier > pi default.
- * A call-site tier beats an agent's pinned model because the parent is
- * expressing per-task intent. A tier the roster could not resolve at all (no
- * registry) still falls through to the agent pin, so flows keep working when the
- * roster is unavailable.
- *
- * The fall-through tests whether the rung *answered*, not whether it named a
- * model, because "run the pi default" is an answer. Treating it as silence would
- * mean a `deep` call landing on an install whose default is already the
- * strongest model would fall through to a fast agent's pin and run the cheap
- * one — the exact inversion of what was asked for.
- *
- * Thinking follows the same shape one rung at a time, so a call that names only
- * a tier still gets that tier's level, and a call that names only a level keeps
- * whatever model the tier chose. The result is clamped to the resolved model:
- * what is reported is what the child ran at, not what was wished for.
- */
-export function resolveChildModel(
-	agent: { model?: string; tier?: string; thinking?: ThinkingLevel },
-	options: { model?: string; tier?: string; thinking?: ThinkingLevel; flowThinking?: ThinkingLevel },
-	roster: ModelRoster | undefined,
-): ChildModelChoice {
-	const optionsTier = rosterAssignment(roster, options.tier);
-	const agentTier = rosterAssignment(roster, agent.tier);
-	const optionsPin = options.model ? parseModelSpec(options.model) : undefined;
-	const agentPin = agent.model ? parseModelSpec(agent.model) : undefined;
-
-	// `null` from any rung means "the pi default", and is normalized to undefined
-	// only here, at the point the answer becomes argv.
-	const answered = (assignment: { model?: string | null } | undefined) => assignment?.model !== undefined;
-	const model = optionsPin?.model
-		?? (answered(optionsTier)
-			? optionsTier?.model ?? undefined
-			: agentPin?.model ?? (answered(agentTier) ? agentTier?.model ?? undefined : undefined));
-
-	// One ordered list rather than nested conditionals: every source of a level,
-	// narrowest first. The tier rungs sit below the explicit statements so naming
-	// a level never gets overruled by the rung that supplied the model.
-	const requested = [
-		options.thinking,
-		optionsPin?.thinking,
-		options.flowThinking,
-		optionsTier?.thinking,
-		agent.thinking,
-		agentPin?.thinking,
-		agentTier?.thinking,
-	].find((level) => level !== undefined);
-
-	const resolved = knownModel(roster, model);
-	return {
-		model,
-		thinking: clampThinking(requested, resolved),
-		thinkingVerified: requested === undefined || resolved !== undefined,
-	};
-}
+// Child model/level resolution lives in child-model.ts; re-exported here
+// because the runner is where every existing consumer of the seam looks.
+export { resolveChildModel, type ChildModelChoice };
 
 export async function writePromptToTempFile(agentName: string, prompt: string, label = "system"): Promise<{ dir: string; filePath: string }> {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-flow-"));
@@ -188,6 +116,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		[options.budget, options.contractBudget].filter((budget): budget is Budget => Boolean(budget)),
 		options.recordEvent,
 		options.scope,
+		options.contract ? contractWrapUpRequirement(options.contract) : undefined,
 	);
 	const refusal = childBudgets.refuseSpawn(options.agentName);
 	if (refusal) {
@@ -221,6 +150,19 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	// Resolved once: the same choice fills the result, the span, and the argv, so
 	// a run can never report a model or level it did not actually spawn with.
 	const choice = resolveChildModel(agent, { model: options.model, tier: options.tier, thinking: options.thinking, flowThinking: options.flowThinking }, options.roster);
+	if (choice.refusal) {
+		// Spawning anyway would launch the child unpinned — pi's configured
+		// default, possibly a model the session scope excludes. Refused like the
+		// bash-ro unenforceable case: a structured error, no process.
+		const error = flowError(
+			"MODEL_SCOPE_UNSATISFIABLE",
+			`Flow agent "${agent.name}" was not dispatched: ${choice.refusal}.`,
+			"The session's model scope admits no model an automatic tier could name, and no session model or explicit pin was available to anchor to.",
+			"Widen the session's model scope (/scoped-models or --models), name a model explicitly on the call, agent, or pi-flows config, or run from a session with a current model.",
+		);
+		options.recordEvent?.({ kind: "validation", name: "dispatch.model_scope_unsatisfiable", ok: false, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": error.code } });
+		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, error), { role: capturedRole });
+	}
 	const result: FlowRunResult = {
 		agent: agent.name,
 		role: capturedRole,
@@ -403,14 +345,27 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				true,
 			);
 			result.errorMessage = result.error.message;
-		} else if (terminalProviderError) {
+		} else if (terminalProviderError || terminalErrorSeen) {
+			// Two ways a terminal provider error ends a run: the child stalls and the
+			// grace timer terminates it (`terminalProviderError`), or the child does
+			// the normal thing and exits on its own with the error still active
+			// (`terminalErrorSeen` — a later healthy turn would have cleared it, and
+			// none arrived before the process closed). Both are
+			// the provider's failure; letting the second fall through to the generic
+			// exit-code branch replaced the one actionable diagnostic the run
+			// produced with "returned a non-zero exit code" (#110).
 			result.stopReason = "error";
 			result.exitCode = result.exitCode === 0 ? 1 : result.exitCode;
 			result.error = flowError(
 				"CHILD_PROVIDER_ERROR",
 				`Flow agent "${agent.name}" hit a terminal provider error: ${result.errorMessage ?? "unknown provider error"}`,
-				"The child's model provider returned a terminal error and the child process stalled instead of exiting, so pi-flows terminated it after the error grace period rather than waiting out timeoutMs.",
-				"Narrow the task or the material the child reads, or pick a larger-context model via tier/model, then retry. PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000).",
+				// The cause stays truthful per path: claiming a grace-period
+				// termination for a child that exited promptly would send whoever
+				// debugs it toward the wrong mechanism.
+				terminalProviderError
+					? "The child's model provider returned a terminal error and the child process stalled instead of exiting, so pi-flows terminated it after the error grace period rather than waiting out timeoutMs."
+					: "The child's model provider returned a terminal error and the child process then exited on its own.",
+				`Narrow the task or the material the child reads, or pick a larger-context model via tier/model, then retry.${terminalProviderError ? " PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000)." : ""}`,
 				true,
 			);
 			result.errorMessage = result.error.message;

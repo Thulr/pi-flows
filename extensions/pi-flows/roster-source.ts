@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { ROSTER_CONFIG_FILE, THINKING_LEVELS, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, UNREADABLE_SCOPED_MODEL, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
 import { OUTPUT_TOKEN_SHARE, isThinkingLevel, resolveModelRoster } from "./model-roster.ts";
 import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
 
@@ -126,7 +126,36 @@ interface RosterContext {
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
 	modelRegistry?: ModelRegistryLike;
+	/**
+	 * The session's effective model scope (`/scoped-models`, `--models`), as pi
+	 * reports it. Structural and tolerant on purpose: older pi runtimes have no
+	 * such property, and an absent or empty list means no scoping is configured.
+	 */
+	scopedModels?: ReadonlyArray<{ model?: { provider?: unknown; id?: unknown } | null } | null | undefined> | null;
 	isProjectTrusted?: () => boolean;
+}
+
+/**
+ * The scope's model references, in the `provider/id` form the roster ranks by.
+ *
+ * Entries whose shape is foreign are skipped rather than trusted — this reads a
+ * property that only newer pi runtimes expose. An absent or empty list means no
+ * scoping is configured. A NON-empty list whose entries all fail to decode is
+ * different: the user configured a scope, this version just cannot read it, and
+ * returning [] would fail open — ranking the full registry and dispatching
+ * automatic tiers to models the scope may exclude. The sentinel keeps the scope
+ * fact alive while decoding nothing.
+ */
+export function scopedModelReferences(scopedModels: RosterContext["scopedModels"]): string[] {
+	if (!Array.isArray(scopedModels) || scopedModels.length === 0) return [];
+	const references: string[] = [];
+	for (const entry of scopedModels) {
+		const model = entry?.model;
+		if (model && typeof model.provider === "string" && typeof model.id === "string") {
+			references.push(`${model.provider}/${model.id}`);
+		}
+	}
+	return references.length ? references : [UNREADABLE_SCOPED_MODEL];
 }
 
 /**
@@ -163,6 +192,7 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 	});
 	return resolveModelRoster({
 		available: availableModelsFromRegistry(ctx.modelRegistry),
+		scoped: scopedModelReferences(ctx.scopedModels),
 		parent: {
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
 			thinking: isThinkingLevel(ctx.thinkingLevel) ? ctx.thinkingLevel : undefined,
