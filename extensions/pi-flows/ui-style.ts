@@ -3,9 +3,9 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /**
  * The shared visual vocabulary for every pi-flows surface — the live tool
- * row, the F8 fleet panel, the durable flow card, and the inspector. One
+ * row, the durable flow card, and the inspector. One
  * module owns the glyphs, bars, badges, and box frames so the surfaces read
- * as one system instead of four hand-rolled ones: a run state is always the
+ * as one system instead of three hand-rolled ones: a run state is always the
  * same icon in the same color, a meter always fills the same way, and a
  * panel always frames itself with the same border language.
  *
@@ -87,25 +87,6 @@ export function runStateBar(theme: Theme, states: RunState[], maxWidth = 16): st
 		used = upto;
 	}
 	return segments.join("");
-}
-
-const SPARK_LEVELS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
-
-/**
- * Block-character sparkline of a small series, normalized to the window's
- * own min–max range — the shape of the curve is the signal (is spend
- * accelerating?), not its absolute height. Min-relative, not zero-relative,
- * because the series is cumulative and the retained window eventually rolls
- * past its zero baseline: $10.00 → $10.10 must still show its slope, not
- * saturate at the top. A window with no growth sits on the baseline, so
- * "sampled and idle" stays distinguishable from "no data".
- */
-export function sparkline(values: number[], width = 24): string {
-	const window = values.slice(-Math.max(0, width));
-	if (window.length === 0) return "";
-	const min = Math.min(...window);
-	const span = Math.max(...window) - min;
-	return window.map((value) => SPARK_LEVELS[span <= 0 ? 0 : Math.round(((Math.min(Math.max(value, min), min + span) - min) / span) * (SPARK_LEVELS.length - 1))]).join("");
 }
 
 /**

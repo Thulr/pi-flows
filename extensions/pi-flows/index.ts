@@ -31,7 +31,6 @@ import { collectBudgetCeilings } from "./budget-disclosure.ts";
 import { Flow, type DetailsBuilder, type ResolvedCall } from "./flow.ts";
 import { appendFlowSessionEntry, checkpointApproval, clearFlowUi, flowProgressText, flowsHelpText, parseFlowsCommandArgs, showModelRoster } from "./ui.ts";
 import { FlowRegistry, showFlowInspector } from "./inspector.ts";
-import { createFleetPanelController } from "./fleet-panel.ts";
 import { flowCallLines, renderFlowResultRow } from "./ui-live-row.ts";
 import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
@@ -129,12 +128,6 @@ export default function (pi: ExtensionAPI) {
 	registerWrapUpSteering(pi);
 
 	const liveFlows = new FlowRegistry();
-	const fleetPanel = createFleetPanelController(liveFlows);
-
-	pi.registerShortcut("f8", {
-		description: "Toggle the flow fleet panel",
-		handler: async (ctx) => fleetPanel.toggle(ctx, true),
-	});
 
 	// The durable flow card: re-renders the persisted `pi-flows.run` entry after
 	// the live tool row has scrolled away, including on session reload.

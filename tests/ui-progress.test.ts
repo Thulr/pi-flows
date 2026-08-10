@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Text, visibleWidth } from "@earendil-works/pi-tui";
-import { FleetPanel, fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
-import { FlowRegistry } from "../extensions/pi-flows/inspector.ts";
+import { Text } from "@earendil-works/pi-tui";
 import { flowLiveBoardLines, renderFlowResultRow } from "../extensions/pi-flows/ui-live-row.ts";
 import { clearFlowUi, flowProgressText } from "../extensions/pi-flows/ui.ts";
 
@@ -42,10 +40,6 @@ function boardHeader(flowDetails: any): string {
 	return flowLiveBoardLines(flowDetails, theme, { tick: 0, redactSecrets: true })[0]!;
 }
 
-function fleetHeader(flowDetails: any, mode = flowDetails.mode): string {
-	return fleetFlowLines({ mode, redactSecrets: true, details: flowDetails } as any, theme, 0)[0]!;
-}
-
 test("flowProgressText names what the numerator counts, then replaces it with the verdict", () => {
 	assert.equal(flowProgressText(inFlight), "0/2 settled");
 	assert.equal(flowProgressText(details([result({ exitCode: 0 }), result({ agent: "analyst" })])), "1/2 settled");
@@ -76,9 +70,6 @@ test("a live flow between stages reports settled runs, not a verdict", () => {
 	assert.equal(board[0]!.includes("2 ok"), false, "the next stage has not run yet");
 	assert.equal(board[0]!.startsWith("✓"), false, "a ✓ beside 'settled so far' contradicts itself");
 	assert.doesNotMatch(board[0]!, /█|░/, "the bar measures outstanding runs, and between stages there are none");
-	assert.match(board.join("\n"), /F8 fleet panel/, "a live flow still points at the fleet panel");
-
-	assert.match(fleetFlowLines({ mode: "evaluate", redactSecrets: true, details: betweenStages } as any, theme, 0, { live: true })[0]!, /flow evaluate 2\/2 settled/);
 });
 
 test("the live tool row takes its liveness from the tool call, not just its runs", () => {
@@ -92,18 +83,6 @@ test("the live tool row takes its liveness from the tool call, not just its runs
 	context.lastComponent = undefined;
 	const finalRow = renderFlowResultRow(flowResult as any, { expanded: false, isPartial: false }, theme, context, (() => "agents") as any) as Text;
 	assert.match(finalRow.text ?? String(finalRow), /flow chain 2 ok/, "the settled row reports the verdict");
-});
-
-test("the fleet panel treats registered flows as live and the last settled flow as settled", () => {
-	const registry = new FlowRegistry();
-	const settledRuns = details([result({ exitCode: 0 }), result({ agent: "analyst", exitCode: 0 })], { mode: "evaluate" });
-	registry.start("flow-1", "evaluate", settledRuns, true);
-	const panel = new FleetPanel({ requestRender: () => {} } as any, theme, { matches: () => false, getKeys: () => ["esc"] } as any, registry, () => {});
-	assert.match(panel.render(60).join("\n"), /flow evaluate 2\/2 settled/, "an active run is mid-flow by definition");
-
-	registry.settle("flow-1", settledRuns);
-	assert.match(panel.render(60).join("\n"), /flow evaluate 2 ok/, "the last finished run has nothing left to spawn");
-	panel.dispose();
 });
 
 test("the live tool row labels the ratio while running and shows the verdict on settle", () => {
@@ -130,7 +109,6 @@ test("non-clean preset outcomes cannot render as a successful live-row verdict",
 	);
 	assert.equal(flowProgressText(findings), "FINDINGS");
 	assert.match(boardHeader(findings), /^◐ flow code-review FINDINGS/);
-	assert.match(fleetHeader(findings), /flow code-review FINDINGS/);
 	assert.doesNotMatch(boardHeader(findings), /✓|2 ok/);
 });
 
@@ -158,43 +136,10 @@ test("the board surfaces report a flow-level error beside the run counts, as bef
 	const board = flowLiveBoardLines(errored, theme, { tick: 0, redactSecrets: true });
 	assert.match(board[0]!, /flow parallel 2 ok/);
 	assert.match(board.join("\n"), /error: TRACE_INCOMPLETE/, "the error line is what carries the flow-level failure");
-	assert.match(fleetFlowLines({ mode: "parallel", redactSecrets: true, details: errored } as any, theme, 0).join("\n"), /error: TRACE_INCOMPLETE/);
 });
 
-test("the fleet panel flow header carries the same labeled counter and verdict", () => {
-	assert.match(fleetHeader(inFlight), /flow parallel 0\/2 settled/);
-	assert.match(fleetHeader(allFailed), /flow parallel 2 failed/);
-	assert.doesNotMatch(fleetHeader(allFailed), /2\/2/, "the panel header has no status icon, so the text is the only signal");
-	assert.match(fleetHeader(allOk), /flow parallel 2 ok/);
-	assert.match(fleetHeader(partial), /flow parallel 1 failed/);
-
-	for (const state of [inFlight, allFailed, allOk, partial]) {
-		assert.ok(fleetHeader(state).includes(flowProgressText(state)), "the panel must not format its own state text");
-	}
-});
-
-test("single-child flows keep bare headers on both board surfaces", () => {
+test("single-child flows keep bare headers on the live board", () => {
 	assert.equal(boardHeader(singleRun).includes("0/1"), false);
 	assert.equal(boardHeader(singleRun).includes("settled"), false, "with one run the header would only restate the agent row");
 	assert.equal(boardHeader(details([result({ exitCode: 0 })], { mode: "single" })).includes("1 ok"), false);
-	assert.equal(fleetHeader(singleRun, "single").includes("0/1"), false);
-	assert.equal(fleetHeader(singleRun, "single").includes("settled"), false);
-	assert.equal(fleetHeader(details([result({ exitCode: 0 })], { mode: "single" }), "single").includes("1 ok"), false);
-});
-
-test("the longest realistic fleet header survives an 80-column terminal", () => {
-	// The overlay is 44% wide with minWidth 46 and hides itself below 80 columns,
-	// so 46 is the narrowest box the header ever renders in.
-	const panelWidth = Math.max(46, Math.floor(80 * 0.44));
-	const registry = new FlowRegistry();
-	const runs = Array.from({ length: 16 }, (_item, index) => result({ agent: `agent-${index}`, exitCode: index < 12 ? 0 : -1 }));
-	registry.start("flow-1", "orchestrate", details(runs, { mode: "orchestrate" }), true);
-	const panel = new FleetPanel({ requestRender: () => {} } as any, theme, { matches: () => false, getKeys: () => ["esc"] } as any, registry, () => {});
-
-	const rendered = panel.render(panelWidth);
-	const header = rendered.find((line) => line.includes("flow orchestrate"))!;
-	assert.ok(header, "the longest mode name must still reach the panel");
-	assert.match(header, /flow orchestrate 12\/16 settled/, "the label must not be the part that gets clipped");
-	assert.ok(rendered.every((line) => visibleWidth(line) <= panelWidth));
-	panel.dispose();
 });

@@ -13,8 +13,8 @@ Not every part of this repo earns the same depth. This split says where to spend
 **Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
 _Modules_: `flow.ts`, `run.ts`, `settle.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
-**Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (fleet panel, inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
-_Modules_: `modes/*`, `presets.ts`, `preset-review.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-style.ts`, `ui-gantt.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `fleet-panel.ts`, `inspector.ts`.
+**Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
+_Modules_: `modes/*`, `presets.ts`, `preset-review.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-style.ts`, `ui-gantt.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `inspector.ts`.
 
 **Generic — plumbing and adapters.** Child-process transport, the anti-corruption layer over a child pi run, fan-out plumbing, param schema and arithmetic, command execution, text parsing. Keep thin, keep replaceable, do not model. `runner.ts` and `jsonl-child.mjs` are where a foreign protocol is allowed to be spoken; everything above them should see domain types only.
 _Modules_: `runner.ts`, `runner-budget.ts`, `child-model.ts`, `dispatch.ts`, `jsonl-child.mjs`, `schema.ts`, `commands.ts`, `parse.ts`, `png.ts`, `protocol.ts`, `topology.ts`, `model-roster.ts`, `roster-config.ts`, `roster-source.ts`, `bash-readonly-extension.ts`, `bash-readonly-sandbox.ts`, `wrapup.ts`.
@@ -105,10 +105,6 @@ _Avoid_: output builder, result collector
 **Replay**:
 The parent re-issuing a flow after it failed. Distinct from a retry, which happens inside a flow against one run. A bounded refusal — budget exhausted, gate failed — is not a signal to replay unchanged.
 _Avoid_: retry, rerun
-
-**Fleet**:
-Every live flow at once, each with the runs under it. Keyed by flow, because liveness is a property of the flow's handler, not of any one run.
-_Avoid_: dashboard, active agents (runs execute; agents are profiles)
 
 ### Contracts and handoffs
 
@@ -257,7 +253,7 @@ A portable capability level (fast, capable, deep) that resolves to a concrete mo
 _Avoid_: model class, size
 
 **Roster**:
-The concrete model and thinking level each tier resolves to on one install, derived by ranking the models that install can actually run. Derived rather than configured, so tiers mean something with no setup; overridable per tier in `pi-flows.json`. Distinct from the fleet panel, which shows running children, not models.
+The concrete model and thinking level each tier resolves to on one install, derived by ranking the models that install can actually run. Derived rather than configured, so tiers mean something with no setup; overridable per tier in `pi-flows.json`. A roster names models, never running children.
 _Avoid_: fleet, model map, tier mapping
 
 **Thinking level**:

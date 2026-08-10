@@ -93,7 +93,7 @@ Exactly one mode is valid per call.
 
 ## Live TUI monitoring
 
-Three surfaces cover a flow's life in interactive Pi, all fed by the same
+Two surfaces cover a flow's life in interactive Pi, both fed by the same
 in-memory flow updates:
 
 - **The tool row is live.** While children run, the `flow` tool row shows a
@@ -104,16 +104,6 @@ in-memory flow updates:
   `ctrl+o` expands the settled row into full per-run output.
 
   <img alt="The live flow tool row updating in place while children run" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-live-row.gif" width="100%">
-- **`F8` toggles the fleet panel**, a non-modal overlay listing every live flow
-  at once with the runs beneath each one: per-run state and activity, failures,
-  and budget burn-down when `maxCostUsd` is set. A flow stays listed until its
-  handler settles, so it remains visible between stages even when every run it
-  has started so far is settled. The panel never takes keyboard focus — keep typing while
-  it is open. Press `F8` again (or Escape when focused) to close it; closing
-  never interrupts children. It hides automatically on terminals narrower than
-  80 columns.
-
-  <img alt="The F8 fleet panel overlay listing every live flow with per-run state and budget burn-down" src="https://raw.githubusercontent.com/Thulr/pi-flows/main/docs/images/flow-fleet-panel.gif" width="100%">
 - **`/flows inspect` drills into one child.** Select a queued or running child
   to see its task, status, usage, and recent text/tool activity. Use Up/Down to
   scroll, End to return to the latest activity, and Escape to close the overlay
@@ -121,12 +111,11 @@ in-memory flow updates:
 
 ### What the fan-out counter counts
 
-The tool row and the fleet panel head a fan-out with `1/3 settled`: the numerator
+The tool row heads a fan-out with `1/3 settled`: the numerator
 counts [**settled**](../../CONTEXT.md#delegation-model) runs, not successful ones.
 Once the flow itself has settled the ratio is replaced by the outcome —
-`2 failed` or `3 ok` — because `3/3` reads as a success total. On those two
-surfaces a single-run flow shows neither, since the header would only restate the
-one run below it.
+`2 failed` or `3 ok` — because `3/3` reads as a success total. A single-run flow
+shows neither, since the header would only restate the one run below it.
 
 A multi-stage mode settles one stage's runs before spawning the next: `evaluate`
 returns its generator before the check command and the critic panel run. Between
@@ -269,7 +258,7 @@ call or mode policy requires fresh approval.
 
 At 80% of any ceiling that would stop the live run (cost, generated output, or a contract's total tokens), the child receives a **wrap-up notice**: a steered message asking it to stop working and emit its return envelope now, recording unfinished work as skipped coverage and `unresolvedQuestions` with status `partial`. The transition belongs to the ceiling, not to one child: when any child's settled turn crosses the threshold of a shared budget, every live child governed by that budget is steered at the same moment, and a child spawned while a shared ceiling is already inside the window is steered at spawn, before its first turn. A child that crosses the ceiling after the notice demonstrably reached it (the steered message is seen echoed into its session) is still terminated — the spend stays bounded — but the run settles gracefully (`stopReason: "budget_wrap_up"`, exit 0) and its final output proceeds to envelope validation instead of being forfeited as `BUDGET_EXCEEDED`. That graceful settlement is provisional for a contracted child: delivery of the notice is not compliance, and a wrap-up response that then fails envelope validation revokes the success — the run reports the validation error (for example `RETURN_ENVELOPE_INVALID`, naming the failing role) rather than rendering as ✓ beside a flow error. To make honoring the notice achievable, a contracted child's notice also states the exact envelope requirement: the `contractId` it must carry and the return-envelope format its final message must be. A ceiling crossed before any wrap-up could be requested (one turn jumping from below 80% past 100%), or whose notice never reached the child (for example with child extensions disabled), keeps the hard-stop semantics. The wrap-up request (`child.wrap_up`, with `flow.budget.wrapup_delivered`) and a graceful exhaustion (`child.exhausted` with `flow.budget.graceful`) are recorded as budget events on the trace. Size ceilings as runaway backstops (~3x the expected normal spend), not as governors inside the normal cost range — a ceiling that sits inside the normal range converts routine runs into losses.
 
-The generated tool call, collapsed live row, fleet panel, and durable Flow card
+The generated tool call, collapsed live row, and durable Flow card
 all disclose configured cost/token ceilings with their authority. Identical
 contract ceilings are collapsed into one compact line; distinct ceilings remain
 separate. The durable entry persists these static ceiling definitions, so a

@@ -151,7 +151,7 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	});
 	if (total > COLLAPSED_AGENT_ROWS) lines.push(`${theme.fg("dim", "└")} ${theme.fg("muted", `+${total - COLLAPSED_AGENT_ROWS} more`)}`);
 	if (details.error) lines.push(theme.fg("error", `error: ${details.error.code}`));
-	lines.push(theme.fg("muted", running ? "ctrl+o expand · F8 fleet panel" : "ctrl+o expand"));
+	lines.push(theme.fg("muted", "ctrl+o expand"));
 	return lines;
 }
 

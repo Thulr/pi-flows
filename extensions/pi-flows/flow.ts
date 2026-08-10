@@ -298,8 +298,8 @@ export class AdmittedFlow {
 	 * Run the mode handler. The flow becomes live (presence) before the handler
 	 * runs, cross-run lessons are injected into the task at this seam so every
 	 * mode gets them without per-handler wiring, and a handler failure settles
-	 * the flow's presence before it propagates — a dead flow never lingers on
-	 * the fleet as live.
+	 * the flow's presence before it propagates — a dead flow never lingers in
+	 * the live-flow registry.
 	 */
 	async dispatch(): Promise<DispatchedFlow> {
 		const state = this.#state;

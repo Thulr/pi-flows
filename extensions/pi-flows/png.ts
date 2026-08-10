@@ -1,11 +1,13 @@
 import { deflateSync } from "node:zlib";
 
 /**
- * Minimal PNG encoder: an RGBA pixel buffer in, a standards-valid PNG out.
- * Generic plumbing — it knows nothing about flows; `ui-gantt.ts` draws into
- * the buffer and this module only packages it. Kept dependency-free on
- * purpose: node:zlib provides the one compression primitive PNG needs, so a
- * raster image costs no package weight beyond this file.
+ * Minimal raster kit: an RGBA pixel buffer, the drawing and color primitives
+ * to fill it (rects, hatching, HSL conversion), and a standards-valid PNG
+ * encoder out. Generic plumbing — it knows nothing about flows; `ui-gantt.ts`
+ * decides what to draw and this module owns how pixels are set and packaged.
+ * Kept dependency-free on purpose: node:zlib provides the one compression
+ * primitive PNG needs, so a raster image costs no package weight beyond this
+ * file.
  */
 
 /** One RGBA color, 0-255 per channel. */
@@ -40,6 +42,44 @@ export function fillRect(raster: Raster, x: number, y: number, width: number, he
 	for (let row = y0; row < y1; row++) {
 		for (let column = x0; column < x1; column++) raster.pixels.set(rgba, (row * raster.width + column) * 4);
 	}
+}
+
+/** The same color at a different alpha. */
+export function withAlpha(rgba: Rgba, alpha: number): Rgba {
+	return [rgba[0], rgba[1], rgba[2], alpha];
+}
+
+/**
+ * Cross-hatched rectangle: a translucent base with solid 45° stripes. A
+ * texture, not just a tint, so whatever it marks stays distinguishable under
+ * any color-vision deficit.
+ */
+export function hatchRect(raster: Raster, x: number, y: number, width: number, height: number, rgba: Rgba): void {
+	fillRect(raster, x, y, width, height, withAlpha(rgba, 110));
+	const x0 = Math.floor(x);
+	const y0 = Math.floor(y);
+	for (let row = y0; row < y0 + height; row++) {
+		for (let column = x0; column < x0 + width; column++) {
+			if ((((column + row) % 12) + 12) % 12 < 4) setPixel(raster, column, row, rgba);
+		}
+	}
+}
+
+/** HSL (h in degrees, s/l in 0–1) to an opaque RGBA color. */
+export function hslToRgb(h: number, s: number, l: number): Rgba {
+	const chroma = (1 - Math.abs(2 * l - 1)) * s;
+	const x = chroma * (1 - Math.abs(((h / 60) % 2) - 1));
+	const m = l - chroma / 2;
+	const sector = Math.floor(h / 60) % 6;
+	const [r, g, b] = [
+		[chroma, x, 0],
+		[x, chroma, 0],
+		[0, chroma, x],
+		[0, x, chroma],
+		[x, 0, chroma],
+		[chroma, 0, x],
+	][sector]!;
+	return [Math.round((r! + m) * 255), Math.round((g! + m) * 255), Math.round((b! + m) * 255), 255];
 }
 
 const CRC_TABLE = new Uint32Array(256).map((_value, index) => {

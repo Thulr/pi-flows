@@ -123,5 +123,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // fallback, plus the PR-review hardening round (expandSafePath, time-grid
 // spend resampling). Same verification: 107 files, none from tests/,
 // scripts/, or evals/.
-assert.ok(pack.unpackedSize < 1_130_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Lowered to 1_125_000: the timeline's editorial-rails redesign grew
+// ui-gantt.ts (per-agent identicons, hatched failed-rail texture), but
+// removing the F8 fleet panel and its spend-sampling machinery more than
+// paid it back. Same verification: 106 files, none from tests/, scripts/,
+// or evals/.
+assert.ok(pack.unpackedSize < 1_125_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

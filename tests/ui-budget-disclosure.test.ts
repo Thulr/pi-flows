@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { collectBudgetCeilings, formatBudgetCeiling } from "../extensions/pi-flows/budget-disclosure.ts";
-import { fleetFlowLines } from "../extensions/pi-flows/fleet-panel.ts";
 import { appendFlowSessionEntry } from "../extensions/pi-flows/ui.ts";
 import { flowCardLines } from "../extensions/pi-flows/ui-flow-card.ts";
 import { flowCallLines, flowLiveBoardLines } from "../extensions/pi-flows/ui-live-row.ts";
@@ -175,7 +174,7 @@ test("pre-dispatch refusals preserve the ceilings shown before work", async () =
 	}
 });
 
-test("exhausted live, fleet, and durable views retain the binding authority and ceiling", () => {
+test("exhausted live and durable views retain the binding authority and ceiling", () => {
 	const budgetCeilings = collectBudgetCeilings({
 		maxCostUsd: 0.5,
 		tasks: [{ agent: "analyst", task: "one", contract: contract({ maxGeneratedTokens: 2000 }) }],
@@ -198,10 +197,6 @@ test("exhausted live, fleet, and durable views retain the binding authority and 
 	const live = flowLiveBoardLines(exhausted, theme, { tick: 0, redactSecrets: true }).join("\n");
 	assert.match(live, /flow ceiling: \$0\.5/);
 	assert.match(live, /BUDGET_EXCEEDED · contract ceiling: 2\.0k generated tok/);
-
-	const fleet = fleetFlowLines({ mode: "parallel", redactSecrets: true, details: exhausted } as any, theme, 0).join("\n");
-	assert.match(fleet, /flow ceiling: \$0\.5/);
-	assert.match(fleet, /BUDGET_EXCEEDED · contract ceiling: 2\.0k generated tok/);
 
 	const entries: Array<{ customType: string; data: any }> = [];
 	appendFlowSessionEntry({ appendEntry: (customType: string, data: any) => entries.push({ customType, data }) } as any, exhausted);

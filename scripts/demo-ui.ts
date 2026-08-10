@@ -1,17 +1,15 @@
 /**
  * Terminal demo harness for the subagent UI surfaces. Drives the *real*
- * renderers — the live tool-row board, the F8 fleet panel, and the durable
- * flow card — with a scripted, fully fictional timeline (no model calls, no
- * child processes, no real paths). Used by the VHS tapes in scripts/demo/ to
- * record the visual evidence embedded in PRs and docs.
+ * renderers — the live tool-row board and the durable flow card — with a
+ * scripted, fully fictional timeline (no model calls, no child processes, no
+ * real paths). Used by the VHS tapes in scripts/demo/ to record the visual
+ * evidence embedded in PRs and docs.
  *
  *   node --import tsx scripts/demo-ui.ts live   # collapsed live board
- *   node --import tsx scripts/demo-ui.ts fleet  # F8 fleet panel overlay
  *   node --import tsx scripts/demo-ui.ts card   # durable flow card entry
+ *   node --import tsx scripts/demo-ui.ts gantt  # write the settled card's timeline PNG
  */
 import { Theme } from "@earendil-works/pi-coding-agent";
-import { FleetPanel } from "../extensions/pi-flows/fleet-panel.ts";
-import { FlowRegistry } from "../extensions/pi-flows/inspector.ts";
 import { renderFlowResultRow, type RowTickerState } from "../extensions/pi-flows/ui-live-row.ts";
 import { flowCardLines, type FlowRunEntryData } from "../extensions/pi-flows/ui-flow-card.ts";
 
@@ -129,25 +127,6 @@ async function liveDemo(): Promise<void> {
 	await sleep(2500);
 }
 
-async function fleetDemo(): Promise<void> {
-	const registry = new FlowRegistry();
-	const snapshot = { maxCostUsd: 1.0, spentCost: 0, spentTokens: 0, spentGeneratedTokens: 0 };
-	// Budget-shaped: the panel reads burn-down through snapshot(), never the fields.
-	const budget = { snapshot: () => ({ ...snapshot }) } as any;
-	registry.start("demo-flow", "parallel", timeline(0), true, budget);
-	const panel = new FleetPanel({ requestRender: () => {} } as any, theme, { matches: () => false, getKeys: () => ["esc"] } as any, registry, () => {});
-	for (let t = 0; t <= LAST_FRAME; t++) {
-		const details = timeline(t);
-		snapshot.spentCost = details.results.reduce((sum: number, result: any) => sum + (result.usage.cost || 0), 0);
-		registry.update("demo-flow", details);
-		clear();
-		process.stdout.write(panel.render(74).join("\n") + "\n");
-		await sleep(t < LAST_FRAME ? 260 : 0);
-	}
-	await sleep(2500);
-	panel.dispose();
-}
-
 async function cardDemo(): Promise<void> {
 	const final = timeline(LAST_FRAME);
 	const data: FlowRunEntryData = {
@@ -196,5 +175,5 @@ async function ganttDemo(): Promise<void> {
 
 const mode = process.argv[2];
 process.stdout.write("\x1b[?25l");
-const run = mode === "fleet" ? fleetDemo : mode === "card" ? cardDemo : mode === "gantt" ? ganttDemo : liveDemo;
+const run = mode === "card" ? cardDemo : mode === "gantt" ? ganttDemo : liveDemo;
 run().finally(() => process.stdout.write("\x1b[?25h"));
