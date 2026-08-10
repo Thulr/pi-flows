@@ -555,3 +555,28 @@ test("code-review: a wrap-up honored with a valid partial envelope settles grace
 	assert.equal(result.details.presetOutcome, "PARTIAL", "an accepted partial envelope is a PARTIAL verdict, not an error");
 	assert.match(result.content[0].text, /Code review: PARTIAL/);
 });
+
+test("code-review: every dishonored wrap-up in the batch is demoted, not only the first", async () => {
+	// The incident shape exactly: BOTH axes cross after the notice and neither
+	// returns an envelope. Consumption must validate (and revoke) both before
+	// surfacing the first error — a short-circuit left the second axis ✓.
+	const task = "Review the pending change.";
+	reviewContracts(task); // preset resolvable; contracts irrelevant, both axes return prose
+	const { result } = await runFlow(
+		{ preset: "code-review", task, maxGeneratedTokens: 10, concurrency: 2, timeoutMs: 8_000 },
+		{
+			overwatch: [
+				{ whenTaskIncludes: "Standards review", reply: "ack", wrapUpReply: "standards wrapped up in prose", holdOpenMs: 6_000 },
+				{ whenTaskIncludes: "Spec review", omitUsage: true, reply: "ack", wrapUpReply: "spec wrapped up in prose", holdOpenMs: 6_000 },
+			],
+		},
+	);
+	assert.equal(result.details.error?.code, "RETURN_ENVELOPE_INVALID");
+	for (const axis of ["standards", "spec"]) {
+		const run = result.details.results.find((item: any) => item.role === axis);
+		assert.ok(run, `${axis} axis ran`);
+		assert.notEqual(run.exitCode, 0, `${axis}: a dishonored wrap-up after the first error must still be demoted`);
+		assert.equal(run.error?.code, "RETURN_ENVELOPE_INVALID", `${axis}: carries its own validation cause`);
+	}
+	assert.equal(flowProgressText(result.details), "2 failed", "no dishonored axis may count as ok");
+});

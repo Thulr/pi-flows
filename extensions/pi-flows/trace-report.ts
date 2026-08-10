@@ -182,9 +182,20 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			legacyWorkerTime ??
 			childSpans.reduce((sum, span) => sum + numericAttr(span, "flow.duration_ms"), 0);
 		const criticalPath = optionalNumericAttr(rootSpan, "flow.critical_path_ms");
+		// A revoked budget wrap-up (#112): the child span was exported `OK` before
+		// envelope validation demoted the run, and an exported span is immutable,
+		// so the linked rejection event carries `flow.budget.wrapup_revoked`. The
+		// reader applies that correction here — a child a revocation event points
+		// at is a failed child, whatever its own span status says.
+		const revokedChildIds = new Set(
+			eventSpans
+				.filter((span) => boolAttr(span, "flow.budget.wrapup_revoked"))
+				.flatMap((span) => (stringAttr(span, "flow.depends_on_span_ids") ?? "").split(",").filter(Boolean)),
+		);
+		const childFailed = (span: TraceSpanRecord) => span.status?.code === "ERROR" || (span.span_id !== undefined && revokedChildIds.has(span.span_id));
 		const executionSuccess =
 			optionalBoolAttr(rootSpan, "flow.execution_success") ??
-			((root?.status?.code ?? "OK") === "OK" && !childSpans.some((span) => span.status?.code === "ERROR"));
+			((root?.status?.code ?? "OK") === "OK" && !childSpans.some(childFailed));
 		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified");
 		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
 		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");

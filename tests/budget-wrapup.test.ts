@@ -175,6 +175,8 @@ test("a delivered wrap-up answered with prose is not marked successful before en
 	assert.ok(rejection, "the envelope rejection is coordination evidence");
 	assert.equal(rejection!.attributes!["flow.budget.wrapup_revoked"], true, "the rejection event marks the revoked provisional wrap-up success");
 	assert.equal(rejection!.attributes!["flow.error_code"], "RETURN_ENVELOPE_INVALID");
+	const childSpan = spans.find((span) => span.attributes?.["flow.span_role"] === "child");
+	assert.ok(String(rejection!.attributes!["flow.depends_on_span_ids"] ?? "").split(",").includes(childSpan!.span_id), "the revocation links to the child span it corrects");
 });
 
 test("a notice that never reaches the child keeps exhaustion fatal", async () => {

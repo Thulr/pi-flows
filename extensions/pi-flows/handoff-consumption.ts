@@ -167,12 +167,19 @@ export class HandoffConsumer {
 
 	consumeResults(options: ConsumeResultOptions[]): HandoffConsumptions {
 		const items: HandoffConsumption[] = [];
+		let error: FlowError | undefined;
 		for (const item of options) {
 			const consumption = this.consumeResult(item);
 			items.push(consumption);
-			if (consumption.error) return { items, error: consumption.error };
+			// Every result is consumed before the first error surfaces: validation
+			// is what demotes a dishonored budget wrap-up (#112), so stopping at
+			// the first failure would leave a second invalid wrap-up in the same
+			// batch rendered as a success beside the flow error — and would drop
+			// the later results' validation evidence from the trace, which is
+			// recorded unconditionally everywhere else.
+			error ??= consumption.error;
 		}
-		return { items };
+		return error ? { items, error } : { items };
 	}
 
 	consumeText(options: ConsumeTextOptions): HandoffConsumption {
