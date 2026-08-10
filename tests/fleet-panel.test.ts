@@ -84,7 +84,12 @@ test("spend sampling decimates inside the interval and holds quiet time flat on 
 	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.2 } })]));
 	clock = 2000;
 	registry.update("flow-1", details([result({ usage: { ...usage, cost: 0.3 } })]));
-	assert.deepEqual([...new Set(registry.spendHistory(flow))], [0.1], "updates inside the interval are decimated; the live grid holds the one sample flat");
+	// Decimation drops the raw samples, but the live endpoint is synthesized
+	// from the current details, so the reader still sees the true level.
+	const midFlight = registry.spendHistory(flow)!;
+	assert.equal(midFlight[0], 0.1);
+	assert.equal(midFlight[midFlight.length - 1]!, 0.3, "an in-interval paid update must not leave the curve stale");
+	assert.ok(!midFlight.includes(0.2), "the decimated intermediate sample is not retained");
 	clock = 3000;
 	registry.settle("flow-1", details([result({ exitCode: 0, usage: { ...usage, cost: 0.4 } })]));
 	const series = registry.spendHistory(flow)!;

@@ -105,17 +105,22 @@ export class FlowRegistry {
 	spendHistory(flow: LiveFlow): number[] | undefined {
 		const samples = this.spendSamples.get(flow);
 		if (!samples || samples.length === 0) return undefined;
-		const first = samples[0]!;
-		const last = samples[samples.length - 1]!;
 		const live = [...this.flows.values()].includes(flow);
-		const end = live ? Math.max(this.now(), last.at) : last.at;
-		if (end <= first.at) return [last.cost];
+		const recorded = samples[samples.length - 1]!;
+		const end = live ? Math.max(this.now(), recorded.at) : recorded.at;
+		// A live flow's endpoint is synthesized from the current details rather
+		// than the last recorded sample: a paid update landing inside the
+		// decimation interval would otherwise stay invisible until the next
+		// event, and the details already hold the true total.
+		const points = live ? [...samples, { at: end, cost: flowSpentCost(flow.details) }] : samples;
+		const first = points[0]!;
+		if (end <= first.at) return [points[points.length - 1]!.cost];
 		const series: number[] = [];
 		let index = 0;
 		for (let point = 0; point < SPEND_SERIES_POINTS; point++) {
 			const time = first.at + ((end - first.at) * point) / (SPEND_SERIES_POINTS - 1);
-			while (index + 1 < samples.length && samples[index + 1]!.at <= time) index++;
-			series.push(samples[index]!.cost);
+			while (index + 1 < points.length && points[index + 1]!.at <= time) index++;
+			series.push(points[index]!.cost);
 		}
 		return series;
 	}
