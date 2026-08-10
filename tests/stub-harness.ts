@@ -55,7 +55,7 @@ export const STUB_REGISTRY = {
 export async function runFlow(
 	params: any,
 	plan: Record<string, unknown>,
-	options: { api?: Record<string, any>; ui?: Record<string, any>; cwd?: string; hasUI?: boolean; registry?: any; model?: any; projectTrusted?: boolean } = {},
+	options: { api?: Record<string, any>; ui?: Record<string, any>; cwd?: string; hasUI?: boolean; registry?: any; model?: any; scopedModels?: any; projectTrusted?: boolean } = {},
 ) {
 	const stubDir = options.cwd ?? await freshDir();
 	process.env.PI_STUB_DIR = stubDir;
@@ -79,6 +79,7 @@ export async function runFlow(
 			// integration path. `options.registry: null` opts back out for the tests
 			// that are specifically about a missing registry.
 			...(options.registry === null ? {} : { modelRegistry: options.registry ?? STUB_REGISTRY, model: options.model ?? STUB_SESSION_MODEL }),
+			...(options.scopedModels !== undefined ? { scopedModels: options.scopedModels } : {}),
 			isProjectTrusted: () => options.projectTrusted ?? false,
 		},
 	);

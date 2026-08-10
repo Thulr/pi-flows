@@ -1,5 +1,5 @@
 import { capBytes, getFinalAssistantText, type ChildMessage } from "./sanitize.ts";
-import { MODEL_VISIBLE_OUTPUT_CAP, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowRunResult } from "./types.ts";
+import { MODEL_VISIBLE_OUTPUT_CAP, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
 
 /**
  * One child executing one task (see CONTEXT.md: Run), owning the lifecycle of
@@ -77,6 +77,22 @@ export class Run {
 	/** The one transition through which a prepared handoff reaches the result. */
 	acceptHandoff(handoff: DelegationHandoffEnvelope): void {
 		this.#result.handoff = handoff;
+	}
+
+	/**
+	 * Revoke a budget wrap-up's provisional success. The budget settles a run
+	 * graceful on notice *delivery* — before anyone has seen whether the child
+	 * actually returned the contracted envelope. Delivery is not compliance
+	 * (issue #112): when validation then rejects the response, the run must stop
+	 * rendering as a success beside the flow error it caused. The stopReason
+	 * stays `budget_wrap_up` — the budget did stop this child mid-wrap-up; what
+	 * changes is that the wrap-up was not honored.
+	 */
+	refuseWrapUpSettlement(error: FlowError): void {
+		if (this.#result.stopReason !== "budget_wrap_up") return;
+		this.#result.exitCode = 1;
+		this.#result.error = error;
+		this.#result.errorMessage = error.message;
 	}
 
 	/**

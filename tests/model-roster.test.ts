@@ -229,6 +229,72 @@ test("deep falls back to a reasoning model before a pricier one that cannot reas
 	assert.equal(roster.deep.thinking, "medium", "clamped to what it offers, rather than collapsed to off");
 });
 
+test("a non-empty session scope constrains the automatically derived fast and deep rungs", () => {
+	// The user narrowed the session to a subset of models (`/scoped-models`,
+	// `--models`). Deriving from the full registry would let `fast`/`deep`
+	// dispatch a child to a model they explicitly disabled.
+	const scopedOnly = deriveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		scoped: ["acme/standard"],
+	});
+	assert.equal(scopedOnly.deep.model, "acme/standard", "deep must not escape to the stronger out-of-scope flagship");
+	assert.equal(scopedOnly.fast.model, "acme/standard", "fast must not escape to the cheaper out-of-scope mini");
+
+	const twoInScope = deriveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		scoped: ["acme/mini", "acme/standard"],
+	});
+	assert.equal(twoInScope.fast.model, "acme/mini", "within the scope, ranking still applies");
+	assert.equal(twoInScope.deep.model, "acme/standard");
+
+	// An empty or absent scope means no scoping is configured, not "no models".
+	const unscoped = deriveModelRoster({ available: INSTALL, parent: { model: "acme/standard" }, scoped: [] });
+	assert.equal(unscoped.fast.model, "acme/mini");
+	assert.equal(unscoped.deep.model, "acme/flagship");
+});
+
+test("the parent model outside the scope still resolves as capable", () => {
+	// The active parent model is already the session's explicit execution
+	// context; the cycling scope constrains automatic derivation, not it.
+	const roster = deriveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/flagship", thinking: "high" },
+		scoped: ["acme/mini"],
+	});
+	assert.equal(roster.capable.model, "acme/flagship");
+	assert.equal(roster.fast.model, "acme/mini");
+	assert.equal(roster.deep.model, "acme/mini");
+});
+
+test("a scope whose models are all unusable leaves the tiers unresolved rather than escaping it", () => {
+	// Every scoped model is below the context floor. Falling back to the full
+	// registry here would silently run the exact models the user scoped out.
+	const roster = deriveModelRoster({
+		available: [model("tiny", { contextWindow: 8_000 }), ...INSTALL],
+		parent: { model: "acme/standard" },
+		scoped: ["acme/tiny"],
+	});
+	assert.equal(roster.fast.model, undefined);
+	assert.equal(roster.deep.model, undefined);
+	assert.equal(roster.capable.model, "acme/standard", "capable still names the session's model");
+	assert.match(describeModelRoster(roster).join("\n"), /model scope/, "and the disclosure names the scope, not a missing registry");
+});
+
+test("an explicit config pin outside the scope is not silently substituted", () => {
+	// This ticket constrains *automatic* derivation only. A pin is a deliberate
+	// override, and swapping another model in under it would be worse.
+	const roster = resolveModelRoster({
+		available: INSTALL,
+		parent: { model: "acme/standard" },
+		scoped: ["acme/mini", "acme/standard"],
+		config: { deep: { model: "acme/flagship" } },
+	});
+	assert.equal(roster.deep.model, "acme/flagship", "the user's explicit pin still wins");
+	assert.equal(roster.deep.thinking, "max", "and is clamped against the pinned model's real limits");
+});
+
 test("a rung names the layer that settled it, so an edit cannot be silently shadowed", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-flows-roster-"));
 	const userDir = path.join(dir, "user");

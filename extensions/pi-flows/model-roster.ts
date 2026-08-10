@@ -165,6 +165,14 @@ export interface RosterInputs {
 	available: AvailableModel[];
 	/** The parent's own model reference and current thinking level. */
 	parent: { model?: string; thinking?: ThinkingLevel };
+	/**
+	 * Model references in the session's effective scope (`/scoped-models`,
+	 * `--models`). Non-empty constrains which models automatic derivation may
+	 * assign to `fast`/`deep`; empty or absent means no scoping is configured.
+	 * `available` stays the full registry — capability metadata and the clamping
+	 * of explicit pins still need models the scope excludes.
+	 */
+	scoped?: string[];
 }
 
 /**
@@ -179,7 +187,19 @@ export interface RosterInputs {
  * capable — reasoning-capable first, then price as the capability proxy.
  */
 export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
-	const pool = usableModels(inputs.available);
+	// A non-empty session scope (`/scoped-models`, `--models`) is the model set
+	// the user actually enabled, so automatic derivation ranks within it rather
+	// than the whole catalogue — otherwise `fast`/`deep` dispatch children to
+	// models the user explicitly disabled. Filtered here and not in the registry
+	// adapter because only *derivation* is scoped: explicit pins and clamping
+	// still read the full registry.
+	const scoped = inputs.scoped?.length ? new Set(inputs.scoped) : undefined;
+	const usable = usableModels(inputs.available);
+	const pool = scoped ? usable.filter((model) => scoped.has(model.reference)) : usable;
+	// Where a rung says its candidates came from. Naming the scope matters: a
+	// user reading `/flows models` after narrowing the session should see that
+	// the narrowing took effect.
+	const poolLabel = scoped ? "in this session's model scope" : "this install can run";
 	const parentModel = inputs.parent.model;
 	// Identified from the FULL registry, not the assignable pool. A parent model
 	// too small to be assigned a tier is still the parent, and losing it here
@@ -205,7 +225,12 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	};
 
 	if (pool.length === 0) {
-		const unknown = "no model registry was available, so every tier runs your pi default";
+		// Two distinct empty states share the fallback but not the explanation. A
+		// scope whose models are all unusable must NOT widen back to the registry
+		// — that would run the exact models the user scoped out.
+		const unknown = scoped
+			? "no usable model is inside this session's model scope, so every tier runs your pi default"
+			: "no model registry was available, so every tier runs your pi default";
 		return { fast: { why: unknown }, capable: { ...capable, why: unknown }, deep: { why: unknown }, available: inputs.available, sessionModel: parentModel, source: "unavailable", issues: [] };
 	}
 
@@ -236,7 +261,7 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 	const fast: RosterAssignment = sameOrDefault(cheapModel, parentModel, {
 		model: cheapModel.reference,
 		thinking: clampThinking(TIER_THINKING.fast, cheapModel),
-		why: `cheapest model this install can run${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
+		why: `cheapest model ${poolLabel}${sameProvider.length ? ` on ${cheapModel.provider}` : ""}`,
 		origin: { model: "derived", thinking: "derived" },
 	}, `the model this session is running is already the cheapest available, so fast reruns it at ${TIER_THINKING.fast} thinking`);
 
@@ -244,8 +269,8 @@ export function deriveModelRoster(inputs: RosterInputs): ModelRoster {
 		model: strongModel.reference,
 		thinking: clampThinking(TIER_THINKING.deep, strongModel),
 		why: supportsExtendedThinking(strongModel)
-			? "most capable model this install can run that supports extended thinking"
-			: "most capable model this install can run (none offer extended thinking)",
+			? `most capable model ${poolLabel} that supports extended thinking`
+			: `most capable model ${poolLabel} (none offer extended thinking)`,
 		origin: { model: "derived", thinking: "derived" },
 	}, supportsExtendedThinking(strongModel)
 		? `the model this session is running is already the most capable available, so deep differs by thinking level (${TIER_THINKING.deep}), not by model`

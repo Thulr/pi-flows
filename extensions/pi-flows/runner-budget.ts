@@ -52,6 +52,8 @@ export class ChildBudgets {
 		private readonly budgets: Budget[],
 		private readonly recordEvent: RecordEvent | undefined,
 		private readonly scope: ChildSpanScope | undefined,
+		/** Appended to any latched notice for a contracted child — see `contractWrapUpRequirement` (contract-resolution.ts), which owns the envelope-shape prose. */
+		private readonly contractRequirement?: string,
 	) {}
 
 	/** Whether any budget governs this child — the wrap-up channel is offered only then. */
@@ -133,7 +135,7 @@ export class ChildBudgets {
 	private latchWrapUp(budget: Budget): void {
 		if (this.wrapUp || this.budgetStop) return;
 		this.wrapUp = budget;
-		this.notice = budget.wrapUpNotice();
+		this.notice = this.contractRequirement ? `${budget.wrapUpNotice()} ${this.contractRequirement}` : budget.wrapUpNotice();
 		this.deliver?.(this.notice);
 	}
 

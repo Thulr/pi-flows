@@ -1,4 +1,5 @@
 import { canonicalEnvelope, prepareIntegrationHandoff } from "./delegation.ts";
+import { Run } from "./run.ts";
 import { createHandoffGuard, HandoffWarnings, prepareResultHandoff, prepareTextHandoff, resolveHandoffPolicy, withInjectionNotice } from "./handoff.ts";
 import { artifactAttributes, handoffAttributes, type ArtifactSource } from "./trace-attributes.ts";
 import { resultText } from "./sanitize.ts";
@@ -120,8 +121,17 @@ export class HandoffConsumer {
 			validation: this.validatedResults.get(options.result),
 		});
 		if (accepted.error) {
-			this.recordRejected({ ...options, contract, scope }, accepted.error, accepted.rejected);
-			return { text: "", warnings: [], action: "fail", error: accepted.error };
+			// The flow-level error names which child's envelope was rejected — in a
+			// multi-axis preset the axis role is the only thing that makes the
+			// failure diagnosable — while the specific validation cause is kept.
+			const from = options.result.role ? `${options.result.role} (${options.result.agent})` : options.result.agent;
+			const named = { ...accepted.error, cause: `Return envelope from ${from} was rejected: ${accepted.error.cause}` };
+			this.recordRejected({ ...options, contract, scope }, named, accepted.rejected);
+			// A budget wrap-up settled this run graceful on notice delivery alone;
+			// a rejected envelope proves the notice was not honored, and the run
+			// must not render as a success beside the flow error it caused (#112).
+			Run.of(options.result).refuseWrapUpSettlement(named);
+			return { text: "", warnings: [], action: "fail", error: named };
 		}
 		if (accepted.validation) this.validatedResults.set(options.result, accepted.validation);
 		if (terminal) {

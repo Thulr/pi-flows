@@ -11,6 +11,7 @@ import { appendCapped, capBytes, getFinalAssistantText, isFailed, makeEmptyRunRe
 import { budgetAttributes, delegationIdentityAttributes } from "./trace-attributes.ts";
 import { BASH_READONLY_ENV, bashReadonlyGitEnv } from "./bash-readonly.ts";
 import { WRAPUP_FILE_ENV, requestWrapUp } from "./wrapup.ts";
+import { contractWrapUpRequirement } from "./contract-resolution.ts";
 import { ChildBudgets } from "./runner-budget.ts";
 import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
 import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
@@ -188,6 +189,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		[options.budget, options.contractBudget].filter((budget): budget is Budget => Boolean(budget)),
 		options.recordEvent,
 		options.scope,
+		options.contract ? contractWrapUpRequirement(options.contract) : undefined,
 	);
 	const refusal = childBudgets.refuseSpawn(options.agentName);
 	if (refusal) {
@@ -403,14 +405,27 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				true,
 			);
 			result.errorMessage = result.error.message;
-		} else if (terminalProviderError) {
+		} else if (terminalProviderError || terminalErrorSeen) {
+			// Two ways a terminal provider error ends a run: the child stalls and the
+			// grace timer terminates it (`terminalProviderError`), or the child does
+			// the normal thing and exits on its own with the error still active
+			// (`terminalErrorSeen` — a later healthy turn would have cleared it, and
+			// none arrived before the process closed). Both are
+			// the provider's failure; letting the second fall through to the generic
+			// exit-code branch replaced the one actionable diagnostic the run
+			// produced with "returned a non-zero exit code" (#110).
 			result.stopReason = "error";
 			result.exitCode = result.exitCode === 0 ? 1 : result.exitCode;
 			result.error = flowError(
 				"CHILD_PROVIDER_ERROR",
 				`Flow agent "${agent.name}" hit a terminal provider error: ${result.errorMessage ?? "unknown provider error"}`,
-				"The child's model provider returned a terminal error and the child process stalled instead of exiting, so pi-flows terminated it after the error grace period rather than waiting out timeoutMs.",
-				"Narrow the task or the material the child reads, or pick a larger-context model via tier/model, then retry. PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000).",
+				// The cause stays truthful per path: claiming a grace-period
+				// termination for a child that exited promptly would send whoever
+				// debugs it toward the wrong mechanism.
+				terminalProviderError
+					? "The child's model provider returned a terminal error and the child process stalled instead of exiting, so pi-flows terminated it after the error grace period rather than waiting out timeoutMs."
+					: "The child's model provider returned a terminal error and the child process then exited on its own.",
+				`Narrow the task or the material the child reads, or pick a larger-context model via tier/model, then retry.${terminalProviderError ? " PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000)." : ""}`,
 				true,
 			);
 			result.errorMessage = result.error.message;

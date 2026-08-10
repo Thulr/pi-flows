@@ -126,7 +126,33 @@ interface RosterContext {
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
 	modelRegistry?: ModelRegistryLike;
+	/**
+	 * The session's effective model scope (`/scoped-models`, `--models`), as pi
+	 * reports it. Structural and tolerant on purpose: older pi runtimes have no
+	 * such property, and an absent or empty list means no scoping is configured.
+	 */
+	scopedModels?: ReadonlyArray<{ model?: { provider?: unknown; id?: unknown } | null } | null | undefined> | null;
 	isProjectTrusted?: () => boolean;
+}
+
+/**
+ * The scope's model references, in the `provider/id` form the roster ranks by.
+ *
+ * Entries whose shape is foreign are skipped rather than trusted — this reads a
+ * property that only newer pi runtimes expose, so a partial or unexpected shape
+ * degrades to "unscoped" (the pre-scope behavior) instead of throwing or, worse,
+ * deriving a roster from values that are not model references.
+ */
+export function scopedModelReferences(scopedModels: RosterContext["scopedModels"]): string[] {
+	if (!Array.isArray(scopedModels)) return [];
+	const references: string[] = [];
+	for (const entry of scopedModels) {
+		const model = entry?.model;
+		if (model && typeof model.provider === "string" && typeof model.id === "string") {
+			references.push(`${model.provider}/${model.id}`);
+		}
+	}
+	return references;
 }
 
 /**
@@ -163,6 +189,7 @@ export function currentModelRoster(ctx: RosterContext): ModelRoster {
 	});
 	return resolveModelRoster({
 		available: availableModelsFromRegistry(ctx.modelRegistry),
+		scoped: scopedModelReferences(ctx.scopedModels),
 		parent: {
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
 			thinking: isThinkingLevel(ctx.thinkingLevel) ? ctx.thinkingLevel : undefined,

@@ -253,6 +253,10 @@ produce this error when it crosses the ceiling — it settles gracefully with
 seeing `BUDGET_EXCEEDED` means the ceiling was crossed before any wrap-up
 could be requested, or the notice never reached the child (for example when
 child extensions are disabled, or one turn jumped from below 80% past 100%).
+Note the graceful settlement is provisional for a contracted child: if its
+wrap-up response then fails envelope validation, the run is reported failed
+with that validation error (`RETURN_ENVELOPE_INVALID`, naming the role) —
+notice delivery alone never renders as a success.
 
 Fix: do not automatically replay the same Flow unchanged. Ask for direction, or
 make a material, visible change that stays within the configured ceiling:
@@ -679,13 +683,17 @@ stuck auth/provider cases, run a smaller no-model smoke check first.
 ### `CHILD_PROVIDER_ERROR`
 
 Cause: the child's model provider returned a terminal error (for example
-"input exceeds the context window of this model") and the child process then
-stalled instead of exiting, so pi-flows terminated it after a short grace
-period rather than letting it hang until `timeoutMs`.
+"input exceeds the context window of this model"). Usually the child process
+then exits on its own; if it stalls instead, pi-flows terminates it after a
+short grace period rather than letting it hang until `timeoutMs`. The error's
+`cause` says which of the two happened, and the provider's own diagnostic is
+preserved in the error message — this is not a generic `CHILD_EXIT_NONZERO`
+even though the process exited non-zero.
 
 Fix: narrow the task or the material the child reads (a smaller issue thread,
 fewer files), or pick a larger-context model via `tier`/`model`, then retry.
-`PI_FLOWS_ERROR_GRACE_MS` tunes the grace period (default 30000ms).
+For the stalled case, `PI_FLOWS_ERROR_GRACE_MS` tunes the grace period
+(default 30000ms).
 
 ### `TRACE_INCOMPLETE`
 
