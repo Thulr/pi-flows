@@ -146,6 +146,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	}
 
 	const started = Date.now();
+	// Stamped again immediately before the process run: per-child setup (the
+	// prompt file, the read-only sandbox) is asynchronous, and an interval
+	// measured from `started` would show children overlapping before either
+	// process existed.
+	let spawnedAt: number | undefined;
 	const timeoutMs = normalizeTimeout(options.timeoutMs);
 	// Resolved once: the same choice fills the result, the span, and the argv, so
 	// a run can never report a model or level it did not actually spawn with.
@@ -244,6 +249,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		let terminalErrorTimer: NodeJS.Timeout | null = null;
 		let terminalErrorSeen = false;
 		let terminalProviderError = false;
+		spawnedAt = Date.now();
 		const run = await runJsonlProcess({
 			command: invocation.command,
 			args: invocation.args,
@@ -419,8 +425,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		// only its budget event (already emitted by refuseSpawn), never a child
 		// span for a child that did not run.
 		if (!refusedLate) {
-			result.durationMs = Date.now() - started;
-			result.startedAtMs = started;
+			// From the actual spawn when one happened, so [startedAtMs, +durationMs]
+			// is the child process interval; a failure before spawn falls back to
+			// the run's own start.
+			result.durationMs = Date.now() - (spawnedAt ?? started);
+			result.startedAtMs = spawnedAt ?? started;
 			options.recordSpan?.(result, { scope: options.scope, attributes: childSpanAttributes(options, agent, tools, policy, choice, enforcement ?? undefined) });
 			childBudgets.recordOutcome(agent.name);
 		}

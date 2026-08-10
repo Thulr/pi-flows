@@ -82,6 +82,7 @@ test("expandSafePath inverts only the two absolute forms, never guessing", () =>
 	assert.equal(expandSafePath("/work/trace.jsonl"), "/work/trace.jsonl");
 	assert.equal(expandSafePath("~/trace.jsonl"), `${os.homedir()}/trace.jsonl`);
 	assert.equal(expandSafePath("~"), os.homedir());
+	assert.equal(expandSafePath("~\\audit\\trace.jsonl"), `${os.homedir()}\\audit\\trace.jsonl`, "the Windows separator form safePath produces expands too");
 	assert.equal(expandSafePath("~other/trace.jsonl"), null, "another user's home is not ours to expand");
 	assert.equal(expandSafePath("audit/trace.jsonl"), null);
 	assert.equal(expandSafePath(undefined), null);

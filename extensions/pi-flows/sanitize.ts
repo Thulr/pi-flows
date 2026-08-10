@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import * as path from "node:path";
 import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type FlowError, type FlowRunResult } from "./types.ts";
 
 /**
@@ -40,8 +41,10 @@ export function safePath(candidate: string | null | undefined): string | null {
  */
 export function expandSafePath(candidate: string | null | undefined): string | null {
 	if (!candidate) return null;
-	if (candidate.startsWith("/")) return candidate;
-	if (candidate === "~" || candidate.startsWith("~/")) {
+	// Platform-aware: POSIX `/…` and, on Windows, `C:\…`/UNC forms pass through.
+	if (path.isAbsolute(candidate)) return candidate;
+	// safePath preserves the platform separator after `~`, so accept both.
+	if (candidate === "~" || candidate.startsWith("~/") || candidate.startsWith("~\\")) {
 		const home = os.homedir();
 		return home ? `${home}${candidate.slice(1)}` : null;
 	}
