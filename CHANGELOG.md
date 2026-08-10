@@ -38,10 +38,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   (including older pi runtimes without the property) keeps the
   all-available-models behavior, `capable` still mirrors the session's active
   model even outside the cycling scope, and explicit model pins remain
-  deliberate overrides. A scope whose models are all unusable for delegation —
-  or one reported in a shape this version cannot read — anchors the automatic
-  tiers to the session's own model instead of falling through to pi's
-  configured default or widening back to the full registry. (#108)
+  deliberate overrides. A non-empty scope that leaves the tiers nothing
+  rankable fails closed down a ladder instead of falling through: anchor to
+  the session model, else bind a decoded scoped reference directly, else
+  refuse the automatic tier with the new `MODEL_SCOPE_UNSATISFIABLE` error —
+  an unpinned child would load pi's configured default, which the scope may
+  exclude. (#108)
 - A child that reported a terminal provider error and then exited on its own
   was misclassified as `CHILD_EXIT_NONZERO`, replacing the provider's
   diagnostic with a generic exit message; it is now `CHILD_PROVIDER_ERROR` on

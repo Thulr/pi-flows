@@ -78,7 +78,9 @@ export async function runFlow(
 			// broken, not a normal one — so tier behavior went unexercised by the
 			// integration path. `options.registry: null` opts back out for the tests
 			// that are specifically about a missing registry.
-			...(options.registry === null ? {} : { modelRegistry: options.registry ?? STUB_REGISTRY, model: options.model ?? STUB_SESSION_MODEL }),
+			// `model: null` omits the session model entirely — the degraded-context
+			// shape the scope-refusal path exists for.
+			...(options.registry === null ? {} : { modelRegistry: options.registry ?? STUB_REGISTRY, ...(options.model === null ? {} : { model: options.model ?? STUB_SESSION_MODEL }) }),
 			...(options.scopedModels !== undefined ? { scopedModels: options.scopedModels } : {}),
 			isProjectTrusted: () => options.projectTrusted ?? false,
 		},

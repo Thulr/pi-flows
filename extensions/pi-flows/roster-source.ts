@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { ROSTER_CONFIG_FILE, THINKING_LEVELS, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
+import { ROSTER_CONFIG_FILE, THINKING_LEVELS, UNREADABLE_SCOPED_MODEL, type AvailableModel, type ModelRoster, type ThinkingLevel } from "./types.ts";
 import { OUTPUT_TOKEN_SHARE, isThinkingLevel, resolveModelRoster } from "./model-roster.ts";
 import { envRosterConfig, loadRosterConfig } from "./roster-config.ts";
 
@@ -134,15 +134,6 @@ interface RosterContext {
 	scopedModels?: ReadonlyArray<{ model?: { provider?: unknown; id?: unknown } | null } | null | undefined> | null;
 	isProjectTrusted?: () => boolean;
 }
-
-/**
- * Stands in for a scope entry whose shape this version could not read. It can
- * match no registry reference (those are always `provider/id`), so a scope
- * that decodes to nothing still constrains derivation — the stranded-scope
- * branch anchors the automatic tiers to the session model — instead of
- * silently widening back to the full registry.
- */
-export const UNREADABLE_SCOPED_MODEL = "(unreadable scoped-model entry)";
 
 /**
  * The scope's model references, in the `provider/id` form the roster ranks by.

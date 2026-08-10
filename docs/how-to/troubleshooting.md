@@ -552,6 +552,21 @@ allowlist fallback; or change the role's tools — `bash` if write-capable
 classification (and the shared-write guard) is acceptable, or `read,grep,find,ls`
 if the child does not need a shell.
 
+### `MODEL_SCOPE_UNSATISFIABLE`
+
+Cause: the child asked for an automatic tier (`fast`/`deep`), but the session's
+model scope (`/scoped-models`, `--models`) admits no model the tier could name —
+no scoped model is readable or present, the context supplied no session model to
+anchor to, and nothing explicit (call `model`, agent pin, or pi-flows config)
+named one. Spawning anyway would launch the child with no `--model`, loading
+pi's configured default — possibly a model or provider the scope excludes — so
+the spawn is refused before any process starts. (When the session model *is*
+known, or the scope contains readable references, the tiers anchor or bind
+instead of refusing; see the model-roster section of the flow reference.)
+
+Fix: widen the session's model scope, name a model explicitly on the call,
+agent, or `pi-flows.json`, or run the flow from a session with a current model.
+
 ### `PROJECT_AGENT_APPROVAL_REQUIRED`
 
 Cause: a headless (non-UI) run requested a project-local agent from

@@ -82,11 +82,29 @@ export interface AvailableModel {
  * "run the default" would read as "no answer" and fall through to whatever the
  * agent pinned — so asking for `deep` on a fast agent could run the cheap model.
  */
+/**
+ * Stands in for a session-scope entry whose shape could not be read (see
+ * `scopedModelReferences` in roster-source.ts). It can match no registry
+ * reference — those are always `provider/id` — so a scope that decodes to
+ * nothing still constrains derivation instead of silently widening back to
+ * the full registry. Vocabulary rather than policy: both the reader and the
+ * empty-pool ranking branch on it.
+ */
+export const UNREADABLE_SCOPED_MODEL = "(unreadable scoped-model entry)";
+
 export interface RosterAssignment {
 	model?: string | null;
 	thinking?: ThinkingLevel;
 	/** Plain-English reason, shown by `flow showConfig:true` and `/flows models` so a surprising choice is inspectable. */
 	why: string;
+	/**
+	 * Set when this rung REFUSES rather than answers or stays silent: the
+	 * session's model scope admits nothing the rung could name, and there is no
+	 * session model to anchor to — so falling through to an unpinned child
+	 * (pi's configured default, possibly outside the scope) must not happen.
+	 * A later layer or an explicit pin naming a model clears the refusal.
+	 */
+	refusal?: string;
 	/**
 	 * Which layer settled each field. Tracked per field, not per rung, because the
 	 * layers merge per field: a project stating only `thinking` leaves `model` to

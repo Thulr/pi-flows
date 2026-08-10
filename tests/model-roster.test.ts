@@ -13,6 +13,7 @@ import * as path from "node:path";
 import test from "node:test";
 import { availableModelsFromRegistry } from "../extensions/pi-flows/roster-source.ts";
 import { resolveChildModel } from "../extensions/pi-flows/runner.ts";
+import { UNREADABLE_SCOPED_MODEL } from "../extensions/pi-flows/types.ts";
 import {
 	clampThinking,
 	deriveModelRoster,
@@ -286,15 +287,71 @@ test("a scope whose models are all unusable anchors the tiers to the session mod
 	assert.equal(roster.capable.model, "acme/standard", "capable still names the session's model");
 	assert.match(describeModelRoster(roster).join("\n"), /model scope/, "and the disclosure names the scope, not a missing registry");
 
-	// With no session model there is nothing in-scope to anchor to, so the
-	// tiers stay honestly unresolved rather than inventing a model.
+	// With no session model, the scope's own decoded reference is the next-best
+	// anchor: the user enabled exactly that model, and an unresolved tier would
+	// fall through to an unpinned child — pi's configured default, which the
+	// scope may exclude.
 	const anchorless = deriveModelRoster({
-		available: [model("tiny", { contextWindow: 8_000 }), ...INSTALL],
+		available: [model("tiny", { contextWindow: 8_000, thinkingLevels: ["off", "low"] }), ...INSTALL],
 		parent: {},
 		scoped: ["acme/tiny"],
 	});
-	assert.equal(anchorless.fast.model, undefined);
-	assert.equal(anchorless.deep.model, undefined);
+	assert.equal(anchorless.fast.model, "acme/tiny", "the scoped model is bound even below the ranking floor");
+	assert.equal(anchorless.deep.model, "acme/tiny");
+	assert.equal(anchorless.deep.thinking, "low", "clamped to what the bound model actually offers");
+});
+
+test("a scope with nothing readable and no session model refuses the automatic tiers", () => {
+	// The last resort is an explicit refusal, never a silent fall-through: with
+	// no decoded reference and no session model, any model an automatic tier
+	// named would be a guess, and an unpinned child would load pi's configured
+	// default — possibly outside the scope.
+	const roster = deriveModelRoster({
+		available: INSTALL,
+		parent: {},
+		scoped: [UNREADABLE_SCOPED_MODEL],
+	});
+	assert.ok(roster.fast.refusal, "fast refuses rather than answering or staying silent");
+	assert.ok(roster.deep.refusal);
+	assert.equal(roster.fast.model, undefined);
+	assert.equal(roster.capable.model, null, "capable still answers: the pi default is the session's explicit context");
+	assert.match(describeModelRoster(roster).join("\n"), /refused — model scope unsatisfiable/, "the disclosure must not claim the pi default will run");
+
+	// A config layer naming a model is a deliberate choice that answers the rung.
+	const overridden = resolveModelRoster({
+		available: INSTALL,
+		parent: {},
+		scoped: [UNREADABLE_SCOPED_MODEL],
+		config: { deep: { model: "acme/flagship" } },
+	});
+	assert.equal(overridden.deep.refusal, undefined);
+	assert.equal(overridden.deep.model, "acme/flagship");
+	assert.ok(overridden.fast.refusal, "a rung no layer answered keeps refusing");
+
+	// resolveChildModel surfaces the refusal to the dispatcher — unless an
+	// explicit pin overrides it, which is a stated model and therefore wins.
+	const refused = resolveModelRoster({ available: INSTALL, parent: {}, scoped: [UNREADABLE_SCOPED_MODEL] });
+	assert.ok(resolveChildModel({ tier: "deep" }, {}, refused).refusal, "a refused call tier reaches the dispatcher as a refusal");
+	assert.ok(resolveChildModel({}, { tier: "fast" }, refused).refusal);
+	assert.equal(resolveChildModel({ tier: "deep" }, { model: "acme/standard" }, refused).refusal, undefined, "a call-site pin clears it");
+	assert.equal(resolveChildModel({ model: "acme/standard", tier: "deep" }, {}, refused).refusal, undefined, "an agent pin clears its own tier's refusal");
+	assert.equal(resolveChildModel({ model: "acme/standard" }, { tier: "deep" }, refused).refusal, undefined, "an agent pin also backstops a refused call tier");
+	assert.equal(resolveChildModel({ tier: "capable" }, {}, refused).refusal, undefined, "capable is the session's explicit context, never refused");
+
+	// Any CONCRETE model the chain lands on clears the refusal — here a refused
+	// call tier falls through to an agent tier a config layer answered. Refusing
+	// a deliberately configured model would over-refuse; only a chain ending
+	// unpinned (the configured-default escape) keeps the refusal.
+	const configAnswered = resolveModelRoster({
+		available: INSTALL,
+		parent: {},
+		scoped: [UNREADABLE_SCOPED_MODEL],
+		config: { deep: { model: "acme/flagship" } },
+	});
+	const backstopped = resolveChildModel({ tier: "deep" }, { tier: "fast" }, configAnswered);
+	assert.equal(backstopped.refusal, undefined, "a config-answered agent tier backstops the refused call tier");
+	assert.equal(backstopped.model, "acme/flagship");
+	assert.ok(resolveChildModel({ tier: "capable" }, { tier: "fast" }, refused).refusal, "falling through to an unpinned capable answer is still the escape, so the refusal stands");
 });
 
 test("an explicit config pin outside the scope is not silently substituted", () => {

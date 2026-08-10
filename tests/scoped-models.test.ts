@@ -112,6 +112,20 @@ test("a scope with no usable model keeps a tiered child on the session model's a
 	assert.equal(modelOf(calls[0]), "test-provider/session-model", "a stranded scope anchors the tier to the session model, never to an unpinned default");
 });
 
+test("an unreadable scope with no session model refuses the automatic tier before any spawn", async () => {
+	// The last rung of the fail-closed ladder: nothing decoded, nothing to
+	// anchor to. Spawning would launch the child unpinned — pi's configured
+	// default, possibly outside the scope — so the dispatch is refused with a
+	// structured error instead.
+	const { result, calls } = await runFlow(
+		{ agent: "operator", task: "adjudicate the design", tier: "deep" },
+		{ operator: "done" },
+		{ registry: WIDE_REGISTRY, model: null, scopedModels: [{ model: { provider: 7, id: "x" } }] },
+	);
+	assert.equal(calls.length, 0, "no child process may spawn unpinned into an unsatisfiable scope");
+	assert.equal(result.details.results[0]?.error?.code, "MODEL_SCOPE_UNSATISFIABLE");
+});
+
 test("the scoped roster is what showConfig reports", async () => {
 	const { text } = await runFlow(
 		{ showConfig: true, why: undefined },
