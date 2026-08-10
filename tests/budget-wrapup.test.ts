@@ -149,7 +149,7 @@ test("a delivered wrap-up answered with prose is not marked successful before en
 	// exitCode 0 / budget_wrap_up beside the flow's RETURN_ENVELOPE_INVALID.
 	const contract = contractWithBudget({ maxTokens: 25 });
 	const { result, stubDir } = await runFlow(
-		{ agent: "recon", contract, timeoutMs: 5_000 },
+		{ agent: "recon", contract, timeoutMs: 5_000, traceFile: "wrapup-invalid-trace.jsonl" },
 		{ recon: { reply: "still reading", wrapUpReply: "ran out of budget; here are my notes in plain prose.", holdOpenMs: 4_000 } },
 	);
 	const child = result.details.results[0];
@@ -166,6 +166,15 @@ test("a delivered wrap-up answered with prose is not marked successful before en
 	const notice = readFileSync(path.join(stubDir, "wrapup-notice.txt"), "utf8");
 	assert.match(notice, /pi-flows\.return-envelope\.v1/);
 	assert.ok(notice.includes(delegationContractId(contract as never)), "the notice names the contract identity the envelope must carry");
+
+	// The child span was exported (status OK) before validation ran, and an
+	// exported span is immutable — the revocation is recorded on the linked
+	// rejection event as the correction a trace consumer applies.
+	const spans = parseTraceJsonl(await readFile(path.join(stubDir, "wrapup-invalid-trace.jsonl"), "utf8")).spans;
+	const rejection = spans.find((span) => span.attributes?.["flow.event_name"] === "envelope.rejected");
+	assert.ok(rejection, "the envelope rejection is coordination evidence");
+	assert.equal(rejection!.attributes!["flow.budget.wrapup_revoked"], true, "the rejection event marks the revoked provisional wrap-up success");
+	assert.equal(rejection!.attributes!["flow.error_code"], "RETURN_ENVELOPE_INVALID");
 });
 
 test("a notice that never reaches the child keeps exhaustion fatal", async () => {

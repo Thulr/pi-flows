@@ -67,14 +67,16 @@ test("no automatically tiered child receives a model excluded from the session s
 		{ registry: WIDE_REGISTRY, model: { provider: "test-provider", id: "scoped" }, scopedModels },
 	);
 	assert.equal(deep.calls.length, 1);
-	assert.notEqual(modelOf(deep.calls[0]), "test-provider/outside-scope", "deep dispatched a child to a model the user scoped out");
+	// The exact in-scope model, not merely "not the strongest outsider": any
+	// out-of-scope model on the argv would break the session-scope contract.
+	assert.equal(modelOf(deep.calls[0]), "test-provider/scoped", "deep dispatched a child to a model outside the session scope");
 
 	const fast = await runFlow(
 		{ agent: "operator", task: "scout the repo", tier: "fast" },
 		{ operator: "done" },
 		{ registry: WIDE_REGISTRY, model: { provider: "test-provider", id: "scoped" }, scopedModels },
 	);
-	assert.notEqual(modelOf(fast.calls[0]), "test-provider/outside-cheap", "fast dispatched a child to a model the user scoped out");
+	assert.equal(modelOf(fast.calls[0]), "test-provider/scoped", "fast dispatched a child to a model outside the session scope");
 });
 
 test("the scoped roster is what showConfig reports", async () => {

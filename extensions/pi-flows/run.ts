@@ -87,12 +87,19 @@ export class Run {
 	 * rendering as a success beside the flow error it caused. The stopReason
 	 * stays `budget_wrap_up` — the budget did stop this child mid-wrap-up; what
 	 * changes is that the wrap-up was not honored.
+	 *
+	 * Returns whether a settlement was actually revoked. The child span was
+	 * already exported (`status: OK`) from the runner's finally block, and an
+	 * exported span is immutable — so the caller records the revocation on its
+	 * rejection event, which links to the child span, as the correction a trace
+	 * consumer applies.
 	 */
-	refuseWrapUpSettlement(error: FlowError): void {
-		if (this.#result.stopReason !== "budget_wrap_up") return;
+	refuseWrapUpSettlement(error: FlowError): boolean {
+		if (this.#result.stopReason !== "budget_wrap_up" || this.#result.error) return false;
 		this.#result.exitCode = 1;
 		this.#result.error = error;
 		this.#result.errorMessage = error.message;
+		return true;
 	}
 
 	/**

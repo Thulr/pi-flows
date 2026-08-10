@@ -126,11 +126,14 @@ export class HandoffConsumer {
 			// failure diagnosable — while the specific validation cause is kept.
 			const from = options.result.role ? `${options.result.role} (${options.result.agent})` : options.result.agent;
 			const named = { ...accepted.error, cause: `Return envelope from ${from} was rejected: ${accepted.error.cause}` };
-			this.recordRejected({ ...options, contract, scope }, named, accepted.rejected);
 			// A budget wrap-up settled this run graceful on notice delivery alone;
 			// a rejected envelope proves the notice was not honored, and the run
 			// must not render as a success beside the flow error it caused (#112).
-			Run.of(options.result).refuseWrapUpSettlement(named);
+			// The revocation rides on the rejection event below: the child span was
+			// already exported with the provisional OK, so this linked event is the
+			// correction a trace consumer applies.
+			const revoked = Run.of(options.result).refuseWrapUpSettlement(named);
+			this.recordRejected({ ...options, contract, scope }, named, accepted.rejected, revoked);
 			return { text: "", warnings: [], action: "fail", error: named };
 		}
 		if (accepted.validation) this.validatedResults.set(options.result, accepted.validation);
@@ -347,6 +350,7 @@ export class HandoffConsumer {
 		options: ConsumeResultOptions,
 		rejection: FlowError,
 		rejected: ReturnType<typeof prepareIntegrationHandoff>["rejected"],
+		wrapUpRevoked = false,
 	): void {
 		if (!this.options.recordEvent) return;
 		// Terminal rejections live in the validation slot for the same reason
@@ -369,6 +373,10 @@ export class HandoffConsumer {
 				"flow.error_code": rejection.code,
 				"flow.handoff.retryable": rejection.retryable,
 				"flow.handoff.artifact_count": rejected?.artifactReferences.length ?? 0,
+				// This rejection revoked a provisional budget_wrap_up success. The
+				// child span already exported status OK; this linked event is the
+				// correction a trace consumer applies (#112).
+				...(wrapUpRevoked ? { "flow.budget.wrapup_revoked": true } : {}),
 			},
 		});
 		if (!rejected) return;
