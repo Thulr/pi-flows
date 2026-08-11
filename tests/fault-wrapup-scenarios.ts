@@ -87,7 +87,7 @@ function wrapUpUndeliveredScenario(): FaultScenario {
 				usage: { input: 10, output: 10, cost: 0.001 },
 			});
 			const deps = faultDeps(
-				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }], concurrency: 1 },
+				{ task: "collect two findings", tier: "capable", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }], concurrency: 1 },
 				adapter,
 				cwd,
 			);
@@ -135,7 +135,7 @@ function wrapUpHonoredControlScenario(): FaultScenario {
 				usage: { input: 10, output: 10, cost: 0.001 },
 			});
 			const deps = faultDeps(
-				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }], concurrency: 1, incompleteHandoffPolicy: "include" },
+				{ task: "collect two findings", tier: "capable", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }], concurrency: 1, incompleteHandoffPolicy: "include" },
 				adapter,
 				cwd,
 			);
@@ -182,7 +182,7 @@ function wrapUpDishonoredScenario(): FaultScenario {
 				usage: { input: 10, output: 10, cost: 0.001 },
 			});
 			const deps = faultDeps(
-				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }], concurrency: 1, incompleteHandoffPolicy: "include" },
+				{ task: "collect two findings", tier: "capable", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }], concurrency: 1, incompleteHandoffPolicy: "include" },
 				adapter,
 				cwd,
 			);
@@ -235,7 +235,7 @@ function wrapUpBroadcastControlScenario(): FaultScenario {
 				usage: { input: 2, output: 8, cost: 0.001 },
 			});
 			const deps = faultDeps(
-				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
+				{ task: "collect two findings", tier: "capable", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
 				adapter,
 				cwd,
 				{ budget: Budget.forFlow({ maxGeneratedTokens: 10 }) },
@@ -287,7 +287,7 @@ function wrapUpMixedCeilingControlScenario(): FaultScenario {
 				usage: { input: 22, output: 8, cost: 0.001 },
 			});
 			const deps = faultDeps(
-				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
+				{ task: "collect two findings", tier: "capable", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
 				adapter,
 				cwd,
 				{ budget: Budget.forFlow({ maxTokens: 30, maxGeneratedTokens: 10 }) },
@@ -343,7 +343,7 @@ function wrapUpErroredTurnScenario(): FaultScenario {
 				usage: { input: 2, output: 8, cost: 0.001 },
 			});
 			const deps = faultDeps(
-				{ task: "collect two findings", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
+				{ task: "collect two findings", tier: "capable", contract, tasks: [{ agent: "recon", task: "inspect A" }, { agent: "redteam", task: "inspect B" }], incompleteHandoffPolicy: "include" },
 				adapter,
 				cwd,
 				{ budget: Budget.forFlow({ maxGeneratedTokens: 10 }) },

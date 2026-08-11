@@ -30,6 +30,7 @@ function fullContract(budget: Record<string, number>): Record<string, unknown> {
 
 const REFUSED_FANOUT = {
 	why: "independent review of uncommitted changes",
+	tier: "capable",
 	tasks: [
 		{ agent: "overwatch", role: "standards", task: "Review the uncommitted changes for standards issues." },
 		{ agent: "overwatch", role: "spec", task: "Review the uncommitted changes against intent." },
@@ -51,7 +52,7 @@ test("preset calls are scored on their expanded topology, exactly as the tool re
 	// bash-ro override falls back to overwatch's frontmatter bash and is
 	// refused. Scoring raw preset args could not tell these two apart.
 	assert.equal(
-		callAdmissibilityFailure({ tasks: [{ agent: "overwatch", task: "standards review" }, { agent: "overwatch", task: "spec review" }], concurrency: 2, why: "independent review" })?.code,
+		callAdmissibilityFailure({ tier: "capable", tasks: [{ agent: "overwatch", task: "standards review" }, { agent: "overwatch", task: "spec review" }], concurrency: 2, why: "independent review" })?.code,
 		"SHARED_WRITE_CWD",
 	);
 	// Shape-visible resolution failures (unknown name, undeclared override
@@ -110,6 +111,7 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 	// review nothing performed.
 	const invented = {
 		why: "independent review of uncommitted changes",
+		tier: "capable",
 		tasks: [
 			{ agent: "standards-reviewer", task: "Review the uncommitted changes." },
 			{ agent: "spec-reviewer", task: "Review the uncommitted changes." },
@@ -125,6 +127,7 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 	// harness must terminate rather than let live children run to completion.
 	const mixed = {
 		why: "independent review of uncommitted changes",
+		tier: "capable",
 		concurrency: 1,
 		tasks: [{ agent: "recon", task: "Review the uncommitted changes." }, { agent: "spec-reviewer", task: "Review the uncommitted changes." }],
 	};
@@ -358,6 +361,7 @@ test("an invalid consumed contract refuses the whole call at plan construction",
 	const badContract = { ...fullContract({ timeoutMs: 60_000, maxTokens: 1000, maxGeneratedTokens: 100 }), returnSchema: { type: "string", pattern: "(" } };
 	const refusal = callAdmissibilityFailure({
 		why: "independent review of uncommitted changes",
+		tier: "capable",
 		concurrency: 1,
 		tasks: [
 			{ agent: "recon", task: "Review the uncommitted changes.", contract: badContract },
@@ -382,6 +386,7 @@ test("mixed per-role refusal causes combine: a wave nobody can start is refused"
 	// spawn, so admission would credit a call that does nothing.
 	const mixedCauses = {
 		why: "independent review of uncommitted changes",
+		tier: "capable",
 		concurrency: 1,
 		tasks: [
 			{ agent: "invented-reviewer", task: "Review the uncommitted changes." },

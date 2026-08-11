@@ -172,7 +172,7 @@ function contractedFanout(replies: Record<string, ReplyScript>, faults: FaultRul
 	const adapter = makeFaultAdapter({ replies, faults });
 	const deps = faultDeps(
 		{
-			task: "collect two findings",
+			task: "collect two findings", tier: "capable",
 			contract: BASE_CONTRACT,
 			tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }],
 			...extraParams,
@@ -308,7 +308,7 @@ function reorderedResponseScenario(): FaultScenario {
 			const adapter = makeFaultAdapter({ replies: adapterReplies, faults });
 			const deps = faultDeps(
 				{
-					task: "inspect both subsystems",
+					task: "inspect both subsystems", tier: "capable",
 					tasks: [
 						{ agent: "recon", task: "inspect A", contract: first },
 						{ agent: "recon", task: "inspect B", contract: second },
@@ -414,7 +414,7 @@ function exhaustedBudgetScenario(): FaultScenario {
 		run: async () => {
 			const adapter = makeFaultAdapter({ replies: { recon: "finding" }, usage: { input: 100, output: 100, cost: 0.4 } });
 			const deps = faultDeps(
-				{ task: "collect findings", tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+				{ task: "collect findings", tier: "capable", tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 				adapter,
 				cwd,
 				// Concurrency 1 makes the ceiling bite between children rather than racing them.
@@ -452,7 +452,7 @@ function sharedWriterRaceScenario(): FaultScenario {
 		run: scenarioRun(() => {
 			const adapter = makeFaultAdapter({ replies: { operator: "edited the file" } });
 			const deps = faultDeps(
-				{ task: "edit the shared file", tasks: [{ agent: "operator", task: "edit A" }, { agent: "operator", task: "edit B" }] },
+				{ task: "edit the shared file", tier: "capable", tasks: [{ agent: "operator", task: "edit A" }, { agent: "operator", task: "edit B" }] },
 				adapter,
 				cwd,
 			);
@@ -491,7 +491,7 @@ function bashReadonlySharedCwdScenario(): FaultScenario {
 		run: scenarioRun(() => {
 			const adapter = makeFaultAdapter({ replies: { recon: "reviewed" } });
 			const deps = faultDeps(
-				{ task: "review the shared change set", tasks: [{ agent: "recon", task: "standards review", tools: "read,grep,find,ls,bash-ro" }, { agent: "recon", task: "spec review", tools: "read,grep,find,ls,bash-ro" }] },
+				{ task: "review the shared change set", tier: "capable", tasks: [{ agent: "recon", task: "standards review", tools: "read,grep,find,ls,bash-ro" }, { agent: "recon", task: "spec review", tools: "read,grep,find,ls,bash-ro" }] },
 				adapter,
 				cwd,
 			);
@@ -711,7 +711,7 @@ export async function runTraceSuppression(): Promise<TraceSuppressionRun> {
 	const adapter = makeFaultAdapter({ replies: { recon: envelopeFor(BASE_CONTRACT) } });
 	const deps = faultDeps(
 		{
-			task: "collect two findings",
+			task: "collect two findings", tier: "capable",
 			contract: BASE_CONTRACT,
 			tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }],
 		},

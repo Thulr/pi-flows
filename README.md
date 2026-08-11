@@ -107,6 +107,8 @@ To hack on pi-flows or try unreleased `main`, work from a checkout: `git clone h
 
 Exactly one mode per call. `{"list": true}` and `{"showConfig": true}` answer without spawning a child; every spawning call also requires `"why"` — one sentence naming the reason delegation beats direct execution.
 
+Raw parallel fan-out also requires intentional model sizing before spend: set `tier` or `model` on every task, or set one flow-wide `tier`/`model` to acknowledge that uniform sizing is deliberate. Use per-task `fast`/`capable`/`deep` tiers when the work has mixed complexity.
+
 | Mode | What it runs |
 |---|---|
 | [Presets](./docs/reference/flow-reference.md#workflow-presets) | `scout`, `map-codebase`, `code-review` — intent-level templates expanded before ordinary mode validation. |

@@ -11,6 +11,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callAdmissibilityFailure, scoringDiscovery } from "./select-admissibility.mjs";
+import { taskTierShapeMismatch } from "./select-model-sizing.mjs";
 import { effectiveTools, isWorkflowWorkPhase, resolvedCwd } from "../extensions/pi-flows/validate.ts";
 import { firstSpawnAgentRefs } from "../extensions/pi-flows/modes/contract.ts";
 
@@ -72,8 +73,6 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 // directly, and a preset call through presetRunCwd (its nested roles). Every
 // other mode resolves per-role cwd only.
 const TOP_LEVEL_CWD_MODES = new Set(["single", "monitor", "preset"]);
-
-
 
 /** Declared overrides per bundled preset, read from the preset files so the eval cannot drift from them. */
 const bundledPresetsDir = path.resolve(repoRoot, "presets");
@@ -261,7 +260,6 @@ function taskText(args) {
 	return pieces.join("\n");
 }
 
-
 // The pure shape half of expectation matching: does this call look like the
 // shape, ignoring whether the tool would run it? Kept separate so forbidden
 // shapes can match refused calls too — a guard bypass must not escape its
@@ -289,6 +287,9 @@ function flowCallShapeMismatch(args, shape) {
 	if (shape.minTasks !== undefined && actualTaskCount < shape.minTasks) {
 		return `expected at least ${shape.minTasks} ${actualMode} task(s), saw ${actualTaskCount}`;
 	}
+
+	const tierMismatch = taskTierShapeMismatch(args.tasks, actualMode, shape.taskTiers);
+	if (tierMismatch) return tierMismatch;
 
 	// The gate itself, not just the work in front of it: a phase-gated case
 	// must be able to require that the workflow actually pauses. Approval

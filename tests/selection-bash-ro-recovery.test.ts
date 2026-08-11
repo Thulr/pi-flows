@@ -72,6 +72,7 @@ test("dropping the shell is not a recovery — the roles could not run the reque
 	// would score abandoning the work as a SHARED_WRITE_CWD recovery.
 	const shellLess = {
 		why: WHY,
+		tier: "capable",
 		tasks: [{ agent: "recon", task: READONLY_TASKS[0] }, { agent: "analyst", task: READONLY_TASKS[1] }],
 	};
 	assert.equal(callAdmissibilityFailure(shellLess), null, "the shell-less fan-out is admissible — only the case shape rejects it");
@@ -89,6 +90,7 @@ test("cwd isolation is not a recovery for a task naming one checkout", () => {
 	// checkout — so the refusal stops without the work being done.
 	const relocated = {
 		why: WHY,
+		tier: "capable",
 		tasks: PLAIN_BASH_FANOUT.tasks.map((task: any, index: number) => ({ ...task, cwd: `/tmp/checkout-${index}` })),
 	};
 	assert.equal(callAdmissibilityFailure(relocated), null, "distinct cwds are admissible — only the case shape rejects them");
@@ -140,6 +142,7 @@ test("the bypass is forbidden for work the request describes as read-only", () =
 test("every role must itself inspect the history — an off-topic sibling cannot ride the request", () => {
 	const mixed = {
 		why: WHY,
+		tier: "capable",
 		tasks: [
 			{ agent: "overwatch", tools: "read,grep,find,ls,bash-ro", task: READONLY_TASKS[0] },
 			{ agent: "overwatch", tools: "read,grep,find,ls,bash-ro", task: "Summarize README.md." },
@@ -151,6 +154,7 @@ test("every role must itself inspect the history — an off-topic sibling cannot
 	// An invented reviewer halves the requested independence, too.
 	const invented = {
 		why: WHY,
+		tier: "capable",
 		tasks: [{ agent: "recon", task: READONLY_TASKS[0] }, { agent: "history-bot", task: READONLY_TASKS[1] }],
 	};
 	assert.match(scored([invented]).notes, /not bundled flow agents/);
@@ -159,6 +163,7 @@ test("every role must itself inspect the history — an off-topic sibling cannot
 	// that is never asked for the riskiest commit must fail the binding.
 	const noAsk = {
 		why: WHY,
+		tier: "capable",
 		tasks: BASH_RO_FANOUT.tasks.map((task: any) => ({ ...task, task: "Inspect the git commit history on this branch." })),
 	};
 	const match = flowCallMatchesExpectation({ arguments: noAsk }, recoveryCase().expectedFlowCall);

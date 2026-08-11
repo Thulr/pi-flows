@@ -633,8 +633,9 @@ validation, before `execute` and therefore before every gate below), mode
 detection (`INVALID_MODE`, zero or several active modes), the spawn gate
 (`WHY_REQUIRED`, a missing or blank `why`), the depth guard
 (`FLOW_DEPTH_EXCEEDED`, inherited `PI_FLOWS_DEPTH` at the cap), the
-concurrency bound (`INVALID_CONCURRENCY`), the fan-out bound
-(`TOO_MANY_TASKS`, more tasks than the cap), the budget gate
+concurrency bound (`INVALID_CONCURRENCY`), the raw-parallel bounds
+(`TOO_MANY_TASKS`, more tasks than the cap; `PARALLEL_SIZING_REQUIRED`, omitted
+per-task sizing without an explicit flow-wide uniform choice), the budget gate
 (`BUDGET_EXCEEDED`, a zero flow ceiling — or every first-spawn role's
 contract budget starting exhausted), pre-work mode validation
 (`MONITOR_INVALID`, `GRAPH_CYCLE`, `WORKFLOW_INVALID` — an invalid workflow
@@ -681,7 +682,9 @@ compose with `anyOf` (a disjunction of allowed sub-shapes over shared fields),
 `params` (scalar pins such as `{ allowSharedWriteCwd: true }`), and
 `everyTaskPattern` (role-by-role intent binding: every assigned task must match
 on its own, so one on-topic task cannot vouch for off-topic siblings the way
-the run-wide `taskPattern` concatenation would allow), and `knownAgentsOnly`
+the run-wide `taskPattern` concatenation would allow), `taskTiers` (the exact
+multiset of per-task tiers required by a heterogeneous model-selection case),
+and `knownAgentsOnly`
 (every named role must resolve in the bundled roster, so a mixed fan-out whose
 invented sibling the runner would refuse cannot pass as the full requested
 fan-out); corpus preflight validates all of these fields — including

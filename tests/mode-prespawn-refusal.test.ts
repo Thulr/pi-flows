@@ -78,6 +78,12 @@ const ENFORCED: Array<{ mode: string; params: Record<string, any>; handler: (dep
 		code: "TOO_MANY_TASKS",
 	},
 	{
+		mode: "parallel",
+		params: { why: "w", tasks: [{ agent: "recon", task: "mechanical" }, { agent: "recon", task: "adversarial" }] },
+		handler: handleParallel,
+		code: "PARALLEL_SIZING_REQUIRED",
+	},
+	{
 		mode: "vote",
 		params: { why: "w", task: "decide", vote: { agent: "recon", count: overCap } },
 		handler: handleVote,

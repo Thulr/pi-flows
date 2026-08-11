@@ -208,6 +208,18 @@ subprocess fanout.
 
 Fix: split the work into batches of `8` or fewer.
 
+### `PARALLEL_SIZING_REQUIRED`
+
+Cause: a raw parallel call contains two or more tasks, at least one task omits
+both `tier` and `model`, and the call names no flow-wide `tier` or `model`.
+Agent defaults could otherwise place mixed-complexity work uniformly on the
+parent session model without making that cost choice visible.
+
+Fix: set `tier` (`fast`, `capable`, or `deep`) or an exact `model` on every
+task. If every task intentionally needs the same capability, set one flow-wide
+`tier` or `model` as the explicit uniform-sizing choice. `thinking` alone does
+not select a model and does not satisfy this gate.
+
 ### `TOO_FEW_VOTERS`
 
 Cause: `vote` mode was given fewer than 2 voters.

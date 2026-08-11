@@ -733,7 +733,7 @@ test("parallel validates its returns but records no handoff", async () => {
 	// that admitted each return is itself evidence, recorded under the
 	// validation vocabulary rather than as a handoff that never happened.
 	const { stubDir } = await runFlow(
-		{ task: "collect", traceFile: TRACE, contract, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "collect", tier: "capable", traceFile: TRACE, contract, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: envelope() },
 	);
 	const spans = await readSpans(stubDir);
@@ -746,7 +746,7 @@ test("parallel validates its returns but records no handoff", async () => {
 	assert.equal(byRole(spans, "child").length, 2, "the children themselves are still evidence");
 
 	const invalid = await runFlow(
-		{ task: "collect", contract, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "collect", tier: "capable", contract, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "prose, not an envelope" },
 	);
 	assert.equal(invalid.result.details.error?.code, "RETURN_ENVELOPE_INVALID", "validation still fails closed");
@@ -760,6 +760,7 @@ test("a child span records the thinking level it actually ran at", async () => {
 	const { stubDir } = await runFlow(
 		{
 			traceFile: TRACE,
+			tier: "capable",
 			tasks: [
 				{ agent: "recon", task: "scout the api", thinking: "low" },
 				{ agent: "recon", task: "scout the docs", thinking: "high" },

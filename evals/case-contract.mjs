@@ -143,7 +143,7 @@ register([
 ], "capability", "delegation-selection", decision);
 register([
 	"independent-review-safe-first-call",
-	"readonly-shell-fanout-bash-ro-recovery",
+	"readonly-shell-fanout-bash-ro-recovery", "mixed-complexity-parallel-right-sizes-tiers",
 ], "regression", "delegation-selection", review);
 register([
 	"implicit-evidence-corpus-uses-dossier",
@@ -315,7 +315,7 @@ function asList(value) {
 // scorer would silently ignore. firstCall is meaningful only on a top-level
 // expectation — inside anyOf arms and forbidden shapes it would be a silent
 // no-op, so it is unknown there.
-const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly", "everyRoleShellCapable", "everyRoleSharesCwd"]);
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "taskTiers", "params", "anyOf", "knownAgentsOnly", "everyRoleShellCapable", "everyRoleSharesCwd"]);
 
 function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
 	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
@@ -341,6 +341,9 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 		if (Array.isArray(shape[listField]) && shape[listField].length === 0) {
 			issues.push(`${label}.${listField} must not be an empty list — it would constrain nothing`);
 		}
+	}
+	if (shape.taskTiers !== undefined && (!Array.isArray(shape.taskTiers) || shape.taskTiers.length === 0 || shape.taskTiers.some((tier) => !["fast", "capable", "deep"].includes(tier)))) {
+		issues.push(`${label}.taskTiers must be a non-empty array containing only fast, capable, or deep`);
 	}
 	for (const patternField of ["preset", "taskPattern", "everyTaskPattern"]) {
 		if (shape[patternField] !== undefined && (typeof shape[patternField] !== "string" || shape[patternField] === "")) {

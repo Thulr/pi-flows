@@ -36,7 +36,7 @@ async function handlerOutcome(mode: RunMode, params: Record<string, unknown>) {
 // concurrent roles. With the write-capable `operator` (pi-default tools) the
 // handler must refuse pre-spawn; with the read-only `recon` it must not.
 const GUARDED_MODES: Record<string, (agent: string) => Record<string, unknown>> = {
-	parallel: (agent) => ({ tasks: [{ agent, task: "inspect A" }, { agent, task: "inspect B" }] }),
+	parallel: (agent) => ({ tier: "capable", tasks: [{ agent, task: "inspect A" }, { agent, task: "inspect B" }] }),
 	evaluate: (agent) => ({ task: "draft and verify", evaluate: { redteam: [{ agent }, { agent }] } }),
 	vote: (agent) => ({ task: "answer the question", vote: { agent, count: 2 } }),
 	graph: (agent) => ({ graph: { nodes: [{ id: "a", agent, task: "A" }, { id: "b", agent, task: "B" }] } }),
@@ -77,7 +77,7 @@ test("every guard release valve the tool honors is honored by the predicate", as
 	for (const release of [
 		{ ...base, concurrency: 1 },
 		{ ...base, allowSharedWriteCwd: true },
-		{ tasks: [{ agent: "operator", task: "A", cwd: "left" }, { agent: "operator", task: "B", cwd: "right" }] },
+		{ tier: "capable", tasks: [{ agent: "operator", task: "A", cwd: "left" }, { agent: "operator", task: "B", cwd: "right" }] },
 	]) {
 		assert.equal(preSpawnSharedWriteRefusal(discovery, cwd, release), null);
 		const { errorCode } = await handlerOutcome("parallel", release);
@@ -189,7 +189,7 @@ test("the predicate is total over malformed model-emitted args — smaller waves
 	// Garbage elements shrink the wave but honest refs still count: one null
 	// plus two write-capable tasks is still a collision.
 	assert.equal(
-		preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", tasks: [null, { agent: "operator", task: "A" }, { agent: "operator", task: "B" }] })?.code,
+		preSpawnSharedWriteRefusal(discovery, "/tmp", { why: "x", tier: "capable", tasks: [null, { agent: "operator", task: "A" }, { agent: "operator", task: "B" }] })?.code,
 		"SHARED_WRITE_CWD",
 	);
 });
@@ -208,6 +208,13 @@ test("the mirror stays silent behind TOO_MANY_TASKS, agreeing with the handler's
 		why: "x",
 		vote: { voters: Array.from({ length: 9 }, () => ({ agent: "operator" })) },
 	}), null);
+});
+
+test("the shared-write mirror stays silent behind PARALLEL_SIZING_REQUIRED", async () => {
+	const omitted = { tasks: [{ agent: "operator", task: "A" }, { agent: "operator", task: "B" }] };
+	const { errorCode, cwd } = await handlerOutcome("parallel", omitted);
+	assert.equal(errorCode, "PARALLEL_SIZING_REQUIRED");
+	assert.equal(preSpawnSharedWriteRefusal(faultDiscovery(), cwd, omitted), null);
 });
 
 test("wave derivations mirror handler defaults, not just explicit refs", () => {

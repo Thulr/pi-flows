@@ -350,6 +350,7 @@ test("a live sibling in a concurrent fan-out is steered when another child's tur
 	const { result, stubDir } = await runFlow(
 		{
 			task: "two readers, one ceiling",
+			tier: "capable",
 			maxGeneratedTokens: 10,
 			concurrency: 2,
 			timeoutMs: 8_000,
@@ -379,6 +380,7 @@ test("a child spawned into a nearly spent shared budget is steered before its fi
 	const { result } = await runFlow(
 		{
 			task: "three readers, one ceiling",
+			tier: "capable",
 			maxGeneratedTokens: 18,
 			concurrency: 1,
 			timeoutMs: 5_000,

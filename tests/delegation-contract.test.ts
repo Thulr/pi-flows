@@ -119,8 +119,8 @@ test("thinking: a per-task level survives fan-out and the flow-level fallback", 
 		{
 			thinking: "medium",
 			tasks: [
-				{ agent: "recon", task: "scout the api", thinking: "low" },
-				{ agent: "analyst", task: "read the docs" },
+				{ agent: "recon", task: "scout the api", tier: "fast", thinking: "low" },
+				{ agent: "analyst", task: "read the docs", tier: "capable" },
 			],
 		},
 		{ recon: "a", analyst: "b" },
@@ -167,7 +167,7 @@ test("thinking: a role's model suffix outranks the flow-wide fallback", async ()
 			thinking: "low",
 			tasks: [
 				{ agent: "recon", task: "scout the api", model: "test-provider/some-model:high" },
-				{ agent: "analyst", task: "read the docs" },
+				{ agent: "analyst", task: "read the docs", tier: "capable" },
 			],
 		},
 		{ recon: "a", analyst: "b" },

@@ -76,7 +76,7 @@ Exactly one mode is valid per call.
 | List | `{ "list": true }` | No |
 | Config | `{ "showConfig": true }` | No |
 | Single | `{ "agent": "recon", "task": "..." }` | Yes |
-| Parallel | `{ "tasks": [{ "agent": "recon", "task": "..." }] }` | Yes |
+| Parallel | `{ "tasks": [{ "agent": "recon", "task": "...", "tier": "fast" }, { "agent": "analyst", "task": "...", "tier": "deep" }] }` | Yes |
 | Chain | `{ "task": "...", "chain": [{ "agent": "recon", "task": "..." }] }` | Yes |
 | Evaluate | `{ "task": "...", "evaluate": { "maxIterations": 3 } }` | Yes |
 | Vote | `{ "task": "...", "vote": { "voters": [{ "agent": "recon" }, { "agent": "overwatch" }] } }` | Yes |
@@ -90,6 +90,13 @@ Exactly one mode is valid per call.
 | Debate | `{ "task": "...", "debate": { "participants": [{ "agent": "analyst" }, { "agent": "strategist" }] } }` | Yes |
 | Dossier | `{ "task": "...", "dossier": { "sections": [{ "agent": "recon", "task": "source A" }, { "agent": "analyst", "task": "source B" }] } }` | Yes |
 | Monitor | `{ "task": "...", "monitor": { "command": "./probe" } }` | On trigger |
+
+A raw parallel call with two or more tasks must make sizing intentional before
+child spend begins. Set `tier` or `model` on every task. If every task truly
+needs the same capability, a flow-wide `tier` or `model` is the explicit
+uniform-sizing acknowledgement. Omitting both paths is refused with
+`PARALLEL_SIZING_REQUIRED`; `thinking` alone does not satisfy the gate because
+it changes reasoning effort without selecting model capability.
 
 ## Live TUI monitoring
 
@@ -182,8 +189,8 @@ if no justification can be stated, the task belongs in the parent context.
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
-| `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. Prefer `tier` unless the user named a concrete model. |
-| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent; a `fast`/`deep` tier the roster could not resolve falls through to the agent's own pin. |
+| `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Prefer `tier` unless the user named a concrete model. |
+| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent; a `fast`/`deep` tier the roster could not resolve falls through to the agent's own pin. |
 | `thinking` | agent/tier | Flow-wide thinking-level fallback (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), overridable per task/phase/role. Independent of `tier`: sets effort without changing which model runs. Lowered automatically to what the resolved model supports, and a child with no level named anywhere leaves pi's own default alone. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. `bash-ro` grants bash under a child-enforced read-only allowlist (see [write isolation](#return-requirements-delegation-contracts-and-write-isolation)); a toolset carrying both `bash` and `bash-ro` resolves to plain `bash`. |
 | `cwd` | parent cwd | Child process working directory. |
