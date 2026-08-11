@@ -32,10 +32,14 @@ function runtime() {
 	return { flow: tools.get("flow"), commands };
 }
 
+// Wait-for-condition helpers, not timeouts under test: each returns the moment
+// its condition holds, so the bound only decides how much scheduling delay is
+// tolerated before the run is called broken. Spawning a node subprocess under a
+// loaded parallel suite routinely costs more than the 1s these used to allow.
 async function waitForCall(dir: string): Promise<void> {
-	for (let attempt = 0; attempt < 100; attempt++) {
+	for (let attempt = 0; attempt < 300; attempt++) {
 		if ((await readFile(path.join(dir, "calls.jsonl"), "utf8").catch(() => "")).trim()) return;
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 	assert.fail("stub child did not start");
 }
@@ -76,14 +80,14 @@ test("/flows inspect opens the viewer over a live child and closing it does not 
 	const previousDir = process.env.PI_STUB_DIR;
 	const previousPlan = process.env.PI_STUB_PLAN;
 	process.env.PI_STUB_DIR = cwd;
-	// The child must still be LIVE when the viewer attaches, and the render loop
-	// below polls for up to 1s before giving up — so the hold-open window has to
-	// exceed that, not merely the reply delay. At 80ms the test was racing
-	// process scheduling and lost under parallel load; every sibling that needs
-	// a live child holds open for seconds (budget-wrapup, provider-error,
-	// preset-code-review). The assertions are unchanged: this widens the window
-	// the scenario needs, it does not relax what is checked inside it.
-	process.env.PI_STUB_PLAN = JSON.stringify({ recon: { reply: "LIVE_ACTIVITY", delayBeforeReplyMs: 80, holdOpenMs: 3_000 } });
+	// Two independent windows have to cover the same race, and widening only one
+	// left this test flaky under parallel load: the child must still be LIVE when
+	// the viewer attaches (holdOpenMs), AND the render loop below must still be
+	// polling when the child's reply completes the spawn -> reply -> parent-read
+	// -> render pipeline. That pipeline, not the 80ms reply delay, is what
+	// exceeds a 1s bound on a loaded machine. Hold-open stays above the poll
+	// bound so the child never dies mid-poll.
+	process.env.PI_STUB_PLAN = JSON.stringify({ recon: { reply: "LIVE_ACTIVITY", delayBeforeReplyMs: 80, holdOpenMs: 6_000 } });
 
 	try {
 		const { flow, commands } = runtime();
@@ -107,10 +111,12 @@ test("/flows inspect opens the viewer over a live child and closing it does not 
 					keybindings,
 					() => { closed = true; },
 				);
-				for (let attempt = 0; attempt < 100; attempt++) {
+				// Breaks the instant the activity renders; the bound is only how long
+				// a loaded machine may take to get there, and stays under holdOpenMs.
+				for (let attempt = 0; attempt < 250; attempt++) {
 					lines = component.render(80);
 					if (/LIVE_ACTIVITY/.test(lines.join("\n"))) break;
-					await new Promise((resolve) => setTimeout(resolve, 10));
+					await new Promise((resolve) => setTimeout(resolve, 20));
 				}
 				component.handleInput("x");
 				component.dispose();
