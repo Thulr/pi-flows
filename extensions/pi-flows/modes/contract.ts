@@ -4,20 +4,26 @@ import type { ModeCriticalPathFn, ModePlan, ModePlanFn, ModePreSpawnRefusalFn, P
 import { criticalPathSingle, handleSingle, planSingle } from "./single.ts";
 import { criticalPathParallel, handleParallel, planParallel, preSpawnRefusalParallel } from "./parallel.ts";
 import { criticalPathChain, handleChain, planChain } from "./chain.ts";
-import { criticalPathEvaluate, handleEvaluate, planEvaluate } from "./evaluate.ts";
+import { criticalPathEvaluate, handleEvaluate, planEvaluate, preSpawnRefusalEvaluate } from "./evaluate.ts";
 import { criticalPathVote, handleVote, planVote, preSpawnRefusalVote } from "./vote.ts";
-import { criticalPathRoute, handleRoute, planRoute } from "./route.ts";
-import { criticalPathOrchestrate, handleOrchestrate, planOrchestrate } from "./orchestrate.ts";
+import { criticalPathRoute, handleRoute, planRoute, preSpawnRefusalRoute } from "./route.ts";
+import { criticalPathOrchestrate, handleOrchestrate, planOrchestrate, preSpawnRefusalOrchestrate } from "./orchestrate.ts";
 import { criticalPathGraph, handleGraph, planGraph, preSpawnRefusalGraph } from "./graph.ts";
-import { criticalPathLoop, handleLoop, planLoop } from "./loop.ts";
-import { criticalPathSearch, handleSearch, planSearch } from "./search.ts";
+import { criticalPathLoop, handleLoop, planLoop, preSpawnRefusalLoop } from "./loop.ts";
+import { criticalPathSearch, handleSearch, planSearch, preSpawnRefusalSearch } from "./search.ts";
 import { criticalPathWorkflow, handleWorkflow, planWorkflow, preSpawnRefusalWorkflow } from "./workflow.ts";
-import { criticalPathWorktree, handleWorktree, planWorktree } from "./worktree.ts";
-import { criticalPathDebate, handleDebate, planDebate } from "./debate.ts";
-import { criticalPathDossier, handleDossier, planDossier } from "./dossier.ts";
+import { criticalPathWorktree, handleWorktree, planWorktree, preSpawnRefusalWorktree } from "./worktree.ts";
+import { criticalPathDebate, handleDebate, planDebate, preSpawnRefusalDebate } from "./debate.ts";
+import { criticalPathDossier, handleDossier, planDossier, preSpawnRefusalDossier } from "./dossier.ts";
 import { criticalPathMonitor, handleMonitor, planMonitor, preSpawnRefusalMonitor } from "./monitor.ts";
 
-/** A mode that reaches no refusal before its first spawn — a declared answer, never a fall-through. */
+/**
+ * A mode with no entry rule of its own — a declared answer, never a
+ * fall-through. Only single and chain qualify: what they can still refuse
+ * before spawning comes from shared machinery (delegation-contract resolution
+ * in integrationRunPlan), not from the mode, and a reader that scores contract
+ * refusals asks validateDelegationContract directly.
+ */
 const noPreSpawnRefusal: ModePreSpawnRefusalFn = () => null;
 
 export interface RunModeContract {
@@ -82,7 +88,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.evaluate),
 		plan: planEvaluate,
 		criticalPath: criticalPathEvaluate,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalEvaluate,
 		renderLabel: (params) => {
 			const generator = params.evaluate?.operator?.agent ?? "operator";
 			const redteam = params.evaluate?.redteam;
@@ -110,7 +116,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.route),
 		plan: planRoute,
 		criticalPath: criticalPathRoute,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalRoute,
 		renderLabel: (params) => `route via ${params.route?.controller?.agent ?? "controller"}`,
 		handler: handleRoute,
 	},
@@ -119,7 +125,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.orchestrate),
 		plan: planOrchestrate,
 		criticalPath: criticalPathOrchestrate,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalOrchestrate,
 		renderLabel: (params) => `orchestrate ->${params.orchestrate?.recon?.agent ?? "recon"}`,
 		handler: handleOrchestrate,
 	},
@@ -141,7 +147,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.loop),
 		plan: planLoop,
 		criticalPath: criticalPathLoop,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalLoop,
 		renderLabel: (params) => {
 			const body = params.loop?.body?.agent ?? "agent";
 			const judge = params.loop?.judge?.agent ? `->${params.loop.judge.agent}` : "";
@@ -154,7 +160,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.search),
 		plan: planSearch,
 		criticalPath: criticalPathSearch,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalSearch,
 		renderLabel: (params) => `search ${params.search?.candidates ?? DEFAULT_SEARCH_CANDIDATES}`,
 		handler: handleSearch,
 	},
@@ -172,7 +178,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.worktree),
 		plan: planWorktree,
 		criticalPath: criticalPathWorktree,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalWorktree,
 		renderLabel: (params) => `worktree ${params.worktree?.tasks?.length ?? 0} writers`,
 		handler: handleWorktree,
 	},
@@ -181,7 +187,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.debate),
 		plan: planDebate,
 		criticalPath: criticalPathDebate,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalDebate,
 		renderLabel: (params) => `debate ${params.debate?.participants?.length ?? 0} advocates`,
 		handler: handleDebate,
 	},
@@ -190,7 +196,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		isActive: (params) => Boolean(params.dossier),
 		plan: planDossier,
 		criticalPath: criticalPathDossier,
-		preSpawnRefusal: noPreSpawnRefusal,
+		preSpawnRefusal: preSpawnRefusalDossier,
 		renderLabel: (params) => `dossier ${params.dossier?.sections?.length ?? 0} sources`,
 		handler: handleDossier,
 	},

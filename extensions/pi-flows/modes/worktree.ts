@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type FlowError, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "../sanitize.ts";
 import { runWave } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
@@ -107,23 +107,38 @@ export function workerRecoveryDetails(workers: Array<{ branch: string; cwd: stri
 const workerKey = (id: string) => `worker-${encodeAuthorKey(id)}`;
 const BRANCHES_KEY = "worktrees-created";
 
-export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
-	const settle = modeSettle(deps);
-	const { params, policy, defaultCwd } = deps;
-	const spec = params.worktree ?? {};
-	const tasks = Array.isArray(spec.tasks) ? spec.tasks : [];
-	// Setup refusals fire before any run: the settle carries what was tracked,
-	// which here is nothing, so an empty-results refusal is the true record.
+/**
+ * Worktree's pre-spawn refusal (modes/contract.ts): the setup rules that fire
+ * before any writer spawns — fewer than two independent write tasks, or a task
+ * whose id/agent/task would leave branch ownership ambiguous. Whether the cwd
+ * is a git repository is not knowable without touching the filesystem, so
+ * WORKTREE_NOT_GIT stays in the handler. Total over raw model args.
+ */
+export function preSpawnRefusalWorktree(params: any): FlowError | null {
+	if (params?.worktree === undefined) return null;
+	const tasks = Array.isArray(params.worktree?.tasks) ? params.worktree.tasks : [];
 	if (tasks.length < 2) {
-		return settle.refuse(flowError("WORKTREE_SETUP_FAILED", "Worktree mode needs at least two independent write tasks.", "One writer does not need fan-out isolation or an integration branch.", "Use single/evaluate for one writer, or provide two or more worktree.tasks."));
+		return flowError("WORKTREE_SETUP_FAILED", "Worktree mode needs at least two independent write tasks.", "One writer does not need fan-out isolation or an integration branch.", "Use single/evaluate for one writer, or provide two or more worktree.tasks.");
 	}
 	const ids = new Set<string>();
 	for (const task of tasks) {
 		if (!task?.id || !task?.agent || !task?.task || ids.has(task.id)) {
-			return settle.refuse(flowError("WORKTREE_SETUP_FAILED", "Worktree tasks need unique id, agent, and task fields.", "A worker task was incomplete or reused an id, so branch ownership would be ambiguous.", "Give every worktree task a unique id plus a concrete agent and task."));
+			return flowError("WORKTREE_SETUP_FAILED", "Worktree tasks need unique id, agent, and task fields.", "A worker task was incomplete or reused an id, so branch ownership would be ambiguous.", "Give every worktree task a unique id plus a concrete agent and task.");
 		}
 		ids.add(task.id);
 	}
+	return null;
+}
+
+export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
+	const settle = modeSettle(deps);
+	const { params, policy, defaultCwd } = deps;
+	const spec = params.worktree ?? {};
+	// Setup refusals fire before any run: the settle carries what was tracked,
+	// which here is nothing, so an empty-results refusal is the true record.
+	const entryRefusal = preSpawnRefusalWorktree(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const tasks = spec.tasks as any[];
 
 	const rootResult = git(defaultCwd, ["rev-parse", "--show-toplevel"]);
 	if (!rootResult.ok) {

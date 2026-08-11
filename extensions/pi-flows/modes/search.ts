@@ -1,4 +1,4 @@
-import { DEFAULT_SEARCH_BEAM_WIDTH, flowError, modeSettle, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_SEARCH_BEAM_WIDTH, flowError, modeSettle, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, validateSharedWriteCwd } from "../validate.ts";
 import { parseScore, scoreProtocolInstruction } from "../protocol.ts";
@@ -60,15 +60,25 @@ function roundKey(round: number): string {
 	return `round-${round}`;
 }
 
+/**
+ * Search's pre-spawn refusal (modes/contract.ts): no goal to search for is
+ * refused INVALID_MODE before any generator spawns. The scorer wave's
+ * shared-write guard is a separate rule the plan declares. Total over raw
+ * model args.
+ */
+export function preSpawnRefusalSearch(params: any): FlowError | null {
+	if (params?.search === undefined) return null;
+	if (typeof params.task === "string" && params.task.trim()) return null;
+	return flowError("INVALID_MODE", "Search mode requires a task.", "search mode generates and scores candidate paths for a top-level goal.", 'Add a task, e.g. { "task": "...", "search": {} }.');
+}
+
 export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, discovery, policy, defaultCwd } = deps;
 	const spec = params.search ?? {};
-	const goal: string | undefined = params.task;
-	if (!goal?.trim()) {
-		const error = flowError("INVALID_MODE", "Search mode requires a task.", "search mode generates and scores candidate paths for a top-level goal.", 'Add a task, e.g. { "task": "...", "search": {} }.');
-		return settle.refuse(error);
-	}
+	const entryRefusal = preSpawnRefusalSearch(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const goal = params.task as string;
 	const generatorRef: FlowAgentRefInput = spec.generator ?? { agent: "strategist" };
 	const scorerRef: FlowAgentRefInput = spec.scorer ?? { agent: "redteam", tools: "none" };
 	const debriefRef: FlowAgentRefInput = spec.debrief ?? { agent: "debrief" };

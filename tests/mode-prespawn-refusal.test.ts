@@ -18,10 +18,18 @@ import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { RUN_MODE_CONTRACTS, preSpawnRefusalForParams } from "../extensions/pi-flows/modes/contract.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
+import { handleDebate } from "../extensions/pi-flows/modes/debate.ts";
+import { handleDossier } from "../extensions/pi-flows/modes/dossier.ts";
+import { handleEvaluate } from "../extensions/pi-flows/modes/evaluate.ts";
 import { handleGraph } from "../extensions/pi-flows/modes/graph.ts";
+import { handleLoop } from "../extensions/pi-flows/modes/loop.ts";
 import { handleMonitor } from "../extensions/pi-flows/modes/monitor.ts";
+import { handleOrchestrate } from "../extensions/pi-flows/modes/orchestrate.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
+import { handleRoute } from "../extensions/pi-flows/modes/route.ts";
+import { handleSearch } from "../extensions/pi-flows/modes/search.ts";
 import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
+import { handleWorktree } from "../extensions/pi-flows/modes/worktree.ts";
 import { preSpawnRefusalWorkflow } from "../extensions/pi-flows/modes/workflow.ts";
 import { MAX_PARALLEL_TASKS, emptyUsage, makeSettle, type FlowDiscovery, type FlowRunResult, type ModeDeps, type ModeOutput, type RunChildOptions } from "../extensions/pi-flows/types.ts";
 
@@ -105,6 +113,22 @@ const ENFORCED: Array<{ mode: string; params: Record<string, any>; handler: (dep
 		handler: handleMonitor,
 		code: "MONITOR_INVALID",
 	},
+	// The entry rules: a mode that cannot start for want of a task, a candidate
+	// set, or enough participants refuses before spawning just as surely as one
+	// over its fan-out cap, so the table declares those too.
+	{ mode: "vote", params: { why: "w", vote: { agent: "recon", count: 3 } }, handler: handleVote, code: "INVALID_MODE" },
+	{ mode: "evaluate", params: { why: "w", evaluate: {} }, handler: handleEvaluate, code: "INVALID_MODE" },
+	{ mode: "route", params: { why: "w", route: { candidates: ["recon"] } }, handler: handleRoute, code: "INVALID_MODE" },
+	{ mode: "route", params: { why: "w", task: "pick one", route: {} }, handler: handleRoute, code: "INVALID_MODE" },
+	{ mode: "orchestrate", params: { why: "w", orchestrate: {} }, handler: handleOrchestrate, code: "INVALID_MODE" },
+	{ mode: "loop", params: { why: "w", loop: { body: { agent: "recon" } } }, handler: handleLoop, code: "INVALID_MODE" },
+	{ mode: "loop", params: { why: "w", task: "iterate", loop: {} }, handler: handleLoop, code: "INVALID_MODE" },
+	{ mode: "search", params: { why: "w", search: {} }, handler: handleSearch, code: "INVALID_MODE" },
+	{ mode: "debate", params: { why: "w", task: "a or b", debate: { participants: [{ agent: "recon" }] } }, handler: handleDebate, code: "DEBATE_TOO_FEW_PARTICIPANTS" },
+	{ mode: "debate", params: { why: "w", debate: { participants: [{ agent: "recon" }, { agent: "debrief" }] } }, handler: handleDebate, code: "INVALID_MODE" },
+	{ mode: "dossier", params: { why: "w", task: "map it", dossier: { sections: [{ agent: "recon", task: "a" }] } }, handler: handleDossier, code: "DOSSIER_TOO_FEW_SECTIONS" },
+	{ mode: "worktree", params: { why: "w", task: "build", worktree: { tasks: [{ id: "a", agent: "recon", task: "t" }] } }, handler: handleWorktree, code: "WORKTREE_SETUP_FAILED" },
+	{ mode: "worktree", params: { why: "w", task: "build", worktree: { tasks: [{ id: "a", agent: "recon", task: "t" }, { id: "a", agent: "recon", task: "t" }] } }, handler: handleWorktree, code: "WORKTREE_SETUP_FAILED" },
 ];
 
 test("a mode's declared pre-spawn refusal is the one its handler enforces", async () => {
