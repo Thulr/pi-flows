@@ -8,6 +8,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.8.0 - 2026-08-10
+
 ### Added
 
 - The settled flow card renders a **timeline** of the run as an inline image
