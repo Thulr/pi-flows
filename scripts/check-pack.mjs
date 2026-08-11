@@ -128,5 +128,13 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // removing the F8 fleet panel and its spend-sampling machinery more than
 // paid it back. Same verification: 106 files, none from tests/, scripts/,
 // or evals/.
-assert.ok(pack.unpackedSize < 1_125_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_127_000 for the mode pre-spawn refusal declarations. Runtime
+// source barely moved — the mode files gained a declaration each and
+// validate.ts lost 76 lines of mirror — so nearly all of the +1.2kB is prose
+// this repo's own standards require: the Mode pre-spawn refusal glossary entry
+// (CONTEXT.md), the added table member in the adding-a-mode recipe (AGENTS.md),
+// and the Unreleased changelog entry (CONTRIBUTING.md's release-changes rule).
+// Prose was trimmed twice before raising this. Same verification: 106 files,
+// none from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 1_127_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

@@ -209,7 +209,7 @@ A spawn-free re-derivation of a handler's pre-spawn decision, used to answer adm
 _Avoid_: simulation, dry run
 
 **Mode pre-spawn refusal**:
-What one mode refuses before any of its children spawn, declared beside its handler as a `preSpawnRefusal` member on the mode table. The handler calls that declaration rather than rebuilding the refusal, so the declared rule and the enforced one are one function and not a rule plus a mirror of it. What a mode can only discover mid-run — a probe that fails to start, a cycle stranding only later waves — is not one of these and stays in the handler.
+What one mode refuses before any of its children spawn, declared beside its handler as a `preSpawnRefusal` member on the mode table. The handler reaches the same rule through the same function — its declaration, or the shared predicate that declaration composes where part of the rule turns on context the declaration is given rather than reads — so the declared rule and the enforced one are never a rule plus a mirror of it. What a mode can only discover mid-run — a probe that fails to start, a cycle stranding only later waves — is not one of these and stays in the handler.
 _Avoid_: the bare "pre-spawn refusal" (that covers any refusal before spawning, an Admission gate's or a Budget's included), pre-spawn declaration, pre-flight check, guard (that names the shared-write gate)
 
 **Checkpoint**:
