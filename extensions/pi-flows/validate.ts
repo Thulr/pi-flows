@@ -151,79 +151,9 @@ export function validGraphNodes(params: Record<string, any>): any[] | null {
 	return nodes;
 }
 
-/**
- * A structurally valid graph with no dependency-free node deadlocks
- * immediately: handleGraph computes an empty first wave and refuses
- * GRAPH_CYCLE before any child spawns. The selection eval scores that
- * refusal so an all-cyclic graph cannot terminate the harness into credit
- * for delegation that never occurred.
- */
-export function graphCycleRefusal(params: Record<string, any>): FlowError | null {
-	if (params?.graph === undefined) return null;
-	const nodes = validGraphNodes(params);
-	if (!nodes) return null;
-	if (nodes.some((node) => graphDependsOn(node).length === 0)) return null;
-	return flowError(
-		"GRAPH_CYCLE",
-		"Graph has a cycle or unsatisfied dependency.",
-		"No graph node is dependency-free, so no first wave can ever become runnable.",
-		"Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node.",
-	);
-}
-
-/**
- * handleMonitor's pre-probe validation, as one call-level predicate: a
- * missing probe command, or a match trigger without a compilable pattern, is
- * refused MONITOR_INVALID before the probe command ever runs — so the
- * selection eval can score the refusal and safely let it play out. The
- * trigger normalization mirrors the handler exactly: anything other than
- * "failure" or "match" falls back to "success", which needs no pattern.
- */
-export function monitorInvalidRefusal(params: Record<string, any>): FlowError | null {
-	if (params?.monitor === undefined) return null;
-	const spec = params.monitor ?? {};
-	const invalid = (message: string, cause: string, fix: string): FlowError => flowError("MONITOR_INVALID", message, cause, fix);
-	if (typeof spec.command !== "string" || !spec.command.trim()) {
-		return invalid("Monitor mode requires a probe command.", "No deterministic observation source was configured.", "Provide monitor.command and a bounded trigger policy.");
-	}
-	const trigger = ["failure", "match"].includes(spec.trigger) ? spec.trigger : "success";
-	if (trigger === "match") {
-		try {
-			if (!spec.pattern) throw new Error("pattern is required for a match trigger");
-			new RegExp(spec.pattern, "i");
-		} catch (cause) {
-			return invalid("Monitor match trigger has an invalid pattern.", cause instanceof Error ? cause.message : String(cause), "Provide a valid JavaScript regular expression in monitor.pattern.");
-		}
-	}
-	return null;
-}
-
-/**
- * The fan-out bounds handlers enforce before any spawn, as one call-level
- * predicate: parallel refuses more than MAX_PARALLEL_TASKS tasks
- * (modes/parallel.ts) and vote refuses more than MAX_PARALLEL_TASKS voters,
- * explicit or replicated (modes/vote.ts), both with TOO_MANY_TASKS and both
- * before their shared-write guard runs. The wave mirror above stays silent
- * for these so the refusal is never mislabeled as the guard; this predicate
- * is how the admissibility seam scores the refusal itself.
- */
-export function preSpawnFanoutRefusal(params: Record<string, any>): FlowError | null {
-	const tooMany = (count: number, what: string): FlowError => flowError(
-		"TOO_MANY_TASKS",
-		`Too many ${what} (${count}).`,
-		`At most ${MAX_PARALLEL_TASKS} concurrent children are allowed to prevent runaway subprocess fanout.`,
-		`Use ${MAX_PARALLEL_TASKS} or fewer ${what}.`,
-	);
-	if (Array.isArray(params?.tasks) && params.tasks.length > MAX_PARALLEL_TASKS) return tooMany(params.tasks.length, "flow tasks");
-	if (params?.vote !== undefined) {
-		const spec = params.vote ?? {};
-		if (Array.isArray(spec.voters) && spec.voters.length > MAX_PARALLEL_TASKS) return tooMany(spec.voters.length, "voters");
-		if (typeof spec.agent === "string" && spec.agent && Number.isFinite(spec.count) && Math.floor(spec.count) > MAX_PARALLEL_TASKS) {
-			return tooMany(Math.floor(spec.count), "voters");
-		}
-	}
-	return null;
-}
+// Per-mode pre-spawn refusals are declared by the modes themselves
+// (`preSpawnRefusal` on the mode table); the Core-owned predicates those
+// declarations build on stay here.
 
 export function validateConcurrency(value: number | undefined): FlowError | null {
 	if (value === undefined) return null;
