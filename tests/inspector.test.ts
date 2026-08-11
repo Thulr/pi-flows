@@ -76,7 +76,14 @@ test("/flows inspect opens the viewer over a live child and closing it does not 
 	const previousDir = process.env.PI_STUB_DIR;
 	const previousPlan = process.env.PI_STUB_PLAN;
 	process.env.PI_STUB_DIR = cwd;
-	process.env.PI_STUB_PLAN = JSON.stringify({ recon: { reply: "LIVE_ACTIVITY", delayBeforeReplyMs: 80, holdOpenMs: 80 } });
+	// The child must still be LIVE when the viewer attaches, and the render loop
+	// below polls for up to 1s before giving up — so the hold-open window has to
+	// exceed that, not merely the reply delay. At 80ms the test was racing
+	// process scheduling and lost under parallel load; every sibling that needs
+	// a live child holds open for seconds (budget-wrapup, provider-error,
+	// preset-code-review). The assertions are unchanged: this widens the window
+	// the scenario needs, it does not relax what is checked inside it.
+	process.env.PI_STUB_PLAN = JSON.stringify({ recon: { reply: "LIVE_ACTIVITY", delayBeforeReplyMs: 80, holdOpenMs: 3_000 } });
 
 	try {
 		const { flow, commands } = runtime();
