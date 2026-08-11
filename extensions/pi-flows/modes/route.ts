@@ -1,4 +1,4 @@
-import { flowError, modeSettle, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, modeSettle, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements } from "../validate.ts";
 import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
@@ -37,28 +37,42 @@ export function criticalPathRoute(_params: any, results: FlowRunResult[]): numbe
 const ROUTER_KEY = "router";
 const SELECTION_KEY = "selection";
 
-export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
-	const settle = modeSettle(deps);
-	const { params, discovery, policy } = deps;
+/**
+ * Route's pre-spawn refusal (modes/contract.ts): the router needs something to
+ * classify and a candidate set to choose from, and refuses INVALID_MODE for
+ * either before it spawns. Total over raw model args.
+ */
+export function preSpawnRefusalRoute(params: any): FlowError | null {
+	if (params?.route === undefined) return null;
 	const spec = params.route ?? {};
-	const goal: string | undefined = params.task;
-	if (!goal || !goal.trim()) {
-		return settle.refuse(flowError(
+	if (typeof params.task !== "string" || !params.task.trim()) {
+		return flowError(
 			"INVALID_MODE",
 			"Route mode requires a task.",
 			"route mode classifies `task` and dispatches it to one candidate agent.",
 			'Add a `task` string, e.g. { "task": "...", "route": { "candidates": ["recon","strategist"] } }.',
-		));
+		);
 	}
-	const candidates: string[] = Array.isArray(spec.candidates) ? spec.candidates.filter((name: any) => typeof name === "string" && name.trim()) : [];
+	const candidates = Array.isArray(spec.candidates) ? spec.candidates.filter((name: any) => typeof name === "string" && name.trim()) : [];
 	if (candidates.length === 0) {
-		return settle.refuse(flowError(
+		return flowError(
 			"INVALID_MODE",
 			"Route mode requires candidates.",
 			"route.candidates lists the agent names the router may choose from.",
 			'Provide route.candidates, e.g. { "route": { "candidates": ["recon","strategist","overwatch"] } }.',
-		));
+		);
 	}
+	return null;
+}
+
+export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
+	const settle = modeSettle(deps);
+	const { params, discovery, policy } = deps;
+	const spec = params.route ?? {};
+	const entryRefusal = preSpawnRefusalRoute(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const goal = params.task as string;
+	const candidates: string[] = spec.candidates.filter((name: any) => typeof name === "string" && name.trim());
 	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 
 	const routerRef: FlowAgentRefInput = spec.controller ?? { agent: "controller" };

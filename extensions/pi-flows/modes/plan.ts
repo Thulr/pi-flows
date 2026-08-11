@@ -1,4 +1,4 @@
-import { MAX_PARALLEL_TASKS, type FlowRunResult } from "../types.ts";
+import { MAX_PARALLEL_TASKS, type FlowError, type FlowRunResult } from "../types.ts";
 
 // The plan vocabulary (CONTEXT.md: Wave). A mode's topology used to be written
 // five times — the handler, the requested-agents lambda, the shared-write
@@ -82,6 +82,31 @@ export type ModePlanFn = (params: any) => ModePlan;
  * derivable — a declared answer, not a fall-through.
  */
 export type ModeCriticalPathFn = (params: any, results: FlowRunResult[]) => number | undefined;
+
+/**
+ * What a mode pre-spawn refusal may know beyond its params. Only UI
+ * availability, because exactly one rule turns on it: a phase that needs a
+ * human decision refuses before spawning when nothing can collect one.
+ */
+export interface PreSpawnContext {
+	/** No UI is available to collect an approval, so an approval gate refuses rather than prompting. */
+	headless: boolean;
+}
+
+/**
+ * What one mode refuses before any of its children spawn, declared beside its
+ * handler and wired into the table (modes/contract.ts). The handler calls its
+ * own declaration, so the enforced rule and the declared one are one function
+ * rather than a rule and a mirror kept in agreement by hand; the selection
+ * eval's admissibility seam resolves it through the table, so a mode added
+ * there is covered without that reader changing.
+ *
+ * Refusals a mode can only reach mid-run (a probe that fails to start, a cycle
+ * stranding only later waves) are not declarable here and stay in the handler.
+ * Total over arbitrary params: an inactive or malformed call declares no
+ * refusal, never a throw.
+ */
+export type ModePreSpawnRefusalFn = (params: any, context: PreSpawnContext) => FlowError | null;
 
 /**
  * Whether a fan-out list stays inside MAX_PARALLEL_TASKS — the one shape of

@@ -1,4 +1,4 @@
-import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowRunResult, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowError, type FlowRunResult, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
@@ -24,19 +24,30 @@ export function criticalPathParallel(_params: any, results: FlowRunResult[]): nu
 	return maxRunDuration(results);
 }
 
+/**
+ * Parallel's pre-spawn refusal (modes/contract.ts): a fan-out over the cap
+ * is refused TOO_MANY_TASKS before the shared-write guard and before any child
+ * spawns. Total over raw model args — a non-array `tasks` never reaches here
+ * (the schema refuses it) and yields no refusal rather than throwing.
+ */
+export function preSpawnRefusalParallel(params: any): FlowError | null {
+	const tasks = params?.tasks;
+	if (!Array.isArray(tasks) || tasks.length <= MAX_PARALLEL_TASKS) return null;
+	return flowError(
+		"TOO_MANY_TASKS",
+		`Too many flow tasks (${tasks.length}).`,
+		`Parallel mode supports at most ${MAX_PARALLEL_TASKS} tasks to prevent runaway subprocess fanout.`,
+		`Split the work into batches of ${MAX_PARALLEL_TASKS} or fewer tasks.`,
+	);
+}
+
 export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy } = deps;
 	const tasks = params.tasks as FlowTaskInput[];
 
-	if (tasks.length > MAX_PARALLEL_TASKS) {
-		return settle.refuse(flowError(
-			"TOO_MANY_TASKS",
-			`Too many flow tasks (${tasks.length}).`,
-			`Parallel mode supports at most ${MAX_PARALLEL_TASKS} tasks to prevent runaway subprocess fanout.`,
-			`Split the work into batches of ${MAX_PARALLEL_TASKS} or fewer tasks.`,
-		));
-	}
+	const fanoutRefusal = preSpawnRefusalParallel(params);
+	if (fanoutRefusal) return settle.refuse(fanoutRefusal);
 
 	const plans: IntegrationRunPlan[] = [];
 	for (const task of tasks) {

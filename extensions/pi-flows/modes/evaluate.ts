@@ -1,4 +1,4 @@
-import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_CHECK_COMMAND_TIMEOUT_MS, MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, clampIterations, normalizeTimeout, resolvedCwd, validateSharedWriteCwd } from "../validate.ts";
 import { ResolvedDelegationContract } from "../delegation.ts";
@@ -45,6 +45,29 @@ export function criticalPathEvaluate(params: any, results: FlowRunResult[]): num
 /** One place the generator's unit key is derived, so each critic's dependency link names the draft it judged. */
 const generatorKey = (stageKey: string) => `${stageKey}.generator`;
 
+/**
+ * Evaluate's pre-spawn refusal (modes/contract.ts): no goal for the generator
+ * to satisfy is refused INVALID_MODE before it spawns. A call carrying a
+ * delegation contract is left to the handler: the contract may supply the
+ * objective, and an invalid one is refused by its own resolution first — so
+ * claiming INVALID_MODE here would name the wrong refusal. Total over raw
+ * model args.
+ */
+export function preSpawnRefusalEvaluate(params: any): FlowError | null {
+	if (params?.evaluate === undefined) return null;
+	const spec = params.evaluate ?? {};
+	if (spec.operator?.contract ?? params.contract) return null;
+	const operatorTask = typeof spec.operator?.task === "string" ? spec.operator.task : undefined;
+	const goal = params.task ?? operatorTask;
+	if (typeof goal === "string" && goal.trim()) return null;
+	return flowError(
+		"INVALID_MODE",
+		"Evaluate mode requires a task.",
+		"evaluate mode needs a top-level `task` describing the goal, or a delegation contract whose objective the generator must satisfy and the evaluator must judge.",
+		'Add a `task` string, e.g. { "task": "Add a /health endpoint with a test", "evaluate": {} }.',
+	);
+}
+
 export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, discovery, policy, defaultCwd, signal, onUpdate, makeDetails } = deps;
@@ -57,14 +80,17 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 	const contract = resolution.resolved;
 	const goal: string | undefined = params.task ?? operatorTask ?? contract?.contract.objective;
 
+	// The declaration answers for a contract-free call; a contracted one may take
+	// its objective from the contract, which only exists once resolved above.
+	const entryRefusal = preSpawnRefusalEvaluate(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
 	if (!goal || !goal.trim()) {
-		const error = flowError(
+		return settle.refuse(flowError(
 			"INVALID_MODE",
 			"Evaluate mode requires a task.",
 			"evaluate mode needs a top-level `task` describing the goal, or a delegation contract whose objective the generator must satisfy and the evaluator must judge.",
 			'Add a `task` string, e.g. { "task": "Add a /health endpoint with a test", "evaluate": {} }.',
-		);
-		return settle.refuse(error);
+		));
 	}
 	const contractedGoal = contract
 		? contract.renderTask(goal, params.returnContract, params.requireEvidence)

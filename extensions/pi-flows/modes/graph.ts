@@ -1,10 +1,58 @@
-import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { graphDependsOn, validGraphNodes } from "../validate.ts";
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { plannedRefs, runDuration, type ModePlan, type PlannedWave } from "./plan.ts";
+
+/**
+ * Graph's pre-spawn refusal (modes/contract.ts): every structural defect
+ * the handler refuses GRAPH_INVALID for, then the one cycle shape that is
+ * knowable before dispatch — a structurally valid graph with no
+ * dependency-free node computes an empty first wave and can never start.
+ *
+ * A cycle stranding only *later* nodes is invisible here and stays in the
+ * handler's wave loop, which refuses GRAPH_CYCLE with its own cause. Different
+ * moments, not a duplicated rule: this says no first wave exists, that says no
+ * remaining node became runnable. Total over raw model args — dependency lists
+ * read through graphDependsOn, so a malformed one yields no dependencies.
+ */
+export function preSpawnRefusalGraph(params: any): FlowError | null {
+	if (params?.graph === undefined) return null;
+	const nodes = Array.isArray(params.graph?.nodes) ? params.graph.nodes : [];
+	if (nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) {
+		return flowError(
+			"GRAPH_INVALID",
+			`Graph mode needs 1..${MAX_GRAPH_NODES} nodes.`,
+			"graph.nodes must be a non-empty static DAG of agent nodes, bounded so graph mode cannot become unbounded orchestration.",
+			`Provide between 1 and ${MAX_GRAPH_NODES} graph nodes.`,
+		);
+	}
+	const ids = new Set<string>();
+	for (const node of nodes) {
+		if (!node?.id || !node.agent || !node.task || ids.has(node.id)) {
+			return flowError("GRAPH_INVALID", "Graph nodes require unique id, agent, and task fields.", "A graph node was missing a required field or reused an id.", "Give every graph node a unique id plus agent and task.");
+		}
+		ids.add(node.id);
+	}
+	for (const node of nodes) {
+		for (const dep of graphDependsOn(node)) {
+			if (!ids.has(dep)) {
+				return flowError("GRAPH_INVALID", `Graph node "${node.id}" depends on unknown node "${dep}".`, "Every dependsOn entry must reference another graph node id.", "Fix dependsOn ids or add the missing node.");
+			}
+		}
+	}
+	if (!nodes.some((node: any) => graphDependsOn(node).length === 0)) {
+		return flowError(
+			"GRAPH_CYCLE",
+			"Graph has a cycle or unsatisfied dependency.",
+			"No graph node is dependency-free, so no first wave can ever become runnable.",
+			"Remove cycles and ensure every dependsOn chain eventually reaches a dependency-free node.",
+		);
+	}
+	return null;
+}
 
 /**
  * Graph's plan: the dependency-free first wave (the only wave the handler
@@ -78,29 +126,11 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 	const hasDebrief = Boolean(spec.debrief?.agent);
 	const nodeHasConsumer = (id: string) => hasDebrief
 		|| nodes.some((candidate: any) => (candidate.dependsOn ?? []).includes(id));
-	if (nodes.length === 0 || nodes.length > MAX_GRAPH_NODES) {
-		return settle.refuse(flowError(
-			"GRAPH_INVALID",
-			"Graph mode needs 1..16 nodes.",
-			"graph.nodes must be a non-empty static DAG of agent nodes, bounded so graph mode cannot become unbounded orchestration.",
-			`Provide between 1 and ${MAX_GRAPH_NODES} graph nodes.`,
-		));
-	}
-
-	const ids = new Set<string>();
-	for (const node of nodes) {
-		if (!node?.id || !node.agent || !node.task || ids.has(node.id)) {
-			return settle.refuse(flowError("GRAPH_INVALID", "Graph nodes require unique id, agent, and task fields.", "A graph node was missing a required field or reused an id.", "Give every graph node a unique id plus agent and task."));
-		}
-		ids.add(node.id);
-	}
-	for (const node of nodes) {
-		for (const dep of node.dependsOn ?? []) {
-			if (!ids.has(dep)) {
-				return settle.refuse(flowError("GRAPH_INVALID", `Graph node "${node.id}" depends on unknown node "${dep}".`, "Every dependsOn entry must reference another graph node id.", "Fix dependsOn ids or add the missing node."));
-			}
-		}
-	}
+	// Structural validity and the no-first-wave cycle, as the mode table
+	// declares them. Past this every node has a unique id, an agent, a task, and
+	// resolvable dependencies, and at least one node is dependency-free.
+	const structuralRefusal = preSpawnRefusalGraph(params);
+	if (structuralRefusal) return settle.refuse(structuralRefusal);
 
 	const outputs = new Map<string, string>();
 	const outputKeys = new Map<string, string>();

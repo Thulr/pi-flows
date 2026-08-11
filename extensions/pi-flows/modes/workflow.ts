@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { encodeAuthorKey, flowError, modeSettle, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { encodeAuthorKey, flowError, modeSettle, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, resultText, sanitizeText } from "../sanitize.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { ResolvedDelegationContract, canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
@@ -9,8 +9,8 @@ import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
-import { isWorkflowWorkPhase, workflowPhasesRefusal } from "../validate.ts";
-import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
+import { isWorkflowWorkPhase, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../validate.ts";
+import { plannedRefs, sumRunDurations, type ModePlan, type PreSpawnContext } from "./plan.ts";
 
 /**
  * Workflow's plan: one wave per phase in phase order (approval phases plan no
@@ -39,6 +39,22 @@ export function planWorkflow(params: any): ModePlan {
 /** Phases run one at a time: sequential. */
 export function criticalPathWorkflow(_params: any, results: FlowRunResult[]): number | undefined {
 	return sumRunDurations(results);
+}
+
+/**
+ * Workflow's pre-spawn refusal (modes/contract.ts). Both rules already
+ * live in Core (validate-workflow.ts) because the handler and the eval always
+ * shared them; this composes them into the one question the table asks, and
+ * supplies the context the second rule needs.
+ *
+ * Phase shape is refused unconditionally. The approval rule is
+ * context-dependent: an opening approval phase can be collected interactively,
+ * so only a headless run is refused before spawning — which is why the handler
+ * enforces that one inline, against the UI it actually has, rather than
+ * through this declaration.
+ */
+export function preSpawnRefusalWorkflow(params: any, context: PreSpawnContext): FlowError | null {
+	return workflowPhasesRefusal(params ?? {}) ?? (context.headless ? workflowHeadlessApprovalRefusal(params ?? {}) : null);
 }
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */

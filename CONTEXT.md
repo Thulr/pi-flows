@@ -205,8 +205,12 @@ Whether the tool itself would admit a call rather than refuse it before any chil
 _Avoid_: validity, eligibility
 
 **Mirror**:
-A spawn-free re-derivation of a handler's pre-spawn decision, used to answer admissibility without running the flow. A mirror stays silent wherever the tool would refuse first for a different reason, so a refusal is never mislabeled.
+A spawn-free re-derivation of a handler's pre-spawn decision, used to answer admissibility without running the flow. A mirror stays silent wherever the tool would refuse first for a different reason, so a refusal is never mislabeled. A mirror is a second derivation of a rule and must be kept in agreement with the first; prefer a **pre-spawn refusal** declaration, which removes the second copy entirely.
 _Avoid_: simulation, dry run
+
+**Mode pre-spawn refusal**:
+What one mode refuses before any of its children spawn, declared beside its handler as a `preSpawnRefusal` member on the mode table. The handler reaches the same rule through the same function — its declaration, or the shared predicate that declaration composes where part of the rule turns on context the declaration is given rather than reads — so the declared rule and the enforced one are never a rule plus a mirror of it. What a mode can only discover mid-run — a probe that fails to start, a cycle stranding only later waves — is not one of these and stays in the handler.
+_Avoid_: the bare "pre-spawn refusal" (that covers any refusal before spawning, an Admission gate's or a Budget's included), pre-spawn declaration, pre-flight check, guard (that names the shared-write gate)
 
 **Checkpoint**:
 A human approval point in a flow, before spawning or before finalizing. A checkpoint is not a gate.

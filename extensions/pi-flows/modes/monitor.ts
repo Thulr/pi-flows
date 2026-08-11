@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, modeSettle, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "../types.ts";
+import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, modeSettle, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runAgentRef } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../commands.ts";
@@ -27,6 +27,44 @@ export function criticalPathMonitor(): number | undefined {
 	return undefined;
 }
 
+/**
+ * Monitor's probe configuration resolved once: the trigger policy and compiled
+ * match pattern, or the refusal that configuration earns. The handler consumes
+ * the resolved form and {@link preSpawnRefusalMonitor} reads the refusal out of
+ * it, so the two cannot disagree about what a valid probe is.
+ */
+export type MonitorProbePlan =
+	| { refusal: FlowError }
+	| { trigger: "success" | "failure" | "match"; pattern: RegExp | null };
+
+export function monitorProbePlan(params: any): MonitorProbePlan {
+	const spec = params?.monitor ?? {};
+	const invalid = (message: string, cause: string, fix: string): { refusal: FlowError } => ({ refusal: flowError("MONITOR_INVALID", message, cause, fix) });
+	if (typeof spec.command !== "string" || !spec.command.trim()) {
+		return invalid("Monitor mode requires a probe command.", "No deterministic observation source was configured.", "Provide monitor.command and a bounded trigger policy.");
+	}
+	const trigger = ["failure", "match"].includes(spec.trigger) ? spec.trigger : "success";
+	if (trigger !== "match") return { trigger, pattern: null };
+	try {
+		if (!spec.pattern) throw new Error("pattern is required for a match trigger");
+		return { trigger, pattern: new RegExp(spec.pattern, "i") };
+	} catch (cause) {
+		return invalid("Monitor match trigger has an invalid pattern.", cause instanceof Error ? cause.message : String(cause), "Provide a valid JavaScript regular expression in monitor.pattern.");
+	}
+}
+
+/**
+ * Monitor's pre-spawn refusal (modes/contract.ts): a missing probe command
+ * or an uncompilable match pattern is refused MONITOR_INVALID before the probe
+ * ever runs, so nothing spawns. A probe that fails to *start* is a runtime
+ * refusal and stays in the handler. Total over raw model args.
+ */
+export function preSpawnRefusalMonitor(params: any): FlowError | null {
+	if (params?.monitor === undefined) return null;
+	const plan = monitorProbePlan(params);
+	return "refusal" in plan ? plan.refusal : null;
+}
+
 function boundedInteger(value: number | undefined, fallback: number, max: number): number {
 	if (!Number.isFinite(value)) return fallback;
 	return Math.max(1, Math.min(max, Math.floor(value as number)));
@@ -47,19 +85,11 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy, defaultCwd } = deps;
 	const spec = params.monitor ?? {};
-	if (!spec.command?.trim()) {
-		return settle.refuse(flowError("MONITOR_INVALID", "Monitor mode requires a probe command.", "No deterministic observation source was configured.", "Provide monitor.command and a bounded trigger policy."));
-	}
-	const trigger = ["failure", "match"].includes(spec.trigger) ? spec.trigger : "success";
-	let pattern: RegExp | null = null;
-	if (trigger === "match") {
-		try {
-			if (!spec.pattern) throw new Error("pattern is required for a match trigger");
-			pattern = new RegExp(spec.pattern, "i");
-		} catch (cause) {
-			return settle.refuse(flowError("MONITOR_INVALID", "Monitor match trigger has an invalid pattern.", cause instanceof Error ? cause.message : String(cause), "Provide a valid JavaScript regular expression in monitor.pattern."));
-		}
-	}
+	// The same resolution the mode table declares pre-spawn: refuse on its
+	// refusal, otherwise take the trigger and compiled pattern it produced.
+	const probePlan = monitorProbePlan(params);
+	if ("refusal" in probePlan) return settle.refuse(probePlan.refusal);
+	const { trigger, pattern } = probePlan;
 
 	const maxChecks = boundedInteger(spec.maxChecks, DEFAULT_MONITOR_CHECKS, MAX_MONITOR_CHECKS);
 	const intervalMs = Math.max(10, Math.min(MAX_MONITOR_INTERVAL_MS, boundedInteger(spec.intervalMs, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_INTERVAL_MS)));

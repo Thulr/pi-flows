@@ -1,4 +1,4 @@
-import { flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
@@ -35,14 +35,25 @@ export function criticalPathDossier(params: any, results: FlowRunResult[]): numb
 /** One place a section's unit key is derived, so the synthesizer's dependency links name the sections it read. */
 const sectionKey = (index: number) => `section-${index + 1}`;
 
+/**
+ * Dossier's pre-spawn refusal (modes/contract.ts): a map/reduce over fewer
+ * than two sources has no cross-source evidence to reconcile, and is refused
+ * before any section spawns. Total over raw model args.
+ */
+export function preSpawnRefusalDossier(params: any): FlowError | null {
+	if (params?.dossier === undefined) return null;
+	const sections = Array.isArray(params.dossier?.sections) ? params.dossier.sections : [];
+	if (sections.length >= 2) return null;
+	return flowError("DOSSIER_TOO_FEW_SECTIONS", "Dossier mode needs at least two evidence sections.", "A dossier is a map/reduce pattern; one assignment has no cross-source evidence or conflict surface.", "Provide two or more source- or claim-specific sections, or use single recon/analyst for one source.");
+}
+
 export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy } = deps;
 	const spec = params.dossier ?? {};
-	const sections = Array.isArray(spec.sections) ? spec.sections : [];
-	if (sections.length < 2) {
-		return settle.refuse(flowError("DOSSIER_TOO_FEW_SECTIONS", "Dossier mode needs at least two evidence sections.", "A dossier is a map/reduce pattern; one assignment has no cross-source evidence or conflict surface.", "Provide two or more source- or claim-specific sections, or use single recon/analyst for one source."));
-	}
+	const entryRefusal = preSpawnRefusalDossier(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const sections = spec.sections as any[];
 
 	const sectionItems: IntegrationRunPlan[] = [];
 	for (const [index, section] of sections.entries()) {

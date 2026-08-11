@@ -1,4 +1,4 @@
-import { flowError, formatFlowError, modeSettle, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, formatFlowError, modeSettle, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
@@ -32,14 +32,25 @@ export function criticalPathLoop(_params: any, results: FlowRunResult[]): number
 /** One place each loop unit key is derived, so the judge's dependency link names the body that actually ran. */
 const bodyKey = (stageKey: string) => `${stageKey}.body`;
 
+/**
+ * Loop's pre-spawn refusal (modes/contract.ts): a loop with no goal or no body
+ * agent has nothing to iterate and is refused INVALID_MODE before it spawns.
+ * Total over raw model args.
+ */
+export function preSpawnRefusalLoop(params: any): FlowError | null {
+	if (params?.loop === undefined) return null;
+	const spec = params.loop ?? {};
+	if (typeof params.task === "string" && params.task.trim() && spec.body?.agent) return null;
+	return flowError("INVALID_MODE", "Loop mode requires task and loop.body.agent.", "loop runs one body agent repeatedly until DONE/PASS or maxIterations.", 'Use { "task": "...", "loop": { "body": { "agent": "operator" } } }.');
+}
+
 export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy } = deps;
 	const spec = params.loop ?? {};
-	const goal: string | undefined = params.task;
-	if (!goal?.trim() || !spec.body?.agent) {
-		return settle.refuse(flowError("INVALID_MODE", "Loop mode requires task and loop.body.agent.", "loop runs one body agent repeatedly until DONE/PASS or maxIterations.", 'Use { "task": "...", "loop": { "body": { "agent": "operator" } } }.'));
-	}
+	const entryRefusal = preSpawnRefusalLoop(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const goal = params.task as string;
 	const maxIterations = clampLoopIterations(spec.maxIterations);
 	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
 	const bodyRef: FlowAgentRefInput = spec.body;

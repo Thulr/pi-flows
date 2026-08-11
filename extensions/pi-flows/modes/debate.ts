@@ -1,4 +1,4 @@
-import { flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runWave } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
@@ -45,19 +45,30 @@ function advocateKey(round: number, index: number): string {
 	return `round-${round}.advocate-${index + 1}`;
 }
 
+/**
+ * Debate's pre-spawn refusal (modes/contract.ts): fewer than two advocates, or
+ * no decision question, is refused before any advocate spawns — in the
+ * handler's order, so the participant count is judged first. Total over raw
+ * model args.
+ */
+export function preSpawnRefusalDebate(params: any): FlowError | null {
+	if (params?.debate === undefined) return null;
+	const spec = params.debate ?? {};
+	const participants = Array.isArray(spec.participants) ? spec.participants : [];
+	if (participants.length < 2) {
+		return flowError("DEBATE_TOO_FEW_PARTICIPANTS", "Debate mode needs at least two advocates.", "A single answer has no independent opposition or rebuttal surface.", "Provide two or more participants, or use single/evaluate for one proposal plus critique.");
+	}
+	if (typeof params.task === "string" && params.task.trim()) return null;
+	return flowError("INVALID_MODE", "Debate mode requires a task.", "The advocates and adjudicator need the same decision question and constraints.", 'Add a top-level task, e.g. {"task":"choose A or B under ...","debate":{...}}.');
+}
+
 export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy } = deps;
 	const spec = params.debate ?? {};
-	const participants: FlowAgentRefInput[] = Array.isArray(spec.participants) ? spec.participants : [];
-	if (participants.length < 2) {
-		const error = flowError("DEBATE_TOO_FEW_PARTICIPANTS", "Debate mode needs at least two advocates.", "A single answer has no independent opposition or rebuttal surface.", "Provide two or more participants, or use single/evaluate for one proposal plus critique.");
-		return settle.refuse(error);
-	}
-	if (!params.task?.trim()) {
-		const error = flowError("INVALID_MODE", "Debate mode requires a task.", "The advocates and adjudicator need the same decision question and constraints.", 'Add a top-level task, e.g. {"task":"choose A or B under ...","debate":{...}}.');
-		return settle.refuse(error);
-	}
+	const entryRefusal = preSpawnRefusalDebate(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const participants: FlowAgentRefInput[] = spec.participants;
 
 	const rounds = debateRounds(spec);
 	let priorArguments: string[] = [];

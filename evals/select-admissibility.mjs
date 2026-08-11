@@ -9,8 +9,8 @@
 // a bare-node script such as eval:review or eval:pareto.
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentFlowDepth, graphCycleRefusal, monitorInvalidRefusal, nonSpawningFlowCall, preSpawnFanoutRefusal, spawnJustificationMissing, validateConcurrency, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../extensions/pi-flows/validate.ts";
-import { firstSpawnAgentRefs, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
+import { currentFlowDepth, nonSpawningFlowCall, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
+import { firstSpawnAgentRefs, preSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
@@ -62,6 +62,23 @@ const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph", "dossi
 // (PRESET_EXPANSION_INVALID, PRESET_TASK_REQUIRED).
 const SHAPE_VISIBLE_PRESET_FAILURES = new Set(["UNKNOWN_PRESET", "PRESET_OVERRIDE_INVALID"]);
 
+// Which of the active mode's declared pre-spawn refusals this seam scores.
+// The mode table (modes/contract.ts) declares every refusal a mode reaches
+// before its first spawn; this seam deliberately scores a subset, because the
+// rest are per-mode bounds a selection is not judged on — TOO_FEW_VOTERS and
+// vote's no-voters INVALID_MODE are shape mismatches the shape matchers
+// already see, and GRAPH_INVALID names a malformed topology rather than a
+// misselected mode. Everything outside the set scores as admissible, exactly
+// as it did when this seam imported five predicates by hand. Widening the
+// vocabulary is now this one line, not a new import plus a new ordered call.
+const SCORED_PRE_SPAWN_CODES = new Set([
+	"TOO_MANY_TASKS",
+	"GRAPH_CYCLE",
+	"MONITOR_INVALID",
+	"WORKFLOW_INVALID",
+	"WORKFLOW_APPROVAL_REQUIRED",
+]);
+
 function effectiveCallParams(args) {
 	if (typeof args?.preset !== "string" || !args.preset) return { params: args };
 	const resolved = resolveFlowPreset(args, scoringPresetDiscovery);
@@ -83,8 +100,13 @@ function effectiveCallParams(args) {
 // refused-call budget can group verdicts by refusal code. Refusal codes
 // outside this seam's vocabulary (per-mode bounds such as TOO_FEW_VOTERS, or
 // the roster rule for monitor and worktree, whose refusal is not statically
-// certain) score as admissible; extending the vocabulary means adding the
-// tool's own predicate here.
+// certain) score as admissible.
+//
+// Per-mode pre-spawn refusals are no longer enumerated here: the mode table
+// declares what each mode refuses before its first spawn, and
+// preSpawnRefusalForParams resolves the active one, so a new mode joins this
+// gate by existing. What stays this seam's own decision is which of those
+// codes to score — SCORED_PRE_SPAWN_CODES above.
 export function callAdmissibilityFailure(args) {
 	// pi validates the raw call against the public flow schema before execute
 	// ever runs, so a schema-invalid call is refused ahead of every gate below
@@ -129,28 +151,18 @@ export function callAdmissibilityFailure(args) {
 	if (checkpointGates(effective?.checkpoint, "spawn")) {
 		return { code: "CHECKPOINT_APPROVAL_REQUIRED", reason: "a spawn checkpoint cannot collect approval in the headless subject" };
 	}
-	const fanout = preSpawnFanoutRefusal(effective ?? {});
-	if (fanout) return { code: fanout.code, reason: fanout.message.replace(/\.$/, "") };
-	// A structurally valid but rootless graph deadlocks its first wave;
-	// handleGraph refuses GRAPH_CYCLE before any child spawns.
-	const cycle = graphCycleRefusal(effective ?? {});
-	if (cycle) return { code: cycle.code, reason: cycle.message.replace(/\.$/, "") };
-	// handleMonitor validates its probe command and match pattern before the
-	// probe ever runs; a call it refuses MONITOR_INVALID spawns nothing.
-	const monitorInvalid = monitorInvalidRefusal(effective ?? {});
-	if (monitorInvalid) return { code: monitorInvalid.code, reason: monitorInvalid.message.replace(/\.$/, "") };
-	// handleWorkflow validates phase shape before touching state or spawning
-	// — 1..MAX phases, unique ids, each phase exactly one kind (agent+task
-	// work or approval) — and an invalid phase refuses the call WHOLE
-	// (WORKFLOW_INVALID), so a topology whose valid siblings would satisfy a
-	// case must not score as one the tool runs (#88).
-	const workflowPhases = workflowPhasesRefusal(effective ?? {});
-	if (workflowPhases) return { code: workflowPhases.code, reason: workflowPhases.message.replace(/\.$/, "") };
-	// A workflow opening with an approval phase is refused in the headless
-	// subject before any child spawns (state is persisted first, so the
-	// play-out branch still terminates it via the stateful-mode rule).
-	const workflowApproval = workflowHeadlessApprovalRefusal(effective ?? {});
-	if (workflowApproval) return { code: workflowApproval.code, reason: workflowApproval.message.replace(/\.$/, "") };
+	// Whatever the ACTIVE mode declares it refuses before its first spawn,
+	// asked of the tool's own declaration rather than reassembled here: the
+	// fan-out cap (parallel, vote), a graph with no runnable first wave,
+	// monitor's probe validation, and workflow's phase-shape and
+	// opening-approval rules all arrive through this one call. The subject runs
+	// headless, so an approval gate that needs a UI refuses here. A mode added
+	// to the table is covered without touching this file; only the scored
+	// vocabulary above is this seam's own decision.
+	const modeRefusal = preSpawnRefusalForParams(effective ?? {}, { headless: true });
+	if (modeRefusal && SCORED_PRE_SPAWN_CODES.has(modeRefusal.code)) {
+		return { code: modeRefusal.code, reason: modeRefusal.message.replace(/\.$/, "") };
+	}
 	const sharedWrite = preSpawnSharedWriteRefusal(scoringDiscovery, repoRoot, effective ?? {});
 	if (sharedWrite) return { code: sharedWrite.code, reason: sharedWrite.message.replace(/\.$/, "") };
 	// A flow budget that starts exhausted (a zero ceiling) refuses at the

@@ -8,7 +8,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
-- Nothing yet.
+### Changed
+
+- Every mode now declares its **pre-spawn refusal** — what it refuses before
+  its first child spawns — once beside its handler, and the handler calls that
+  declaration instead of rebuilding the refusal inline. These rules previously
+  existed twice, because Core may not import Supporting: once where the handler
+  enforced them and once as a mirror in `validate.ts` for the selection eval to
+  score, kept in agreement by hand. A new mode without one is a compile error,
+  and the eval resolves the active mode's declaration through the table rather
+  than importing and ordering five predicates. No refusal changed: same codes,
+  same messages, same causes.
 
 ## 0.8.0 - 2026-08-10
 

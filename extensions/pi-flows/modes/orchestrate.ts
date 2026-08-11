@@ -48,6 +48,27 @@ const workerKey = (index: number) => `worker-${index + 1}`;
 const synthesisKey = (round: number) => `synthesis-${round}`;
 const verifyKey = (round: number) => `verify-${round}`;
 
+/**
+ * Orchestrate's pre-spawn refusal (modes/contract.ts): no goal to decompose is
+ * refused INVALID_MODE before the decomposer spawns. The goal may arrive under
+ * three keys, read here exactly as the handler reads them. Total over raw
+ * model args.
+ */
+export function preSpawnRefusalOrchestrate(params: any): FlowError | null {
+	if (params?.orchestrate === undefined) return null;
+	const spec = params.orchestrate ?? {};
+	const nestedTask = typeof spec.task === "string" ? spec.task : undefined;
+	const nestedReturnContract = typeof spec.returnContract === "string" ? spec.returnContract : undefined;
+	const goal = params.task ?? nestedTask ?? nestedReturnContract;
+	if (typeof goal === "string" && goal.trim()) return null;
+	return flowError(
+		"INVALID_MODE",
+		"Orchestrate mode requires a task.",
+		"orchestrate mode decomposes `task` into subtasks, fans them out to workers, then synthesizes the results.",
+		'Add a `task` string, e.g. { "task": "...", "orchestrate": {} }.',
+	);
+}
+
 export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy } = deps;
@@ -55,15 +76,9 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const orchestrateAliases = spec as typeof spec & { task?: unknown; returnContract?: unknown };
 	const nestedTask = typeof orchestrateAliases.task === "string" ? orchestrateAliases.task : undefined;
 	const nestedReturnContract = typeof orchestrateAliases.returnContract === "string" ? orchestrateAliases.returnContract : undefined;
-	const goal: string | undefined = params.task ?? nestedTask ?? nestedReturnContract;
-	if (!goal || !goal.trim()) {
-		return settle.refuse(flowError(
-			"INVALID_MODE",
-			"Orchestrate mode requires a task.",
-			"orchestrate mode decomposes `task` into subtasks, fans them out to workers, then synthesizes the results.",
-			'Add a `task` string, e.g. { "task": "...", "orchestrate": {} }.',
-		));
-	}
+	const entryRefusal = preSpawnRefusalOrchestrate(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const goal = (params.task ?? nestedTask ?? nestedReturnContract) as string;
 	const returnContract = params.returnContract ?? (params.task || nestedTask ? nestedReturnContract : undefined);
 	const contractedGoal = goal;
 

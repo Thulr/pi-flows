@@ -1,4 +1,4 @@
-import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
@@ -42,9 +42,77 @@ export function planVote(params: any): ModePlan {
 	return { waves, opening: first?.guarded ? first.refs : [] };
 }
 
-/** A concurrent ballot wave, then the aggregator tail. */
+/**
+ * How many voters this call resolves to, by the handler's own rule: an
+ * explicit list wins, else one agent replicated `count` times (defaulting to
+ * 3, including for a non-numeric count). Null when neither source configures
+ * voters at all. Counted rather than materialized, so a hostile count is
+ * bounded by {@link preSpawnRefusalVote} before any array is allocated.
+ * planVote deliberately differs on a non-numeric count — it declares the wave
+ * non-replicable rather than guessing 3 — because a plan may not allocate.
+ */
+export function voteVoterCount(params: any): number | null {
+	const spec = params?.vote ?? {};
+	if (Array.isArray(spec.voters) && spec.voters.length > 0) return spec.voters.length;
+	if (typeof spec.agent === "string" && spec.agent) return Number.isFinite(spec.count) ? Math.floor(spec.count) : 3;
+	return null;
+}
+
+/**
+ * Vote's pre-spawn refusal (modes/contract.ts): every way a ballot is refused
+ * before any voter spawns — no question to vote on, no voters configured,
+ * fewer than two, or more than the fan-out cap — in the handler's own order,
+ * so the question is judged before the ballot. Total over raw model args.
+ */
+export function preSpawnRefusalVote(params: any): FlowError | null {
+	if (params?.vote === undefined) return null;
+	if (typeof params.task !== "string" || !params.task.trim()) {
+		return flowError(
+			"INVALID_MODE",
+			"Vote mode requires a task.",
+			"vote mode runs the same `task` across multiple voters and aggregates the answers.",
+			'Add a `task` string, e.g. { "task": "...", "vote": { "agent": "recon", "count": 3 } }.',
+		);
+	}
+	const count = voteVoterCount(params);
+	if (count === null) {
+		return flowError(
+			"INVALID_MODE",
+			"Vote mode needs voters.",
+			"Provide either `vote.voters` (explicit agents) or `vote.agent` with `vote.count`.",
+			'Use { "vote": { "agent": "recon", "count": 3 } } or { "vote": { "voters": [{"agent":"recon"},{"agent":"recon","model":"..."}] } }.',
+		);
+	}
+	if (count < 2) {
+		return flowError(
+			"TOO_FEW_VOTERS",
+			`Vote mode needs at least 2 voters (got ${count}).`,
+			"Voting suppresses non-deterministic errors by comparing independent answers; one voter is just single mode.",
+			"Set vote.count >= 2 or provide >= 2 vote.voters.",
+		);
+	}
+	if (count > MAX_PARALLEL_TASKS) {
+		return flowError(
+			"TOO_MANY_TASKS",
+			`Too many voters (${count}).`,
+			`Vote mode supports at most ${MAX_PARALLEL_TASKS} voters to prevent runaway subprocess fanout.`,
+			`Use ${MAX_PARALLEL_TASKS} or fewer voters.`,
+		);
+	}
+	return null;
+}
+
+/**
+ * A concurrent ballot wave, then the aggregator tail. The fan-out width comes
+ * from {@link voteVoterCount}, the same rule the handler replicates by, so a
+ * non-numeric count reports the 3 voters that actually ran instead of an NaN
+ * width that silently drops the metric.
+ */
 export function criticalPathVote(params: any, results: FlowRunResult[]): number | undefined {
-	const voterCount = Array.isArray(params.vote?.voters) && params.vote.voters.length > 0 ? params.vote.voters.length : Math.floor(params.vote?.count ?? 3);
+	// Falls back to the same 3 the handler replicates by when neither voter
+	// source is configured, so a spec this metric is asked about still bounds a
+	// wave rather than reporting unavailable.
+	const voterCount = voteVoterCount(params) ?? 3;
 	return voterCount > 0 ? fanoutThenTailCriticalPath(results, voterCount) : undefined;
 }
 
@@ -84,53 +152,18 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, discovery, policy } = deps;
 	const spec = params.vote ?? {};
-	const goal: string | undefined = params.task;
-	if (!goal || !goal.trim()) {
-		const error = flowError(
-			"INVALID_MODE",
-			"Vote mode requires a task.",
-			"vote mode runs the same `task` across multiple voters and aggregates the answers.",
-			'Add a `task` string, e.g. { "task": "...", "vote": { "agent": "recon", "count": 3 } }.',
-		);
-		return settle.refuse(error);
-	}
-	const contractedGoal = goal;
+	// Everything vote refuses before its first voter, as the mode table declares
+	// it. Past this there is a question to vote on and the count is known to be
+	// 2..MAX_PARALLEL_TASKS and resolvable from one of the two sources, so the
+	// replication below cannot allocate an unbounded array.
+	const entryRefusal = preSpawnRefusalVote(params);
+	if (entryRefusal) return settle.refuse(entryRefusal);
+	const contractedGoal = params.task as string;
 
 	// Build voters: explicit heterogeneous list (vendor-diverse) or one agent repeated `count` times.
-	let voters: FlowAgentRefInput[];
-	if (Array.isArray(spec.voters) && spec.voters.length > 0) {
-		voters = spec.voters as FlowAgentRefInput[];
-	} else if (spec.agent) {
-		const count = Number.isFinite(spec.count) ? Math.floor(spec.count) : 3;
-		voters = Array.from({ length: count }, () => ({ agent: spec.agent as string }));
-	} else {
-		const error = flowError(
-			"INVALID_MODE",
-			"Vote mode needs voters.",
-			"Provide either `vote.voters` (explicit agents) or `vote.agent` with `vote.count`.",
-			'Use { "vote": { "agent": "recon", "count": 3 } } or { "vote": { "voters": [{"agent":"recon"},{"agent":"recon","model":"..."}] } }.',
-		);
-		return settle.refuse(error);
-	}
-
-	if (voters.length < 2) {
-		const error = flowError(
-			"TOO_FEW_VOTERS",
-			`Vote mode needs at least 2 voters (got ${voters.length}).`,
-			"Voting suppresses non-deterministic errors by comparing independent answers; one voter is just single mode.",
-			"Set vote.count >= 2 or provide >= 2 vote.voters.",
-		);
-		return settle.refuse(error);
-	}
-	if (voters.length > MAX_PARALLEL_TASKS) {
-		const error = flowError(
-			"TOO_MANY_TASKS",
-			`Too many voters (${voters.length}).`,
-			`Vote mode supports at most ${MAX_PARALLEL_TASKS} voters to prevent runaway subprocess fanout.`,
-			`Use ${MAX_PARALLEL_TASKS} or fewer voters.`,
-		);
-		return settle.refuse(error);
-	}
+	const voters: FlowAgentRefInput[] = Array.isArray(spec.voters) && spec.voters.length > 0
+		? (spec.voters as FlowAgentRefInput[])
+		: Array.from({ length: voteVoterCount(params) ?? 0 }, () => ({ agent: spec.agent as string }));
 
 	const diversifyVoters = shouldDiversifyVoterPrompts(voters);
 	const voterPlans: IntegrationRunPlan[] = [];
@@ -139,7 +172,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
-			placeholderTask: goal,
+			placeholderTask: contractedGoal,
 			scope: { key: voterKey(index) },
 		});
 		if (planned.error) return settle.refuse(planned.error);
