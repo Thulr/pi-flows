@@ -73,6 +73,7 @@ const SHAPE_VISIBLE_PRESET_FAILURES = new Set(["UNKNOWN_PRESET", "PRESET_OVERRID
 // vocabulary is now this one line, not a new import plus a new ordered call.
 const SCORED_PRE_SPAWN_CODES = new Set([
 	"TOO_MANY_TASKS",
+	"PARALLEL_SIZING_REQUIRED",
 	"GRAPH_CYCLE",
 	"MONITOR_INVALID",
 	"WORKFLOW_INVALID",
@@ -153,7 +154,8 @@ export function callAdmissibilityFailure(args) {
 	}
 	// Whatever the ACTIVE mode declares it refuses before its first spawn,
 	// asked of the tool's own declaration rather than reassembled here: the
-	// fan-out cap (parallel, vote), a graph with no runnable first wave,
+	// raw parallel bounds (fan-out cap and intentional sizing), vote's fan-out
+	// cap, a graph with no runnable first wave,
 	// monitor's probe validation, and workflow's phase-shape and
 	// opening-approval rules all arrive through this one call. The subject runs
 	// headless, so an approval gate that needs a UI refuses here. A mode added

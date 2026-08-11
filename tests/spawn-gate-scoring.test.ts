@@ -15,7 +15,7 @@ import { spawnJustificationMissing } from "../extensions/pi-flows/validate.ts";
 // the spawn gate stands between it and a pass.
 const SPAWNING_CALLS: Record<string, Record<string, unknown>> = {
 	single: { agent: "recon", task: "Inspect the repo" },
-	parallel: { tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+	parallel: { tier: "capable", tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 	chain: { chain: [{ agent: "recon", task: "A" }, { agent: "analyst", task: "B" }] },
 	evaluate: { task: "Draft and verify", evaluate: {} },
 	vote: { task: "Pick one", vote: {} },

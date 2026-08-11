@@ -44,6 +44,7 @@ function theReviewCase(): any {
 // before any child spawns, and the third call bypasses the guard outright.
 const REFUSED_FANOUT = {
 	why: "independent review of uncommitted changes",
+	tier: "capable",
 	tasks: [
 		{ agent: "overwatch", role: "standards", task: "Review the uncommitted changes for standards issues." },
 		{ agent: "overwatch", role: "spec", task: "Review the uncommitted changes against intent." },
@@ -51,6 +52,7 @@ const REFUSED_FANOUT = {
 };
 const NAME_ONLY_RETRY = {
 	why: "independent review of uncommitted changes",
+	tier: "capable",
 	tasks: [
 		{ agent: "recon", tools: "read,grep,bash", task: "Review the uncommitted changes for standards issues." },
 		{ agent: "recon", tools: "read,grep,bash", task: "Review the uncommitted changes against intent." },
@@ -75,6 +77,7 @@ test("the shared-write guard is scored through the admissibility seam, against t
 	assert.equal(callAdmissibilityFailure({ ...REFUSED_FANOUT, concurrency: 1 }), null);
 	assert.equal(callAdmissibilityFailure({
 		why: "independent review",
+		tier: "capable",
 		tasks: [{ agent: "recon", task: "Review A." }, { agent: "analyst", task: "Review B." }],
 	}), null);
 	assert.equal(callAdmissibilityFailure(GUARD_BYPASS), null);
@@ -215,6 +218,7 @@ test("each safe first-call topology passes the #82-shape case", () => {
 		// Genuinely read-only reviewers at full concurrency.
 		{
 			why: "independent review of uncommitted changes",
+			tier: "capable",
 			tasks: [{ agent: "recon", task: "Review the uncommitted changes." }, { agent: "analyst", task: "Review the uncommitted changes." }],
 		},
 		// Independent voters over the same review task.
@@ -387,7 +391,7 @@ test("vacuous predicate values fail preflight — allowed keys that constrain no
 		calibration: [],
 		selection: [{
 			...base,
-			expectedFlowCall: { anyOf: [{ params: {} }], agents: [], taskPattern: "" },
+			expectedFlowCall: { anyOf: [{ params: {} }], agents: [], taskPattern: "", tieredTasks: [] },
 			forbiddenFlowCall: { modes: [] },
 		}],
 	});
@@ -395,6 +399,7 @@ test("vacuous predicate values fail preflight — allowed keys that constrain no
 	assert.ok(validation.issues.some((issue: string) => issue.includes("anyOf[0].params must pin at least one value")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("agents must not be an empty list")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("taskPattern must be a non-empty string")));
+	assert.ok(validation.issues.some((issue: string) => issue.includes("tieredTasks must be a non-empty array")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("forbiddenFlowCalls[0].modes must not be an empty list")));
 	// minTasks typos make the comparison vacuously false and the arm
 	// unconditional; preflight names them too.

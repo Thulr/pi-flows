@@ -72,8 +72,8 @@ missing/stale identities with `RETURN_CONTRACT_MISMATCH`.
 ```json
 {
   "tasks": [
-    { "agent": "recon", "task": "Find docs and README surfaces" },
-    { "agent": "recon", "task": "Find package/test scripts" }
+    { "agent": "recon", "task": "Find docs and README surfaces", "tier": "fast" },
+    { "agent": "recon", "task": "Find package/test scripts", "tier": "fast" }
   ],
   "concurrency": 2,
   "why": "docs and scripts are independent areas worth inspecting in parallel"
@@ -81,6 +81,8 @@ missing/stale identities with `RETURN_CONTRACT_MISMATCH`.
 ```
 
 Expected: both tasks complete; details include one result per agent and durations.
+Raw parallel calls must set `tier` or `model` per task; alternatively, set one
+flow-wide `tier` or `model` when uniform sizing is intentional.
 Each task may also set a delegation `contract`. Valid return envelopes and legacy prose results are
 normalized into `details.results[*].handoff`; prose uses
 `compatibility:"legacy-prose"`, while contracted handoffs preserve delegation-contract identity,

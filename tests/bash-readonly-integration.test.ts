@@ -89,6 +89,7 @@ test("bash-ro: child extensions disabled still spawns — the -e enforcer surviv
 test("bash-ro: two bash-ro reviewers share a cwd at concurrency 2 without SHARED_WRITE_CWD", async () => {
 	const { result, calls } = await runFlow(
 		{
+			tier: "fast",
 			tasks: [
 				{ agent: "recon", task: "standards review", tools: "read,grep,find,ls,bash-ro" },
 				{ agent: "recon", task: "spec review", tools: "read,grep,find,ls,bash-ro" },

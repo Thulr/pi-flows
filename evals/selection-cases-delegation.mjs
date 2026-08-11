@@ -199,6 +199,7 @@ export const DELEGATION_SELECTION_CASES = [
 				// recovers from — however the bundled roster's tools change.
 				{
 					why: "two independent read-only passes over the branch history",
+					tier: "capable",
 					tasks: [
 						{ agent: "overwatch", tools: "read,grep,find,ls,bash", task: "Inspect the git commit history on this branch and report the riskiest commit." },
 						{ agent: "overwatch", tools: "read,grep,find,ls,bash", task: "Independently inspect the git commit history on this branch and report the riskiest commit." },
@@ -207,6 +208,7 @@ export const DELEGATION_SELECTION_CASES = [
 				// The recovery this case exists to score: same topology, read-only shell.
 				{
 					why: "two independent read-only passes over the branch history",
+					tier: "capable",
 					tasks: [
 						{ agent: "overwatch", tools: "read,grep,find,ls,bash-ro", task: "Inspect the git commit history on this branch and report the riskiest commit." },
 						{ agent: "overwatch", tools: "read,grep,find,ls,bash-ro", task: "Independently inspect the git commit history on this branch and report the riskiest commit." },
@@ -253,7 +255,7 @@ export const DELEGATION_SELECTION_CASES = [
 		answerPattern: "checkpoint|approval|headless",
 		mock: {
 			flowCalls: 1,
-			flowCallArgs: [{ why: "eval mock justification",
+			flowCallArgs: [{ why: "eval mock justification", tier: "fast",
 				tasks: [
 					{ agent: "recon", task: "Inspect README.md for human checkpoint behavior." },
 					{ agent: "recon", task: "Inspect docs/reference/flow-reference.md for human checkpoint behavior." },
@@ -264,6 +266,37 @@ export const DELEGATION_SELECTION_CASES = [
 		sourceExpectations: [
 			{ format: "text", path: "README.md", patterns: ["Human checkpoints", "Headless runs fail closed"] },
 			{ format: "text", path: "docs/reference/flow-reference.md", patterns: ["Human checkpoints", "headless[\\s\\S]*fail closed"] },
+		],
+	},
+	{
+		name: "mixed-complexity-parallel-right-sizes-tiers",
+		task: "Use the analyst agent for two independent tasks in parallel: mechanically extract the documented flow error codes, and adversarially assess whether the model-selection precedence can violate session model scopes. Right-size each task explicitly without naming vendor model IDs.",
+		expectFlow: true,
+		expectedFlowCall: {
+			mode: "parallel",
+			agents: ["analyst"],
+			minTasks: 2,
+			taskPattern: "error code|model-selection|precedence|scope",
+			tieredTasks: [
+				{ tier: "fast", taskPattern: "mechanical|extract|error code" },
+				{ tier: "deep", taskPattern: "adversarial|model-selection|precedence|scope" },
+			],
+		},
+		answerPattern: "error|scope|model|tier",
+		mock: {
+			flowCalls: 1,
+			flowCallArgs: [{
+				why: "the requested independent tasks require parallel isolated analysis",
+				tasks: [
+					{ agent: "analyst", task: "Mechanically extract the documented flow error codes.", tier: "fast" },
+					{ agent: "analyst", task: "Adversarially assess model-selection precedence against session model scopes.", tier: "deep" },
+				],
+			}],
+			answer: "The error-code inventory and scope analysis both completed with explicitly distinct tiers.",
+		},
+		sourceExpectations: [
+			{ format: "text", path: "extensions/pi-flows/index.ts", patterns: ["raw parallel call with two or more tasks is refused", "Prefer per-task tiers for mixed work"] },
+			{ format: "text", path: "extensions/pi-flows/schema.ts", patterns: ["With two or more raw tasks, set tier or model on every task"] },
 		],
 	},
 	{

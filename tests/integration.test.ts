@@ -92,7 +92,7 @@ test("single: PI_FLOWS_CHILD_NO_EXTENSIONS isolates spawned child pi", async () 
 
 test("parallel: fans out every task to its own child", async () => {
 	const { calls } = await runFlow(
-		{ tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }], concurrency: 2 },
+		{ tier: "capable", tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }], concurrency: 2 },
 		{ recon: "found it" },
 	);
 
@@ -104,7 +104,7 @@ test("parallel: fans out every task to its own child", async () => {
 
 test("parallel: shared write-capable cwd is refused before spawning workers", async () => {
 	const { result, calls, text } = await runFlow(
-		{ tasks: [{ agent: "operator", task: "edit a" }, { agent: "operator", task: "edit b" }], concurrency: 2 },
+		{ tier: "capable", tasks: [{ agent: "operator", task: "edit a" }, { agent: "operator", task: "edit b" }], concurrency: 2 },
 		{ operator: "should not run" },
 	);
 
@@ -115,7 +115,7 @@ test("parallel: shared write-capable cwd is refused before spawning workers", as
 
 test("parallel: concurrency 1 serializes write-capable agents sharing cwd", async () => {
 	const { result, calls, text } = await runFlow(
-		{ tasks: [{ agent: "operator", task: "edit a" }, { agent: "operator", task: "edit b" }], concurrency: 1 },
+		{ tier: "capable", tasks: [{ agent: "operator", task: "edit a" }, { agent: "operator", task: "edit b" }], concurrency: 1 },
 		{ operator: "EDIT_DONE" },
 	);
 

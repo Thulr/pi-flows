@@ -177,6 +177,7 @@ test("an exhausted ceiling refuses the next child before it spawns, and says so 
 	const { result, calls, stubDir } = await runFlow(
 		{
 			task: "two scouts, one budget",
+			tier: "capable",
 			maxTokens: 4,
 			traceFile: "flow-trace.jsonl",
 			concurrency: 1,

@@ -218,6 +218,7 @@ test("parallel: every contracted task leaves exactly one validation event, accep
 		await writeFile(path.join(cwd, "note-b.txt"), "b\n");
 		return evidenceRunAt(cwd, "parallel", handleParallel, {
 			task: "collect",
+			tier: "fast",
 			tasks: [
 				{ agent: "recon", task: "A", contract },
 				{ agent: "recon", task: "B", contract },

@@ -65,7 +65,7 @@ function makeDeps(params: Record<string, unknown>, runChild: ModeDeps["runChild"
 test("parallel coordination runs in-process through the runChild seam", async () => {
 	const calls: RunChildOptions[] = [];
 	const deps = makeDeps(
-		{ tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }] },
+		{ tier: "capable", tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }] },
 		async (options) => {
 			calls.push(options);
 			return fakeResult(options, `done: ${options.task}`);

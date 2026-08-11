@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tieredTaskShapeIssues } from "./select-model-sizing.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SUITES = new Set(["representative", "capability", "regression", "adversarial"]);
@@ -143,7 +144,7 @@ register([
 ], "capability", "delegation-selection", decision);
 register([
 	"independent-review-safe-first-call",
-	"readonly-shell-fanout-bash-ro-recovery",
+	"readonly-shell-fanout-bash-ro-recovery", "mixed-complexity-parallel-right-sizes-tiers",
 ], "regression", "delegation-selection", review);
 register([
 	"implicit-evidence-corpus-uses-dossier",
@@ -315,7 +316,7 @@ function asList(value) {
 // scorer would silently ignore. firstCall is meaningful only on a top-level
 // expectation — inside anyOf arms and forbidden shapes it would be a silent
 // no-op, so it is unknown there.
-const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "params", "anyOf", "knownAgentsOnly", "everyRoleShellCapable", "everyRoleSharesCwd"]);
+const SHAPE_KEYS = new Set(["preset", "mode", "modes", "agent", "agents", "minTasks", "minApprovalPhases", "taskPattern", "everyTaskPattern", "tieredTasks", "params", "anyOf", "knownAgentsOnly", "everyRoleShellCapable", "everyRoleSharesCwd"]);
 
 function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = false }) {
 	if (!shape || typeof shape !== "object" || Array.isArray(shape)) return [`${label} must be an object shape`];
@@ -342,6 +343,7 @@ function flowCallShapeIssues(label, shape, { requireNonEmpty, allowFirstCall = f
 			issues.push(`${label}.${listField} must not be an empty list — it would constrain nothing`);
 		}
 	}
+	issues.push(...tieredTaskShapeIssues(label, shape.tieredTasks));
 	for (const patternField of ["preset", "taskPattern", "everyTaskPattern"]) {
 		if (shape[patternField] !== undefined && (typeof shape[patternField] !== "string" || shape[patternField] === "")) {
 			issues.push(`${label}.${patternField} must be a non-empty string`);

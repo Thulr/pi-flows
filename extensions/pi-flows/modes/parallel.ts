@@ -3,19 +3,18 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
 import { integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
-import { maxRunDuration, plannedRefs, withinFanoutCap, type ModePlan } from "./plan.ts";
+import { maxRunDuration, plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
- * Parallel's plan: one concurrent wave of every task, guarded — unless the
- * fan-out is over the cap, where the handler refuses TOO_MANY_TASKS before its
- * guard, so the wave stays declared (requested agents, disclosure) while the
- * admissibility mirror stays silent behind the earlier refusal and no opening
- * is certain.
+ * Parallel's plan: one concurrent wave of every task, guarded unless the
+ * mode's own declaration refuses first (fan-out cap or missing sizing). The
+ * wave stays declared for requested agents and disclosure while the
+ * shared-write mirror stays silent behind that earlier refusal.
  */
 export function planParallel(params: any): ModePlan {
 	if (!Array.isArray(params.tasks) || params.tasks.length === 0) return { waves: [], opening: [] };
 	const refs = plannedRefs(params.tasks);
-	const guarded = withinFanoutCap(params.tasks);
+	const guarded = preSpawnRefusalParallel(params) === null;
 	return { waves: [{ refs, guarded, contracts: "resolved" }], opening: guarded ? refs : [] };
 }
 
@@ -25,19 +24,40 @@ export function criticalPathParallel(_params: any, results: FlowRunResult[]): nu
 }
 
 /**
- * Parallel's pre-spawn refusal (modes/contract.ts): a fan-out over the cap
- * is refused TOO_MANY_TASKS before the shared-write guard and before any child
- * spawns. Total over raw model args — a non-array `tasks` never reaches here
- * (the schema refuses it) and yields no refusal rather than throwing.
+ * Parallel's pre-spawn refusals (modes/contract.ts): a fan-out over the cap is
+ * refused TOO_MANY_TASKS first; then a multi-task raw fan-out must make model
+ * sizing explicit before the shared-write guard or any child spawn. Total over
+ * raw model args — a non-array `tasks` never reaches here (the schema refuses
+ * it) and yields no refusal rather than throwing.
  */
 export function preSpawnRefusalParallel(params: any): FlowError | null {
 	const tasks = params?.tasks;
-	if (!Array.isArray(tasks) || tasks.length <= MAX_PARALLEL_TASKS) return null;
+	if (!Array.isArray(tasks)) return null;
+	if (tasks.length > MAX_PARALLEL_TASKS) {
+		return flowError(
+			"TOO_MANY_TASKS",
+			`Too many flow tasks (${tasks.length}).`,
+			`Parallel mode supports at most ${MAX_PARALLEL_TASKS} tasks to prevent runaway subprocess fanout.`,
+			`Split the work into batches of ${MAX_PARALLEL_TASKS} or fewer tasks.`,
+		);
+	}
+	if (tasks.length < 2) return null;
+
+	const namesModel = (value: unknown) => typeof value === "string" && value.trim().length > 0;
+	const namesTier = (value: unknown) => typeof value === "string" && ["fast", "capable", "deep"].includes(value);
+	if (namesModel(params?.model) || namesTier(params?.tier)) return null;
+
+	const omitted = tasks.flatMap((task, index) => {
+		if (!task || typeof task !== "object" || Array.isArray(task)) return [];
+		return namesModel(task.model) || namesTier(task.tier) ? [] : [index + 1];
+	});
+	if (omitted.length === 0) return null;
+
 	return flowError(
-		"TOO_MANY_TASKS",
-		`Too many flow tasks (${tasks.length}).`,
-		`Parallel mode supports at most ${MAX_PARALLEL_TASKS} tasks to prevent runaway subprocess fanout.`,
-		`Split the work into batches of ${MAX_PARALLEL_TASKS} or fewer tasks.`,
+		"PARALLEL_SIZING_REQUIRED",
+		"Parallel task sizing must be explicit before child spend begins.",
+		`Task${omitted.length === 1 ? "" : "s"} ${omitted.join(", ")} ${omitted.length === 1 ? "omits" : "omit"} both model and tier, while the flow names no model or tier. Agent defaults can otherwise place a heterogeneous fan-out uniformly on the parent session model.`,
+		"Set tier:'fast'|'capable'|'deep' (or an exact model) on every task. If uniform sizing is intentional, set one flow-wide tier or model as the explicit acknowledgement. A thinking level alone changes effort, not model capability.",
 	);
 }
 

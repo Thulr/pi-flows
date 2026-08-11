@@ -138,5 +138,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // the added table member in the adding-a-mode recipe (AGENTS.md), and the
 // Unreleased changelog entry — and it was trimmed twice before raising this.
 // Same verification: 106 files, none from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 1_135_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_145_000 for intentional parallel sizing (#121): the runtime
+// refusal, model-facing schema/tool guidance, and the reference,
+// troubleshooting, example, and changelog text that keep the public contract
+// synchronized. The file set remains 106 files with no tests/, scripts/, or
+// evals/; this is growth in already-packaged public surfaces, not an inclusion.
+assert.ok(pack.unpackedSize < 1_145_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

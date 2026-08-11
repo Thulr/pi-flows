@@ -192,6 +192,7 @@ test("a validation failure and a budget refusal are attributable without a child
 	const capped = await runFlow(
 		{
 			task: "two scouts, one budget",
+			tier: "capable",
 			traceFile: TRACE,
 			maxTokens: 4,
 			concurrency: 1,

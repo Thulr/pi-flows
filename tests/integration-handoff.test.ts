@@ -266,6 +266,7 @@ test("public integration-mode schemas accept role-specific contracts and an expl
 test("parallel validates typed returns and exposes compatibility provenance for legacy returns", async () => {
 	const { result: output, calls } = await runFlow(
 		{
+			tier: "capable",
 			tasks: [
 				{ agent: "recon", task: "typed", contract },
 				{ agent: "analyst", task: "legacy" },

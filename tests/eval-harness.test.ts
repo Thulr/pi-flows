@@ -710,7 +710,7 @@ test("selection eval scores overuse, correct non-use, and wrong flow arguments",
 
 	const correct = scoreSelection(
 		{ expectFlow: true, answerPattern: "done", expectedFlowCall: { mode: "parallel", minTasks: 2, taskPattern: "auth" } },
-		{ flowCalls: 1, flowCallArgs: [{ why: "fan-out", tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }] }], answer: "done" },
+		{ flowCalls: 1, flowCallArgs: [{ why: "fan-out", tier: "capable", tasks: [{ agent: "recon", task: "frontend auth" }, { agent: "recon", task: "backend auth" }] }], answer: "done" },
 	);
 	assert.equal(correct.pass, true);
 

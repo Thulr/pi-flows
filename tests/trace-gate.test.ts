@@ -112,7 +112,7 @@ test("a malformed trace row is counted, not fatal", () => {
 
 test("a duplicated span cannot conceal a dropped one", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -159,7 +159,7 @@ test("a row stripped of its trace id cannot vanish from the evidence gate", asyn
 
 test("a new-format trace with its expectation stripped is incomplete, not self-consistent", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -189,7 +189,7 @@ test("a new-format trace with its expectation stripped is incomplete, not self-c
 
 test("the strict gate validates its own inputs, not just the spans they describe", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -218,7 +218,7 @@ test("the strict gate validates its own inputs, not just the spans they describe
 
 test("a span whose parent was cut is a broken tree, not a complete one", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -247,7 +247,7 @@ test("a span whose parent was cut is a broken tree, not a complete one", async (
 
 test("a resolvable link is not a tree: cycles and unreachable spans are corruption", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -327,7 +327,7 @@ test("an id containing the list delimiter does not turn a healthy run into a ref
 
 test("a row that claims to be the root while hanging off a parent is corruption", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -371,7 +371,7 @@ test("long author-supplied ids do not truncate a valid chain into a broken one",
 
 test("a modern trace cannot demote a row out of the checks by dropping its role", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -389,7 +389,7 @@ test("a modern trace cannot demote a row out of the checks by dropping its role"
 
 test("spans the exporter never claimed to have written are not evidence either", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -475,7 +475,7 @@ test("a corrupt dependency count cannot vouch for an emptied link list", async (
 
 test("a stated expectation nothing can read does not exempt the trace from the checks", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);
@@ -560,7 +560,7 @@ test("dependency metadata is refused in pieces, not just when it points nowhere"
 
 test("a span tree that could not have happened is refused", async () => {
 	const { stubDir } = await runFlow(
-		{ task: "two scouts", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+		{ task: "two scouts", tier: "capable", traceFile: TRACE, tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 		{ recon: "done" },
 	);
 	const spans = await readSpans(stubDir);

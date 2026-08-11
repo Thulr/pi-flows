@@ -105,6 +105,7 @@ export const FLOW_ERROR_CODES = [
 	"INVALID_SCOPE",
 	"INVALID_CONCURRENCY",
 	"TOO_MANY_TASKS",
+	"PARALLEL_SIZING_REQUIRED",
 	"TOO_FEW_VOTERS",
 	"ROUTE_UNRESOLVED",
 	"ORCHESTRATE_NO_SUBTASKS",
@@ -155,7 +156,6 @@ export const FLOW_ERROR_CODES = [
 	"CHILD_PROVIDER_ERROR",
 	"TRACE_INCOMPLETE",
 ] as const;
-
 export type FlowErrorCode = (typeof FLOW_ERROR_CODES)[number];
 
 export interface FlowError {

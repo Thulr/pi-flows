@@ -33,7 +33,7 @@ function requestedNames(params: Record<string, unknown>): string[] {
 // across the table is that mode's own contribution.
 const REPRESENTATIVE: Record<RunMode, Record<string, unknown>> = {
 	single: { agent: "recon", task: "inspect", cwd: "sub", tools: "none" },
-	parallel: { tasks: [{ agent: "recon", task: "A", tools: "none" }, { agent: "operator", task: "B", cwd: "b" }] },
+	parallel: { tier: "capable", tasks: [{ agent: "recon", task: "A", tools: "none" }, { agent: "operator", task: "B", cwd: "b" }] },
 	chain: { chain: [{ agent: "recon", task: "A" }, { agent: "debrief", task: "B" }] },
 	evaluate: { task: "t", evaluate: { operator: { agent: "op" }, redteam: [{ agent: "critic-a" }, { agent: "critic-b" }] } },
 	vote: { task: "t", vote: { agent: "recon", count: 2, debrief: { agent: "debrief" } } },

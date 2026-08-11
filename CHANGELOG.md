@@ -10,6 +10,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Raw `parallel` fan-out with two or more tasks now refuses before child spend
+  when any task omits `tier`/`model` and the flow names no uniform fallback.
+  Per-task sizing is explicit for mixed work; a flow-wide `tier` or `model`
+  remains the explicit choice for intentional uniform sizing.
 - Every mode now declares its **mode pre-spawn refusal** — what it refuses
   before its first child spawns — once beside its handler, and the handler
   reaches that same function instead of rebuilding the refusal inline. These

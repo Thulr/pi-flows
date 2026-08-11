@@ -142,7 +142,7 @@ function settleWithoutDispatchScenario(): FaultScenario {
 		run: async () => {
 			const adapter = makeFaultAdapter({ replies: { recon: ["finding A", "finding B"] } });
 			const ports = flowPorts(
-				{ task: "collect two findings", tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
+				{ task: "collect two findings", tier: "capable", tasks: [{ agent: "recon", task: "A" }, { agent: "recon", task: "B" }] },
 				adapter,
 				cwd,
 			);
