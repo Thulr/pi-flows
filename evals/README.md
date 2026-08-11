@@ -63,7 +63,8 @@ npm run eval -- --failure-ledger=/secure/failures.jsonl # include imported capab
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 npm run eval:select                # tool-selection eval: should the parent model call flow at all?
 npm run eval:failure -- inspect --ledger=/secure/failures.jsonl # inspect the production-failure ledger
-npm run eval:release -- --evidence=/secure/release-evidence.json ... # write a release record
+npm run eval:release -- --run --run-id=release-1.2.3 --attest-hard-blockers # evaluate and decide in one command
+npm run eval:release -- --evidence=/secure/release-evidence.json ... # decide from artifacts already produced
 ```
 
 `--trials=N` measures **subject reliability** and is independent of

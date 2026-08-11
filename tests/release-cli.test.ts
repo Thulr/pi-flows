@@ -9,6 +9,8 @@ import { calibrationKey, canonicalDigest } from "../evals/calibration-key.mjs";
 import { failureLedgerIdentity } from "../evals/failure-ledger.mjs";
 import { buildCalibrationReport } from "../evals/calibration.mjs";
 import { reliabilityAttestation } from "../evals/reliability.mjs";
+import { deriveEvidence } from "../evals/release-evidence.mjs";
+import { HARD_BLOCKER_KEYS } from "../evals/release-manifest.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const TEST_ATTESTATION_KEY = "test-only-attestation-material-0000000000000001";
@@ -311,4 +313,52 @@ test("failure command imports a capability case and refuses dry-run promotion ev
 	assert.match(recorded.stderr, /held-out (runtime trace|judged-run) validation failed/);
 	const records = (await readFile(ledger, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
 	assert.deepEqual(records.map((record) => record.type), ["failure.imported"]);
+});
+
+test("--run requires a run id rather than defaulting one", () => {
+	const child = run("evals/release.mjs", ["--run"]);
+
+	assert.equal(child.status, 2);
+	assert.match(child.stderr, /--run requires --run-id=<id>/);
+});
+
+test("derived evidence copies run provenance and leaves hard blockers unattested", () => {
+	const source = reliability();
+	source.generatedAt = "2026-08-10T12:00:00.000Z";
+	source.evaluation = {
+		...source.evaluation,
+		models: { subjects: ["provider/subject"], judge: "provider/judge" },
+		topology: { arm: "flows", modes: ["evaluate"] },
+		budgets: { subjectTrials: 5 },
+		grader: { name: "thulr", version: "0.3.0" },
+	};
+
+	const derived = deriveEvidence(source, false);
+
+	assert.equal(derived.schemaVersion, "pi-flows.release-evidence.v1");
+	assert.equal(derived.runId, source.runId);
+	assert.equal(derived.codeCommit, source.evaluatedSystem.code.commit);
+	assert.equal(derived.evaluatedAt, "2026-08-10T12:00:00.000Z");
+	// Every provenance field the gate cross-checks is the artifact's own record,
+	// so a derived evidence object can never disagree with the run it describes.
+	for (const field of ["models", "topology", "budgets", "suite", "grader"] as const) {
+		assert.deepEqual(derived[field], source.evaluation[field]);
+	}
+	// Without an explicit operator attestation the six blockers stay unasserted,
+	// and the gate rejects them for lacking attributable evidence.
+	assert.deepEqual(Object.keys(derived.hardBlockers), HARD_BLOCKER_KEYS);
+	for (const key of HARD_BLOCKER_KEYS) {
+		assert.deepEqual(derived.hardBlockers[key], { status: "not-attested", evidence: [] });
+	}
+});
+
+test("attested evidence records the operator assertion against the run it decided", () => {
+	const derived = deriveEvidence(reliability(), true);
+
+	for (const key of HARD_BLOCKER_KEYS) {
+		assert.deepEqual(derived.hardBlockers[key], {
+			status: "passed",
+			evidence: ["operator-attested:release-run"],
+		});
+	}
 });

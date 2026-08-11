@@ -68,9 +68,22 @@ permission, and provenance is generated automatically.
 
 6. Commit with a [Conventional Commit](../../CONTRIBUTING.md#commit-messages), open
    a PR, and merge to `main`.
-7. Check out the clean merge commit, repeat the release evaluation in step 4
-   against that exact commit, and generate the release record described below.
-   An `approved` decision is required before tagging.
+7. Check out the clean merge commit and run the release evaluation and decision
+   against that exact commit in one command. An `approved` decision is required
+   before tagging:
+
+   ```bash
+   npm run eval:release -- --run --run-id="release-<version>" --attest-hard-blockers
+   ```
+
+   `--run` generates a single-use attestation token, hands it to the evaluation
+   it starts, and throws it away — so the artifacts it decides from can only
+   have come from that run. It writes them under `.thulr/runs/<run-id>.*` and
+   derives the evidence object from the reliability artifact's own provenance.
+   Pass `--attest-hard-blockers` only once the six hard blockers below have
+   actually been attested; without it the decision blocks as `not-attested`.
+   See [Release evidence and manifest](#release-evidence-and-manifest) for the
+   artifact-based mode and the full list of what the gate checks.
 8. Tag the merge commit and push the tag — this triggers the **Publish**
    workflow:
 
@@ -84,6 +97,20 @@ permission, and provenance is generated automatically.
    the new version, and `pi install npm:pi-flows` resolves it.
 
 ## Release evidence and manifest
+
+`eval:release` has two modes. `--run` (step 7 above) runs the evaluation and
+decides from it in one command, deriving the evidence object from the
+reliability artifact's own provenance record. The default mode decides from
+artifacts already on disk and requires an operator-written evidence file; it
+reads its attestation key from `PI_FLOWS_EVAL_ATTESTATION_KEY`, which exists for
+tests and for re-deciding a run whose token you still hold.
+
+Deriving evidence is not a weaker check. Every provenance field the gate
+verifies — `models`, `topology`, `budgets`, `suite`, `grader` — is cross-checked
+against that same reliability record, so transcribing them by hand can only
+introduce a mismatch, never add assurance. The hard blockers are the one part no
+artifact can supply, and they stay an explicit operator assertion: `--run`
+records `not-attested` unless `--attest-hard-blockers` is passed.
 
 The release owner prepares a minimized `pi-flows.release-evidence.v1` JSON
 attestation. It names the eval run, evaluated time, every subject and judge model,
@@ -173,9 +200,11 @@ Copy `models`, `topology`, `budgets`, `suite`, and `grader` from the reliability
 artifact's `evaluation` object, then add the independently owned hard-blocker
 references. Any edit or substitution blocks release.
 
-The release record requires the same operator-controlled
-`PI_FLOWS_EVAL_ATTESTATION_KEY` that authenticated the reliability run. Keep it
-in the release secret store, never in an artifact or the repository.
+In the artifact-based mode the release record requires the same
+operator-controlled `PI_FLOWS_EVAL_ATTESTATION_KEY` that authenticated the
+reliability run. Keep it in the release secret store, never in an artifact or
+the repository. `--run` needs no such secret: its token is generated per
+invocation and never leaves the process tree.
 
 ```bash
 npm run eval:release -- \
