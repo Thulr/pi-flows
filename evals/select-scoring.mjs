@@ -11,7 +11,7 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { callAdmissibilityFailure, scoringDiscovery } from "./select-admissibility.mjs";
-import { taskTierShapeMismatch } from "./select-model-sizing.mjs";
+import { tieredTaskShapeMismatch } from "./select-model-sizing.mjs";
 import { effectiveTools, isWorkflowWorkPhase, resolvedCwd } from "../extensions/pi-flows/validate.ts";
 import { firstSpawnAgentRefs } from "../extensions/pi-flows/modes/contract.ts";
 
@@ -288,7 +288,7 @@ function flowCallShapeMismatch(args, shape) {
 		return `expected at least ${shape.minTasks} ${actualMode} task(s), saw ${actualTaskCount}`;
 	}
 
-	const tierMismatch = taskTierShapeMismatch(args.tasks, actualMode, shape.taskTiers);
+	const tierMismatch = tieredTaskShapeMismatch(args.tasks, actualMode, shape.tieredTasks);
 	if (tierMismatch) return tierMismatch;
 
 	// The gate itself, not just the work in front of it: a phase-gated case

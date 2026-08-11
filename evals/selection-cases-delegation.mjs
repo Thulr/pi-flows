@@ -277,7 +277,10 @@ export const DELEGATION_SELECTION_CASES = [
 			agents: ["analyst"],
 			minTasks: 2,
 			taskPattern: "error code|model-selection|precedence|scope",
-			taskTiers: ["fast", "deep"],
+			tieredTasks: [
+				{ tier: "fast", taskPattern: "mechanical|extract|error code" },
+				{ tier: "deep", taskPattern: "adversarial|model-selection|precedence|scope" },
+			],
 		},
 		answerPattern: "error|scope|model|tier",
 		mock: {

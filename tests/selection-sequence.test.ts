@@ -391,7 +391,7 @@ test("vacuous predicate values fail preflight — allowed keys that constrain no
 		calibration: [],
 		selection: [{
 			...base,
-			expectedFlowCall: { anyOf: [{ params: {} }], agents: [], taskPattern: "", taskTiers: [] },
+			expectedFlowCall: { anyOf: [{ params: {} }], agents: [], taskPattern: "", tieredTasks: [] },
 			forbiddenFlowCall: { modes: [] },
 		}],
 	});
@@ -399,7 +399,7 @@ test("vacuous predicate values fail preflight — allowed keys that constrain no
 	assert.ok(validation.issues.some((issue: string) => issue.includes("anyOf[0].params must pin at least one value")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("agents must not be an empty list")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("taskPattern must be a non-empty string")));
-	assert.ok(validation.issues.some((issue: string) => issue.includes("taskTiers must be a non-empty array containing only")));
+	assert.ok(validation.issues.some((issue: string) => issue.includes("tieredTasks must be a non-empty array")));
 	assert.ok(validation.issues.some((issue: string) => issue.includes("forbiddenFlowCalls[0].modes must not be an empty list")));
 	// minTasks typos make the comparison vacuously false and the arm
 	// unconditional; preflight names them too.

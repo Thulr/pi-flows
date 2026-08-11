@@ -682,8 +682,8 @@ compose with `anyOf` (a disjunction of allowed sub-shapes over shared fields),
 `params` (scalar pins such as `{ allowSharedWriteCwd: true }`), and
 `everyTaskPattern` (role-by-role intent binding: every assigned task must match
 on its own, so one on-topic task cannot vouch for off-topic siblings the way
-the run-wide `taskPattern` concatenation would allow), `taskTiers` (the exact
-multiset of per-task tiers required by a heterogeneous model-selection case),
+the run-wide `taskPattern` concatenation would allow), `tieredTasks` (an exact
+set of per-task tier + task-pattern bindings for heterogeneous model-selection),
 and `knownAgentsOnly`
 (every named role must resolve in the bundled roster, so a mixed fan-out whose
 invented sibling the runner would refuse cannot pass as the full requested
