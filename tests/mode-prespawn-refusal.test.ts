@@ -16,7 +16,7 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
-import { RUN_MODE_CONTRACTS, preSpawnRefusalForParams } from "../extensions/pi-flows/modes/contract.ts";
+import { RUN_MODE_CONTRACTS, modePreSpawnRefusalForParams } from "../extensions/pi-flows/modes/contract.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
 import { handleDebate } from "../extensions/pi-flows/modes/debate.ts";
 import { handleDossier } from "../extensions/pi-flows/modes/dossier.ts";
@@ -133,7 +133,7 @@ const ENFORCED: Array<{ mode: string; params: Record<string, any>; handler: (dep
 
 test("a mode's declared pre-spawn refusal is the one its handler enforces", async () => {
 	for (const { mode, params, handler, code } of ENFORCED) {
-		const declared = preSpawnRefusalForParams(params, { headless: true });
+		const declared = modePreSpawnRefusalForParams(params, { headless: true });
 		assert.ok(declared, `${mode}/${code}: the table declared no refusal for a call the handler refuses`);
 		assert.equal(declared.code, code, `${mode}: declared the wrong code`);
 
@@ -148,14 +148,14 @@ test("a mode's declared pre-spawn refusal is the one its handler enforces", asyn
 
 test("the table resolves the active mode's declaration, and stays silent for admissible calls", () => {
 	const headless = { headless: true } as const;
-	assert.equal(preSpawnRefusalForParams({ agent: "recon", task: "x", why: "w" }, headless), null);
-	assert.equal(preSpawnRefusalForParams({ why: "w", tasks: [{ agent: "recon", task: "a" }] }, headless), null);
-	assert.equal(preSpawnRefusalForParams({}, headless), null, "a call activating no mode declares no refusal");
+	assert.equal(modePreSpawnRefusalForParams({ agent: "recon", task: "x", why: "w" }, headless), null);
+	assert.equal(modePreSpawnRefusalForParams({ why: "w", tasks: [{ agent: "recon", task: "a" }] }, headless), null);
+	assert.equal(modePreSpawnRefusalForParams({}, headless), null, "a call activating no mode declares no refusal");
 	// The active mode answers, not the first mode with an opinion: a monitor
 	// call carrying an over-cap `tasks` array is a multi-mode call the tool
 	// refuses earlier (INVALID_MODE), and first-activator order must not let
 	// parallel's cap speak for monitor.
-	assert.equal(preSpawnRefusalForParams({ why: "w", task: "watch", monitor: { command: "true" } }, headless), null);
+	assert.equal(modePreSpawnRefusalForParams({ why: "w", task: "watch", monitor: { command: "true" } }, headless), null);
 });
 
 test("workflow's approval rule reads the context; its phase rule does not", () => {
@@ -204,7 +204,7 @@ test("a cycle that strands only later waves stays the handler's, not the declara
 			{ id: "b", agent: "recon", task: "t", dependsOn: ["a"] },
 		] },
 	};
-	assert.equal(preSpawnRefusalForParams(params, { headless: true }), null, "a runnable first wave is not a pre-spawn refusal");
+	assert.equal(modePreSpawnRefusalForParams(params, { headless: true }), null, "a runnable first wave is not a pre-spawn refusal");
 
 	const spawned: string[] = [];
 	const output = await handleGraph(makeDeps(params, async (options: RunChildOptions): Promise<FlowRunResult> => {

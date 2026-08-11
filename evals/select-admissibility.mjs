@@ -10,7 +10,7 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentFlowDepth, nonSpawningFlowCall, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
-import { firstSpawnAgentRefs, preSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
+import { firstSpawnAgentRefs, modePreSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
@@ -104,7 +104,7 @@ function effectiveCallParams(args) {
 //
 // Per-mode pre-spawn refusals are no longer enumerated here: the mode table
 // declares what each mode refuses before its first spawn, and
-// preSpawnRefusalForParams resolves the active one, so a new mode joins this
+// modePreSpawnRefusalForParams resolves the active one, so a new mode joins this
 // gate by existing. What stays this seam's own decision is which of those
 // codes to score — SCORED_PRE_SPAWN_CODES above.
 export function callAdmissibilityFailure(args) {
@@ -159,7 +159,7 @@ export function callAdmissibilityFailure(args) {
 	// headless, so an approval gate that needs a UI refuses here. A mode added
 	// to the table is covered without touching this file; only the scored
 	// vocabulary above is this seam's own decision.
-	const modeRefusal = preSpawnRefusalForParams(effective ?? {}, { headless: true });
+	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true });
 	if (modeRefusal && SCORED_PRE_SPAWN_CODES.has(modeRefusal.code)) {
 		return { code: modeRefusal.code, reason: modeRefusal.message.replace(/\.$/, "") };
 	}

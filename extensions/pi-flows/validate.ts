@@ -125,14 +125,20 @@ export function graphDependsOn(node: any): string[] {
 }
 
 /**
- * handleGraph refuses GRAPH_INVALID for every structural defect before its
- * guard — node count outside 1..MAX_GRAPH_NODES, a node missing string
- * id/agent/task, a duplicated id, a non-array dependsOn, or a dependsOn
- * naming no node. A graph failing any of those yields null (the admissibility
- * mirror and the cycle check stay silent behind that earlier refusal, and
- * never iterate a hostile-length list); a structurally valid one yields its
- * nodes. Exported for graph's plan declaration (modes/graph.ts), so the plan
- * and this refusal read one structural predicate.
+ * Structural validity of a graph, as the plan reads it: node count within
+ * 1..MAX_GRAPH_NODES, every node carrying a string id/agent/task, no duplicated
+ * id, no non-array dependsOn, and no dependsOn naming a node that is not there.
+ * Yields the nodes, or null for a graph failing any of those — so the plan
+ * declares an unguarded wave and no opening, and never iterates a
+ * hostile-length list.
+ *
+ * This is the plan's predicate only. The refusal a caller sees comes from
+ * graph's own pre-spawn declaration (modes/graph.ts), which reports which
+ * defect was found rather than a boolean; Core may not import Supporting, so
+ * the two cannot be one function. They agree on every input the public schema
+ * admits — id/agent/task are typed strings and dependsOn a string array — so
+ * the shapes on which their strictness differs are refused SCHEMA_INVALID
+ * before either runs.
  */
 export function validGraphNodes(params: Record<string, any>): any[] | null {
 	const nodes = params.graph?.nodes;

@@ -51,7 +51,7 @@ export interface RunModeContract {
  * the name in RUN_MODE_NAMES (types.ts) + a params field (schema.ts). The
  * Record key makes a missing or extra entry a compile error; the handler
  * table, mode detection, render labels, requested-agent scans, the pre-spawn
- * admissibility mirror, the pre-spawn refusal resolver, budget disclosure, the
+ * admissibility mirror, the mode pre-spawn refusal resolver, budget disclosure, the
  * critical-path metric, and the INVALID_MODE hint list all derive from this
  * table.
  */
@@ -291,7 +291,10 @@ export function firstSpawnAgentRefs(params: Record<string, any>): PlannedRef[] {
 
 /**
  * Would the active mode refuse this call before any child spawns, and with
- * what? Its own declaration answers, so every mode in the table is covered —
+ * what? Named for the *mode* refusal specifically (CONTEXT.md: Mode pre-spawn
+ * refusal): preSpawnSharedWriteRefusal below is also a refusal before spawn,
+ * but it is the aggregate's guard over a declared wave rather than a rule the
+ * mode owns, and the two must not read as the same thing. Its own declaration answers, so every mode in the table is covered —
  * including one added tomorrow — without callers enumerating modes or codes.
  *
  * Ordered before the shared-write guard below, matching the tool: a mode's own
@@ -300,7 +303,7 @@ export function firstSpawnAgentRefs(params: Record<string, any>): PlannedRef[] {
  * refusal that landed earlier. Total over raw model args: a call activating no
  * mode declares no refusal.
  */
-export function preSpawnRefusalForParams(params: Record<string, any>, context: PreSpawnContext): FlowError | null {
+export function modePreSpawnRefusalForParams(params: Record<string, any>, context: PreSpawnContext): FlowError | null {
 	const candidate = params ?? {};
 	const hasObjectMode = objectModeActive(candidate);
 	const contract = RUN_MODE_CONTRACTS.find((entry) => entry.isActive(candidate, hasObjectMode));
