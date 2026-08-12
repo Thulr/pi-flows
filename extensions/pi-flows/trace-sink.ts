@@ -14,7 +14,7 @@ import type {
 	SpanStage,
 } from "./types.ts";
 import { emptyTraceHealth, encodeUnitKey, traceHealthStatus, type FlowTraceStructure } from "./trace-scope.ts";
-import { verifyExportedTrace } from "./trace-verify.ts";
+import { reconcileVerdicts, verifyExportedTrace } from "./trace-verify.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
 import { stableTraceIds } from "./trace-identity.mjs";
 
@@ -461,7 +461,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// file that no longer exists; every row is now expected, so attempted and
 			// declared are the same number.
 			const structure = preCertification
-				? await verifyExportedTrace(traceFile, traceId, { attempted: declaredExpectation, declared: declaredExpectation }, policy)
+				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, traceId, { attempted: declaredExpectation, declared: declaredExpectation }, policy))
 				: undefined;
 			const spans: FlowTraceHealth = {
 				// The declared count, so a landed certification reads as observed ==

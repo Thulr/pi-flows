@@ -96,3 +96,17 @@ export async function verifyExportedTrace(traceFile: string, traceId: string, ex
 		return { valid: false, issue: `the trace could not be read back: ${sanitizeText(safePath(raw) ?? raw, { ...policy, recordContent: true }, 512)}` };
 	}
 }
+
+/**
+ * One verdict for a dual reading. The preliminary failure is already durable —
+ * the certification event recorded it as a revocation before the final reading
+ * ran — so the final reading may confirm it but never overturn it: a live call
+ * that out-voted its own persisted record would pass a run whose trace every
+ * later reader withholds. The asymmetry is deliberate and fail-closed: a
+ * preliminary pass overturned by a final failure refuses (the final state is
+ * what the file holds), while a preliminary failure stands even when the final
+ * reading recovers.
+ */
+export function reconcileVerdicts(preliminary: FlowTraceStructure, final: FlowTraceStructure): FlowTraceStructure {
+	return preliminary.valid ? final : preliminary;
+}

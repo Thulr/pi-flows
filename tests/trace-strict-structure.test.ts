@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { makeTraceSink } from "../extensions/pi-flows/trace-sink.ts";
+import { reconcileVerdicts } from "../extensions/pi-flows/trace-verify.ts";
 import { stableTraceIds } from "../extensions/pi-flows/trace-identity.mjs";
 import { parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceEvidenceIssue, traceReportIsComplete } from "../extensions/pi-flows/trace.ts";
 import type { FlowRunResult } from "../extensions/pi-flows/types.ts";
@@ -286,10 +287,13 @@ test("a surplus row under this trace id fails verification, not just the report"
 
 	const link = await sink.finalize({ ok: true });
 	assert.equal(link.structure!.valid, false, "rows the run never claimed are not its evidence");
-	// "3 attempted" is the post-write yardstick (child + root + certification):
-	// a verdict naming it was read after this finalize's last write, so nothing
-	// the run wrote postdates what it verified.
-	assert.match(link.structure!.issue!, /beyond the 3 attempted/, link.structure!.issue);
+	// The preliminary reading found the surplus, and under reconcileVerdicts a
+	// preliminary failure takes precedence over the final reading — so the fault
+	// names the pre-certification yardstick. The final reading's own verdict
+	// only surfaces when the preliminary passed and the file then changed,
+	// which only I/O faults can produce; its precedence rule is pinned as the
+	// pure function instead.
+	assert.match(link.structure!.issue!, /beyond the 2 attempted/, link.structure!.issue);
 	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE", "so the live gate refuses what the report gate would");
 });
 
@@ -328,4 +332,19 @@ test("a certified trace that went incomplete afterwards is not a verified outcom
 	const report = summarizeTraceSpans(spans, 0, "t.jsonl");
 	assert.equal(report.incompleteTraces, 1, "the surplus row makes the trace incomplete");
 	assert.equal(report.verifiedOutcomes, 0, "and incomplete evidence supports no verified outcome, certification or not");
+});
+
+/**
+ * The two readings can disagree only through transient I/O — a read error that
+ * clears between them — which nothing in-process can fake deterministically,
+ * so the precedence rule is pinned as the pure function the sink wires in. A
+ * preliminary failure is already durable as a revocation; a live verdict that
+ * overturned it would pass a run whose trace every later reader withholds.
+ */
+test("a preliminary failure is never overturned by a recovering final reading", () => {
+	const failed = { valid: false, issue: "the trace could not be read back: transient" };
+	const recovered = { valid: true };
+	assert.deepEqual(reconcileVerdicts(failed, recovered), failed, "the durable revocation wins");
+	assert.deepEqual(reconcileVerdicts({ valid: true }, failed), failed, "while a final failure stands on its own");
+	assert.deepEqual(reconcileVerdicts({ valid: true }, recovered), recovered, "and agreement passes through");
 });
