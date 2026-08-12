@@ -13,7 +13,9 @@ import type {
 	RecordSpan,
 	SpanStage,
 } from "./types.ts";
-import { emptyTraceHealth, encodeUnitKey, traceHealthStatus } from "./trace-scope.ts";
+import { emptyTraceHealth, encodeUnitKey, traceHealthStatus, type FlowTraceStructure } from "./trace-scope.ts";
+import { parseTraceJsonl } from "./trace-report.ts";
+import { traceStructure } from "./trace-structure.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
 import { stableTraceIds } from "./trace-identity.mjs";
 
@@ -94,7 +96,47 @@ const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.
  * returned link can say how much evidence actually landed and a strict caller
  * can refuse to treat an incomplete trace as proof.
  */
-export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, traceLabel?: string, context?: FlowTraceContext): TraceSink {
+/**
+ * Read the finished export back and say whether it is a span tree. The strict
+ * gate used to answer only from write-time accounting, which cannot see a
+ * child parented to a stage nobody wrote or a root that does not reach itself
+ * — the refusal text even sent readers to `npm run trace:report --strict` to
+ * do this by hand. A run that stakes its verdict on evidence should not be the
+ * one caller that never checks it.
+ *
+ * A read that itself fails is reported as invalid rather than swallowed:
+ * evidence nobody could re-read is not evidence.
+ *
+ * Scoped to this flow's own trace_id, the way the read-back report groups
+ * before validating. One JSONL file routinely holds many flows — an eval sets
+ * PI_FLOWS_TRACE_FILE once for a whole run — so validating the file whole
+ * would judge every flow after the first against its predecessors' spans and
+ * fail it for a surplus that is simply someone else's trace. A row the flow
+ * wrote that no longer parses is caught by the count instead: the trace comes
+ * back shorter than it declared.
+ */
+async function readBackStructure(traceFile: string, traceId: string, declared: number): Promise<FlowTraceStructure> {
+	try {
+		const parsed = parseTraceJsonl(await fs.readFile(traceFile, "utf8"));
+		const own = parsed.spans.filter((span) => span.trace_id === traceId);
+		const structure = traceStructure(own, { declared, present: true });
+		const missing = Math.max(0, declared - own.length);
+		if (!structure.invalid && missing === 0) return { valid: true, danglingLinks: structure.danglingLinks };
+		const faults = [
+			missing ? `${missing} of ${declared} declared row(s) missing or unreadable` : "",
+			structure.root ? "" : "no root span",
+			structure.duplicateSpans ? `${structure.duplicateSpans} duplicate span id(s)` : "",
+			structure.malformedSpans ? `${structure.malformedSpans} span(s) not reaching the root or outside its interval` : "",
+			structure.unexpectedSpans ? `${structure.unexpectedSpans} span(s) beyond the ${declared} declared` : "",
+		].filter(Boolean);
+		return { valid: false, issue: faults.join(", ") || "the exported rows are not a span tree", danglingLinks: structure.danglingLinks };
+	} catch (error) {
+		return { valid: false, issue: `the trace could not be read back: ${error instanceof Error ? error.message : String(error)}`, danglingLinks: 0 };
+	}
+}
+
+/** `verify` reads the export back once the root is written; strict runs set it, ordinary flows do not and pay nothing. */
+export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, traceLabel?: string, context?: FlowTraceContext, verify = false): TraceSink {
 	const ids = context ? stableTraceIds(context, mode) : { traceId: randomUUID().replace(/-/g, ""), rootSpanId: spanId() };
 	const { traceId, rootSpanId } = ids;
 	const storedContext = context ? storedTraceContext(context, policy) : undefined;
@@ -404,6 +446,10 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				spans,
 				...(storedContext ? { context: storedContext } : {}),
 				...(writeError ? { error: sanitizeText(writeError, { ...policy, recordContent: true }, 1024) } : {}),
+				// Read back only when asked. An ordinary flow pays nothing; a strict run
+				// must not report evidence whose shape it never checked, and the root is
+				// on disk by now, so what the file holds is a complete tree or it is not.
+				...(verify ? { structure: await readBackStructure(traceFile, traceId, expectedSpans) } : {}),
 			};
 		},
 	};

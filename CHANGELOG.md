@@ -29,6 +29,18 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   graph node is runnable even though some nodes are incomplete". The wave loop
   keeps that cause for a cycle that strands only later nodes.
 
+### Changed
+
+- A run with `traceStrict` now reads its own exported trace back before
+  reporting the result as evidence-backed. **Trace health** is the writer's
+  count — spans attempted against spans written — so it cannot see corruption
+  that lands after a successful write, and a trace no reader can follow still
+  passed the gate. The refusal text even directed readers to run
+  `npm run trace:report -- --strict` by hand to find exactly this. The gate now
+  performs that reading itself and refuses with `TRACE_INCOMPLETE` when the
+  export is complete but is not a span tree. Ordinary best-effort flows do not
+  read anything back and are unaffected.
+
 ### Fixed
 
 - Provider failures now show sanitized cause, runtime/context facts, and safe

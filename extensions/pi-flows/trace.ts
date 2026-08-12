@@ -159,10 +159,18 @@ export function traceSummaryAttributes(mode: FlowMode, params: any, output: Mode
  */
 export function traceEvidenceIssue(link: FlowTraceLink | undefined): string | null {
 	if (!link) return "no trace file was configured, so the run produced no coordination evidence";
-	if (link.health === "recorded") return null;
-	const spans = link.spans;
-	const counts = spans ? `${spans.observedSpans}/${spans.expectedSpans} spans observed, ${spans.droppedSpans} dropped, ${spans.failedExports} failed export(s)` : "span accounting unavailable";
-	return `trace ${link.traceId} is ${link.health} (${counts})${link.error ? `: ${link.error}` : ""}`;
+	if (link.health !== "recorded") {
+		const spans = link.spans;
+		const counts = spans ? `${spans.observedSpans}/${spans.expectedSpans} spans observed, ${spans.droppedSpans} dropped, ${spans.failedExports} failed export(s)` : "span accounting unavailable";
+		return `trace ${link.traceId} is ${link.health} (${counts})${link.error ? `: ${link.error}` : ""}`;
+	}
+	// Complete by the writer's count and still not a span tree: health is what
+	// the exporter knew while writing, so a strict run that asked for the file to
+	// be read back is refused on what the reading found, not on the count.
+	if (link.structure && !link.structure.valid) {
+		return `trace ${link.traceId} exported completely but is not a readable span tree: ${link.structure.issue ?? "structure invalid"}`;
+	}
+	return null;
 }
 
 /**
@@ -189,6 +197,6 @@ export function strictTraceError(link: FlowTraceLink | undefined, strict: boolea
 		"TRACE_INCOMPLETE",
 		"Flow completed but its coordination trace is incomplete, and strict tracing is on.",
 		`${issue}. Under traceStrict the run cannot be reported as evidence-backed.`,
-		"Check that the trace path is writable and has space, then rerun. This gate sees what the exporter failed to write; for spans lost after a successful write, read the file back with `npm run trace:report -- --strict`. Set traceStrict:false to accept best-effort tracing.",
+		"Check that the trace path is writable and has space, then rerun. This gate sees both what the exporter failed to write and what reading the finished file back proves about its shape; `npm run trace:report -- --strict` reruns that same reading over a trace you still have. Set traceStrict:false to accept best-effort tracing.",
 	);
 }

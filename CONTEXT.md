@@ -179,8 +179,12 @@ The recorded fact that a human approval point was reached and how it resolved. C
 _Avoid_: gate (a gate is machine-evaluated)
 
 **Trace health**:
-How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed.
+How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed. Strictly a *writer's* count — what the sink attempted against what reached the file — so it is answered while writing and cannot see anything that is only visible on reading the file back.
 _Avoid_: trace status, telemetry health
+
+**Trace structure**:
+Whether an exported trace is a span tree at all — a root that reaches itself, every span inside its parent's interval, no duplicate ids, no surplus rows. A second question from **Trace health**, deliberately not folded into it: a file can be written completely and still be unreadable as a tree, and reporting either answer as the other is how a strict run would certify evidence nothing checked. Answered only when a caller asks for the export to be read back, which today means a strict run; absent means unverified, never verified-fine.
+_Avoid_: trace health (that is the writer's count), trace validity
 
 **Execution success**:
 A run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct.
