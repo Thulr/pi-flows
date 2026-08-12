@@ -35,6 +35,7 @@ test("a child that stalls after a terminal provider error is terminated with CHI
 			category: "context_window",
 			diagnostic: "Codex error: Your input exceeds the context window of this model.",
 			termination: "grace_terminated",
+			contextTokens: 20,
 			contextWindow: 200_000,
 			thinkingVerified: false,
 		});
@@ -71,6 +72,7 @@ test("a terminal provider error followed by a prompt non-zero exit is CHILD_PROV
 		category: "context_window",
 		diagnostic: "Provider error: input exceeds this model context window.",
 		termination: "prompt_exit",
+		contextTokens: 20,
 		contextWindow: 200_000,
 		thinkingVerified: false,
 	});

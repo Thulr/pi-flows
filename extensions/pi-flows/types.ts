@@ -200,6 +200,7 @@ export interface ProviderFailure {
 	category: ProviderFailureCategory;
 	diagnostic: string;
 	termination: "prompt_exit" | "grace_terminated";
+	contextTokens?: number;
 	contextWindow?: number;
 	thinkingVerified: boolean;
 }

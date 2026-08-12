@@ -719,12 +719,13 @@ stalls, pi-flows terminates it after a short grace instead of waiting for
 not generic `CHILD_EXIT_NONZERO`. Collapsed views classify context, rate-limit,
 auth, capacity, or unknown failures and show diagnostic, model, thinking (marked
 requested when unverified), usage/cost/exit, and known context usage/limit;
-expanded detail remains capped.
+missing context telemetry shows `?`, and expanded detail remains capped.
 
 Fix by category: reduce input/use a larger context; wait/reduce concurrency;
 repair access; wait/change model/provider; or inspect details/status/access.
-Provider text remains redacted/capped. Never auto-replay; retry explicitly within
-remaining budget. Context, auth, and unknown failures are not retryable unchanged.
+Provider text remains redacted/capped, or omitted with `recordContent:false`.
+Never auto-replay; retry explicitly within remaining budget. Context, auth, and
+unknown failures are not retryable unchanged.
 `PI_FLOWS_ERROR_GRACE_MS` tunes stalled-child grace (default 30000ms).
 
 ### `TRACE_INCOMPLETE`

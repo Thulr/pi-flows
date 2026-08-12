@@ -101,7 +101,7 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => runDisplayName(result).length)));
 	data.results.forEach((result, index) => {
 		const failed = entryResultFailed(result);
-		const provider = result.providerFailure ? providerFailurePresentation(result.providerFailure, result.usage?.contextTokens, result.thinking, result.exitCode) : undefined;
+		const provider = result.providerFailure ? providerFailurePresentation(result.providerFailure, result.thinking, result.exitCode) : undefined;
 		const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
 		// The duration track carries the row's outcome color so a failed child
 		// reads as a red bar at a glance, not only as a trailing error code.

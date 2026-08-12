@@ -32,7 +32,7 @@ test("provider diagnostics classify into category-specific recovery", () => {
 });
 
 test("provider failure presentation preserves zero context values", () => {
-	const view = providerFailurePresentation({ category: "unknown", diagnostic: "failure", termination: "prompt_exit", contextWindow: 0, thinkingVerified: false }, 0, undefined, 1);
+	const view = providerFailurePresentation({ category: "unknown", diagnostic: "failure", termination: "prompt_exit", contextTokens: 0, contextWindow: 0, thinkingVerified: false }, undefined, 1);
 	assert.equal(view.context, "ctx:0/0");
 });
 
@@ -50,6 +50,7 @@ test("collapsed live and durable surfaces expose a sanitized context failure bef
 	const run = result.details.results[0];
 	assert.equal(run.providerFailure?.category, "context_window");
 	assert.equal(run.providerFailure?.termination, "prompt_exit");
+	assert.equal(run.providerFailure?.contextTokens, 20);
 	assert.equal(run.providerFailure?.contextWindow, 200_000);
 	assert.match(run.providerFailure?.diagnostic ?? "", /\[REDACTED_SECRET\]/);
 	assert.match(run.providerFailure?.diagnostic ?? "", /\[REDACTED_EMAIL\]/);
@@ -83,6 +84,27 @@ test("collapsed live and durable surfaces expose a sanitized context failure bef
 	assert.match(expanded, /\[REDACTED_SECRET\]/);
 	assert.match(expanded, /Output truncated/);
 	assert.doesNotMatch(expanded, new RegExp(rawSecret));
+});
+
+test("content-disabled failures persist no provider prose and missing usage stays unknown", async () => {
+	const entries: Array<{ data: any }> = [];
+	const privateDiagnostic = "input exceeds the context window for PRIVATE_WORKSPACE_7429";
+	const { result } = await runFlow(
+		{ agent: "analyst", task: "inspect a bounded issue", recordContent: false },
+		{ analyst: { reply: "partial", stopReason: "error", errorMessage: privateDiagnostic, exitCode: 1, omitUsage: true } },
+		{ api: { appendEntry: (_type: string, data: any) => entries.push({ data }) } },
+	);
+	const run = result.details.results[0];
+	assert.equal(run.providerFailure?.category, "context_window", "classification still uses the transient provider diagnostic");
+	assert.equal(run.providerFailure?.diagnostic, "[content omitted: recordContent=false]");
+	assert.equal(run.providerFailure?.contextTokens, undefined);
+	assert.doesNotMatch(JSON.stringify({ details: result.details, entry: entries[0]?.data }), /PRIVATE_WORKSPACE_7429/);
+
+	const live = flowLiveBoardLines(result.details, theme, { tick: 0, redactSecrets: true }).join("\n");
+	const card = flowCardLines(entries[0]?.data, theme, true).join("\n");
+	assert.match(live, /ctx:\?\/200k/);
+	assert.match(card, /ctx:\?\/200k/);
+	assert.doesNotMatch(`${live}\n${card}`, /PRIVATE_WORKSPACE_7429/);
 });
 
 test("an unpinned or bare-pinned assistant model keeps provider identity for duplicate-id context lookup", async () => {

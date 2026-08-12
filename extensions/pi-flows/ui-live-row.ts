@@ -92,7 +92,7 @@ function totalsText(details: FlowDetails): string {
 function runUsageText(result: FlowRunResult): string {
 	if (!result.providerFailure) return formatUsage(result.usage, result.model, result.durationMs);
 	const base = formatUsage({ ...result.usage, contextTokens: 0 }, result.model, result.durationMs);
-	const provider = providerFailurePresentation(result.providerFailure, result.usage.contextTokens, result.thinking, result.exitCode);
+	const provider = providerFailurePresentation(result.providerFailure, result.thinking, result.exitCode);
 	return [base, provider.context, provider.thinking].filter(Boolean).join(" ");
 }
 
@@ -143,7 +143,7 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	const visibleRows = Math.min(total, COLLAPSED_AGENT_ROWS) + (total > COLLAPSED_AGENT_ROWS ? 1 : 0);
 	const nameWidth = Math.min(28, Math.max(4, ...details.results.map((item) => runDisplayName(item).length)));
 	details.results.slice(0, COLLAPSED_AGENT_ROWS).forEach((item, index) => {
-		const provider = item.providerFailure ? providerFailurePresentation(item.providerFailure, item.usage.contextTokens, item.thinking, item.exitCode) : undefined;
+		const provider = item.providerFailure ? providerFailurePresentation(item.providerFailure, item.thinking, item.exitCode) : undefined;
 		let line = `${theme.fg("dim", treeGuide(index, visibleRows))} ${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", runDisplayName(item).padEnd(nameWidth))}`;
 		const usage = runUsageText(item);
 		if (usage) line += ` ${theme.fg("dim", usage)}`;

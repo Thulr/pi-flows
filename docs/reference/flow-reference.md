@@ -279,7 +279,8 @@ omitting all ceiling fields means uncapped execution rather than a hidden
 default.
 
 For `CHILD_PROVIDER_ERROR`, collapsed views show category, diagnostic,
-runtime/context facts, and safe recovery; expansion keeps redacted/capped detail.
+runtime/context facts (`?` when telemetry is absent), and safe recovery;
+expansion keeps redacted/capped detail or withholds prose under `recordContent:false`.
 
 ### Trace export (observability)
 
