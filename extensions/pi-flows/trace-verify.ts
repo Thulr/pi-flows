@@ -62,6 +62,14 @@ export async function verifyExportedTrace(traceFile: string, traceId: string, ex
 			}
 		}
 		const structure = traceStructure(own, { declared: attempted, present: true });
+		// Accept by the report's own disjunction (trace-report.ts), not a subset of
+		// it: `invalid` covers connectivity, attribution, and containment, while
+		// duplicates, id-less rows, and surplus are separate counters there — and a
+		// verifier that ignores any of them certifies evidence the downstream
+		// strict report then rejects. Surplus is the live case: a concurrent
+		// writer under this trace id leaves the tree connected, so only the count
+		// sees it.
+		const broken = structure.invalid || structure.duplicateSpans > 0 || structure.malformedSpans > 0 || structure.unexpectedSpans > 0;
 		const missing = Math.max(0, attempted - own.length);
 		// The root records what the run attempted; if the persisted copy disagrees
 		// with what this run actually attempted, the row carrying every other
@@ -70,7 +78,7 @@ export async function verifyExportedTrace(traceFile: string, traceId: string, ex
 		// `trace:report --strict` would validate against.
 		const persisted = structure.root ? optionalNumericAttr(structure.root, "flow.trace.expected_spans") : undefined;
 		const expectationRewritten = structure.root !== undefined && persisted !== declared;
-		if (!structure.invalid && missing === 0 && unreadable === 0 && !expectationRewritten) return { valid: true };
+		if (!broken && missing === 0 && unreadable === 0 && !expectationRewritten) return { valid: true };
 		const faults = [
 			missing ? `${missing} of ${attempted} attempted row(s) missing` : "",
 			unreadable ? `${unreadable} of this trace's row(s) no longer parse` : "",

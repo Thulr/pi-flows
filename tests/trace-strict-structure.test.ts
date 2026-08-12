@@ -251,3 +251,38 @@ test("a verified strict trace passes the read-back report whole", async () => {
 	assert.equal(report.incompleteTraces, 0, "no surplus row and no broken dependency shape");
 	assert.equal(traceReportIsComplete(report), true, "and the strict report gate admits the trace the runtime admitted");
 });
+
+/**
+ * The verifier and the report must accept by the same criteria, or the live
+ * gate certifies evidence the downstream gate rejects. A surplus row — a
+ * concurrent writer reusing this trace id — leaves the tree connected and
+ * contained, so `structure.invalid` stays false; only `unexpectedSpans` sees
+ * it, and the report refuses on that field. The verifier has to as well.
+ */
+test("a surplus row under this trace id fails verification, not just the report", async () => {
+	const file = traceFile();
+	const context = { runId: "r2", caseId: "c2", trialId: "t2" };
+	const { rootSpanId } = stableTraceIds(context, "single");
+	const traceId = stableTraceIds(context, "single").traceId;
+
+	const sink = makeTraceSink(file, "single", policy, { context, verify: true });
+	sink.record(settledRun("recon"), { scope: { key: "single" } });
+	// A well-formed, connected, contained row this run never wrote, appended by
+	// a concurrent writer under the same stable trace id.
+	const now = Date.now();
+	writeFileSync(file, `${JSON.stringify({
+		trace_id: traceId,
+		span_id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		parent_span_id: rootSpanId,
+		name: "flow.single.child (foreign)",
+		start_time_unix_ms: now,
+		end_time_unix_ms: now,
+		status: { code: "OK" },
+		attributes: { "flow.span_role": "child" },
+	})}\n`, { flag: "a" });
+
+	const link = await sink.finalize({ ok: true });
+	assert.equal(link.structure!.valid, false, "rows the run never claimed are not its evidence");
+	assert.match(link.structure!.issue!, /beyond the/, link.structure!.issue);
+	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE", "so the live gate refuses what the report gate would");
+});
