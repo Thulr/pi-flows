@@ -207,7 +207,16 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// expectation was rewritten after the fact, which these rows alone look
 		// consistent with.
 		const structureRevoked = eventSpans.some((span) => boolAttr(span, "flow.trace.structure_revoked"));
-		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked && !structure.invalid;
+		// A root written by a strict run says its claims are contingent on a
+		// verification it could not perform yet. Honouring them needs the positive
+		// certification, not merely the absence of a complaint: a fault only the
+		// writer could see — a rewritten `expected_spans` that leaves these rows
+		// looking consistent — is invisible here, and the append that would have
+		// reported it is exactly what a full disk loses. Absent certification the
+		// claim is withheld rather than granted.
+		const verificationPending = boolAttr(rootSpan, "flow.trace.verification_pending");
+		const structureCertified = eventSpans.some((span) => boolAttr(span, "flow.trace.structure_verified"));
+		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked && !structure.invalid && (!verificationPending || structureCertified);
 		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
 		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
 		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");

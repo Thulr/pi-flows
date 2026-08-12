@@ -186,3 +186,36 @@ test("an invalid trace is not a verified outcome even with no revocation event",
 	assert.equal(spans.some((span: any) => span.attributes["flow.trace.structure_revoked"]), false, "no revocation was written");
 	assert.equal(summarizeTraceSpans(spans, 0, "t.jsonl").verifiedOutcomes, 0, "the rows alone are enough to withhold the claim");
 });
+
+/**
+ * The case the negative correction could not cover. A rewritten
+ * `flow.trace.expected_spans` leaves the rows themselves a perfectly consistent
+ * tree, so a reader cannot see the fault — only the run that wrote them knows
+ * what it attempted. If the append carrying that knowledge fails, nothing
+ * durable records it. So a strict root declares its claims contingent and the
+ * reader withholds them without positive certification: every way the
+ * certification can fail to arrive reads as unverified, not as verified.
+ */
+test("a strict root's claim is withheld when no certification arrives", () => {
+	const rootSpanId = "cccccccccccccccccccccccccccccccc";
+	const strictRoot = (extra: Record<string, unknown>) => ({
+		trace_id: "t2", span_id: rootSpanId, parent_span_id: null, name: "flow.parallel",
+		start_time_unix_ms: 1, end_time_unix_ms: 100, status: { code: "OK" },
+		attributes: {
+			"flow.span_role": "root", "flow.mode": "parallel",
+			"flow.outcome_verified": true, "flow.outcome_success": true,
+			"flow.trace.expected_spans": 1, "flow.trace.verification_pending": true,
+			...extra,
+		},
+	});
+	const certification = {
+		trace_id: "t2", span_id: "dddddddddddddddddddddddddddddddd", parent_span_id: rootSpanId,
+		name: "flow.parallel.event.trace.structure_verified",
+		start_time_unix_ms: 50, end_time_unix_ms: 50, status: { code: "OK" },
+		attributes: { "flow.span_role": "event", "flow.event_kind": "validation", "flow.trace.structure_verified": true },
+	};
+	const summarize = (spans: unknown[]) => summarizeTraceSpans(spans as Parameters<typeof summarizeTraceSpans>[0], 0, "t.jsonl").verifiedOutcomes;
+
+	assert.equal(summarize([strictRoot({})]), 0, "no certification: the contingent claim is not honoured");
+	assert.equal(summarize([strictRoot({}), certification]), 1, "certified: the claim stands");
+});

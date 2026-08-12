@@ -395,6 +395,12 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.trace.failed_exports": health.failedExports,
 					"flow.trace.stage_count": stages.size,
 					"flow.trace.health": traceHealthStatus({ ...health, expectedSpans, observedSpans }, true),
+					// A strict run cannot verify itself before this row exists, so the row
+					// says its own claims are contingent. A reader then requires positive
+					// certification to honour them, which makes every way the certification
+					// can fail to arrive — including the append for it failing — read as
+					// unverified rather than verified.
+					...(verify ? { "flow.trace.verification_pending": true } : {}),
 				},
 			});
 			await rootAppend;
@@ -406,23 +412,24 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// already-failing trace gains this row, so no healthy export is pushed past
 			// its own declared count by it.
 			const structure = verify ? await verifyExportedTrace(traceFile, traceId, expectedSpans, policy) : undefined;
-			if (structure && !structure.valid) {
+			if (structure) {
+				const certified = structure.valid;
 				await append({
 					trace_id: traceId,
 					span_id: spanId(),
 					parent_span_id: rootSpanId,
-					name: `flow.${mode}.event.trace.structure_invalid`,
+					name: `flow.${mode}.event.trace.${certified ? "structure_verified" : "structure_invalid"}`,
 					start_time_unix_ms: end,
 					end_time_unix_ms: end,
-					status: { code: "ERROR" },
+					status: { code: certified ? "OK" : "ERROR" },
 					attributes: {
 						"openinference.span.kind": "CHAIN",
 						"flow.span_role": "event",
 						"flow.event_kind": "validation",
-						"flow.event_name": "trace.structure_invalid",
+						"flow.event_name": `trace.${certified ? "structure_verified" : "structure_invalid"}`,
 						"flow.mode": mode,
 						"flow.trace_label": storedTraceLabel,
-						"flow.trace.structure_revoked": true,
+						...(certified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }),
 						"flow.depends_on_span_ids": rootSpanId,
 						...storedAttributes({ "flow.trace.structure_issue": structure.issue }),
 						...traceContextAttributes(storedContext),
