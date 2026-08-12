@@ -4,9 +4,9 @@ import { Container, Image, Text, getCapabilities, hyperlink } from "@earendil-wo
 import { budgetDisclosureLines, formatBudgetCeiling } from "./budget-disclosure.ts";
 import { expandSafePath, safePath } from "./sanitize.ts";
 import { formatTokens } from "./trace.ts";
-import type { BudgetCeiling, FlowMode, UsageStats } from "./types.ts";
+import { formatFlowError, type BudgetCeiling, type FlowError, type FlowMode, type ProviderFailure, type ThinkingLevel, type UsageStats } from "./types.ts";
 import { flowGanttPng, type GanttImage } from "./ui-gantt.ts";
-import { chip, formatDuration, runDisplayName, treeGuide } from "./ui-style.ts";
+import { chip, formatDuration, providerFailurePresentation, runDisplayName, treeGuide } from "./ui-style.ts";
 
 /**
  * The durable flow card: the `pi-flows.run` session entry (the entry type
@@ -24,8 +24,11 @@ export interface FlowRunEntryResult {
 	exitCode: number;
 	stopReason?: string;
 	errorCode?: string;
+	error?: FlowError;
+	providerFailure?: ProviderFailure;
 	budgetCeiling?: BudgetCeiling;
 	model?: string;
+	thinking?: ThinkingLevel;
 	durationMs?: number;
 	/** Epoch ms the child spawned, when the writer recorded it; lets the card draw the real concurrency timeline. */
 	startedAtMs?: number;
@@ -98,6 +101,7 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => runDisplayName(result).length)));
 	data.results.forEach((result, index) => {
 		const failed = entryResultFailed(result);
+		const provider = result.providerFailure ? providerFailurePresentation(result.providerFailure, result.thinking, result.exitCode) : undefined;
 		const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
 		// The duration track carries the row's outcome color so a failed child
 		// reads as a red bar at a glance, not only as a trailing error code.
@@ -108,16 +112,24 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		const tokens = (result.usage?.input || 0) + (result.usage?.output || 0);
 		if (tokens) meta.push(`${formatTokens(tokens)} tok`);
 		if (result.usage?.cost) meta.push(`$${result.usage.cost.toFixed(4)}`);
+		if (provider) meta.push(provider.context);
 		if (result.model) meta.push(result.model);
+		if (provider) meta.push(provider.thinking);
+		else if (result.thinking) meta.push(`thinking:${result.thinking}`);
 		if (meta.length) line += ` ${theme.fg("muted", meta.join(" · "))}`;
 		if (failed && !expanded) {
-			const failure = `${result.errorCode ?? result.stopReason ?? "failed"}${result.budgetCeiling ? ` · ${formatBudgetCeiling(result.budgetCeiling)}` : ""}`;
+			const providerReason = provider ? ` · ${provider.reason}` : "";
+			const failure = `${result.errorCode ?? result.stopReason ?? "failed"}${result.budgetCeiling ? ` · ${formatBudgetCeiling(result.budgetCeiling)}` : ""}${providerReason}`;
 			line += ` ${theme.fg("error", failure)}`;
 		}
 		lines.push(line);
+		if (!expanded && provider) lines.push(`  ${theme.fg("warning", provider.recovery)}`);
 		if (expanded && failed) {
 			const bindingBudget = result.budgetCeiling ? ` · ${formatBudgetCeiling(result.budgetCeiling)}` : "";
 			lines.push(`  ${theme.fg("error", `${result.errorCode ?? "failed"}${bindingBudget}${result.stopReason ? ` · stop: ${result.stopReason}` : ""} · exit ${result.exitCode}`)}`);
+			if (result.error) {
+				for (const detail of formatFlowError(result.error).split("\n")) lines.push(`  ${theme.fg("muted", detail)}`);
+			}
 		}
 	});
 

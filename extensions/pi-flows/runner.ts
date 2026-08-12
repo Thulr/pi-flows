@@ -16,6 +16,7 @@ import { ChildBudgets } from "./runner-budget.ts";
 import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
 import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
 import { buildChildArgs, getPiInvocation } from "./commands.ts";
+import { describeProviderFailure, modelContextWindow, providerFailureGuidance, providerFailureRetryable } from "./provider-failure.ts";
 
 /**
  * The ACL translation for child transcript messages: project the child
@@ -249,6 +250,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		let terminalErrorTimer: NodeJS.Timeout | null = null;
 		let terminalErrorSeen = false;
 		let terminalProviderError = false;
+		let terminalProviderDiagnostic: string | undefined;
+		let terminalProviderContextTokens: number | undefined;
 		spawnedAt = Date.now();
 		const run = await runJsonlProcess({
 			command: invocation.command,
@@ -268,12 +271,17 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
 						if (childBudgets.chargeTurn(turnUsage, !message.errorMessage).terminate) controls.terminate();
-						if (!result.model && message.model) result.model = message.model;
+						if (message.model && (!result.model || result.model === message.model)) {
+							const p = (message as { provider?: unknown }).provider;
+							result.model = typeof p === "string" ? `${p}/${message.model}` : message.model;
+						}
 						if (message.stopReason) result.stopReason = message.stopReason;
-						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
-						// A terminal provider error (e.g. context window exceeded) marks
-						// the child as expected-to-exit; only a later HEALTHY assistant
-						// turn (no errorMessage) proves recovery and clears the mark.
+						if (message.errorMessage) {
+							terminalProviderDiagnostic = sanitizeText(message.errorMessage, policy);
+							terminalProviderContextTokens = Number.isFinite(message.usage?.totalTokens) ? message.usage?.totalTokens : undefined;
+							result.errorMessage = policy.recordContent ? terminalProviderDiagnostic : "[content omitted: recordContent=false]";
+						}
+						// Only a later healthy assistant turn proves recovery.
 						if (message.errorMessage && message.stopReason === "error") terminalErrorSeen = true;
 						else if (!message.errorMessage) terminalErrorSeen = false;
 					}
@@ -293,11 +301,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 					emitUpdate();
 				}
 
-				// After a terminal error the child should exit on its own; each event
-				// restarts the grace (momentary progress is not recovery), so the
-				// timer is never left disarmed while the error state stands. When it
-				// fires, the stalled child is terminated instead of hanging until
-				// timeoutMs.
+				// Progress restarts the grace but does not prove provider recovery.
 				if (terminalErrorTimer) {
 					clearTimeout(terminalErrorTimer);
 					terminalErrorTimer = null;
@@ -352,27 +356,27 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			);
 			result.errorMessage = result.error.message;
 		} else if (terminalProviderError || terminalErrorSeen) {
-			// Two ways a terminal provider error ends a run: the child stalls and the
-			// grace timer terminates it (`terminalProviderError`), or the child does
-			// the normal thing and exits on its own with the error still active
-			// (`terminalErrorSeen` — a later healthy turn would have cleared it, and
-			// none arrived before the process closed). Both are
-			// the provider's failure; letting the second fall through to the generic
-			// exit-code branch replaced the one actionable diagnostic the run
-			// produced with "returned a non-zero exit code" (#110).
+			// Preserve the provider outcome whether the child exits or the grace kills it.
 			result.stopReason = "error";
 			result.exitCode = result.exitCode === 0 ? 1 : result.exitCode;
+			const diagnostic = terminalProviderDiagnostic ?? result.errorMessage ?? "unknown provider error";
+			result.providerFailure = describeProviderFailure(
+				diagnostic,
+				terminalProviderError ? "grace_terminated" : "prompt_exit",
+				terminalProviderContextTokens,
+				modelContextWindow(options.roster, result.model),
+				choice.thinking !== undefined && choice.thinkingVerified,
+			);
+			if (!policy.recordContent) result.providerFailure.diagnostic = result.errorMessage!;
 			result.error = flowError(
 				"CHILD_PROVIDER_ERROR",
-				`Flow agent "${agent.name}" hit a terminal provider error: ${result.errorMessage ?? "unknown provider error"}`,
-				// The cause stays truthful per path: claiming a grace-period
-				// termination for a child that exited promptly would send whoever
-				// debugs it toward the wrong mechanism.
+				`Flow agent "${agent.name}" hit a terminal provider error: ${result.providerFailure.diagnostic}`,
+				// Keep prompt exit distinct from grace termination.
 				terminalProviderError
 					? "The child's model provider returned a terminal error and the child process stalled instead of exiting, so pi-flows terminated it after the error grace period rather than waiting out timeoutMs."
 					: "The child's model provider returned a terminal error and the child process then exited on its own.",
-				`Narrow the task or the material the child reads, or pick a larger-context model via tier/model, then retry.${terminalProviderError ? " PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000)." : ""}`,
-				true,
+				`${providerFailureGuidance(result.providerFailure.category)}${terminalProviderError ? " PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000)." : ""}`,
+				providerFailureRetryable(result.providerFailure.category),
 			);
 			result.errorMessage = result.error.message;
 		} else if (run.spawnErrorMessage) {

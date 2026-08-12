@@ -28,8 +28,17 @@ test("a child that stalls after a terminal provider error is terminated with CHI
 		assert.ok(Date.now() - startedAt < 30_000, "flow must end at the error grace, not holdOpenMs");
 		const run = result.details.results[0];
 		assert.equal(run.error?.code, "CHILD_PROVIDER_ERROR");
+		assert.equal(run.error?.retryable, false, "context overflow cannot succeed unchanged");
 		assert.equal(run.stopReason, "error");
 		assert.notEqual(run.exitCode, 0);
+		assert.deepEqual(run.providerFailure, {
+			category: "context_window",
+			diagnostic: "Codex error: Your input exceeds the context window of this model.",
+			termination: "grace_terminated",
+			contextTokens: 20,
+			contextWindow: 200_000,
+			thinkingVerified: false,
+		});
 		// The tokens the child burned before dying stay visible to the ledger.
 		assert.equal(run.usage.cost, 0.0001);
 		assert.match(text, /CHILD_PROVIDER_ERROR/);
@@ -57,7 +66,16 @@ test("a terminal provider error followed by a prompt non-zero exit is CHILD_PROV
 	);
 	const run = result.details.results[0];
 	assert.equal(run.error?.code, "CHILD_PROVIDER_ERROR", `prompt provider exit was misclassified as ${run.error?.code}: ${run.error?.cause ?? ""}`);
+	assert.equal(run.error?.retryable, false, "context overflow cannot succeed unchanged");
 	assert.equal(run.stopReason, "error");
+	assert.deepEqual(run.providerFailure, {
+		category: "context_window",
+		diagnostic: "Provider error: input exceeds this model context window.",
+		termination: "prompt_exit",
+		contextTokens: 20,
+		contextWindow: 200_000,
+		thinkingVerified: false,
+	});
 	assert.match(run.error?.message ?? "", /context window/, "the provider's diagnostic must survive into the structured error");
 	// The cause must be truthful: this child exited promptly; pi-flows never
 	// terminated a stalled process.

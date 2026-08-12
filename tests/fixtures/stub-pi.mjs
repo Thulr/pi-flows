@@ -28,6 +28,7 @@ const sysIdx = argv.indexOf("--append-system-prompt");
 const sysPath = sysIdx >= 0 ? argv[sysIdx + 1] : null;
 const modelIdx = argv.indexOf("--model");
 const model = modelIdx >= 0 ? argv[modelIdx + 1] : "stub-model";
+let reportedModel = model;
 
 const task = taskPath && existsSync(taskPath) ? readFileSync(taskPath, "utf8") : "";
 const systemPrompt = sysPath && existsSync(sysPath) ? readFileSync(sysPath, "utf8") : "";
@@ -68,6 +69,7 @@ let delayBeforeReplyMs = 0;
 let holdOpenMs = 0;
 let stopReason = "endTurn";
 let errorMessage;
+let provider;
 let extraEvents = [];
 let omitCost = false;
 let omitUsage = false;
@@ -89,6 +91,8 @@ if (reply && typeof reply === "object") {
 	holdOpenMs = Number.isFinite(reply.holdOpenMs) ? Math.max(0, Number(reply.holdOpenMs)) : 0;
 	if (typeof reply.stopReason === "string") stopReason = reply.stopReason;
 	if (typeof reply.errorMessage === "string") errorMessage = reply.errorMessage;
+	if (typeof reply.provider === "string") provider = reply.provider;
+	if (typeof reply.reportedModel === "string") reportedModel = reply.reportedModel;
 	if (Array.isArray(reply.extraEvents)) extraEvents = reply.extraEvents;
 	omitCost = reply.omitCost === true;
 	omitUsage = reply.omitUsage === true;
@@ -104,7 +108,8 @@ const event = {
 		role: "assistant",
 		content: [{ type: "text", text: String(reply) }],
 		...(omitUsage ? {} : { usage: { input: 12, output: 8, cacheRead: 0, cacheWrite: 0, ...(omitCost ? {} : { cost: { total: 0.0001 } }), totalTokens: 20 } }),
-		model,
+		model: reportedModel,
+		...(provider ? { provider } : {}),
 		stopReason,
 		...(errorMessage ? { errorMessage } : {}),
 	},

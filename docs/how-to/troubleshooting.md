@@ -270,6 +270,10 @@ wrap-up response then fails envelope validation, the run is reported failed
 with that validation error (`RETURN_ENVELOPE_INVALID`, naming the role) —
 notice delivery alone never renders as a success.
 
+`maxCostUsd` caps cost, `maxTokens` cumulative input+output, and
+`maxGeneratedTokens` output only — not total/input, context, or cost. Compact
+views label these scopes.
+
 Fix: do not automatically replay the same Flow unchanged. Ask for direction, or
 make a material, visible change that stays within the configured ceiling:
 narrow the task or reduce fan-out (fewer voters, subtasks, or `maxIterations`).
@@ -709,18 +713,20 @@ stuck auth/provider cases, run a smaller no-model smoke check first.
 
 ### `CHILD_PROVIDER_ERROR`
 
-Cause: the child's model provider returned a terminal error (for example
-"input exceeds the context window of this model"). Usually the child process
-then exits on its own; if it stalls instead, pi-flows terminates it after a
-short grace period rather than letting it hang until `timeoutMs`. The error's
-`cause` says which of the two happened, and the provider's own diagnostic is
-preserved in the error message — this is not a generic `CHILD_EXIT_NONZERO`
-even though the process exited non-zero.
+Cause: the provider returned a terminal error. The child normally exits; if it
+stalls, pi-flows terminates it after a short grace instead of waiting for
+`timeoutMs`. The structured cause retains that path and the provider diagnostic,
+not generic `CHILD_EXIT_NONZERO`. Collapsed views classify context, rate-limit,
+auth, capacity, or unknown failures and show diagnostic, model, thinking (marked
+requested when unverified), usage/cost/exit, and known context usage/limit;
+missing context telemetry shows `?`, and expanded detail remains capped.
 
-Fix: narrow the task or the material the child reads (a smaller issue thread,
-fewer files), or pick a larger-context model via `tier`/`model`, then retry.
-For the stalled case, `PI_FLOWS_ERROR_GRACE_MS` tunes the grace period
-(default 30000ms).
+Fix by category: reduce input/use a larger context; wait/reduce concurrency;
+repair access; wait/change model/provider; or inspect details/status/access.
+Provider text remains redacted/capped, or omitted with `recordContent:false`.
+Never auto-replay; retry explicitly within remaining budget. Context, auth, and
+unknown failures are not retryable unchanged.
+`PI_FLOWS_ERROR_GRACE_MS` tunes stalled-child grace (default 30000ms).
 
 ### `TRACE_INCOMPLETE`
 

@@ -263,6 +263,10 @@ call or mode policy requires fresh approval.
 
 `maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero. A delegation contract may independently impose a **contract budget**, including a tighter timeout.
 
+The dimensions are independent: `maxCostUsd` is cost, `maxTokens` cumulative
+input+output, and `maxGeneratedTokens` output only — not total/input, context,
+or cost. Compact disclosure says so.
+
 At 80% of any ceiling that would stop the live run (cost, generated output, or a contract's total tokens), the child receives a **wrap-up notice**: a steered message asking it to stop working and emit its return envelope now, recording unfinished work as skipped coverage and `unresolvedQuestions` with status `partial`. The transition belongs to the ceiling, not to one child: when any child's settled turn crosses the threshold of a shared budget, every live child governed by that budget is steered at the same moment, and a child spawned while a shared ceiling is already inside the window is steered at spawn, before its first turn. A child that crosses the ceiling after the notice demonstrably reached it (the steered message is seen echoed into its session) is still terminated — the spend stays bounded — but the run settles gracefully (`stopReason: "budget_wrap_up"`, exit 0) and its final output proceeds to envelope validation instead of being forfeited as `BUDGET_EXCEEDED`. That graceful settlement is provisional for a contracted child: delivery of the notice is not compliance, and a wrap-up response that then fails envelope validation revokes the success — the run reports the validation error (for example `RETURN_ENVELOPE_INVALID`, naming the failing role) rather than rendering as ✓ beside a flow error. To make honoring the notice achievable, a contracted child's notice also states the exact envelope requirement: the `contractId` it must carry and the return-envelope format its final message must be. A ceiling crossed before any wrap-up could be requested (one turn jumping from below 80% past 100%), or whose notice never reached the child (for example with child extensions disabled), keeps the hard-stop semantics. The wrap-up request (`child.wrap_up`, with `flow.budget.wrapup_delivered`) and a graceful exhaustion (`child.exhausted` with `flow.budget.graceful`) are recorded as budget events on the trace. Size ceilings as runaway backstops (~3x the expected normal spend), not as governors inside the normal cost range — a ceiling that sits inside the normal range converts routine runs into losses.
 
 The generated tool call, collapsed live row, and durable Flow card
@@ -273,6 +277,10 @@ separate. The durable entry persists these static ceiling definitions, so a
 reload. Timeout-only contracts are not presented as cost/token ceilings, and
 omitting all ceiling fields means uncapped execution rather than a hidden
 default.
+
+For `CHILD_PROVIDER_ERROR`, collapsed views show category, diagnostic,
+runtime/context facts (`?` when telemetry is absent), and safe recovery;
+expansion keeps redacted/capped detail or withholds prose under `recordContent:false`.
 
 ### Trace export (observability)
 
@@ -983,7 +991,7 @@ lesson-augmented.
 - `presets`: discovered preset summaries and their declared override keys.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
-- `results`: child run summaries with redacted task preview, usage, duration, stderr, optional validated return `envelope`, and structured error when applicable. On error, `results` still contains every run that completed before the failure — a graph that ran two waves before hitting a cycle reports those runs' usage and cost alongside `error`.
+- `results`: redacted child summaries with usage, duration, stderr, optional validated `envelope`, and structured error. Provider errors add sanitized classification/diagnostic, termination path, known context window, and thinking-level verification; prior runs retain usage/cost.
 
 ## Structured errors
 
