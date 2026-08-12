@@ -197,6 +197,6 @@ export function strictTraceError(link: FlowTraceLink | undefined, strict: boolea
 		"TRACE_INCOMPLETE",
 		"Flow completed but its coordination trace is incomplete, and strict tracing is on.",
 		`${issue}. Under traceStrict the run cannot be reported as evidence-backed.`,
-		"Check that the trace path is writable and has space, then rerun. This gate sees both what the exporter failed to write and what reading the finished file back proves about its shape; `npm run trace:report -- --strict` reruns that same reading over a trace you still have. Set traceStrict:false to accept best-effort tracing.",
+		"Check that the trace path is writable and has space, then rerun. This gate sees both what the exporter failed to write and what reading the finished file back proves about its shape; `npm run trace:report -- --strict` runs the same validator over a trace you still have, reading its expectation off the root span rather than from the run that wrote it. Set traceStrict:false to accept best-effort tracing.",
 	);
 }

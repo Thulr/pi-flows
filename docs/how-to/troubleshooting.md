@@ -736,10 +736,14 @@ complete evidence. Either no `traceFile` was configured at all, or the export
 settled with dropped spans / failed writes — for example an unwritable trace
 path or a full disk.
 
-The in-process gate sees what the exporter failed to write. Spans lost *after* a
-successful write (a truncating concurrent writer, a rotated file) are caught on
-the read-back side instead, by comparing the root span's declared expectation
-against the rows present: `npm run trace:report -- --strict <trace-file>`.
+The in-process gate sees both. It counts what the exporter failed to write, and
+before reporting a result it reads its own export back, so spans lost *after* a
+successful write (a truncating concurrent writer, a rotated file) fail the call
+too rather than passing on the writer's count. It reads only the rows carrying
+its own `trace_id`, so flows sharing one file do not judge each other.
+`npm run trace:report -- --strict <trace-file>` runs the same validator over a
+trace you still have, taking its expectation from the root span on disk instead
+of from the run that wrote it.
 
 Note what this is *not*: it is never a statement about the agents. The children
 may all have succeeded. Strict mode only refuses to report the run as

@@ -116,8 +116,6 @@ export interface FlowTraceStructure {
 	valid: boolean;
 	/** Why it is not a span tree. Absent when it is one. */
 	issue?: string;
-	/** Dependency links naming a unit no span registered. Not corruption — an honest record of a handler bug — so it is counted rather than failed on. */
-	danglingLinks: number;
 }
 
 export interface FlowTraceLink {

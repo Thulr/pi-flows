@@ -244,7 +244,7 @@ export class Flow {
 		// A strict run asks the sink to read its own export back at finalize: it is
 		// about to stake a verdict on this evidence, so it is the one caller that
 		// must not take write-time accounting as proof the file is a span tree.
-		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, call.policy, call.params.traceLabel, call.params.traceContext, traceStrict) : undefined;
+		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, call.policy, { traceLabel: call.params.traceLabel, context: call.params.traceContext, verify: traceStrict }) : undefined;
 		trust.record(sink?.event);
 		const handoffs = createHandoffConsumer({ params: call.params, mode, policy: call.policy, defaultCwd: prepared.runDefaultCwd, recordEvent: sink?.event });
 		// A refusal from here on has a trace of its own; without the link a caller

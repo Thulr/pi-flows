@@ -28,18 +28,22 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   become runnable", where it previously reported the wave loop's "No remaining
   graph node is runnable even though some nodes are incomplete". The wave loop
   keeps that cause for a cycle that strands only later nodes.
-
-### Changed
-
 - A run with `traceStrict` now reads its own exported trace back before
   reporting the result as evidence-backed. **Trace health** is the writer's
   count — spans attempted against spans written — so it cannot see corruption
   that lands after a successful write, and a trace no reader can follow still
-  passed the gate. The refusal text even directed readers to run
+  passed the gate; the refusal text even directed readers to run
   `npm run trace:report -- --strict` by hand to find exactly this. The gate now
   performs that reading itself and refuses with `TRACE_INCOMPLETE` when the
-  export is complete but is not a span tree. Ordinary best-effort flows do not
-  read anything back and are unaffected.
+  export is complete but is not a span tree. It reads only the rows carrying
+  its own `trace_id`, so flows sharing one trace file — an eval setting
+  `PI_FLOWS_TRACE_FILE` once for a whole run — do not judge each other.
+  Ordinary best-effort flows read nothing back and are unaffected.
+
+  This does **not** make trace health see un-emitted coordination events. A
+  mode that records no state transition, retry or approval still writes a
+  valid tree and still passes, because the expectation the reading measures
+  against is what the sink attempted, not what the mode owed.
 
 ### Fixed
 

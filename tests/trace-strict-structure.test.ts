@@ -36,7 +36,7 @@ function settledRun(agent: string): FlowRunResult {
 
 test("a verified strict export reports a valid structure and passes the gate", async () => {
 	const file = traceFile();
-	const sink = makeTraceSink(file, "single", policy, undefined, undefined, true);
+	const sink = makeTraceSink(file, "single", policy, { verify: true });
 	sink.record(settledRun("recon"), { scope: { key: "single" } });
 	const link = await sink.finalize({ ok: true });
 
@@ -105,12 +105,12 @@ test("an unverified link is not treated as a verified one", () => {
 test("flows sharing one trace file each verify only their own trace", async () => {
 	const file = traceFile();
 
-	const first = makeTraceSink(file, "single", policy, undefined, undefined, true);
+	const first = makeTraceSink(file, "single", policy, { verify: true });
 	first.record(settledRun("recon"), { scope: { key: "single" } });
 	const firstLink = await first.finalize({ ok: true });
 	assert.equal(firstLink.structure!.valid, true);
 
-	const second = makeTraceSink(file, "single", policy, undefined, undefined, true);
+	const second = makeTraceSink(file, "single", policy, { verify: true });
 	second.record(settledRun("analyst"), { scope: { key: "single" } });
 	const secondLink = await second.finalize({ ok: true });
 

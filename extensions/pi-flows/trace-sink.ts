@@ -85,18 +85,6 @@ const STRUCTURAL_CAP = 8 * 1024;
 const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids", "flow.depends_on_unresolved"]);
 
 /**
- * Emit redacted OpenInference-shaped spans to JSONL: a root span, one span per
- * child run, lazily-created stage spans that keep waves/rounds/phases from
- * flattening into the root, and zero-duration coordination-event spans for the
- * boundaries that are not child runs at all (artifacts, state transitions,
- * retries, approvals, budget changes, validation results, handoffs).
- *
- * Export is best-effort by default and never throws into a flow. What it does
- * do is *account* for itself: every span it tries to write is counted, so the
- * returned link can say how much evidence actually landed and a strict caller
- * can refuse to treat an incomplete trace as proof.
- */
-/**
  * Read the finished export back and say whether it is a span tree. The strict
  * gate used to answer only from write-time accounting, which cannot see a
  * child parented to a stage nobody wrote or a root that does not reach itself
@@ -114,6 +102,12 @@ const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.
  * fail it for a surplus that is simply someone else's trace. A row the flow
  * wrote that no longer parses is caught by the count instead: the trace comes
  * back shorter than it declared.
+ *
+ * One residual it does not close: stableTraceIds derives the id from the trace
+ * context and mode, so two calls sharing both — a project-preset refusal and
+ * the retry after it, into one file — write two roots under one id, and this
+ * reading cannot tell them apart. It reports duplicates, which is honest about
+ * what the file holds and wrong about the run.
  */
 async function readBackStructure(traceFile: string, traceId: string, declared: number): Promise<FlowTraceStructure> {
 	try {
@@ -121,7 +115,7 @@ async function readBackStructure(traceFile: string, traceId: string, declared: n
 		const own = parsed.spans.filter((span) => span.trace_id === traceId);
 		const structure = traceStructure(own, { declared, present: true });
 		const missing = Math.max(0, declared - own.length);
-		if (!structure.invalid && missing === 0) return { valid: true, danglingLinks: structure.danglingLinks };
+		if (!structure.invalid && missing === 0) return { valid: true };
 		const faults = [
 			missing ? `${missing} of ${declared} declared row(s) missing or unreadable` : "",
 			structure.root ? "" : "no root span",
@@ -129,14 +123,34 @@ async function readBackStructure(traceFile: string, traceId: string, declared: n
 			structure.malformedSpans ? `${structure.malformedSpans} span(s) not reaching the root or outside its interval` : "",
 			structure.unexpectedSpans ? `${structure.unexpectedSpans} span(s) beyond the ${declared} declared` : "",
 		].filter(Boolean);
-		return { valid: false, issue: faults.join(", ") || "the exported rows are not a span tree", danglingLinks: structure.danglingLinks };
+		return { valid: false, issue: faults.join(", ") || "the exported rows are not a span tree" };
 	} catch (error) {
-		return { valid: false, issue: `the trace could not be read back: ${error instanceof Error ? error.message : String(error)}`, danglingLinks: 0 };
+		return { valid: false, issue: `the trace could not be read back: ${error instanceof Error ? error.message : String(error)}` };
 	}
 }
 
-/** `verify` reads the export back once the root is written; strict runs set it, ordinary flows do not and pay nothing. */
-export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, traceLabel?: string, context?: FlowTraceContext, verify = false): TraceSink {
+/** What a caller configures beyond the file, the mode, and the capture policy. An object rather than three more positional slots, so a caller asking only for `verify` does not have to pass two `undefined`s to reach it. */
+export interface TraceSinkOptions {
+	traceLabel?: string;
+	context?: FlowTraceContext;
+	/** Read the export back once the root is written. Strict runs set it; ordinary flows do not, and pay nothing. */
+	verify?: boolean;
+}
+
+/**
+ * Emit redacted OpenInference-shaped spans to JSONL: a root span, one span per
+ * child run, lazily-created stage spans that keep waves/rounds/phases from
+ * flattening into the root, and zero-duration coordination-event spans for the
+ * boundaries that are not child runs at all (artifacts, state transitions,
+ * retries, approvals, budget changes, validation results, handoffs).
+ *
+ * Export is best-effort by default and never throws into a flow. What it does
+ * do is *account* for itself: every span it tries to write is counted, so the
+ * returned link can say how much evidence actually landed and a strict caller
+ * can refuse to treat an incomplete trace as proof.
+ */
+export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, options: TraceSinkOptions = {}): TraceSink {
+	const { traceLabel, context, verify = false } = options;
 	const ids = context ? stableTraceIds(context, mode) : { traceId: randomUUID().replace(/-/g, ""), rootSpanId: spanId() };
 	const { traceId, rootSpanId } = ids;
 	const storedContext = context ? storedTraceContext(context, policy) : undefined;
