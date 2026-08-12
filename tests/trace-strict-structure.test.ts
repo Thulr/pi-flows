@@ -13,7 +13,7 @@ import path from "node:path";
 import test from "node:test";
 import { makeTraceSink } from "../extensions/pi-flows/trace-sink.ts";
 import { stableTraceIds } from "../extensions/pi-flows/trace-identity.mjs";
-import { parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
+import { parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceEvidenceIssue, traceReportIsComplete } from "../extensions/pi-flows/trace.ts";
 import type { FlowRunResult } from "../extensions/pi-flows/types.ts";
 
 const policy = { recordContent: true, redactSecrets: true };
@@ -218,4 +218,29 @@ test("a strict root's claim is withheld when no certification arrives", () => {
 
 	assert.equal(summarize([strictRoot({})]), 0, "no certification: the contingent claim is not honoured");
 	assert.equal(summarize([strictRoot({}), certification]), 1, "certified: the claim stands");
+});
+
+/**
+ * The certification is itself a row, written after the root froze its span
+ * accounting. Unless the root reserves its slot, every healthy strict trace
+ * reads back with one span beyond the declared count — and the strict report
+ * gate (`npm run trace:report -- --strict`, the release-trace gate) rejects
+ * exactly the traces that verified clean. The event's own shape matters the
+ * same way: a partial dependency attribute reads as corruption to
+ * `dependenciesHold`, so a malformed certification would invalidate the very
+ * tree it certifies.
+ */
+test("a verified strict trace passes the read-back report whole", async () => {
+	const file = traceFile();
+	const sink = makeTraceSink(file, "parallel", policy, { verify: true });
+	sink.record(settledRun("recon"), { scope: { key: "a" } });
+	sink.record(settledRun("analyst"), { scope: { key: "b" } });
+	const link = await sink.finalize({ ok: true }, { "flow.outcome_verified": true, "flow.outcome_success": true });
+	assert.equal(link.structure!.valid, true, `the run itself verified: ${link.structure!.issue}`);
+
+	const parsed = parseTraceJsonl(readFileSync(file, "utf8"));
+	const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, file);
+	assert.equal(report.verifiedOutcomes, 1, "the certified claim is honoured");
+	assert.equal(report.incompleteTraces, 0, "no surplus row and no broken dependency shape");
+	assert.equal(traceReportIsComplete(report), true, "and the strict report gate admits the trace the runtime admitted");
 });

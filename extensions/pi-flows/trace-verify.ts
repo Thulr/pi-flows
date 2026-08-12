@@ -36,7 +36,14 @@ import { optionalNumericAttr, traceStructure, type TraceSpanRecord } from "./tra
  * reading cannot tell them apart. It reports duplicates, which is honest about
  * what the file holds and wrong about the run.
  */
-export async function verifyExportedTrace(traceFile: string, traceId: string, declared: number, policy: CapturePolicy): Promise<FlowTraceStructure> {
+/**
+ * `attempted` is what the run has written when this reading happens — the rows
+ * that must be present now. `declared` is what the root says, one more than
+ * attempted, because the root reserves a slot for the certification this
+ * reading produces afterwards.
+ */
+export async function verifyExportedTrace(traceFile: string, traceId: string, expectation: { attempted: number; declared: number }, policy: CapturePolicy): Promise<FlowTraceStructure> {
+	const { attempted, declared } = expectation;
 	try {
 		// Only this trace's rows are parsed. In the eval setup one file accumulates
 		// every flow of a run, so parsing all of it on each finalize would cost
@@ -54,8 +61,8 @@ export async function verifyExportedTrace(traceFile: string, traceId: string, de
 				unreadable += 1;
 			}
 		}
-		const structure = traceStructure(own, { declared, present: true });
-		const missing = Math.max(0, declared - own.length);
+		const structure = traceStructure(own, { declared: attempted, present: true });
+		const missing = Math.max(0, attempted - own.length);
 		// The root records what the run attempted; if the persisted copy disagrees
 		// with what this run actually attempted, the row carrying every other
 		// accounting attribute has been rewritten, which is exactly the after-write
@@ -65,13 +72,13 @@ export async function verifyExportedTrace(traceFile: string, traceId: string, de
 		const expectationRewritten = structure.root !== undefined && persisted !== declared;
 		if (!structure.invalid && missing === 0 && unreadable === 0 && !expectationRewritten) return { valid: true };
 		const faults = [
-			missing ? `${missing} of ${declared} declared row(s) missing` : "",
+			missing ? `${missing} of ${attempted} attempted row(s) missing` : "",
 			unreadable ? `${unreadable} of this trace's row(s) no longer parse` : "",
 			structure.root ? "" : "no root span",
-			expectationRewritten ? `the root now declares ${persisted ?? "no"} expected span(s) where the run wrote ${declared}` : "",
+			expectationRewritten ? `the root now declares ${persisted ?? "no"} expected span(s) where the run declared ${declared}` : "",
 			structure.duplicateSpans ? `${structure.duplicateSpans} duplicate span id(s)` : "",
 			structure.malformedSpans ? `${structure.malformedSpans} span(s) not reaching the root or outside its interval` : "",
-			structure.unexpectedSpans ? `${structure.unexpectedSpans} span(s) beyond the ${declared} declared` : "",
+			structure.unexpectedSpans ? `${structure.unexpectedSpans} span(s) beyond the ${attempted} attempted` : "",
 		].filter(Boolean);
 		return { valid: false, issue: faults.join(", ") || "the exported rows are not a span tree" };
 	} catch (error) {

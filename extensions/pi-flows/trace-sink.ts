@@ -363,6 +363,14 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// covers everything including this row.
 			const expectedSpans = health.expectedSpans + 1;
 			const observedSpans = health.observedSpans + 1;
+			// A verifying run reserves one more slot: the certification the reader
+			// requires is itself a row, and it can only be written after this root has
+			// frozen the count. Without the reservation every healthy strict trace
+			// reads back one span over its declaration, and the strict report gate
+			// rejects exactly the traces that verified clean. A certification that
+			// never lands leaves the trace one row short of its declaration, which
+			// reads as loss — the failing-closed direction.
+			const declaredExpectation = expectedSpans + (verify ? 1 : 0);
 			const preRootHealth: FlowTraceHealth = {
 				expectedSpans,
 				observedSpans,
@@ -388,7 +396,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					...storedAttributes(rootAttributes),
 					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
 					"flow.execution_success": status.ok,
-					"flow.trace.expected_spans": expectedSpans,
+					"flow.trace.expected_spans": declaredExpectation,
 					"flow.trace.observed_spans": observedSpans,
 					"flow.trace.dropped_spans": health.droppedSpans,
 					"flow.trace.redacted_spans": health.redactedSpans,
@@ -411,7 +419,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// budget wrap-up does, and the report applies the correction. Only an
 			// already-failing trace gains this row, so no healthy export is pushed past
 			// its own declared count by it.
-			const structure = verify ? await verifyExportedTrace(traceFile, traceId, expectedSpans, policy) : undefined;
+			const structure = verify ? await verifyExportedTrace(traceFile, traceId, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
 			if (structure) {
 				const certified = structure.valid;
 				await append({
@@ -430,14 +438,15 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 						"flow.mode": mode,
 						"flow.trace_label": storedTraceLabel,
 						...(certified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }),
-						"flow.depends_on_span_ids": rootSpanId,
 						...storedAttributes({ "flow.trace.structure_issue": structure.issue }),
 						...traceContextAttributes(storedContext),
 					},
 				});
 			}
 			const spans: FlowTraceHealth = {
-				expectedSpans,
+				// The declared count, so a landed certification reads as observed ==
+				// expected rather than as one span of surplus.
+				expectedSpans: declaredExpectation,
 				observedSpans: health.observedSpans,
 				droppedSpans: health.droppedSpans,
 				redactedSpans: health.redactedSpans,
