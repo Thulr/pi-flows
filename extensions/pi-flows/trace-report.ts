@@ -196,12 +196,18 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const executionSuccess =
 			optionalBoolAttr(rootSpan, "flow.execution_success") ??
 			((root?.status?.code ?? "OK") === "OK" && !childSpans.some(childFailed));
-		// A strict run writes its root before it can read the export back, so a
-		// structural failure found afterwards arrives as a linked revocation, the
-		// same way a revoked wrap-up does. Without applying it here the report would
-		// keep counting a run the gate refused as a verified outcome.
+		// A strict run writes its root before it can read the export back, so the
+		// root can claim a verified outcome the run then failed to evidence. Two
+		// independent corrections, because each covers the other's blind spot.
+		// `structure.invalid` is derived here from the rows themselves and needs
+		// nothing to have been written, so it survives the append that carries the
+		// revocation failing — a full disk is precisely when both the evidence and
+		// the correction go missing. The revocation event covers the converse: a
+		// fault only the writer could see, such as a root whose declared
+		// expectation was rewritten after the fact, which these rows alone look
+		// consistent with.
 		const structureRevoked = eventSpans.some((span) => boolAttr(span, "flow.trace.structure_revoked"));
-		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked;
+		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked && !structure.invalid;
 		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
 		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
 		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");

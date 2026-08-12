@@ -160,3 +160,29 @@ test("a failed verification revokes the root's verified-outcome claim", async ()
 		"because the revocation is on the trace, linked to the root the gate could not unsay",
 	);
 });
+
+/**
+ * The correction must not depend on the write that carries it. A disk that
+ * filled after the root was written is exactly when the revocation append
+ * fails too — and `append` is best-effort by design, so it swallows that. The
+ * report therefore derives the verdict from the rows it can see, and counts no
+ * verified outcome for a trace that does not hold together, revocation or not.
+ */
+test("an invalid trace is not a verified outcome even with no revocation event", () => {
+	const rootSpanId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+	const spans = [
+		{
+			trace_id: "t1", span_id: rootSpanId, parent_span_id: null, name: "flow.parallel",
+			start_time_unix_ms: 1, end_time_unix_ms: 100, status: { code: "OK" },
+			attributes: { "flow.span_role": "root", "flow.mode": "parallel", "flow.outcome_verified": true, "flow.outcome_success": true, "flow.trace.expected_spans": 2 },
+		},
+		{
+			trace_id: "t1", span_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", parent_span_id: "0000000000000000", name: "orphan",
+			start_time_unix_ms: 2, end_time_unix_ms: 3, status: { code: "OK" },
+			attributes: { "flow.span_role": "child", "flow.mode": "parallel" },
+		},
+	] as unknown as Parameters<typeof summarizeTraceSpans>[0];
+
+	assert.equal(spans.some((span: any) => span.attributes["flow.trace.structure_revoked"]), false, "no revocation was written");
+	assert.equal(summarizeTraceSpans(spans, 0, "t.jsonl").verifiedOutcomes, 0, "the rows alone are enough to withhold the claim");
+});
