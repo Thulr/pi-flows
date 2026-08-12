@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { PI_FLOWS_VERSION, ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
 import { describeModelRoster, usableModels } from "./model-roster.ts";
 import { saveRosterOverride, type RosterOverride } from "./roster-config.ts";
-import { runFailed, runSettled } from "./run.ts";
+import { runFailed, runSettled, runState } from "./run.ts";
 import { safePath, sanitizeText } from "./sanitize.ts";
 
 /**
@@ -61,7 +61,10 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 		mode: details.mode,
 		preset: details.preset?.name,
 		presetOutcome: details.presetOutcome,
-		status: details.error ? "error" : hasNonCleanPresetOutcome(details) || details.results.some(runFailed) ? "partial" : "ok",
+		// Partial covers both halves of "not every run completed": one that failed,
+		// and one the flow never settled. Asking `runFailed` alone would call the
+		// latter ok and put a ✓ header over the row's own ◌.
+		status: details.error ? "error" : hasNonCleanPresetOutcome(details) || details.results.some((result) => runState(result) !== "completed") ? "partial" : "ok",
 		errorCode: details.error?.code,
 		budgetCeilings: details.budgetCeilings,
 		// Trace pointer travels with the entry so the flow card can link evidence

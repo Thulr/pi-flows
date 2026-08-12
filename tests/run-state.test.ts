@@ -9,12 +9,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runFailed, runSettled, runState, type RunStateFields } from "../extensions/pi-flows/run.ts";
 import { isFailed } from "../extensions/pi-flows/sanitize.ts";
-import { flowProgressText } from "../extensions/pi-flows/ui.ts";
+import { appendFlowSessionEntry, flowProgressText } from "../extensions/pi-flows/ui.ts";
 import { flowCardLines, type FlowRunEntryData, type FlowRunEntryResult } from "../extensions/pi-flows/ui-flow-card.ts";
 import { ganttLayout } from "../extensions/pi-flows/ui-gantt.ts";
 import type { FlowDetails, FlowRunResult } from "../extensions/pi-flows/types.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
+
+/** The entry the production writer actually persists for these details, so header and rows are judged against one source. */
+function persistedEntry(details: FlowDetails): FlowRunEntryData {
+	let captured: FlowRunEntryData | undefined;
+	appendFlowSessionEntry({ appendEntry: (_kind: string, data: unknown) => { captured = data as FlowRunEntryData; } } as any, details);
+	assert.ok(captured, "appendFlowSessionEntry wrote no entry");
+	return captured;
+}
 
 /**
  * The divergence case, and the reason the shared derivation exists: a child
@@ -98,14 +106,22 @@ test("a run the flow never settled is neither ✓ nor ✗ on the durable card", 
 	const results = [
 		{ agent: "recon", agentSource: "package", exitCode: 0, durationMs: 4000 },
 		{ agent: "redteam", agentSource: "package", exitCode: -1 },
-	] as FlowRunEntryResult[];
+	] as unknown as FlowRunResult[];
 	assert.equal(runState(results[1]!), "running");
 
-	const lines = flowCardLines({ version: "test", mode: "parallel", status: "partial", results }, theme, false);
+	// Built by the real writer, not hand-assembled: a test that supplies its own
+	// `status` can pass while the writer that produces it in production still
+	// says "ok", which is exactly how the header kept a verdict the rows had
+	// already dropped.
+	const entry = persistedEntry({ mode: "parallel", results } as FlowDetails);
+	assert.equal(entry.status, "partial", "a flow holding an unsettled run has not finished ok");
+
+	const lines = flowCardLines(entry, theme, false);
 	const row = lines.find((line) => line.includes("redteam"))!;
 	assert.ok(row.includes("◌"), `an unsettled run renders as unsettled, not as success:\n${row}`);
 	assert.equal(row.includes("✓"), false, "and never as a green check");
 	assert.equal(row.includes("✗"), false, "nor as a failure it did not reach");
+	assert.equal(lines[0]!.includes("✓ ok"), false, `the header cannot claim ok over that row:\n${lines[0]}`);
 });
 
 test("a clean run is clean on every surface", () => {
