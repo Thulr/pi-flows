@@ -239,6 +239,13 @@ test("a verified strict trace passes the read-back report whole", async () => {
 	assert.equal(link.structure!.valid, true, `the run itself verified: ${link.structure!.issue}`);
 
 	const parsed = parseTraceJsonl(readFileSync(file, "utf8"));
+	// The persisted root and the returned link carry the same counters — the
+	// documented contract (flow-reference) — so an OTel consumer reading the
+	// attributes sees no false missing-span signal for a trace that verified.
+	const root = parsed.spans.find((span) => span.parent_span_id === null)!;
+	assert.equal(root.attributes!["flow.trace.expected_spans"], link.spans!.expectedSpans, "root and link agree on expected");
+	assert.equal(root.attributes!["flow.trace.observed_spans"], link.spans!.observedSpans, "root and link agree on observed");
+	assert.equal(root.attributes!["flow.trace.observed_spans"], root.attributes!["flow.trace.expected_spans"], "and a healthy trace observes what it declared");
 	const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, file);
 	assert.equal(report.verifiedOutcomes, 1, "the certified claim is honoured");
 	assert.equal(report.incompleteTraces, 0, "no surplus row and no broken dependency shape");

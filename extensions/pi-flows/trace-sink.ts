@@ -371,6 +371,13 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// never lands leaves the trace one row short of its declaration, which
 			// reads as loss — the failing-closed direction.
 			const declaredExpectation = expectedSpans + (verify ? 1 : 0);
+			// The certification is counted the way the root counts itself: in the
+			// write that precedes it. Both root counters then share one convention —
+			// the rows this finalize will have written when it completes — and match
+			// the link's on the healthy path. Neither append's own failure is
+			// recordable in a row already written; the link (which counts real
+			// appends) and the file's own shortfall carry that truth.
+			const declaredObserved = observedSpans + (verify ? 1 : 0);
 			const preRootHealth: FlowTraceHealth = {
 				expectedSpans,
 				observedSpans,
@@ -397,7 +404,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
 					"flow.execution_success": status.ok,
 					"flow.trace.expected_spans": declaredExpectation,
-					"flow.trace.observed_spans": observedSpans,
+					"flow.trace.observed_spans": declaredObserved,
 					"flow.trace.dropped_spans": health.droppedSpans,
 					"flow.trace.redacted_spans": health.redactedSpans,
 					"flow.trace.failed_exports": health.failedExports,
