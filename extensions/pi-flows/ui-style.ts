@@ -1,7 +1,7 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { providerFailureGuidance, providerFailureReason } from "./provider-failure.ts";
-import { formatTokens } from "./trace-report.ts";
+import { formatTokens } from "./trace.ts";
 import type { ProviderFailure } from "./types.ts";
 
 /**
