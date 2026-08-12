@@ -143,5 +143,17 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // troubleshooting, example, and changelog text that keep the public contract
 // synchronized. The file set remains 106 files with no tests/, scripts/, or
 // evals/; this is growth in already-packaged public surfaces, not an inclusion.
-assert.ok(pack.unpackedSize < 1_145_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_149_500 for the one run-state derivation: run.ts gains the
+// exported RunState/RunStateFields vocabulary and runState/runSettled/runFailed,
+// the flow card gains its third verdict glyph, and each carries the JSDoc this
+// repo's standards require on a Core surface three views now render through. It
+// is a net addition even after deleting the two duplicate predicates it replaces
+// (entryResultFailed, flowAgentState) and collapsing ten exitCode === -1 sentinel
+// sites into one. The prose was trimmed twice before raising, and the remaining
+// rationale lives in CONTEXT.md and docs/domain-review.json, neither packaged.
+// Headroom is ~460 B, matching the previous raise rather than loosening the
+// ratchet. Same verification: 107 files, none from tests/, scripts/, or evals/ —
+// growth in an already-packaged public surface, not an inclusion. (The two
+// comments above say 106; both were already 107 when written.)
+assert.ok(pack.unpackedSize < 1_149_500, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

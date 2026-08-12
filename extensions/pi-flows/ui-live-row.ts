@@ -1,8 +1,9 @@
 import { getMarkdownTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { budgetDisclosureLines, collectBudgetCeilings, exhaustedBudgetText } from "./budget-disclosure.ts";
-import { flowAgentActivity, flowAgentState } from "./inspector.ts";
-import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
+import { flowAgentActivity } from "./inspector.ts";
+import { runFailed, runSettled, runState } from "./run.ts";
+import { capModelVisibleText, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
 import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
@@ -67,7 +68,7 @@ export function ensureRowTicker(
 }
 
 function agentIcon(result: FlowRunResult, index: number, tick: number, theme: Theme): string {
-	return stateIcon(theme, flowAgentState(result), tick, index * 2);
+	return stateIcon(theme, runState(result), tick, index * 2);
 }
 
 function headerIcon(details: FlowDetails, settled: number, failed: number, tick: number, theme: Theme, live = false): string {
@@ -114,8 +115,8 @@ export function flowCallLines(args: unknown, theme: Theme, label: string, scope:
 
 /** Collapsed-view lines for a run in progress or settled. First line is the header. */
 export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: LiveBoardOptions): string[] {
-	const settled = details.results.filter((item) => item.exitCode !== -1).length;
-	const failed = details.results.filter((item) => item.exitCode !== -1 && isFailed(item)).length;
+	const settled = details.results.filter(runSettled).length;
+	const failed = details.results.filter(runFailed).length;
 	const total = details.results.length;
 	const outstanding = settled < total;
 	const running = options.live === true || outstanding;
@@ -131,7 +132,7 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		// The bar measures settled-ness, so it belongs to outstanding runs — not to a
 		// flow that is between stages with nothing currently running. Each cell is
 		// one run in its state color, so the bar also says *which* runs are out.
-		if (outstanding) header += ` ${runStateBar(theme, details.results.map(flowAgentState))}`;
+		if (outstanding) header += ` ${runStateBar(theme, details.results.map(runState))}`;
 		const totals = totalsText(details);
 		if (totals) header += ` ${theme.fg("muted", totals)}`;
 	}
@@ -147,7 +148,7 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		let line = `${theme.fg("dim", treeGuide(index, visibleRows))} ${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", runDisplayName(item).padEnd(nameWidth))}`;
 		const usage = runUsageText(item);
 		if (usage) line += ` ${theme.fg("dim", usage)}`;
-		const state = flowAgentState(item);
+		const state = runState(item);
 		if (state === "running") line += `  ${theme.fg("muted", currentActivityText(item, options.redactSecrets))}`;
 		else if (state === "queued") line += `  ${theme.fg("muted", "queued")}`;
 		else if (state === "failed") {
@@ -201,7 +202,7 @@ export function renderFlowResultRow(
 		return new Text(text?.type === "text" ? (text.text ?? "") : summarizeAgentsFn((details.agents ?? []) as FlowAgent[], details.discoveryIssues ?? []), 0, 0);
 	}
 
-	const settled = details.results.filter((item) => item.exitCode !== -1).length;
+	const settled = details.results.filter(runSettled).length;
 	const running = options.isPartial || settled < details.results.length;
 	ensureRowTicker(context.state, running, context.invalidate);
 
@@ -222,7 +223,7 @@ export function renderFlowResultRow(
 		return new Text(lines.join("\n"), 0, 0);
 	}
 
-	const failed = details.results.filter((item) => item.exitCode !== -1 && isFailed(item)).length;
+	const failed = details.results.filter(runFailed).length;
 	const container = new Container();
 	container.addChild(new Text(`${headerIcon(details, settled, failed, context.state.tick ?? 0, theme)} ${theme.fg("toolTitle", theme.bold(`flow ${details.mode}`))}`, 0, 0));
 	const mdTheme = getMarkdownTheme();

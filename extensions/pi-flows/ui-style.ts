@@ -1,5 +1,6 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { RunState } from "./run.ts";
 import { providerFailureGuidance, providerFailureReason } from "./provider-failure.ts";
 import { formatTokens } from "./trace.ts";
 import type { ProviderFailure } from "./types.ts";
@@ -17,8 +18,8 @@ import type { ProviderFailure } from "./types.ts";
  * without a TUI.
  */
 
-/** The four states a child run can be in, as every surface names them. */
-export type RunState = "queued" | "running" | "completed" | "failed";
+/** The four states a child run can be in. Owned by the Run (run.ts); the icon, color, and bar below only render that one derivation. */
+export type { RunState };
 
 /** The one display form for a run: `role (agent)` when a role exists, the agent name alone otherwise. Every surface labels a run through this. */
 export function runDisplayName(result: { agent: string; role?: string }): string {
