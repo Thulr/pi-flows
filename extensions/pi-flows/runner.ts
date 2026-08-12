@@ -273,7 +273,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						if (childBudgets.chargeTurn(turnUsage, !message.errorMessage).terminate) controls.terminate();
 						if (message.model && (!result.model || result.model === message.model)) {
 							const p = (message as { provider?: unknown }).provider;
-							result.model = typeof p === "string" && !message.model.includes("/") ? `${p}/${message.model}` : message.model;
+							result.model = typeof p === "string" ? `${p}/${message.model}` : message.model;
 						}
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) {

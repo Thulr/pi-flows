@@ -107,7 +107,7 @@ test("content-disabled failures persist no provider prose and missing usage stay
 	assert.doesNotMatch(`${live}\n${card}`, /PRIVATE_WORKSPACE_7429/);
 });
 
-test("an unpinned or bare-pinned assistant model keeps provider identity for duplicate-id context lookup", async () => {
+test("assistant model IDs keep provider identity for duplicate-id context lookup", async () => {
 	const cwd = await mkdtemp(path.join(os.tmpdir(), "pi-flows-provider-model-"));
 	const agentDir = path.join(cwd, ".pi", "flow-agents");
 	await mkdir(agentDir, { recursive: true });
@@ -116,17 +116,23 @@ test("an unpinned or bare-pinned assistant model keeps provider identity for dup
 		getAvailable: () => [
 			{ id: "shared", provider: "alpha", reasoning: true, contextWindow: 8_000, maxTokens: 1024, cost: { input: 1, output: 1 } },
 			{ id: "shared", provider: "beta", reasoning: true, contextWindow: 64_000, maxTokens: 1024, cost: { input: 1, output: 1 } },
+			{ id: "vendor/shared", provider: "alpha", reasoning: true, contextWindow: 16_000, maxTokens: 1024, cost: { input: 1, output: 1 } },
+			{ id: "vendor/shared", provider: "beta", reasoning: true, contextWindow: 96_000, maxTokens: 1024, cost: { input: 1, output: 1 } },
 		],
 	};
-	for (const model of [undefined, "shared"]) {
+	for (const { model, reportedModel, expectedModel, contextWindow } of [
+		{ model: undefined, reportedModel: "shared", expectedModel: "beta/shared", contextWindow: 64_000 },
+		{ model: "shared", reportedModel: "shared", expectedModel: "beta/shared", contextWindow: 64_000 },
+		{ model: undefined, reportedModel: "vendor/shared", expectedModel: "beta/vendor/shared", contextWindow: 96_000 },
+	]) {
 		const entries: Array<{ data: any }> = [];
 		const { result } = await runFlow(
 			{ agent: "bare", agentScope: "project", confirmProjectAgents: false, task: "exercise the provider identity seam", thinking: "max", ...(model ? { model } : {}) },
-			{ bare: { reply: "partial", stopReason: "error", errorMessage: "input exceeds the context window", exitCode: 1, provider: "beta", reportedModel: "shared" } },
+			{ bare: { reply: "partial", stopReason: "error", errorMessage: "input exceeds the context window", exitCode: 1, provider: "beta", reportedModel } },
 			{ cwd, projectTrusted: true, registry, model: { provider: "beta", id: "shared" }, api: { appendEntry: (_type: string, data: any) => entries.push({ data }) } },
 		);
-		assert.equal(result.details.results[0]?.model, "beta/shared");
-		assert.equal(result.details.results[0]?.providerFailure?.contextWindow, 64_000);
+		assert.equal(result.details.results[0]?.model, expectedModel);
+		assert.equal(result.details.results[0]?.providerFailure?.contextWindow, contextWindow);
 		assert.equal(result.details.results[0]?.providerFailure?.thinkingVerified, false);
 		assert.match(flowLiveBoardLines(result.details, theme, { tick: 0, redactSecrets: true }).join("\n"), /thinking:max \(requested\)/);
 		assert.match(flowCardLines(entries[0]?.data, theme, false).join("\n"), /thinking:max \(requested\)/);
