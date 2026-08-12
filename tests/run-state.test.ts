@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { runFailed, runSettled, runState, type RunStateFields } from "../extensions/pi-flows/run.ts";
 import { isFailed } from "../extensions/pi-flows/sanitize.ts";
 import { appendFlowSessionEntry, flowProgressText } from "../extensions/pi-flows/ui.ts";
-import { flowCardLines, type FlowRunEntryData, type FlowRunEntryResult } from "../extensions/pi-flows/ui-flow-card.ts";
+import { flowCardLines, type FlowRunEntryData } from "../extensions/pi-flows/ui-flow-card.ts";
 import { ganttLayout } from "../extensions/pi-flows/ui-gantt.ts";
 import type { FlowDetails, FlowRunResult } from "../extensions/pi-flows/types.ts";
 
@@ -62,26 +62,23 @@ test("runState names the four states, queued apart from running", () => {
  * this is the test that fails if any of them re-derives state for itself again.
  */
 test("the live row, the flow card, and the timeline agree about one run", () => {
-	const run = { agent: "redteam", agentSource: "package", exitCode: 0, stopReason: "error", durationMs: 8000, startedAtMs: 5000 };
-
+	// One `details`, carried to every surface the way production carries it: the
+	// live row reads it directly, and the card and timeline read what the writer
+	// persisted from it. Hand-assembling the entry instead would skip the writer,
+	// so the test could not catch it dropping the very field — `stopReason` —
+	// whose absence from the card's old predicate caused this bug.
 	const details = {
 		mode: "parallel",
 		results: [
-			{ agent: "recon", agentSource: "package", exitCode: 0, durationMs: 4000 },
-			run,
+			{ agent: "recon", agentSource: "package", exitCode: 0, durationMs: 4000, startedAtMs: 1000 },
+			{ agent: "redteam", agentSource: "package", exitCode: 0, stopReason: "error", durationMs: 8000, startedAtMs: 5000 },
 		] as unknown as FlowRunResult[],
 	} as FlowDetails;
 	assert.equal(flowProgressText(details), "1 failed", "the live row counts it against the flow");
 
-	const entry: FlowRunEntryData = {
-		version: "test",
-		mode: "parallel",
-		status: "partial",
-		results: [
-			{ agent: "recon", agentSource: "package", exitCode: 0, durationMs: 4000, startedAtMs: 1000 },
-			run,
-		] as FlowRunEntryResult[],
-	};
+	const entry = persistedEntry(details);
+	assert.equal(entry.results[1]!.stopReason, "error", "the writer persists the signal the card's verdict turns on");
+	assert.equal(entry.status, "partial", "and does not call the flow ok");
 	const collapsed = flowCardLines(entry, theme, false);
 	assert.ok(collapsed.some((line) => line.includes("✗")), `the card marks the run failed:\n${collapsed.join("\n")}`);
 	assert.ok(
