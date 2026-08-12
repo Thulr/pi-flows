@@ -95,8 +95,8 @@ test("the live row, the flow card, and the timeline agree about one run", () => 
 
 /**
  * A guard, not a regression test: no entry written today holds an unsettled
- * run, because the child protocol (jsonl-child.mjs) only ever finishes 0 or 1
- * and the -1 placeholders never leave the progress path. But asking the
+ * run: a process exit code is never negative (jsonl-child.mjs finishes with
+ * `code ?? 0`), so the -1 placeholders never leave the progress path. But asking the
  * settled question first turns "not failed" into a green check on a
  * two-verdict surface, so without this the card's honesty would rest on an
  * invariant three modules away — and the failure mode is a success claimed on

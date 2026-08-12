@@ -50,7 +50,17 @@ export function stateColor(state: RunState): "muted" | "warning" | "success" | "
 /** One glyph per run state; running animates on the shared spinner, staggered by `offset` so a fan-out shimmers instead of blinking in lockstep. */
 export function stateIcon(theme: Theme, state: RunState, tick = 0, offset = 0): string {
 	if (state === "running") return theme.fg("warning", spinnerFrame(tick, offset));
-	return theme.fg(stateColor(state), state === "queued" ? "◌" : state === "completed" ? "✓" : "✗");
+	return staticStateIcon(theme, state);
+}
+
+/**
+ * {@link stateIcon} without the animation, for a surface that re-renders from
+ * a stored entry and has no ticker to drive one. Both settled glyphs are the
+ * same as the live board's, so the durable card cannot mark a run with a
+ * symbol the row above it never used.
+ */
+export function staticStateIcon(theme: Theme, state: RunState): string {
+	return theme.fg(stateColor(state), state === "completed" ? "✓" : state === "failed" ? "✗" : "◌");
 }
 
 const EIGHTHS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"] as const;

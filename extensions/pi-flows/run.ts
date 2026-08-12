@@ -16,7 +16,12 @@ export interface RunStateFields {
 	stopReason?: string;
 	error?: { code: string };
 	errorCode?: string;
-	/** Absent until the runner resolves the agent — what tells a queued run from a running one. */
+	/**
+	 * `"unknown"` until the runner resolves the agent — the sentinel, not an
+	 * absence, is what tells a queued run from a running one. Optional only
+	 * because the timeline's slice does not carry the field at all, which is
+	 * why an unsettled run reads as `running` there rather than `queued`.
+	 */
 	agentSource?: string;
 }
 

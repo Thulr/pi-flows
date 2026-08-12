@@ -7,7 +7,7 @@ import { formatTokens } from "./trace.ts";
 import { runFailed, runState } from "./run.ts";
 import { formatFlowError, type BudgetCeiling, type FlowError, type FlowMode, type ProviderFailure, type ThinkingLevel, type UsageStats } from "./types.ts";
 import { flowGanttPng, type GanttImage } from "./ui-gantt.ts";
-import { chip, formatDuration, providerFailurePresentation, runDisplayName, treeGuide } from "./ui-style.ts";
+import { chip, formatDuration, providerFailurePresentation, runDisplayName, staticStateIcon, treeGuide } from "./ui-style.ts";
 
 /**
  * The durable flow card: the `pi-flows.run` session entry (the entry type
@@ -100,13 +100,12 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		const state = runState(result);
 		const failed = state === "failed";
 		const provider = result.providerFailure ? providerFailurePresentation(result.providerFailure, result.thinking, result.exitCode) : undefined;
-		// Three icons, not two. No entry written today holds an unsettled run —
-		// the child protocol only ever finishes 0 or 1, so the -1 placeholders
-		// stay on the progress path — but with two icons that safety rests on an
+		// Three glyphs, not two. No entry written today holds an unsettled run —
+		// a process exit code is never negative, so the -1 placeholders stay on
+		// the progress path — but with two glyphs that safety rests on an
 		// invariant three modules away, and the failure it would produce is a
-		// green check on the durable record. `stateIcon` animates; the card has
-		// no ticker, so it takes the same glyphs statically.
-		const icon = state === "completed" ? theme.fg("success", "✓") : failed ? theme.fg("error", "✗") : theme.fg("muted", "◌");
+		// green check on the durable record.
+		const icon = staticStateIcon(theme, state);
 		// The duration track carries the row's outcome color so a failed child
 		// reads as a red bar at a glance, not only as a trailing error code.
 		let line = `${theme.fg("dim", treeGuide(index, data.results.length))} ${icon} ${theme.fg("accent", runDisplayName(result).padEnd(nameWidth))}`;
