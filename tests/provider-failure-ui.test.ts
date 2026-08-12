@@ -7,6 +7,7 @@ import { classifyProviderDiagnostic, providerFailureGuidance, providerFailureRet
 import { MODEL_VISIBLE_OUTPUT_CAP } from "../extensions/pi-flows/types.ts";
 import { flowCardLines } from "../extensions/pi-flows/ui-flow-card.ts";
 import { flowLiveBoardLines } from "../extensions/pi-flows/ui-live-row.ts";
+import { providerFailurePresentation } from "../extensions/pi-flows/ui-style.ts";
 import { runFlow } from "./stub-harness.ts";
 
 const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
@@ -28,6 +29,11 @@ test("provider diagnostics classify into category-specific recovery", () => {
 			assert.doesNotMatch(providerFailureGuidance(category), /larger context|Reduce the child task\/input/i, `${category} must not receive context-window guidance`);
 		}
 	}
+});
+
+test("provider failure presentation preserves zero context values", () => {
+	const view = providerFailurePresentation({ category: "unknown", diagnostic: "failure", termination: "prompt_exit", contextWindow: 0 }, 0, undefined, 1);
+	assert.equal(view.context, "ctx:0/0");
 });
 
 test("collapsed live and durable surfaces expose a sanitized context failure before replay", async () => {
@@ -79,7 +85,7 @@ test("collapsed live and durable surfaces expose a sanitized context failure bef
 	assert.doesNotMatch(expanded, new RegExp(rawSecret));
 });
 
-test("an unpinned provider-qualified assistant model selects the right duplicate-id context limit", async () => {
+test("an unpinned or bare-pinned assistant model keeps provider identity for duplicate-id context lookup", async () => {
 	const cwd = await mkdtemp(path.join(os.tmpdir(), "pi-flows-provider-model-"));
 	const agentDir = path.join(cwd, ".pi", "flow-agents");
 	await mkdir(agentDir, { recursive: true });
@@ -90,12 +96,13 @@ test("an unpinned provider-qualified assistant model selects the right duplicate
 			{ id: "shared", provider: "beta", reasoning: true, contextWindow: 64_000, maxTokens: 1024, cost: { input: 1, output: 1 } },
 		],
 	};
-	const { result } = await runFlow(
-		{ agent: "bare", agentScope: "project", confirmProjectAgents: false, task: "exercise the provider identity seam" },
-		{ bare: { reply: "partial", stopReason: "error", errorMessage: "input exceeds the context window", exitCode: 1, provider: "beta", reportedModel: "shared" } },
-		{ cwd, projectTrusted: true, registry, model: { provider: "beta", id: "shared" } },
-	);
-
-	assert.equal(result.details.results[0]?.model, "beta/shared");
-	assert.equal(result.details.results[0]?.providerFailure?.contextWindow, 64_000);
+	for (const model of [undefined, "shared"]) {
+		const { result } = await runFlow(
+			{ agent: "bare", agentScope: "project", confirmProjectAgents: false, task: "exercise the provider identity seam", ...(model ? { model } : {}) },
+			{ bare: { reply: "partial", stopReason: "error", errorMessage: "input exceeds the context window", exitCode: 1, provider: "beta", reportedModel: "shared" } },
+			{ cwd, projectTrusted: true, registry, model: { provider: "beta", id: "shared" } },
+		);
+		assert.equal(result.details.results[0]?.model, "beta/shared");
+		assert.equal(result.details.results[0]?.providerFailure?.contextWindow, 64_000);
+	}
 });

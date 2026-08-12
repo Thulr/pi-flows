@@ -26,9 +26,9 @@ export function runDisplayName(result: { agent: string; role?: string }): string
 }
 
 export function providerFailurePresentation(failure: ProviderFailure, contextTokens: number | undefined, thinking: string | undefined, exitCode: number) {
-	const used = contextTokens ? formatTokens(contextTokens) : "?";
+	const used = contextTokens !== undefined ? formatTokens(contextTokens) : "?";
 	return {
-		context: `ctx:${used}${failure.contextWindow ? `/${formatTokens(failure.contextWindow)}` : ""}`,
+		context: `ctx:${used}${failure.contextWindow !== undefined ? `/${formatTokens(failure.contextWindow)}` : ""}`,
 		thinking: `thinking:${thinking ?? "unknown/pi-default"}`,
 		reason: `${providerFailureReason(failure)} · exit ${exitCode}`,
 		recovery: `recovery: ${providerFailureGuidance(failure.category)}`,

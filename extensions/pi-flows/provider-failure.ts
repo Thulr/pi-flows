@@ -9,9 +9,9 @@ const LABELS: Record<ProviderFailureCategory, string> = {
 };
 const GUIDANCE: Record<ProviderFailureCategory, string> = {
 	context_window: "Reduce input or choose a larger-context model; retry only explicitly within remaining budget.",
-	rate_limit: "Wait for the retry window or reduce concurrency; retry only explicitly within remaining budget.",
+	rate_limit: "Wait or reduce concurrency; retry explicitly within remaining budget.",
 	authentication: "Repair credentials/model access before retry; do not replay unchanged.",
-	capacity: "Wait or choose another available model/provider; retry only within remaining budget.",
+	capacity: "Wait or change model/provider; retry within remaining budget.",
 	unknown: "Inspect details, provider status, and credentials before explicit retry; never auto-replay.",
 };
 const PATTERNS: Array<[ProviderFailureCategory, RegExp]> = [
