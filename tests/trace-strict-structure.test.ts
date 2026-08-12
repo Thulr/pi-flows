@@ -204,7 +204,7 @@ test("a strict root's claim is withheld when no certification arrives", () => {
 		attributes: {
 			"flow.span_role": "root", "flow.mode": "parallel",
 			"flow.outcome_verified": true, "flow.outcome_success": true,
-			"flow.trace.expected_spans": 1, "flow.trace.verification_pending": true,
+			"flow.trace.expected_spans": 2, "flow.trace.verification_pending": true,
 			...extra,
 		},
 	});
@@ -216,6 +216,9 @@ test("a strict root's claim is withheld when no certification arrives", () => {
 	};
 	const summarize = (spans: unknown[]) => summarizeTraceSpans(spans as Parameters<typeof summarizeTraceSpans>[0], 0, "t.jsonl").verifiedOutcomes;
 
+	// Without the certification the trace is also one row short of its
+	// declaration — withheld twice over, by the pending clause and by
+	// completeness.
 	assert.equal(summarize([strictRoot({})]), 0, "no certification: the contingent claim is not honoured");
 	assert.equal(summarize([strictRoot({}), certification]), 1, "certified: the claim stands");
 });
@@ -283,6 +286,46 @@ test("a surplus row under this trace id fails verification, not just the report"
 
 	const link = await sink.finalize({ ok: true });
 	assert.equal(link.structure!.valid, false, "rows the run never claimed are not its evidence");
-	assert.match(link.structure!.issue!, /beyond the/, link.structure!.issue);
+	// "3 attempted" is the post-write yardstick (child + root + certification):
+	// a verdict naming it was read after this finalize's last write, so nothing
+	// the run wrote postdates what it verified.
+	assert.match(link.structure!.issue!, /beyond the 3 attempted/, link.structure!.issue);
 	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE", "so the live gate refuses what the report gate would");
+});
+
+/**
+ * A certification is not a waiver of completeness. A certified trace that
+ * later gains a surplus row (or loses one) is still a connected tree, so
+ * `structure.invalid` stays false — but the report already refuses the trace
+ * as incomplete, and a verified-outcome count that disagreed with that would
+ * credit metrics with evidence the same report rejected.
+ */
+test("a certified trace that went incomplete afterwards is not a verified outcome", () => {
+	const rootSpanId = "abababababababababababababababab";
+	const spans = [
+		{
+			trace_id: "t3", span_id: rootSpanId, parent_span_id: null, name: "flow.single",
+			start_time_unix_ms: 1, end_time_unix_ms: 100, status: { code: "OK" },
+			attributes: {
+				"flow.span_role": "root", "flow.mode": "single",
+				"flow.outcome_verified": true, "flow.outcome_success": true,
+				"flow.trace.expected_spans": 2, "flow.trace.verification_pending": true,
+			},
+		},
+		{
+			trace_id: "t3", span_id: "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", parent_span_id: rootSpanId,
+			name: "flow.single.event.trace.structure_verified",
+			start_time_unix_ms: 50, end_time_unix_ms: 50, status: { code: "OK" },
+			attributes: { "flow.span_role": "event", "flow.event_kind": "validation", "flow.trace.structure_verified": true },
+		},
+		{
+			trace_id: "t3", span_id: "efefefefefefefefefefefefefefefef", parent_span_id: rootSpanId,
+			name: "surplus", start_time_unix_ms: 60, end_time_unix_ms: 60, status: { code: "OK" },
+			attributes: { "flow.span_role": "child" },
+		},
+	] as unknown as Parameters<typeof summarizeTraceSpans>[0];
+
+	const report = summarizeTraceSpans(spans, 0, "t.jsonl");
+	assert.equal(report.incompleteTraces, 1, "the surplus row makes the trace incomplete");
+	assert.equal(report.verifiedOutcomes, 0, "and incomplete evidence supports no verified outcome, certification or not");
 });

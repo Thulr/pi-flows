@@ -426,9 +426,13 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// budget wrap-up does, and the report applies the correction. Only an
 			// already-failing trace gains this row, so no healthy export is pushed past
 			// its own declared count by it.
-			const structure = verify ? await verifyExportedTrace(traceFile, traceId, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
-			if (structure) {
-				const certified = structure.valid;
+			// The first reading decides only what the event below may truthfully
+			// record; it is not the verdict, because this finalize still has one write
+			// left. A row this run appends after its own reading is evidence its
+			// reading never saw.
+			const preCertification = verify ? await verifyExportedTrace(traceFile, traceId, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
+			if (preCertification) {
+				const certified = preCertification.valid;
 				await append({
 					trace_id: traceId,
 					span_id: spanId(),
@@ -445,11 +449,20 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 						"flow.mode": mode,
 						"flow.trace_label": storedTraceLabel,
 						...(certified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }),
-						...storedAttributes({ "flow.trace.structure_issue": structure.issue }),
+						...storedAttributes({ "flow.trace.structure_issue": preCertification.issue }),
 						...traceContextAttributes(storedContext),
 					},
 				});
 			}
+			// The verdict the link carries is of the file as this finalize leaves it —
+			// certification row included, so nothing this run wrote postdates what it
+			// verified. A path rotated or truncated between the first reading and the
+			// event append lands here as missing rows rather than as a pass against a
+			// file that no longer exists; every row is now expected, so attempted and
+			// declared are the same number.
+			const structure = preCertification
+				? await verifyExportedTrace(traceFile, traceId, { attempted: declaredExpectation, declared: declaredExpectation }, policy)
+				: undefined;
 			const spans: FlowTraceHealth = {
 				// The declared count, so a landed certification reads as observed ==
 				// expected rather than as one span of surplus.

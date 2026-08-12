@@ -196,6 +196,31 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const executionSuccess =
 			optionalBoolAttr(rootSpan, "flow.execution_success") ??
 			((root?.status?.code ?? "OK") === "OK" && !childSpans.some(childFailed));
+		// Two independent views of completeness: what the exporter admitted it
+		// failed to write, and what the file holds relative to what the root said to
+		// expect. The second catches loss *after* a successful write, in both
+		// directions — a surplus row is one the exporter never claimed to have
+		// written, which is not evidence it produced.
+		const redactedSpans = numericAttr(rootSpan, "flow.trace.redacted_spans");
+		const failedExports = numericAttr(rootSpan, "flow.trace.failed_exports");
+		// A root that declares a span role came from a sink that always stamps its
+		// expectation, so a missing or unusable one means the counter was lost, and
+		// falling back to the row count would define away the gap it exists to find.
+		// Traces written before span roles existed keep the fallback.
+		const expectationLost = stringAttr(rootSpan, "flow.span_role") === "root" && usableExpectation === undefined;
+		const expectedSpans = usableExpectation ?? traceSpans.length;
+		const { observedSpans, duplicateSpans, malformedSpans, unexpectedSpans } = structure;
+		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
+
+		// Same derivation the sink used when it stamped `flow.trace.health`, so a
+		// read-back verdict and a live one cannot disagree. A duplicated or
+		// unidentifiable row is its own disqualification: nothing downstream can
+		// tell which copy is real, or what an id-less row was meant to be.
+		const incomplete = expectationLost || structure.invalid || duplicateSpans > 0 || malformedSpans > 0 || unexpectedSpans > 0 || traceHealthStatus(
+			{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
+			Boolean(root),
+		) !== "recorded";
+
 		// A strict run writes its root before it can read the export back, so the
 		// root can claim a verified outcome the run then failed to evidence. Two
 		// independent corrections, because each covers the other's blind spot.
@@ -216,27 +241,16 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// claim is withheld rather than granted.
 		const verificationPending = boolAttr(rootSpan, "flow.trace.verification_pending");
 		const structureCertified = eventSpans.some((span) => boolAttr(span, "flow.trace.structure_verified"));
-		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked && !structure.invalid && (!verificationPending || structureCertified);
+		// Withheld on the whole completeness predicate, not on structural validity
+		// alone: a certified trace that later loses a row or gains a surplus one is
+		// still a tree, so `structure.invalid` stays false while `incomplete` does
+		// not — and incomplete evidence supports no verified outcome, whatever a
+		// surviving certification says.
+		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked && !incomplete && (!verificationPending || structureCertified);
 		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
 		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
 		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");
 		const routeChoice = stringAttr(rootSpan, "flow.route_choice");
-
-		// Two independent views of completeness: what the exporter admitted it
-		// failed to write, and what the file holds relative to what the root said to
-		// expect. The second catches loss *after* a successful write, in both
-		// directions — a surplus row is one the exporter never claimed to have
-		// written, which is not evidence it produced.
-		const redactedSpans = numericAttr(rootSpan, "flow.trace.redacted_spans");
-		const failedExports = numericAttr(rootSpan, "flow.trace.failed_exports");
-		// A root that declares a span role came from a sink that always stamps its
-		// expectation, so a missing or unusable one means the counter was lost, and
-		// falling back to the row count would define away the gap it exists to find.
-		// Traces written before span roles existed keep the fallback.
-		const expectationLost = stringAttr(rootSpan, "flow.span_role") === "root" && usableExpectation === undefined;
-		const expectedSpans = usableExpectation ?? traceSpans.length;
-		const { observedSpans, duplicateSpans, malformedSpans, unexpectedSpans } = structure;
-		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
 
 		const delta: TraceReportBucket = {
 			traces: 1,
@@ -261,14 +275,7 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			failedExports,
 			duplicateSpans,
 			malformedSpans,
-			// Same derivation the sink used when it stamped `flow.trace.health`, so a
-			// read-back verdict and a live one cannot disagree. A duplicated or
-			// unidentifiable row is its own disqualification: nothing downstream can
-			// tell which copy is real, or what an id-less row was meant to be.
-			incompleteTraces: expectationLost || structure.invalid || duplicateSpans > 0 || malformedSpans > 0 || unexpectedSpans > 0 || traceHealthStatus(
-				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
-				Boolean(root),
-			) !== "recorded" ? 1 : 0,
+			incompleteTraces: incomplete ? 1 : 0,
 			structurallyInvalidTraces: structure.invalid ? 1 : 0,
 			danglingLinks: structure.danglingLinks,
 			coordinationEvents: eventSpans.length,

@@ -158,7 +158,7 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // already-packaged public surface, not an inclusion. (The two comments above say
 // 106; both were already 107 when written. This file is not packaged, so its own
 // prose is free — state the measurement rather than round it.)
-// Raised to 1_166_100 for the strict-trace structural gate: trace-scope gains
+// Raised to 1_167_350 for the strict-trace structural gate: trace-scope gains
 // the FlowTraceStructure verdict, trace-sink the read-back that produces it,
 // and trace.ts the refusal that reports it — plus the CONTEXT.md Trace
 // structure entry and the changelog. The read-back reuses parseTraceJsonl and
@@ -170,6 +170,6 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // It also adds trace-verify.ts, one module: reading a finished export back is
 // the reader's question, and keeping it in the writer put trace-sink.ts over
 // the 500-line cap, which is not a thing to raise. Headroom is ~486 B over the
-// measured 1_165_629, matching the previous raise.
-assert.ok(pack.unpackedSize < 1_166_100, `package unpacked size too large: ${pack.unpackedSize}`);
+// measured 1_166_886, matching the previous raise.
+assert.ok(pack.unpackedSize < 1_167_350, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
