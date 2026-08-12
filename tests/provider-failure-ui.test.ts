@@ -1,0 +1,78 @@
+import assert from "node:assert/strict";
+import os from "node:os";
+import { test } from "node:test";
+import { classifyProviderDiagnostic, providerFailureGuidance, providerFailureRetryable } from "../extensions/pi-flows/provider-failure.ts";
+import { MODEL_VISIBLE_OUTPUT_CAP } from "../extensions/pi-flows/types.ts";
+import { flowCardLines } from "../extensions/pi-flows/ui-flow-card.ts";
+import { flowLiveBoardLines } from "../extensions/pi-flows/ui-live-row.ts";
+import { runFlow } from "./stub-harness.ts";
+
+const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text, inverse: (text: string) => text } as any;
+
+test("provider diagnostics classify into category-specific recovery", () => {
+	const examples = [
+		["input exceeds the context window", "context_window", false],
+		["HTTP 429: rate limit exceeded", "rate_limit", true],
+		["HTTP 401: invalid API key", "authentication", false],
+		["503: service overloaded and at capacity", "capacity", true],
+		["upstream socket closed unexpectedly", "unknown", false],
+	] as const;
+
+	for (const [diagnostic, category, retryable] of examples) {
+		assert.equal(classifyProviderDiagnostic(diagnostic), category);
+		assert.equal(providerFailureRetryable(category), retryable);
+		assert.match(providerFailureGuidance(category), /retry|Inspect/i);
+		if (category !== "context_window") {
+			assert.doesNotMatch(providerFailureGuidance(category), /larger context|Reduce the child task\/input/i, `${category} must not receive context-window guidance`);
+		}
+	}
+});
+
+test("collapsed live and durable surfaces expose a sanitized context failure before replay", async () => {
+	const entries: Array<{ customType: string; data: any }> = [];
+	const rawSecret = ["sk", "providerDiagnosticSecret123456"].join("-");
+	const rawEmail = ["provider", "example.com"].join("@");
+	const diagnostic = `Provider error: input exceeds the context window; api_key=${rawSecret}; contact ${rawEmail}; file ${os.homedir()}/private.txt. ${"x".repeat(MODEL_VISIBLE_OUTPUT_CAP + 100)}`;
+	const { result } = await runFlow(
+		{ agent: "analyst", task: "inspect a bounded issue" },
+		{ analyst: { reply: "partial notes", stopReason: "error", errorMessage: diagnostic, exitCode: 1 } },
+		{ api: { appendEntry: (customType: string, data: any) => entries.push({ customType, data }) } },
+	);
+
+	const run = result.details.results[0];
+	assert.equal(run.providerFailure?.category, "context_window");
+	assert.equal(run.providerFailure?.termination, "prompt_exit");
+	assert.equal(run.providerFailure?.contextWindow, 200_000);
+	assert.match(run.providerFailure?.diagnostic ?? "", /\[REDACTED_SECRET\]/);
+	assert.match(run.providerFailure?.diagnostic ?? "", /\[REDACTED_EMAIL\]/);
+	assert.match(run.providerFailure?.diagnostic ?? "", /~\/private\.txt/);
+	assert.match(run.providerFailure?.diagnostic ?? "", /Output truncated/);
+	assert.doesNotMatch(run.providerFailure?.diagnostic ?? "", new RegExp(rawSecret));
+	assert.doesNotMatch(run.providerFailure?.diagnostic ?? "", new RegExp(rawEmail.replace(".", "\\.")));
+
+	const live = flowLiveBoardLines(result.details, theme, { tick: 0, redactSecrets: true }).join("\n");
+	assert.match(live, /CHILD_PROVIDER_ERROR · context window/);
+	assert.match(live, /ctx:20\/200k/);
+	assert.match(live, /test-provider\/session-model/);
+	assert.match(live, /thinking:provider-default/);
+	assert.match(live, /exit 1/);
+	assert.match(live, /recovery: Reduce input/);
+	assert.doesNotMatch(live, new RegExp(rawSecret));
+
+	assert.equal(entries[0]?.customType, "pi-flows.run");
+	const card = flowCardLines(entries[0]?.data, theme, false).join("\n");
+	assert.match(card, /CHILD_PROVIDER_ERROR · context window/);
+	assert.match(card, /ctx:20\/200k/);
+	assert.match(card, /test-provider\/session-model/);
+	assert.match(card, /thinking:provider-default/);
+	assert.match(card, /recovery: Reduce input/);
+	assert.doesNotMatch(card, new RegExp(rawSecret));
+
+	const expanded = flowCardLines(entries[0]?.data, theme, true).join("\n");
+	assert.match(expanded, /Cause: The child's model provider returned a terminal error/);
+	assert.match(expanded, /Retryable unchanged: no/);
+	assert.match(expanded, /Fix: Reduce input/);
+	assert.match(expanded, /\[REDACTED_SECRET\]/);
+	assert.match(expanded, /Output truncated/);
+	assert.doesNotMatch(expanded, new RegExp(rawSecret));
+});

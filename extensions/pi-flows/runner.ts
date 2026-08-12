@@ -16,6 +16,7 @@ import { ChildBudgets } from "./runner-budget.ts";
 import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
 import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
 import { buildChildArgs, getPiInvocation } from "./commands.ts";
+import { describeProviderFailure, modelContextWindow, providerFailureGuidance, providerFailureRetryable } from "./provider-failure.ts";
 
 /**
  * The ACL translation for child transcript messages: project the child
@@ -362,17 +363,23 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			// produced with "returned a non-zero exit code" (#110).
 			result.stopReason = "error";
 			result.exitCode = result.exitCode === 0 ? 1 : result.exitCode;
+			const diagnostic = result.errorMessage ?? "unknown provider error";
+			result.providerFailure = describeProviderFailure(
+				diagnostic,
+				terminalProviderError ? "grace_terminated" : "prompt_exit",
+				modelContextWindow(options.roster, result.model),
+			);
 			result.error = flowError(
 				"CHILD_PROVIDER_ERROR",
-				`Flow agent "${agent.name}" hit a terminal provider error: ${result.errorMessage ?? "unknown provider error"}`,
+				`Flow agent "${agent.name}" hit a terminal provider error: ${diagnostic}`,
 				// The cause stays truthful per path: claiming a grace-period
 				// termination for a child that exited promptly would send whoever
 				// debugs it toward the wrong mechanism.
 				terminalProviderError
 					? "The child's model provider returned a terminal error and the child process stalled instead of exiting, so pi-flows terminated it after the error grace period rather than waiting out timeoutMs."
 					: "The child's model provider returned a terminal error and the child process then exited on its own.",
-				`Narrow the task or the material the child reads, or pick a larger-context model via tier/model, then retry.${terminalProviderError ? " PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000)." : ""}`,
-				true,
+				`${providerFailureGuidance(result.providerFailure.category)}${terminalProviderError ? " PI_FLOWS_ERROR_GRACE_MS tunes the grace (default 30000)." : ""}`,
+				providerFailureRetryable(result.providerFailure.category),
 			);
 			result.errorMessage = result.error.message;
 		} else if (run.spawnErrorMessage) {

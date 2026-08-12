@@ -91,10 +91,11 @@ export function collectBudgetCeilings(params: unknown): BudgetCeiling[] {
 
 export function formatBudgetCeiling(ceiling: BudgetCeiling): string {
 	const limits: string[] = [];
-	if (ceiling.maxCostUsd !== undefined) limits.push(`$${ceiling.maxCostUsd}`);
-	if (ceiling.maxTokens !== undefined) limits.push(`${formatTokens(ceiling.maxTokens)} total tok`);
-	if (ceiling.maxGeneratedTokens !== undefined) limits.push(`${formatTokens(ceiling.maxGeneratedTokens)} generated tok`);
-	return `${ceiling.authority} ceiling: ${limits.join(" · ")}`;
+	if (ceiling.maxCostUsd !== undefined) limits.push(`$${ceiling.maxCostUsd} cost`);
+	if (ceiling.maxTokens !== undefined) limits.push(`${formatTokens(ceiling.maxTokens)} total input+output tok`);
+	if (ceiling.maxGeneratedTokens !== undefined) limits.push(`${formatTokens(ceiling.maxGeneratedTokens)} generated-output-only tok`);
+	const generatedScope = ceiling.maxGeneratedTokens !== undefined ? " [not total/input/context/cost]" : "";
+	return `${ceiling.authority} ceiling: ${limits.join(" · ")}${generatedScope}`;
 }
 
 export function budgetDisclosureLines(ceilings: BudgetCeiling[] | undefined): string[] {

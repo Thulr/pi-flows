@@ -270,6 +270,10 @@ wrap-up response then fails envelope validation, the run is reported failed
 with that validation error (`RETURN_ENVELOPE_INVALID`, naming the role) —
 notice delivery alone never renders as a success.
 
+`maxCostUsd` caps cost, `maxTokens` cumulative input+output, and
+`maxGeneratedTokens` output only — not total/input, context, or cost. Compact
+views label these scopes.
+
 Fix: do not automatically replay the same Flow unchanged. Ask for direction, or
 make a material, visible change that stays within the configured ceiling:
 narrow the task or reduce fan-out (fewer voters, subtasks, or `maxIterations`).
@@ -715,12 +719,17 @@ then exits on its own; if it stalls instead, pi-flows terminates it after a
 short grace period rather than letting it hang until `timeoutMs`. The error's
 `cause` says which of the two happened, and the provider's own diagnostic is
 preserved in the error message — this is not a generic `CHILD_EXIT_NONZERO`
-even though the process exited non-zero.
+even though the process exited non-zero. Collapsed views classify context,
+rate-limit, auth, capacity, or unknown failures and show diagnostic,
+model/thinking, usage/cost/exit, and known context usage/limit. Expansion keeps
+capped structured detail.
 
-Fix: narrow the task or the material the child reads (a smaller issue thread,
-fewer files), or pick a larger-context model via `tier`/`model`, then retry.
-For the stalled case, `PI_FLOWS_ERROR_GRACE_MS` tunes the grace period
-(default 30000ms).
+Fix: reduce input/use a larger-context model for context overflow; wait/reduce
+concurrency for rate limits; repair access for auth; wait/change model/provider
+for capacity; inspect details/status/access for unknowns. Redaction and byte caps
+still cover provider text. Never auto-replay: retry only explicitly within
+remaining budget. Context, auth, and unknown failures are not retryable
+unchanged. `PI_FLOWS_ERROR_GRACE_MS` tunes stalled-child grace (default 30000ms).
 
 ### `TRACE_INCOMPLETE`
 

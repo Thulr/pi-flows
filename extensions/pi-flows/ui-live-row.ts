@@ -7,6 +7,7 @@ import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
 import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
 import { runDisplayName, runStateBar, spinnerFrame, stateIcon, treeGuide } from "./ui-style.ts";
+import { providerFailureGuidance, providerFailureReason } from "./provider-failure.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -89,6 +90,14 @@ function totalsText(details: FlowDetails): string {
 	return parts.join(" · ");
 }
 
+function runUsageText(result: FlowRunResult): string {
+	if (!result.providerFailure) return formatUsage(result.usage, result.model, result.durationMs);
+	const base = formatUsage({ ...result.usage, contextTokens: 0 }, result.model, result.durationMs);
+	const used = result.usage.contextTokens ? formatTokens(result.usage.contextTokens) : "?";
+	const context = `ctx:${used}${result.providerFailure.contextWindow ? `/${formatTokens(result.providerFailure.contextWindow)}` : ""}`;
+	return [base, context, `thinking:${result.thinking ?? "provider-default"}`].filter(Boolean).join(" ");
+}
+
 export interface LiveBoardOptions {
 	tick: number;
 	redactSecrets: boolean;
@@ -137,17 +146,19 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	const nameWidth = Math.min(28, Math.max(4, ...details.results.map((item) => runDisplayName(item).length)));
 	details.results.slice(0, COLLAPSED_AGENT_ROWS).forEach((item, index) => {
 		let line = `${theme.fg("dim", treeGuide(index, visibleRows))} ${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", runDisplayName(item).padEnd(nameWidth))}`;
-		const usage = formatUsage(item.usage, item.model, item.durationMs);
+		const usage = runUsageText(item);
 		if (usage) line += ` ${theme.fg("dim", usage)}`;
 		const state = flowAgentState(item);
 		if (state === "running") line += `  ${theme.fg("muted", currentActivityText(item, options.redactSecrets))}`;
 		else if (state === "queued") line += `  ${theme.fg("muted", "queued")}`;
 		else if (state === "failed") {
 			const bindingBudget = exhaustedBudgetText(item.error);
-			const failure = `${item.error?.code ?? item.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}`;
+			const providerReason = item.providerFailure ? ` · ${providerFailureReason(item.providerFailure)} · exit ${item.exitCode}` : "";
+			const failure = `${item.error?.code ?? item.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}${providerReason}`;
 			line += `  ${theme.fg("error", failure)}`;
 		}
 		lines.push(line);
+		if (item.providerFailure) lines.push(`  ${theme.fg("warning", `recovery: ${providerFailureGuidance(item.providerFailure.category)}`)}`);
 	});
 	if (total > COLLAPSED_AGENT_ROWS) lines.push(`${theme.fg("dim", "└")} ${theme.fg("muted", `+${total - COLLAPSED_AGENT_ROWS} more`)}`);
 	if (details.error) lines.push(theme.fg("error", `error: ${details.error.code}`));
@@ -221,7 +232,7 @@ export function renderFlowResultRow(
 		container.addChild(new Spacer(1));
 		container.addChild(new Text(`${agentIcon(item, index, context.state.tick ?? 0, theme)} ${theme.fg("accent", item.agent)} ${theme.fg("muted", `(${item.agentSource})`)}`, 0, 0));
 		container.addChild(new Text(theme.fg("dim", item.task), 0, 0));
-		const usage = formatUsage(item.usage, item.model, item.durationMs);
+		const usage = runUsageText(item);
 		if (usage) container.addChild(new Text(theme.fg("muted", usage), 0, 0));
 		const output = resultText(item).trim();
 		if (output) {

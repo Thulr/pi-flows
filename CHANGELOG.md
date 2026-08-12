@@ -29,6 +29,12 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   graph node is runnable even though some nodes are incomplete". The wave loop
   keeps that cause for a cycle that strands only later nodes.
 
+### Fixed
+
+- Provider failures now show sanitized cause, runtime/context facts, and safe
+  recovery in collapsed views; expansion keeps detail. Generated-token budgets
+  are labeled output-only. (#122)
+
 ## 0.8.0 - 2026-08-10
 
 ### Added

@@ -10,24 +10,11 @@ import type { FlowPreset, FlowPresetSelection } from "./preset-types.ts";
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
 // it can be re-exported here without a cycle) and is part of this module's
 // public surface: downstream consumers import trace types from types.ts.
-export type {
-	ChildSpanScope,
-	CoordinationEvent,
-	CoordinationEventKind,
-	FlowTraceContext,
-	FlowTraceHealth,
-	FlowTraceHealthStatus,
-	FlowTraceLink,
-	RecordEvent,
-	SpanStage,
-} from "./trace-scope.ts";
+export type { ChildSpanScope, CoordinationEvent, CoordinationEventKind, FlowTraceContext, FlowTraceHealth, FlowTraceHealthStatus, FlowTraceLink, RecordEvent, SpanStage } from "./trace-scope.ts";
 export { encodeAuthorKey } from "./trace-scope.ts";
 export type { ChildMessage, ChildMessageBlock } from "./sanitize.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
 export type { FlowPreset, FlowPresetDiscovery, FlowPresetDiscoveryIssue, FlowPresetSelection, PresetSource } from "./preset-types.ts";
-// Model-selection vocabulary, same arrangement: the terms live in a
-// dependency-free module and the policy that produces a roster lives in
-// model-roster.ts, which the kernel may not import.
 export { ROSTER_CONFIG_FILE, THINKING_LEVELS, UNREADABLE_SCOPED_MODEL, USE_DEFAULT_MODEL } from "./roster-types.ts";
 export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterLayer, RosterOverride, ThinkingLevel } from "./roster-types.ts";
 
@@ -208,6 +195,14 @@ export interface UsageStats {
 	turns: number;
 }
 
+export type ProviderFailureCategory = "context_window" | "rate_limit" | "authentication" | "capacity" | "unknown";
+export interface ProviderFailure {
+	category: ProviderFailureCategory;
+	diagnostic: string;
+	termination: "prompt_exit" | "grace_terminated";
+	contextWindow?: number;
+}
+
 export interface FlowRunResult {
 	agent: string;
 	/** The topology slot this run filled; distinct from the selected agent profile. */
@@ -232,6 +227,7 @@ export interface FlowRunResult {
 	stopReason?: string;
 	errorMessage?: string;
 	error?: FlowError;
+	providerFailure?: ProviderFailure;
 	/** True when a budget nearing its ceiling steered this child to wrap up and emit its envelope early. */
 	wrapUpRequested?: boolean;
 	step?: number;
