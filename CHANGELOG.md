@@ -43,7 +43,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   This does **not** make trace health see un-emitted coordination events. A
   mode that records no state transition, retry or approval still writes a
   valid tree and still passes, because the expectation the reading measures
-  against is what the sink attempted, not what the mode owed.
+  against is what the sink attempted, not what the mode owed. Tracked as #128;
+  the read-back's own residual is #127.
 
 ### Fixed
 

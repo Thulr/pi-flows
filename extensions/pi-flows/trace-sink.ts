@@ -103,7 +103,7 @@ const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.
  * wrote that no longer parses is caught by the count instead: the trace comes
  * back shorter than it declared.
  *
- * One residual it does not close: stableTraceIds derives the id from the trace
+ * One residual it does not close (#127): stableTraceIds derives the id from the trace
  * context and mode, so two calls sharing both — a project-preset refusal and
  * the retry after it, into one file — write two roots under one id, and this
  * reading cannot tell them apart. It reports duplicates, which is honest about
