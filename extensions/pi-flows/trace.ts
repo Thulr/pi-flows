@@ -1,4 +1,5 @@
 import { emptyUsage, flowError, type FlowError, type FlowMode, type FlowRunResult, type FlowTraceLink, type ModeOutput, type UsageStats } from "./types.ts";
+import { runSettled } from "./run.ts";
 import { isFailed } from "./sanitize.ts";
 import { parseVerdict } from "./parse.ts";
 import { integrationControlText } from "./delegation.ts";
@@ -107,7 +108,7 @@ const APPROVAL_BLOCKING_CODES = new Set<string>([
 
 /** Root-span summary attributes. `criticalPath` is the mode table's resolver, supplied where the table is reachable (the composition root); without it the metric reports unavailable. */
 export function traceSummaryAttributes(mode: FlowMode, params: any, output: ModeOutput, criticalPath?: CriticalPathResolver): Record<string, unknown> {
-	const results = output.details.results.filter((result) => result.exitCode !== -1);
+	const results = output.details.results.filter(runSettled);
 	const usage = flowUsageTotals(results);
 	const failed = results.filter(isFailed);
 	const workerTimeMs = results.reduce((sum, result) => sum + (result.durationMs ?? 0), 0);

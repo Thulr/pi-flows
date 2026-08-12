@@ -2,7 +2,8 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { PI_FLOWS_VERSION, ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
 import { describeModelRoster, usableModels } from "./model-roster.ts";
 import { saveRosterOverride, type RosterOverride } from "./roster-config.ts";
-import { isFailed, safePath, sanitizeText } from "./sanitize.ts";
+import { runFailed, runSettled, runState } from "./run.ts";
+import { safePath, sanitizeText } from "./sanitize.ts";
 
 /**
  * What a caller knows about the flow beyond its results. `live` means the flow
@@ -41,10 +42,10 @@ export function flowProgressText(details: FlowDetails, options: FlowProgressOpti
 	// A dispatched flow reaches the live row before its first run registers.
 	// Reporting that as `0 ok` would be the same false success the ratio was.
 	if (total === 0) return "starting";
-	const settled = details.results.filter((result) => result.exitCode !== -1).length;
+	const settled = details.results.filter(runSettled).length;
 	if (options.live || settled < total) return `${settled}/${total} settled`;
 	if (hasNonCleanPresetOutcome(details)) return details.presetOutcome!;
-	const failed = details.results.filter((result) => isFailed(result)).length;
+	const failed = details.results.filter(runFailed).length;
 	return failed ? `${failed} failed` : `${total} ok`;
 }
 
@@ -60,7 +61,10 @@ export function appendFlowSessionEntry(pi: ExtensionAPI, details: FlowDetails): 
 		mode: details.mode,
 		preset: details.preset?.name,
 		presetOutcome: details.presetOutcome,
-		status: details.error ? "error" : hasNonCleanPresetOutcome(details) || details.results.some((result) => result.exitCode !== -1 && isFailed(result)) ? "partial" : "ok",
+		// Partial covers both halves of "not every run completed": one that failed,
+		// and one the flow never settled. Asking `runFailed` alone would call the
+		// latter ok and put a ✓ header over the row's own ◌.
+		status: details.error ? "error" : hasNonCleanPresetOutcome(details) || details.results.some((result) => runState(result) !== "completed") ? "partial" : "ok",
 		errorCode: details.error?.code,
 		budgetCeilings: details.budgetCeilings,
 		// Trace pointer travels with the entry so the flow card can link evidence

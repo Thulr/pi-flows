@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import { MODEL_VISIBLE_OUTPUT_CAP, STDERR_CAPTURE_CAP, emptyUsage, formatFlowError, type CapturePolicy, type FlowError, type FlowRunResult } from "./types.ts";
+import type { RunStateFields } from "./run.ts";
 
 /**
  * One content block pi-flows retains from a child transcript message, owned by
@@ -161,8 +162,24 @@ export function getFinalAssistantText(messages: ChildMessage[]): string {
 	return "";
 }
 
-export function isFailed(result: FlowRunResult): boolean {
-	return result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted" || result.stopReason === "timeout";
+/**
+ * Whether a run's outcome is anything other than success, from every signal
+ * that carries one — exit code, terminal stop reason, and an attached error
+ * under either name a run's shapes give it (see {@link RunStateFields}).
+ *
+ * Liveness-unaware by contract: an unsettled run reads as failed, which is
+ * what a handler wants about a run it just settled. Anything that can see a
+ * live run asks `runFailed` (run.ts), which settles the question first.
+ *
+ * Lives beside redaction only because `run.ts` already imports this module:
+ * placement is a cycle constraint, not a claim that failure classification is
+ * capture policy.
+ */
+export function isFailed(result: RunStateFields): boolean {
+	return result.exitCode !== 0
+		|| result.error !== undefined
+		|| result.errorCode !== undefined
+		|| result.stopReason === "error" || result.stopReason === "aborted" || result.stopReason === "timeout";
 }
 
 export function resultText(result: FlowRunResult): string {

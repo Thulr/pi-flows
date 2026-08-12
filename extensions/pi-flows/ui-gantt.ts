@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { createRaster, encodePng, fillRect, hatchRect, hslToRgb, withAlpha, type Raster, type Rgba } from "./png.ts";
+import { runFailed, type RunStateFields } from "./run.ts";
 import { formatDuration, runDisplayName } from "./ui-style.ts";
 
 /**
@@ -19,11 +20,13 @@ import { formatDuration, runDisplayName } from "./ui-style.ts";
  * {@link flowGanttPng} rasterizes that layout with the theme's own colors.
  */
 
-/** The slice of a persisted entry result the timeline needs. Declared here (structurally compatible with the card's type) so the card can import the chart without a module cycle. */
+/** The slice of a persisted entry result the timeline needs. Declared here (structurally compatible with the card's type) so the card can import the chart without a module cycle; its failure fields are {@link RunStateFields}', so a rail's color agrees with the row above it. */
 export interface GanttResultLike {
 	agent: string;
 	role?: string;
 	exitCode: number;
+	stopReason?: string;
+	error?: { code: string };
 	errorCode?: string;
 	durationMs?: number;
 	startedAtMs?: number;
@@ -59,7 +62,7 @@ export function ganttLayout(results: GanttResultLike[]): GanttLayout | undefined
 		agent: result.agent,
 		offsetMs: result.startedAtMs !== undefined ? result.startedAtMs - base : 0,
 		durationMs: result.durationMs!,
-		failed: result.exitCode !== 0 || result.errorCode !== undefined,
+		failed: runFailed(result),
 	}));
 	const totalMs = Math.max(...rows.map((row) => row.offsetMs + row.durationMs));
 	return totalMs > 0 ? { rows, totalMs } : undefined;

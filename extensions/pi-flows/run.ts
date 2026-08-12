@@ -1,5 +1,53 @@
-import { capBytes, getFinalAssistantText, type ChildMessage } from "./sanitize.ts";
+import { capBytes, getFinalAssistantText, isFailed, type ChildMessage } from "./sanitize.ts";
 import { MODEL_VISIBLE_OUTPUT_CAP, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
+
+/** The four states a run can be in, as every surface names them (CONTEXT.md: Run state). */
+export type RunState = "queued" | "running" | "completed" | "failed";
+
+/**
+ * The fields a run's state is derived from. Structural over every shape one
+ * run takes, and accepting two names for its error because those shapes
+ * disagree: a live {@link FlowRunResult} and a current session entry carry
+ * `error`, while an entry persisted before that field existed — and the
+ * timeline's own slice — carry only `errorCode`.
+ */
+export interface RunStateFields {
+	exitCode: number;
+	stopReason?: string;
+	error?: { code: string };
+	errorCode?: string;
+	/**
+	 * `"unknown"` until the runner resolves the agent — the sentinel, not an
+	 * absence, is what tells a queued run from a running one. Optional only
+	 * because the timeline's slice does not carry the field at all, which is
+	 * why an unsettled run reads as `running` there rather than `queued`.
+	 */
+	agentSource?: string;
+}
+
+/**
+ * Has this run reached a terminal state (CONTEXT.md: Settled)? The one place
+ * that knows an exit code of `-1` also means "no child has exited yet".
+ */
+export function runSettled(run: Pick<RunStateFields, "exitCode">): boolean {
+	return run.exitCode !== -1;
+}
+
+/**
+ * A run that settled without succeeding — safe on a live run, which
+ * {@link isFailed} deliberately is not. An outstanding child has not failed,
+ * it has not finished, so a two-verdict surface asks {@link runState} rather
+ * than read "not failed" as success.
+ */
+export function runFailed(run: RunStateFields): boolean {
+	return runSettled(run) && isFailed(run);
+}
+
+/** The one derivation of a run's state, so a run cannot read as failed in one view and complete in another. */
+export function runState(run: RunStateFields): RunState {
+	if (!runSettled(run)) return run.agentSource === "unknown" ? "queued" : "running";
+	return isFailed(run) ? "failed" : "completed";
+}
 
 /**
  * One child executing one task (see CONTEXT.md: Run), owning the lifecycle of

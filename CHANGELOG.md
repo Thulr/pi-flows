@@ -34,6 +34,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 - Provider failures now show sanitized cause, runtime/context facts, and safe
   recovery in collapsed views; expansion keeps detail. Generated-token budgets
   are labeled output-only. (#122)
+- A child that reports a terminal stop reason without a diagnostic no longer
+  renders three different ways. The live row, the flow card, and the timeline
+  each derived **run state** separately and read different fields, so one run
+  could show as failed in the live row, partial in the card header, and
+  complete in that same card's row — and the timeline drew it as a clean rail.
+  All three now render one derivation (`runState` in `run.ts`), which reads
+  every failure signal under either name a run's shapes give it.
 
 ## 0.8.0 - 2026-08-10
 

@@ -1,7 +1,8 @@
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, type KeyId, type TUI } from "@earendil-works/pi-tui";
-import { isFailed, redactText } from "./sanitize.ts";
+import { runSettled, runState } from "./run.ts";
+import { redactText } from "./sanitize.ts";
 import { formatUsage } from "./trace.ts";
 import type { Budget, FlowDetails, FlowMode, FlowRunResult } from "./types.ts";
 import { boxFrame, chip, stateColor } from "./ui-style.ts";
@@ -58,7 +59,8 @@ export class FlowRegistry {
 		const targets: FlowAgentTarget[] = [];
 		for (const flow of this.flows.values()) {
 			for (let resultIndex = 0; resultIndex < flow.details.results.length; resultIndex++) {
-				if (flow.details.results[resultIndex]?.exitCode === -1) targets.push({ flow, resultIndex });
+				const result = flow.details.results[resultIndex];
+				if (result && !runSettled(result)) targets.push({ flow, resultIndex });
 			}
 		}
 		return targets;
@@ -133,15 +135,10 @@ export function flowAgentActivity(result: FlowRunResult, redactSecrets = true): 
 	return items.slice(-100);
 }
 
-export function flowAgentState(result: FlowRunResult): "queued" | "running" | "completed" | "failed" {
-	if (result.exitCode === -1) return result.agentSource === "unknown" ? "queued" : "running";
-	return isFailed(result) ? "failed" : "completed";
-}
-
 function targetLabel(target: FlowAgentTarget, index: number): string {
 	const result = target.flow.details.results[target.resultIndex];
 	if (!result) return `${index + 1}. unavailable child`;
-	return `${index + 1}. ${oneLine(result.agent, 48, target.flow.redactSecrets)} · ${flowAgentState(result)} · ${oneLine(result.task, 72, target.flow.redactSecrets)}`;
+	return `${index + 1}. ${oneLine(result.agent, 48, target.flow.redactSecrets)} · ${runState(result)} · ${oneLine(result.task, 72, target.flow.redactSecrets)}`;
 }
 
 class FlowAgentViewer {
@@ -185,7 +182,7 @@ class FlowAgentViewer {
 			return lines;
 		}
 
-		const state = flowAgentState(result);
+		const state = runState(result);
 		const usage = oneLine(formatUsage(result.usage, result.model, result.durationMs), 120, this.target.flow.redactSecrets);
 		lines.push(row(`${this.theme.fg("accent", this.theme.bold(oneLine(result.agent, 70, this.target.flow.redactSecrets)))} ${chip(this.theme, stateColor(state), state)}`));
 		lines.push(row(this.theme.fg("dim", `${this.target.flow.mode}${usage ? ` · ${usage}` : ""}`)));

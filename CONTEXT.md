@@ -90,12 +90,16 @@ A task produced by orchestrate's decomposition rather than authored upstream. A 
 One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing. The run object (`run.ts`) owns its result's lifecycle: an envelope candidate is retained and consumed exactly once, and an envelope or handoff attaches to a result only through the run's own transitions.
 _Avoid_: execution, invocation
 
+**Run state**:
+Which of four states a run is in — `queued`, `running`, `completed`, `failed` — derived in one place (`runState` in `run.ts`) from the fields that carry the answer. Every surface renders that derivation rather than reading the result's fields itself: the state is the run's, not the view's. Structural over every shape a run takes, and reading its error under both names those shapes use (`error`, `errorCode`), because a predicate that knew only one of them is how the live row, the flow card, and the timeline came to disagree about a single run. `running` names one run's state here and is the deliberate carve-out from the Live entry's Avoid list, which governs how a *flow*'s liveness is described.
+_Avoid_: status (that names a flow's outcome on the card), outcome
+
 **Live**:
 A flow whose handler has not settled and may still spawn runs. Not the same question as whether any run is outstanding: a multi-stage mode settles every run of one stage before opening the next, so a live flow can hold at `N/N settled`.
 _Avoid_: active, in-flight, running
 
 **Settled**:
-A run (or a whole flow) that has reached a terminal state, whether it completed or failed. The opposite of live.
+A run (or a whole flow) that has reached a terminal state, whether it completed or failed. The opposite of live. For a run the question is `runSettled` (`run.ts`), which is the one place that knows an exit code of `-1` also means "no child has exited yet"; `runFailed` answers it first, so an outstanding child reads as unfinished rather than failed. The liveness-unaware primitive `isFailed` (`sanitize.ts`) is what a mode handler wants about a run it just settled, and is deliberately wrong about a live one.
 _Avoid_: done, finished (both read as "succeeded")
 
 **Settle** (as an object):

@@ -4,9 +4,10 @@ import { Container, Image, Text, getCapabilities, hyperlink } from "@earendil-wo
 import { budgetDisclosureLines, formatBudgetCeiling } from "./budget-disclosure.ts";
 import { expandSafePath, safePath } from "./sanitize.ts";
 import { formatTokens } from "./trace.ts";
+import { runFailed, runState } from "./run.ts";
 import { formatFlowError, type BudgetCeiling, type FlowError, type FlowMode, type ProviderFailure, type ThinkingLevel, type UsageStats } from "./types.ts";
 import { flowGanttPng, type GanttImage } from "./ui-gantt.ts";
-import { chip, formatDuration, providerFailurePresentation, runDisplayName, treeGuide } from "./ui-style.ts";
+import { chip, formatDuration, providerFailurePresentation, runDisplayName, staticStateIcon, treeGuide } from "./ui-style.ts";
 
 /**
  * The durable flow card: the `pi-flows.run` session entry (the entry type
@@ -47,10 +48,6 @@ export interface FlowRunEntryData {
 	trace?: { traceFile: string; health: string };
 	/** Configured ceilings persisted so session reloads retain their authority. */
 	budgetCeilings?: BudgetCeiling[];
-}
-
-function entryResultFailed(result: FlowRunEntryResult): boolean {
-	return result.exitCode !== 0 || result.errorCode !== undefined;
 }
 
 /** Proportional duration bar; the longest child fills the track. */
@@ -100,9 +97,15 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 
 	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => runDisplayName(result).length)));
 	data.results.forEach((result, index) => {
-		const failed = entryResultFailed(result);
+		const state = runState(result);
+		const failed = state === "failed";
 		const provider = result.providerFailure ? providerFailurePresentation(result.providerFailure, result.thinking, result.exitCode) : undefined;
-		const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
+		// Three glyphs, not two. No entry written today holds an unsettled run —
+		// a process exit code is never negative, so the -1 placeholders stay on
+		// the progress path — but with two glyphs that safety rests on an
+		// invariant three modules away, and the failure it would produce is a
+		// green check on the durable record.
+		const icon = staticStateIcon(theme, state);
 		// The duration track carries the row's outcome color so a failed child
 		// reads as a red bar at a glance, not only as a trailing error code.
 		let line = `${theme.fg("dim", treeGuide(index, data.results.length))} ${icon} ${theme.fg("accent", runDisplayName(result).padEnd(nameWidth))}`;
@@ -155,7 +158,7 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		const link = target ? hyperlink(display, pathToFileURL(target).href) : display;
 		lines.push(`${theme.fg("muted", "trace:")} ${theme.fg("dim", link)} ${theme.fg(healthColor, `(${data.trace.health})`)}`);
 	}
-	if (!expanded && data.results.some(entryResultFailed)) lines.push(theme.fg("muted", "ctrl+o for failure detail"));
+	if (!expanded && data.results.some(runFailed)) lines.push(theme.fg("muted", "ctrl+o for failure detail"));
 	return lines;
 }
 

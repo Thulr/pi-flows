@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { createHandoffConsumer, type HandoffConsumer } from "./handoff-consumption.ts";
-import { isFailed } from "./sanitize.ts";
+import { runFailed } from "./run.ts";
 import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type CriticalPathResolver, type TraceSink } from "./trace.ts";
 import {
 	Budget,
@@ -431,7 +431,7 @@ export class DispatchedFlow {
 			}
 			shareLive(output.details);
 			if (state.sink) {
-				const ok = !output.details.error && !output.details.results.some((result) => result.exitCode !== -1 && isFailed(result));
+				const ok = !output.details.error && !output.details.results.some(runFailed);
 				// A strict run whose own evidence is degraded is about to be refused,
 				// so the root must not claim a verified outcome it never delivered.
 				output.details.trace = await state.sink.finalize({ ok }, (health) => {

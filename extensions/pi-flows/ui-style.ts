@@ -1,5 +1,6 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { RunState } from "./run.ts";
 import { providerFailureGuidance, providerFailureReason } from "./provider-failure.ts";
 import { formatTokens } from "./trace.ts";
 import type { ProviderFailure } from "./types.ts";
@@ -17,8 +18,8 @@ import type { ProviderFailure } from "./types.ts";
  * without a TUI.
  */
 
-/** The four states a child run can be in, as every surface names them. */
-export type RunState = "queued" | "running" | "completed" | "failed";
+/** The four states a child run can be in. Owned by the Run (run.ts); the icon, color, and bar below only render that one derivation. */
+export type { RunState };
 
 /** The one display form for a run: `role (agent)` when a role exists, the agent name alone otherwise. Every surface labels a run through this. */
 export function runDisplayName(result: { agent: string; role?: string }): string {
@@ -49,7 +50,17 @@ export function stateColor(state: RunState): "muted" | "warning" | "success" | "
 /** One glyph per run state; running animates on the shared spinner, staggered by `offset` so a fan-out shimmers instead of blinking in lockstep. */
 export function stateIcon(theme: Theme, state: RunState, tick = 0, offset = 0): string {
 	if (state === "running") return theme.fg("warning", spinnerFrame(tick, offset));
-	return theme.fg(stateColor(state), state === "queued" ? "◌" : state === "completed" ? "✓" : "✗");
+	return staticStateIcon(theme, state);
+}
+
+/**
+ * {@link stateIcon} without the animation, for a surface that re-renders from
+ * a stored entry and has no ticker to drive one. Both settled glyphs are the
+ * same as the live board's, so the durable card cannot mark a run with a
+ * symbol the row above it never used.
+ */
+export function staticStateIcon(theme: Theme, state: RunState): string {
+	return theme.fg(stateColor(state), state === "completed" ? "✓" : state === "failed" ? "✗" : "◌");
 }
 
 const EIGHTHS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"] as const;
