@@ -1,5 +1,8 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { providerFailureGuidance, providerFailureReason } from "./provider-failure.ts";
+import { formatTokens } from "./trace-report.ts";
+import type { ProviderFailure } from "./types.ts";
 
 /**
  * The shared visual vocabulary for every pi-flows surface — the live tool
@@ -20,6 +23,16 @@ export type RunState = "queued" | "running" | "completed" | "failed";
 /** The one display form for a run: `role (agent)` when a role exists, the agent name alone otherwise. Every surface labels a run through this. */
 export function runDisplayName(result: { agent: string; role?: string }): string {
 	return result.role ? `${result.role} (${result.agent})` : result.agent;
+}
+
+export function providerFailurePresentation(failure: ProviderFailure, contextTokens: number | undefined, thinking: string | undefined, exitCode: number) {
+	const used = contextTokens ? formatTokens(contextTokens) : "?";
+	return {
+		context: `ctx:${used}${failure.contextWindow ? `/${formatTokens(failure.contextWindow)}` : ""}`,
+		thinking: `thinking:${thinking ?? "unknown/pi-default"}`,
+		reason: `${providerFailureReason(failure)} · exit ${exitCode}`,
+		recovery: `recovery: ${providerFailureGuidance(failure.category)}`,
+	};
 }
 
 export const SPINNER_FRAMES = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] as const;

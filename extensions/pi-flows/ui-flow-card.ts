@@ -6,8 +6,7 @@ import { expandSafePath, safePath } from "./sanitize.ts";
 import { formatTokens } from "./trace.ts";
 import { formatFlowError, type BudgetCeiling, type FlowError, type FlowMode, type ProviderFailure, type ThinkingLevel, type UsageStats } from "./types.ts";
 import { flowGanttPng, type GanttImage } from "./ui-gantt.ts";
-import { chip, formatDuration, runDisplayName, treeGuide } from "./ui-style.ts";
-import { providerFailureGuidance, providerFailureReason } from "./provider-failure.ts";
+import { chip, formatDuration, providerFailurePresentation, runDisplayName, treeGuide } from "./ui-style.ts";
 
 /**
  * The durable flow card: the `pi-flows.run` session entry (the entry type
@@ -102,6 +101,7 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	const nameWidth = Math.min(28, Math.max(4, ...data.results.map((result) => runDisplayName(result).length)));
 	data.results.forEach((result, index) => {
 		const failed = entryResultFailed(result);
+		const provider = result.providerFailure ? providerFailurePresentation(result.providerFailure, result.usage?.contextTokens, result.thinking, result.exitCode) : undefined;
 		const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
 		// The duration track carries the row's outcome color so a failed child
 		// reads as a red bar at a glance, not only as a trailing error code.
@@ -112,20 +112,18 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 		const tokens = (result.usage?.input || 0) + (result.usage?.output || 0);
 		if (tokens) meta.push(`${formatTokens(tokens)} tok`);
 		if (result.usage?.cost) meta.push(`$${result.usage.cost.toFixed(4)}`);
-		if (result.usage?.contextTokens || result.providerFailure?.contextWindow) {
-			const used = result.usage?.contextTokens ? formatTokens(result.usage.contextTokens) : "?";
-			meta.push(`ctx:${used}${result.providerFailure?.contextWindow ? `/${formatTokens(result.providerFailure.contextWindow)}` : ""}`);
-		}
+		if (provider) meta.push(provider.context);
 		if (result.model) meta.push(result.model);
-		if (result.thinking || result.providerFailure) meta.push(`thinking:${result.thinking ?? "provider-default"}`);
+		if (provider) meta.push(provider.thinking);
+		else if (result.thinking) meta.push(`thinking:${result.thinking}`);
 		if (meta.length) line += ` ${theme.fg("muted", meta.join(" · "))}`;
 		if (failed && !expanded) {
-			const providerReason = result.providerFailure ? ` · ${providerFailureReason(result.providerFailure)} · exit ${result.exitCode}` : "";
+			const providerReason = provider ? ` · ${provider.reason}` : "";
 			const failure = `${result.errorCode ?? result.stopReason ?? "failed"}${result.budgetCeiling ? ` · ${formatBudgetCeiling(result.budgetCeiling)}` : ""}${providerReason}`;
 			line += ` ${theme.fg("error", failure)}`;
 		}
 		lines.push(line);
-		if (!expanded && result.providerFailure) lines.push(`  ${theme.fg("warning", `recovery: ${providerFailureGuidance(result.providerFailure.category)}`)}`);
+		if (!expanded && provider) lines.push(`  ${theme.fg("warning", provider.recovery)}`);
 		if (expanded && failed) {
 			const bindingBudget = result.budgetCeiling ? ` · ${formatBudgetCeiling(result.budgetCeiling)}` : "";
 			lines.push(`  ${theme.fg("error", `${result.errorCode ?? "failed"}${bindingBudget}${result.stopReason ? ` · stop: ${result.stopReason}` : ""} · exit ${result.exitCode}`)}`);

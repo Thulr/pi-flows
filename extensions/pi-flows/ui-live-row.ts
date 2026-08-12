@@ -6,8 +6,7 @@ import { capModelVisibleText, isFailed, resultText } from "./sanitize.ts";
 import { flowUsageTotals, formatTokens, formatUsage } from "./trace.ts";
 import type { FlowAgent, FlowDetails, FlowRunResult } from "./types.ts";
 import { flowProgressText, hasNonCleanPresetOutcome } from "./ui.ts";
-import { runDisplayName, runStateBar, spinnerFrame, stateIcon, treeGuide } from "./ui-style.ts";
-import { providerFailureGuidance, providerFailureReason } from "./provider-failure.ts";
+import { providerFailurePresentation, runDisplayName, runStateBar, spinnerFrame, stateIcon, treeGuide } from "./ui-style.ts";
 
 /**
  * The live tool-row board: the `flow` tool row is the primary progress surface,
@@ -93,9 +92,8 @@ function totalsText(details: FlowDetails): string {
 function runUsageText(result: FlowRunResult): string {
 	if (!result.providerFailure) return formatUsage(result.usage, result.model, result.durationMs);
 	const base = formatUsage({ ...result.usage, contextTokens: 0 }, result.model, result.durationMs);
-	const used = result.usage.contextTokens ? formatTokens(result.usage.contextTokens) : "?";
-	const context = `ctx:${used}${result.providerFailure.contextWindow ? `/${formatTokens(result.providerFailure.contextWindow)}` : ""}`;
-	return [base, context, `thinking:${result.thinking ?? "provider-default"}`].filter(Boolean).join(" ");
+	const provider = providerFailurePresentation(result.providerFailure, result.usage.contextTokens, result.thinking, result.exitCode);
+	return [base, provider.context, provider.thinking].filter(Boolean).join(" ");
 }
 
 export interface LiveBoardOptions {
@@ -145,6 +143,7 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 	const visibleRows = Math.min(total, COLLAPSED_AGENT_ROWS) + (total > COLLAPSED_AGENT_ROWS ? 1 : 0);
 	const nameWidth = Math.min(28, Math.max(4, ...details.results.map((item) => runDisplayName(item).length)));
 	details.results.slice(0, COLLAPSED_AGENT_ROWS).forEach((item, index) => {
+		const provider = item.providerFailure ? providerFailurePresentation(item.providerFailure, item.usage.contextTokens, item.thinking, item.exitCode) : undefined;
 		let line = `${theme.fg("dim", treeGuide(index, visibleRows))} ${agentIcon(item, index, options.tick, theme)} ${theme.fg("accent", runDisplayName(item).padEnd(nameWidth))}`;
 		const usage = runUsageText(item);
 		if (usage) line += ` ${theme.fg("dim", usage)}`;
@@ -153,12 +152,12 @@ export function flowLiveBoardLines(details: FlowDetails, theme: Theme, options: 
 		else if (state === "queued") line += `  ${theme.fg("muted", "queued")}`;
 		else if (state === "failed") {
 			const bindingBudget = exhaustedBudgetText(item.error);
-			const providerReason = item.providerFailure ? ` · ${providerFailureReason(item.providerFailure)} · exit ${item.exitCode}` : "";
+			const providerReason = provider ? ` · ${provider.reason}` : "";
 			const failure = `${item.error?.code ?? item.stopReason ?? "failed"}${bindingBudget ? ` · ${bindingBudget}` : ""}${providerReason}`;
 			line += `  ${theme.fg("error", failure)}`;
 		}
 		lines.push(line);
-		if (item.providerFailure) lines.push(`  ${theme.fg("warning", `recovery: ${providerFailureGuidance(item.providerFailure.category)}`)}`);
+		if (provider) lines.push(`  ${theme.fg("warning", provider.recovery)}`);
 	});
 	if (total > COLLAPSED_AGENT_ROWS) lines.push(`${theme.fg("dim", "└")} ${theme.fg("muted", `+${total - COLLAPSED_AGENT_ROWS} more`)}`);
 	if (details.error) lines.push(theme.fg("error", `error: ${details.error.code}`));

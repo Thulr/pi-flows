@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { classifyProviderDiagnostic, providerFailureGuidance, providerFailureRetryable } from "../extensions/pi-flows/provider-failure.ts";
 import { MODEL_VISIBLE_OUTPUT_CAP } from "../extensions/pi-flows/types.ts";
@@ -54,7 +56,7 @@ test("collapsed live and durable surfaces expose a sanitized context failure bef
 	assert.match(live, /CHILD_PROVIDER_ERROR · context window/);
 	assert.match(live, /ctx:20\/200k/);
 	assert.match(live, /test-provider\/session-model/);
-	assert.match(live, /thinking:provider-default/);
+	assert.match(live, /thinking:unknown\/pi-default/);
 	assert.match(live, /exit 1/);
 	assert.match(live, /recovery: Reduce input/);
 	assert.doesNotMatch(live, new RegExp(rawSecret));
@@ -64,7 +66,7 @@ test("collapsed live and durable surfaces expose a sanitized context failure bef
 	assert.match(card, /CHILD_PROVIDER_ERROR · context window/);
 	assert.match(card, /ctx:20\/200k/);
 	assert.match(card, /test-provider\/session-model/);
-	assert.match(card, /thinking:provider-default/);
+	assert.match(card, /thinking:unknown\/pi-default/);
 	assert.match(card, /recovery: Reduce input/);
 	assert.doesNotMatch(card, new RegExp(rawSecret));
 
@@ -75,4 +77,25 @@ test("collapsed live and durable surfaces expose a sanitized context failure bef
 	assert.match(expanded, /\[REDACTED_SECRET\]/);
 	assert.match(expanded, /Output truncated/);
 	assert.doesNotMatch(expanded, new RegExp(rawSecret));
+});
+
+test("an unpinned provider-qualified assistant model selects the right duplicate-id context limit", async () => {
+	const cwd = await mkdtemp(path.join(os.tmpdir(), "pi-flows-provider-model-"));
+	const agentDir = path.join(cwd, ".pi", "flow-agents");
+	await mkdir(agentDir, { recursive: true });
+	await writeFile(path.join(agentDir, "bare.md"), "---\nname: bare\ndescription: unpinned test agent\ntools: none\n---\n\nReturn the result.\n");
+	const registry = {
+		getAvailable: () => [
+			{ id: "shared", provider: "alpha", reasoning: true, contextWindow: 8_000, maxTokens: 1024, cost: { input: 1, output: 1 } },
+			{ id: "shared", provider: "beta", reasoning: true, contextWindow: 64_000, maxTokens: 1024, cost: { input: 1, output: 1 } },
+		],
+	};
+	const { result } = await runFlow(
+		{ agent: "bare", agentScope: "project", confirmProjectAgents: false, task: "exercise the provider identity seam" },
+		{ bare: { reply: "partial", stopReason: "error", errorMessage: "input exceeds the context window", exitCode: 1, provider: "beta", reportedModel: "shared" } },
+		{ cwd, projectTrusted: true, registry, model: { provider: "beta", id: "shared" } },
+	);
+
+	assert.equal(result.details.results[0]?.model, "beta/shared");
+	assert.equal(result.details.results[0]?.providerFailure?.contextWindow, 64_000);
 });

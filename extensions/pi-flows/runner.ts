@@ -269,7 +269,10 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 						accumulatePiUsage(turnUsage, message);
 						accumulatePiUsage(result.usage, message);
 						if (childBudgets.chargeTurn(turnUsage, !message.errorMessage).terminate) controls.terminate();
-						if (!result.model && message.model) result.model = message.model;
+						if (!result.model && message.model) {
+							const p = (message as { provider?: unknown }).provider;
+							result.model = typeof p === "string" && !message.model.includes("/") ? `${p}/${message.model}` : message.model;
+						}
 						if (message.stopReason) result.stopReason = message.stopReason;
 						if (message.errorMessage) result.errorMessage = sanitizeText(message.errorMessage, policy);
 						// A terminal provider error (e.g. context window exceeded) marks

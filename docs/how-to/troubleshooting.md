@@ -716,13 +716,12 @@ stuck auth/provider cases, run a smaller no-model smoke check first.
 Cause: the child's model provider returned a terminal error (for example
 "input exceeds the context window of this model"). Usually the child process
 then exits on its own; if it stalls instead, pi-flows terminates it after a
-short grace period rather than letting it hang until `timeoutMs`. The error's
-`cause` says which of the two happened, and the provider's own diagnostic is
-preserved in the error message — this is not a generic `CHILD_EXIT_NONZERO`
-even though the process exited non-zero. Collapsed views classify context,
+short grace period rather than letting it hang until `timeoutMs`. The structured
+cause identifies the path and preserves the provider diagnostic rather than
+degrading it to `CHILD_EXIT_NONZERO`. Collapsed views classify context,
 rate-limit, auth, capacity, or unknown failures and show diagnostic,
-model/thinking, usage/cost/exit, and known context usage/limit. Expansion keeps
-capped structured detail.
+model, named thinking (or unknown pi default), usage/cost/exit, and known
+context usage/limit. Expansion keeps capped structured detail.
 
 Fix: reduce input/use a larger-context model for context overflow; wait/reduce
 concurrency for rate limits; repair access for auth; wait/change model/provider
