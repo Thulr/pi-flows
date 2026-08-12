@@ -7,12 +7,13 @@
 // finalize reads its own export back, and that an ordinary flow does not pay
 // for it.
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { makeTraceSink } from "../extensions/pi-flows/trace-sink.ts";
-import { strictTraceError, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
+import { stableTraceIds } from "../extensions/pi-flows/trace-identity.mjs";
+import { parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
 import type { FlowRunResult } from "../extensions/pi-flows/types.ts";
 
 const policy = { recordContent: true, redactSecrets: true };
@@ -117,4 +118,45 @@ test("flows sharing one trace file each verify only their own trace", async () =
 	assert.notEqual(secondLink.traceId, firstLink.traceId, "two flows, two traces in one file");
 	assert.equal(secondLink.structure!.valid, true, `the second flow is judged on its own rows, not the file: ${secondLink.structure!.issue}`);
 	assert.equal(strictTraceError(secondLink, true), null, "and the strict gate admits it");
+});
+
+/**
+ * The root is written before the export can be read back, so a strict run that
+ * fails verification has already claimed `flow.outcome_verified` on disk. An
+ * exported span is immutable, so the correction arrives the way a revoked
+ * budget wrap-up's does — a linked event the reader applies. Without it a
+ * report would keep counting a run the gate refused as a verified outcome.
+ */
+test("a failed verification revokes the root's verified-outcome claim", async () => {
+	const file = traceFile();
+	const context = { runId: "r1", caseId: "c1", trialId: "t1" };
+	// Seed a row under the id this sink will use, parented to a span that does
+	// not exist: the flow's own export will be complete, and the trace it belongs
+	// to still will not hold together.
+	const { traceId } = stableTraceIds(context, "parallel");
+	writeFileSync(file, `${JSON.stringify({
+		trace_id: traceId,
+		span_id: "ffffffffffffffffffffffffffffffff",
+		parent_span_id: "0000000000000000",
+		name: "orphan",
+		start_time_unix_ms: 1,
+		end_time_unix_ms: 2,
+		status: { code: "OK" },
+		attributes: { "flow.span_role": "child" },
+	})}\n`);
+
+	const sink = makeTraceSink(file, "parallel", policy, { context, verify: true });
+	sink.record(settledRun("recon"), { scope: { key: "a" } });
+	const link = await sink.finalize({ ok: true }, { "flow.outcome_verified": true, "flow.outcome_success": true });
+
+	assert.equal(link.structure!.valid, false, `expected the seeded orphan to break the tree: ${link.structure!.issue}`);
+	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE", "the gate refuses the run");
+
+	const parsed = parseTraceJsonl(readFileSync(file, "utf8"));
+	const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, file);
+	assert.equal(report.verifiedOutcomes, 0, "and the report no longer counts it as a verified outcome");
+	assert.ok(
+		parsed.spans.some((span) => span.attributes?.["flow.trace.structure_revoked"] === true),
+		"because the revocation is on the trace, linked to the root the gate could not unsay",
+	);
 });

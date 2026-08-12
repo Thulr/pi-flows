@@ -196,7 +196,12 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const executionSuccess =
 			optionalBoolAttr(rootSpan, "flow.execution_success") ??
 			((root?.status?.code ?? "OK") === "OK" && !childSpans.some(childFailed));
-		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified");
+		// A strict run writes its root before it can read the export back, so a
+		// structural failure found afterwards arrives as a linked revocation, the
+		// same way a revoked wrap-up does. Without applying it here the report would
+		// keep counting a run the gate refused as a verified outcome.
+		const structureRevoked = eventSpans.some((span) => boolAttr(span, "flow.trace.structure_revoked"));
+		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked;
 		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
 		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
 		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");

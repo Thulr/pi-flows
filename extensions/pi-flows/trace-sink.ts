@@ -14,8 +14,7 @@ import type {
 	SpanStage,
 } from "./types.ts";
 import { emptyTraceHealth, encodeUnitKey, traceHealthStatus, type FlowTraceStructure } from "./trace-scope.ts";
-import { parseTraceJsonl } from "./trace-report.ts";
-import { traceStructure } from "./trace-structure.ts";
+import { verifyExportedTrace } from "./trace-verify.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
 import { stableTraceIds } from "./trace-identity.mjs";
 
@@ -83,51 +82,6 @@ const ATTRIBUTE_CAP = 1024;
  */
 const STRUCTURAL_CAP = 8 * 1024;
 const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids", "flow.depends_on_unresolved"]);
-
-/**
- * Read the finished export back and say whether it is a span tree. The strict
- * gate used to answer only from write-time accounting, which cannot see a
- * child parented to a stage nobody wrote or a root that does not reach itself
- * — the refusal text even sent readers to `npm run trace:report --strict` to
- * do this by hand. A run that stakes its verdict on evidence should not be the
- * one caller that never checks it.
- *
- * A read that itself fails is reported as invalid rather than swallowed:
- * evidence nobody could re-read is not evidence.
- *
- * Scoped to this flow's own trace_id, the way the read-back report groups
- * before validating. One JSONL file routinely holds many flows — an eval sets
- * PI_FLOWS_TRACE_FILE once for a whole run — so validating the file whole
- * would judge every flow after the first against its predecessors' spans and
- * fail it for a surplus that is simply someone else's trace. A row the flow
- * wrote that no longer parses is caught by the count instead: the trace comes
- * back shorter than it declared.
- *
- * One residual it does not close (#127): stableTraceIds derives the id from the trace
- * context and mode, so two calls sharing both — a project-preset refusal and
- * the retry after it, into one file — write two roots under one id, and this
- * reading cannot tell them apart. It reports duplicates, which is honest about
- * what the file holds and wrong about the run.
- */
-async function readBackStructure(traceFile: string, traceId: string, declared: number): Promise<FlowTraceStructure> {
-	try {
-		const parsed = parseTraceJsonl(await fs.readFile(traceFile, "utf8"));
-		const own = parsed.spans.filter((span) => span.trace_id === traceId);
-		const structure = traceStructure(own, { declared, present: true });
-		const missing = Math.max(0, declared - own.length);
-		if (!structure.invalid && missing === 0) return { valid: true };
-		const faults = [
-			missing ? `${missing} of ${declared} declared row(s) missing or unreadable` : "",
-			structure.root ? "" : "no root span",
-			structure.duplicateSpans ? `${structure.duplicateSpans} duplicate span id(s)` : "",
-			structure.malformedSpans ? `${structure.malformedSpans} span(s) not reaching the root or outside its interval` : "",
-			structure.unexpectedSpans ? `${structure.unexpectedSpans} span(s) beyond the ${declared} declared` : "",
-		].filter(Boolean);
-		return { valid: false, issue: faults.join(", ") || "the exported rows are not a span tree" };
-	} catch (error) {
-		return { valid: false, issue: `the trace could not be read back: ${error instanceof Error ? error.message : String(error)}` };
-	}
-}
 
 /** What a caller configures beyond the file, the mode, and the capture policy. An object rather than three more positional slots, so a caller asking only for `verify` does not have to pass two `undefined`s to reach it. */
 export interface TraceSinkOptions {
@@ -445,6 +399,36 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			});
 			await rootAppend;
 			const rootWritten = health.observedSpans === observedSpans;
+			// The root is already on disk, and an exported span is immutable — so a
+			// verification that fails after it cannot unsay `flow.outcome_verified`.
+			// It records the revocation as a linked event instead, exactly as a revoked
+			// budget wrap-up does, and the report applies the correction. Only an
+			// already-failing trace gains this row, so no healthy export is pushed past
+			// its own declared count by it.
+			const structure = verify ? await verifyExportedTrace(traceFile, traceId, expectedSpans, policy) : undefined;
+			if (structure && !structure.valid) {
+				await append({
+					trace_id: traceId,
+					span_id: spanId(),
+					parent_span_id: rootSpanId,
+					name: `flow.${mode}.event.trace.structure_invalid`,
+					start_time_unix_ms: end,
+					end_time_unix_ms: end,
+					status: { code: "ERROR" },
+					attributes: {
+						"openinference.span.kind": "CHAIN",
+						"flow.span_role": "event",
+						"flow.event_kind": "validation",
+						"flow.event_name": "trace.structure_invalid",
+						"flow.mode": mode,
+						"flow.trace_label": storedTraceLabel,
+						"flow.trace.structure_revoked": true,
+						"flow.depends_on_span_ids": rootSpanId,
+						...storedAttributes({ "flow.trace.structure_issue": structure.issue }),
+						...traceContextAttributes(storedContext),
+					},
+				});
+			}
 			const spans: FlowTraceHealth = {
 				expectedSpans,
 				observedSpans: health.observedSpans,
@@ -463,7 +447,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				// Read back only when asked. An ordinary flow pays nothing; a strict run
 				// must not report evidence whose shape it never checked, and the root is
 				// on disk by now, so what the file holds is a complete tree or it is not.
-				...(verify ? { structure: await readBackStructure(traceFile, traceId, expectedSpans) } : {}),
+				...(structure ? { structure } : {}),
 			};
 		},
 	};
