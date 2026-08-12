@@ -32,7 +32,7 @@ test("provider diagnostics classify into category-specific recovery", () => {
 });
 
 test("provider failure presentation preserves zero context values", () => {
-	const view = providerFailurePresentation({ category: "unknown", diagnostic: "failure", termination: "prompt_exit", contextWindow: 0 }, 0, undefined, 1);
+	const view = providerFailurePresentation({ category: "unknown", diagnostic: "failure", termination: "prompt_exit", contextWindow: 0, thinkingVerified: false }, 0, undefined, 1);
 	assert.equal(view.context, "ctx:0/0");
 });
 
@@ -97,12 +97,16 @@ test("an unpinned or bare-pinned assistant model keeps provider identity for dup
 		],
 	};
 	for (const model of [undefined, "shared"]) {
+		const entries: Array<{ data: any }> = [];
 		const { result } = await runFlow(
-			{ agent: "bare", agentScope: "project", confirmProjectAgents: false, task: "exercise the provider identity seam", ...(model ? { model } : {}) },
+			{ agent: "bare", agentScope: "project", confirmProjectAgents: false, task: "exercise the provider identity seam", thinking: "max", ...(model ? { model } : {}) },
 			{ bare: { reply: "partial", stopReason: "error", errorMessage: "input exceeds the context window", exitCode: 1, provider: "beta", reportedModel: "shared" } },
-			{ cwd, projectTrusted: true, registry, model: { provider: "beta", id: "shared" } },
+			{ cwd, projectTrusted: true, registry, model: { provider: "beta", id: "shared" }, api: { appendEntry: (_type: string, data: any) => entries.push({ data }) } },
 		);
 		assert.equal(result.details.results[0]?.model, "beta/shared");
 		assert.equal(result.details.results[0]?.providerFailure?.contextWindow, 64_000);
+		assert.equal(result.details.results[0]?.providerFailure?.thinkingVerified, false);
+		assert.match(flowLiveBoardLines(result.details, theme, { tick: 0, redactSecrets: true }).join("\n"), /thinking:max \(requested\)/);
+		assert.match(flowCardLines(entries[0]?.data, theme, false).join("\n"), /thinking:max \(requested\)/);
 	}
 });

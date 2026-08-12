@@ -990,7 +990,7 @@ lesson-augmented.
 - `presets`: discovered preset summaries and their declared override keys.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
-- `results`: child run summaries with redacted task preview, usage, duration, stderr, optional validated return `envelope`, and structured error. Provider errors add sanitized classification, diagnostic, termination path, and known context window. On error, prior runs remain with their usage and cost.
+- `results`: redacted child summaries with usage, duration, stderr, optional validated `envelope`, and structured error. Provider errors add sanitized classification/diagnostic, termination path, known context window, and thinking-level verification; prior runs retain usage/cost.
 
 ## Structured errors
 

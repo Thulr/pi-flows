@@ -713,22 +713,19 @@ stuck auth/provider cases, run a smaller no-model smoke check first.
 
 ### `CHILD_PROVIDER_ERROR`
 
-Cause: the child's model provider returned a terminal error (for example
-"input exceeds the context window of this model"). Usually the child process
-then exits on its own; if it stalls instead, pi-flows terminates it after a
-short grace period rather than letting it hang until `timeoutMs`. The structured
-cause identifies the path and preserves the provider diagnostic rather than
-degrading it to `CHILD_EXIT_NONZERO`. Collapsed views classify context,
-rate-limit, auth, capacity, or unknown failures and show diagnostic,
-model, named thinking (or unknown pi default), usage/cost/exit, and known
-context usage/limit. Expansion keeps capped structured detail.
+Cause: the provider returned a terminal error. The child normally exits; if it
+stalls, pi-flows terminates it after a short grace instead of waiting for
+`timeoutMs`. The structured cause retains that path and the provider diagnostic,
+not generic `CHILD_EXIT_NONZERO`. Collapsed views classify context, rate-limit,
+auth, capacity, or unknown failures and show diagnostic, model, thinking (marked
+requested when unverified), usage/cost/exit, and known context usage/limit;
+expanded detail remains capped.
 
-Fix: reduce input/use a larger-context model for context overflow; wait/reduce
-concurrency for rate limits; repair access for auth; wait/change model/provider
-for capacity; inspect details/status/access for unknowns. Redaction and byte caps
-still cover provider text. Never auto-replay: retry only explicitly within
-remaining budget. Context, auth, and unknown failures are not retryable
-unchanged. `PI_FLOWS_ERROR_GRACE_MS` tunes stalled-child grace (default 30000ms).
+Fix by category: reduce input/use a larger context; wait/reduce concurrency;
+repair access; wait/change model/provider; or inspect details/status/access.
+Provider text remains redacted/capped. Never auto-replay; retry explicitly within
+remaining budget. Context, auth, and unknown failures are not retryable unchanged.
+`PI_FLOWS_ERROR_GRACE_MS` tunes stalled-child grace (default 30000ms).
 
 ### `TRACE_INCOMPLETE`
 

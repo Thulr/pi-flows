@@ -371,6 +371,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 				diagnostic,
 				terminalProviderError ? "grace_terminated" : "prompt_exit",
 				modelContextWindow(options.roster, result.model),
+				choice.thinking !== undefined && choice.thinkingVerified,
 			);
 			result.error = flowError(
 				"CHILD_PROVIDER_ERROR",

@@ -201,6 +201,7 @@ export interface ProviderFailure {
 	diagnostic: string;
 	termination: "prompt_exit" | "grace_terminated";
 	contextWindow?: number;
+	thinkingVerified: boolean;
 }
 
 export interface FlowRunResult {

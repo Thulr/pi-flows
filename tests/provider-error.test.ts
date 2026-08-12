@@ -36,6 +36,7 @@ test("a child that stalls after a terminal provider error is terminated with CHI
 			diagnostic: "Codex error: Your input exceeds the context window of this model.",
 			termination: "grace_terminated",
 			contextWindow: 200_000,
+			thinkingVerified: false,
 		});
 		// The tokens the child burned before dying stay visible to the ledger.
 		assert.equal(run.usage.cost, 0.0001);
@@ -71,6 +72,7 @@ test("a terminal provider error followed by a prompt non-zero exit is CHILD_PROV
 		diagnostic: "Provider error: input exceeds this model context window.",
 		termination: "prompt_exit",
 		contextWindow: 200_000,
+		thinkingVerified: false,
 	});
 	assert.match(run.error?.message ?? "", /context window/, "the provider's diagnostic must survive into the structured error");
 	// The cause must be truthful: this child exited promptly; pi-flows never

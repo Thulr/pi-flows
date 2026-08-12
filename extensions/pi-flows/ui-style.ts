@@ -29,7 +29,7 @@ export function providerFailurePresentation(failure: ProviderFailure, contextTok
 	const used = contextTokens !== undefined ? formatTokens(contextTokens) : "?";
 	return {
 		context: `ctx:${used}${failure.contextWindow !== undefined ? `/${formatTokens(failure.contextWindow)}` : ""}`,
-		thinking: `thinking:${thinking ?? "unknown/pi-default"}`,
+		thinking: `thinking:${thinking ?? "unknown/pi-default"}${thinking && !failure.thinkingVerified ? " (requested)" : ""}`,
 		reason: `${providerFailureReason(failure)} · exit ${exitCode}`,
 		recovery: `recovery: ${providerFailureGuidance(failure.category)}`,
 	};

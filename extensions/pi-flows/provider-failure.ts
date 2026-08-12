@@ -39,8 +39,8 @@ export function modelContextWindow(roster: ModelRoster | undefined, model: strin
 	return byId.length === 1 ? byId[0]?.contextWindow : undefined;
 }
 
-export function describeProviderFailure(diagnostic: string, termination: ProviderFailure["termination"], contextWindow?: number): ProviderFailure {
-	return { category: classifyProviderDiagnostic(diagnostic), diagnostic, termination, ...(contextWindow !== undefined ? { contextWindow } : {}) };
+export function describeProviderFailure(diagnostic: string, termination: ProviderFailure["termination"], contextWindow: number | undefined, thinkingVerified: boolean): ProviderFailure {
+	return { category: classifyProviderDiagnostic(diagnostic), diagnostic, termination, contextWindow, thinkingVerified };
 }
 
 function shortDiagnostic(diagnostic: string, maxLength = 160): string {
