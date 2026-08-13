@@ -11,37 +11,6 @@ import { declaresOwnRoot, optionalNumericAttr, stringAttr, traceStructure, type 
  * also keeps the writer from importing a reader to check its own work.
  */
 
-/**
- * Read the finished export back and say whether it is a span tree. The strict
- * gate used to answer only from write-time accounting, which cannot see a
- * child parented to a stage nobody wrote or a root that does not reach itself
- * — the refusal text even sent readers to `npm run trace:report --strict` to
- * do this by hand. A run that stakes its verdict on evidence should not be the
- * one caller that never checks it.
- *
- * A read that itself fails is reported as invalid rather than swallowed:
- * evidence nobody could re-read is not evidence.
- *
- * Scoped to this flow's own trace_id AND its invocation id, the way the
- * read-back report groups before validating. One JSONL file routinely holds
- * many flows — an eval sets PI_FLOWS_TRACE_FILE once for a whole run — so
- * validating the file whole would judge every flow after the first against its
- * predecessors' spans and fail it for a surplus that is simply someone else's
- * trace. The trace id alone is not enough (#127): stableTraceIds derives it
- * from the trace context and mode, so two calls sharing both — a project-preset
- * refusal and the retry after it, into one file — write two roots under one id,
- * and a reading scoped only to the id refused the second, healthy, run over the
- * first one's rows. The invocation id is minted per sink, so it separates
- * exactly what the stable id deliberately does not. A row the flow wrote that
- * no longer parses, or that lost its invocation stamp, is caught by the count
- * instead: the trace comes back shorter than it declared. Stampless rows under
- * this trace id inside the record extent are decided by the report's own
- * predicate — a whole run from a pre-discriminator writer is ignored, a
- * remainder no run claims refuses — so the live and report gates agree about
- * everything this invocation could have affected; rows that predate the extent
- * are the report's alone (see the extent note below). The residual is a writer
- * forging both ids inside the extent, which no honest writer produces.
- */
 /** Where an invocation's record begins in its shared, append-only file — the glossary's Record extent (CONTEXT.md). */
 export interface RecordExtent {
 	start: number;
@@ -81,6 +50,36 @@ async function readExtent(traceFile: string, start: number): Promise<string> {
 }
 
 /**
+ * Read the finished export back and say whether it is a span tree. The strict
+ * gate used to answer only from write-time accounting, which cannot see a
+ * child parented to a stage nobody wrote or a root that does not reach itself
+ * — the refusal text even sent readers to `npm run trace:report --strict` to
+ * do this by hand. A run that stakes its verdict on evidence should not be the
+ * one caller that never checks it.
+ *
+ * A read that itself fails is reported as invalid rather than swallowed:
+ * evidence nobody could re-read is not evidence.
+ *
+ * Scoped to this flow's own trace_id AND its invocation id, the way the
+ * read-back report groups before validating. One JSONL file routinely holds
+ * many flows — an eval sets PI_FLOWS_TRACE_FILE once for a whole run — so
+ * validating the file whole would judge every flow after the first against its
+ * predecessors' spans and fail it for a surplus that is simply someone else's
+ * trace. The trace id alone is not enough (#127): stableTraceIds derives it
+ * from the trace context and mode, so two calls sharing both — a project-preset
+ * refusal and the retry after it, into one file — write two roots under one id,
+ * and a reading scoped only to the id refused the second, healthy, run over the
+ * first one's rows. The invocation id is minted per sink, so it separates
+ * exactly what the stable id deliberately does not. A row the flow wrote that
+ * no longer parses, or that lost its invocation stamp, is caught by the count
+ * instead: the trace comes back shorter than it declared. Stampless rows under
+ * this trace id inside the record extent are decided by the report's own
+ * predicate — a whole run from a pre-discriminator writer is ignored, a
+ * remainder no run claims refuses — so the live and report gates agree about
+ * everything this invocation could have affected; rows that predate the extent
+ * are the report's alone (see readExtent above). The residual is a writer
+ * forging both ids inside the extent, which no honest writer produces.
+ *
  * `attempted` is what the run has written when this reading happens — the rows
  * that must be present now. `declared` is what the root says, one more than
  * attempted, because the root reserves a slot for the certification this
