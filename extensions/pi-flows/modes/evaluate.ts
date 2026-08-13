@@ -226,7 +226,14 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		// A failing check is a forced REVISE; the critics are skipped that round to save
 		// cost, and the command output becomes the critique the generator must fix.
 		if (checkCommand) {
-			const check = await runCheckCommand(checkCommand, generatorRef.cwd ?? defaultCwd, checkTimeoutMs, policy, signal);
+			const check = await runCheckCommand(checkCommand, generatorRef.cwd ?? defaultCwd, checkTimeoutMs, policy, {
+				record: deps.recordEvent,
+				name: "evaluate.check_command",
+				// The gate ran against this iteration's draft, so a revision driven by a
+				// failed check can be traced back to the draft that failed it.
+				scope: { stage, key: `${stage.key}.check`, dependsOn: [generatorKey(stage.key)] },
+				attributes: { "flow.check.iteration": iteration },
+			}, signal);
 			if (check.spawnFailed) {
 				const error = flowError(
 					"CHECK_COMMAND_FAILED",
@@ -237,15 +244,6 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 				return settle.refuse(error);
 			}
 			lastCheckOk = check.ok;
-			deps.recordEvent?.({
-				kind: "validation",
-				name: "evaluate.check_command",
-				ok: check.ok,
-				// The gate ran against this iteration's draft, so a revision driven by a
-				// failed check can be traced back to the draft that failed it.
-				scope: { stage, key: `${stage.key}.check`, dependsOn: [generatorKey(stage.key)] },
-				attributes: { "flow.check.passed": check.ok, "flow.check.iteration": iteration },
-			});
 			if (!check.ok) {
 				// The command's output crosses into the next generator's prompt, so it
 				// gets the same treatment as any other feedback: capped, stripped of

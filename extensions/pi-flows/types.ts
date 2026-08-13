@@ -10,8 +10,8 @@ import type { FlowPreset, FlowPresetSelection } from "./preset-types.ts";
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
 // it can be re-exported here without a cycle) and is part of this module's
 // public surface: downstream consumers import trace types from types.ts.
-export type { ChildSpanScope, CoordinationEvent, CoordinationEventKind, FlowTraceContext, FlowTraceHealth, FlowTraceHealthStatus, FlowTraceLink, FlowTraceStructure, RecordEvent, SpanStage } from "./trace-scope.ts";
-export { encodeAuthorKey } from "./trace-scope.ts";
+export type { ChildSpanScope, CoordinationEvent, CoordinationEventKind, EventAttribution, FlowTraceContext, FlowTraceHealth, FlowTraceHealthStatus, FlowTraceLink, FlowTraceStructure, RecordEvent, SpanStage } from "./trace-scope.ts";
+export { encodeAuthorKey, mintEvent } from "./trace-scope.ts";
 export type { ChildMessage, ChildMessageBlock } from "./sanitize.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
 export type { FlowPreset, FlowPresetDiscovery, FlowPresetDiscoveryIssue, FlowPresetSelection, PresetSource } from "./preset-types.ts";

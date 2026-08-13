@@ -383,16 +383,14 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		let checkSummary = "No deterministic integration check requested.";
 		if (spec.checkCommand) {
-			const checked = await runCheckCommand(spec.checkCommand, integrationCwd, resolveFlowCommandTimeoutMs(spec.checkTimeoutMs, params.timeoutMs), policy, deps.signal);
-			deps.recordEvent?.({
-				kind: "validation",
+			const checked = await runCheckCommand(spec.checkCommand, integrationCwd, resolveFlowCommandTimeoutMs(spec.checkTimeoutMs, params.timeoutMs), policy, {
+				record: deps.recordEvent,
 				name: "worktree.integration_check",
-				ok: checked.ok,
 				// The command ran against the reviewed branch, so a failed worktree
 				// ends at the review it invalidated rather than at a loose gate.
 				scope: { key: "integration-check", dependsOn: ["integration-review"] },
-				attributes: { "flow.check.passed": checked.ok, "flow.worktree.integration_branch": integrationBranch, "flow.worktree.changed_file_count": changedFiles.length },
-			});
+				attributes: { "flow.worktree.integration_branch": integrationBranch, "flow.worktree.changed_file_count": changedFiles.length },
+			}, deps.signal);
 			if (!checked.ok) {
 				const error = flowError("WORKTREE_VERIFY_FAILED", "Integration branch failed its deterministic check.", checked.output || "The worktree checkCommand exited non-zero.", "Inspect the retained integration branch, fix the check failure, and rerun verification before merging.");
 				return settle.refuse(error);

@@ -27,7 +27,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { deepFreeze } from "./contract-resolution.ts";
 import { canonicalSha256, isRecord } from "./delegation.ts";
-import { flowError, type ApprovalReceiptSummary, type FlowError } from "./types.ts";
+import { flowError, mintEvent, type ApprovalReceiptSummary, type EventAttribution, type FlowError } from "./types.ts";
 
 export const APPROVAL_RECEIPT_SCHEMA_VERSION = "pi-flows.approval-receipt.v1";
 
@@ -121,14 +121,26 @@ function sealReceipt(receipt: UnsealedReceipt): ApprovalReceipt {
 	return { ...(receipt as ApprovalReceipt), receiptDigest: approvalReceiptDigest(receipt) };
 }
 
-/** Mint a receipt for a granted approval. The receipt starts unconsumed: it authorizes the action, it does not record that the action happened. */
+/**
+ * Mint a receipt for a granted approval. The receipt starts unconsumed: it
+ * authorizes the action, it does not record that the action happened.
+ *
+ * Issuance mints its own approval event (#128): consent becoming a durable
+ * receipt is this module's fact, so the evidence is recorded here rather than
+ * left to the caller's discipline. The event carries receipt identity and
+ * status only — the approved parameters stay inside the binding digest, so the
+ * trace can name the consent without leaking it. The caller owns the
+ * attribution; the receipt-identity attributes are this seam's, assembled
+ * through the `mintEvent` home so the merge order is spelled once.
+ */
 export function issueApprovalReceipt(
 	binding: ApprovalBinding,
 	{ approvedBy, ttlMs = DEFAULT_APPROVAL_TTL_MS, now = Date.now() }: { approvedBy: string; ttlMs?: number; now?: number },
+	attribution: EventAttribution,
 ): ApprovalReceipt {
 	const issuedAt = new Date(now).toISOString();
 	const bindingDigest = approvalBindingDigest(binding);
-	return sealReceipt({
+	const receipt = sealReceipt({
 		schemaVersion: APPROVAL_RECEIPT_SCHEMA_VERSION,
 		receiptId: createHash("sha256").update(`${bindingDigest}:${issuedAt}:${randomUUID()}`).digest("hex").slice(0, 16),
 		action: binding.action,
@@ -143,6 +155,17 @@ export function issueApprovalReceipt(
 		consumedBy: null,
 		validation: "typed",
 	});
+	mintEvent(attribution, {
+		kind: "approval",
+		attributes: {
+			"flow.approval.receipt_id": receipt.receiptId,
+			"flow.approval.action": receipt.action,
+			"flow.approval.approved_by": receipt.approvedBy,
+			"flow.approval.expires_at": receipt.expiresAt ?? "(none)",
+			"flow.approval.validation": receipt.validation,
+		},
+	});
+	return receipt;
 }
 
 /**
@@ -151,6 +174,8 @@ export function issueApprovalReceipt(
  * `legacy-prose`: the old state carried no approver, no issue time, and no
  * window, so the migrated receipt claims none of them and is exempt from
  * expiry — it still binds, so a later edit to the gated action is still caught.
+ * Reconstruction, not consent: unlike issueApprovalReceipt it mints no
+ * approval event, because no human decision happened here to evidence.
  */
 export function legacyApprovalReceipt(binding: ApprovalBinding, { issuedAt, consumedBy }: { issuedAt: string; consumedBy: string }): ApprovalReceipt {
 	const bindingDigest = approvalBindingDigest(binding);

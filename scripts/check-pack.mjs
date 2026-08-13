@@ -198,5 +198,20 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // coverage is tests/trace-invocation-scope.test.ts, not packaged; the
 // domain-review re-record is not packaged either). Headroom is ~454 B over
 // the measured 1_185_406, matching the previous raises.
-assert.ok(pack.unpackedSize < 1_185_860, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_192_370 for minted events (#128): trace-scope gains the
+// EventAttribution vocabulary and the one mintEvent assembly home (the review
+// round's extraction, so the merge order is spelled once and Generic invokes
+// the Core rule rather than authoring it), runCheckCommand mints the
+// deterministic gate's validation event on the one path every check command
+// runs through, and issueApprovalReceipt mints the approval event carrying
+// receipt identity — plus the CONTEXT.md Minted event entry and the
+// changelog. The three mode call sites (workflow, evaluate, worktree) hand
+// their attribution to the seam and delete their hand-placed events, so the
+// mode files shrink; the growth is the seams' JSDoc and the prose, not new
+// machinery. Same verification: the file set is unchanged at 108 and none
+// from tests/, scripts/, or evals/ (the new coverage is
+// tests/coordination-evidence.test.ts, not packaged; the domain-review
+// re-record is not packaged either). Headroom is ~403 B over the measured
+// 1_191_967, matching the previous raises.
+assert.ok(pack.unpackedSize < 1_192_370, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

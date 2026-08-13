@@ -7,6 +7,9 @@ import { ApprovalAuthorization, issueApprovalReceipt, type ApprovalBinding } fro
 import { ResolvedDelegationContract, delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import type { DelegationContract } from "../extensions/pi-flows/types.ts";
 
+/** The stated absence of a trace sink (`record: undefined`): these receipts exist outside any flow, and issuance requires the statement rather than letting evidence be forgotten (#128). */
+const UNRECORDED = { record: undefined, name: "workflow.approval.issued" };
+
 const contract: DelegationContract = {
 	objective: "Return the exact answer.",
 	constraints: [],
@@ -48,7 +51,7 @@ test("neither wrapper can be constructed directly at runtime", () => {
 		new (ResolvedDelegationContract as unknown as Newable)(contract, "sha256:forged", () => true);
 	}, TypeError, "a resolved contract cannot exist without passing admissibility");
 	assert.throws(() => {
-		new (ApprovalAuthorization as unknown as Newable)(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }), "workflow.phase:ship");
+		new (ApprovalAuthorization as unknown as Newable)(issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }, UNRECORDED), "workflow.phase:ship");
 	}, TypeError, "an authorization cannot exist without verify having passed");
 });
 
@@ -88,7 +91,7 @@ const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => (
 const NOW = Date.parse("2026-08-08T12:00:00.000Z");
 
 test("consumption exists only on a verified authorization, bound to the verified consumer", () => {
-	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }, UNRECORDED);
 	const verified = ApprovalAuthorization.verify(receipt, binding(), { consumer: "workflow.phase:ship", now: NOW });
 	assert.equal(verified.error, undefined);
 
@@ -102,7 +105,7 @@ test("consumption exists only on a verified authorization, bound to the verified
 });
 
 test("consumption seals the receipt verification covered, not later mutations", () => {
-	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }, UNRECORDED);
 	const authorization = ApprovalAuthorization.verify(receipt, binding(), { consumer: "workflow.phase:ship", now: NOW }).authorization!;
 	(receipt as { approvedBy: string }).approvedBy = "someone-else";
 	const spent = authorization.consume(NOW);
@@ -110,7 +113,7 @@ test("consumption seals the receipt verification covered, not later mutations", 
 });
 
 test("consuming one authorization twice returns the identical receipt, not a re-stamped one", () => {
-	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW });
+	const receipt = issueApprovalReceipt(binding(), { approvedBy: "justin", now: NOW }, UNRECORDED);
 	const authorization = ApprovalAuthorization.verify(receipt, binding(), { consumer: "workflow.phase:ship", now: NOW }).authorization!;
 	const first = authorization.consume(NOW);
 	const second = authorization.consume(NOW + 5_000);

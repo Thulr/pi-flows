@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, type CapturePolicy, type FlowError } from "./types.ts";
+import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, mintEvent, type CapturePolicy, type EventAttribution, type FlowError } from "./types.ts";
 import { capBytes, sanitizeText } from "./sanitize.ts";
 import { parseToolsOverride } from "./validate.ts";
 import { splitBashReadonly, type BashReadonlyEnforcement } from "./bash-readonly.ts";
@@ -106,15 +106,37 @@ function boundedCommand<T>(options: {
 	});
 }
 
-/** Run a deterministic acceptance gate and return bounded, redacted output. */
-export function runCheckCommand(command: string, cwd: string, timeoutMs: number, policy: CapturePolicy, signal?: AbortSignal): Promise<{ ok: boolean; output: string; spawnFailed: boolean }> {
-	return boundedCommand<{ ok: boolean; output: string; spawnFailed: boolean }>({
+/**
+ * Run a deterministic acceptance gate and return bounded, redacted output.
+ *
+ * The gate mints its own validation evidence (#128): the outcome event is
+ * recorded here, on the one path every check command runs through, the same
+ * way a child span is impossible to skip because runner.ts records it — so a
+ * mode cannot run a gate without leaving the trace fact that it ran, and the
+ * required attribution makes a caller without a sink state that rather than
+ * forget it. The caller owns the attribution; `flow.check.passed` and the
+ * outcome are this seam's, assembled through the Core `mintEvent` home so the
+ * merge order is spelled once. A gate that could not start is recorded too
+ * (`flow.check.spawn_failed`) — evaluate's refuse-first path previously left
+ * no evidence of that spend.
+ */
+export async function runCheckCommand(command: string, cwd: string, timeoutMs: number, policy: CapturePolicy, attribution: EventAttribution, signal?: AbortSignal): Promise<{ ok: boolean; output: string; spawnFailed: boolean }> {
+	const result = await boundedCommand<{ ok: boolean; output: string; spawnFailed: boolean }>({
 		command, cwd, timeoutMs, policy, signal, label: "Check output",
 		finishForCode: (code, output) => ({ ok: code === 0, output, spawnFailed: false }),
 		finishForTimeout: (output) => ({ ok: false, output, spawnFailed: false }),
 		finishForAbort: (output) => ({ ok: false, output, spawnFailed: false }),
 		finishForSpawnError: (output) => ({ ok: false, output, spawnFailed: true }),
 	});
+	mintEvent(attribution, {
+		kind: "validation",
+		ok: result.ok,
+		attributes: {
+			"flow.check.passed": result.ok,
+			...(result.spawnFailed ? { "flow.check.spawn_failed": true } : {}),
+		},
+	});
+	return result;
 }
 
 /** Capture one bounded shell probe without treating expected non-zero exits as agent errors. */

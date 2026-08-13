@@ -10,6 +10,26 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- The two coordination actions that already pass through framework seams now
+  mint their own trace evidence instead of leaving it to handler discipline
+  (#128). Running a deterministic gate (`runCheckCommand`) records the
+  `validation` outcome event at the seam, and issuing an approval receipt
+  (`issueApprovalReceipt`) records the `approval` event carrying the receipt's
+  identity. Both take a required **event attribution** (the caller's event
+  name, span placement, own facts, and the recorder or its stated absence), so
+  a new mode cannot compile a gate or a receipt without stating where its
+  evidence goes, and the seam's facts merge last — through the one `mintEvent`
+  home — so attribution cannot override what happened. Event names,
+  placements, and existing attributes are unchanged on the wire, with two
+  disclosed deltas: `flow.check.spawn_failed` is a new attribute — a gate that
+  could not start now leaves evidence on evaluate's refuse-first path, which
+  previously recorded nothing for that spend — and the approval event now
+  records at issuance rather than after the state persist that follows, so
+  evidence of consent no longer depends on that write landing. A mode's own
+  state transitions, retries, and controller-parsed verdicts have no shared
+  seam performing them and stay hand-placed — the deliberate boundary named in
+  `CONTEXT.md` (**Minted event**) and tracked in #133.
+
 - Raw `parallel` fan-out with two or more tasks now refuses before child spend
   when any task omits `tier`/`model` and the flow names no uniform fallback.
   Per-task sizing is explicit for mixed work; a flow-wide `tier` or `model`
