@@ -85,8 +85,14 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 				|| link.context?.trialId !== trial.trialId) {
 				issues.push(`${label} runtime-trace context does not match reliability identity`);
 			}
-			const root = (link.invocationId ? spans.get(spanKey(link.traceId, link.rootSpanId, link.invocationId)) : undefined)
-				?? spans.get(spanKey(link.traceId, link.rootSpanId));
+			// A link that names its invocation is held to it exactly: falling back to
+			// the unscoped row would let another invocation's root — the refusal
+			// beside a deleted retry, with identical run/case/trial attributes —
+			// stand in for evidence the file no longer holds. Only links written
+			// before the stamp existed may use the unscoped lookup.
+			const root = link.invocationId
+				? spans.get(spanKey(link.traceId, link.rootSpanId, link.invocationId))
+				: spans.get(spanKey(link.traceId, link.rootSpanId));
 			if (!root) {
 				issues.push(`${label} linked runtime root span is absent`);
 				continue;
