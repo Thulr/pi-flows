@@ -78,6 +78,15 @@ test("settle: refuse caps the model-visible text over the whole message, formatt
 	assert.match(output.content[0].text, /truncated: \d+ bytes omitted/);
 });
 
+test("settle: the registered footer has its own small bound, so the refusal stays capped without trusting the registering mode", () => {
+	const settle = worktreeSettle();
+	settle.decorateFooter(() => `\n\n${"p".repeat(8 * 1024)}`);
+	const text = settle.refuse(refusal(), { footer: `\n\n${"x".repeat(64 * 1024)}` }).content[0].text;
+	assert.match(text, /Recovery pointer truncated: \d+ bytes omitted/);
+	// Model-visible body plus the pointer allowance plus two truncation markers.
+	assert.ok(Buffer.byteLength(text, "utf8") <= 50 * 1024 + 2 * 1024 + 128, `refusal must stay bounded, got ${Buffer.byteLength(text, "utf8")} bytes`);
+});
+
 test("settle: the registered recovery pointer survives the cap that truncates the footer", () => {
 	const settle = worktreeSettle();
 	settle.decorateFooter(() => "\n\nIntegration branch: `pi-flow/x/integration`");

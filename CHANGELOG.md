@@ -53,7 +53,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   a pathological error cause is now bounded like all other model-visible text.
   A recovery pointer a mode registers (see the worktree fix below) is appended
   after the cap, so truncation cannot swallow the one line that names where
-  recovery lives.
+  recovery lives — and is bounded by its own small allowance, so the refusal
+  stays capped no matter what a mode registers.
 
 ### Fixed
 

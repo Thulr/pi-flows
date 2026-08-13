@@ -1,5 +1,13 @@
-import { capModelVisibleText } from "./sanitize.ts";
+import { capBytes, capModelVisibleText } from "./sanitize.ts";
 import { formatFlowError, type FlowDetails, type FlowError, type FlowMode, type FlowRunResult, type ModeOutput } from "./types.ts";
+
+/**
+ * The registered refusal footer's own byte allowance. A recovery pointer is a
+ * line or two; bounding it here keeps {@link Settle.refuse}'s bound structural
+ * — the full refusal never exceeds the model-visible cap plus this — instead
+ * of resting on the registering mode's discipline.
+ */
+const REGISTERED_FOOTER_CAP = 2 * 1024;
 
 /**
  * The curried details builder a settle is constructed over — the shape
@@ -75,11 +83,13 @@ export class Settle {
 	 * capped message and slicing the formatted prefix back off. The registered
 	 * footer ({@link decorateFooter}) lands after the cap: it is the short
 	 * recovery pointer a truncated refusal needs most, so truncation must not
-	 * be able to swallow it.
+	 * be able to swallow it — and it is bounded by its own small allowance, so
+	 * the whole refusal stays capped without trusting the registering mode.
 	 */
 	refuse(error: FlowError, options: { footer?: string } = {}): ModeOutput {
+		const body = capModelVisibleText(`${formatFlowError(error)}${options.footer ?? ""}`);
 		return {
-			content: [{ type: "text", text: `${capModelVisibleText(`${formatFlowError(error)}${options.footer ?? ""}`)}${this.#footer()}` }],
+			content: [{ type: "text", text: `${body}${capBytes(this.#footer(), REGISTERED_FOOTER_CAP, "Recovery pointer")}` }],
 			details: this.details(error),
 		};
 	}
