@@ -41,26 +41,64 @@ import { declaresOwnRoot, optionalNumericAttr, stringAttr, traceStructure, type 
  * which no honest writer produces.
  */
 /**
+ * The bytes of a shared, append-only file from `start` on — the region an
+ * invocation's record occupies (#129). Reading from the extent instead of
+ * byte 0 is what keeps a finalize's cost proportional to its own record: in
+ * the eval setup one file accumulates every flow of a run, and a whole-file
+ * read made flow N traverse flows 1..N-1 just to skip them. The boundary is
+ * sound because the file only grows: everything before the extent was on disk
+ * before the sink existed, so it cannot carry the sink's random invocation id
+ * honestly, and everything a concurrent writer lands afterwards is inside the
+ * region and judged as before. `start` may cut a foreign line — a recorded
+ * extent under-estimates when a cross-process append raced its capture — and
+ * the fragment is skipped by the same marker test as any other foreign row.
+ */
+async function readExtent(traceFile: string, start: number): Promise<string> {
+	if (start <= 0) return fs.readFile(traceFile, "utf8");
+	const handle = await fs.open(traceFile, "r");
+	try {
+		const { size } = await handle.stat();
+		const length = Math.max(0, size - start);
+		if (length === 0) return "";
+		const buffer = Buffer.alloc(length);
+		let offset = 0;
+		while (offset < length) {
+			const { bytesRead } = await handle.read(buffer, offset, length - offset, start + offset);
+			if (bytesRead === 0) break;
+			offset += bytesRead;
+		}
+		return buffer.toString("utf8", 0, offset);
+	} finally {
+		await handle.close();
+	}
+}
+
+/**
  * `attempted` is what the run has written when this reading happens — the rows
  * that must be present now. `declared` is what the root says, one more than
  * attempted, because the root reserves a slot for the certification this
- * reading produces afterwards.
+ * reading produces afterwards. `extent.start` is where the invocation's record
+ * begins — the file's size when its sink was born; the default reads the file
+ * whole. Rows before the extent predate the invocation: stamped ones were
+ * always another run's evidence, and a stampless remainder there is a
+ * predecessor's torn record — the whole-file report's business, judged when
+ * the file is read whole, the same way rows appended after finalize already
+ * are. The live verdict covers the region this invocation could have affected.
  */
-export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy): Promise<FlowTraceStructure> {
+export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy, extent: { start: number } = { start: 0 }): Promise<FlowTraceStructure> {
 	const { traceId, invocationId } = identity;
 	const { attempted, declared } = expectation;
 	try {
-		// Only this invocation's rows are parsed. In the eval setup one file
-		// accumulates every flow of a run, so parsing all of it on each finalize
-		// would cost more with each call; a substring test is cheap and JSON.parse
-		// is not. The line filter is this module's, the validator below is shared
-		// with the report — the same check, not the same reader.
+		// Only this invocation's rows are parsed, and only its own extent is read.
+		// A substring test is cheap and JSON.parse is not. The line filter is this
+		// module's, the validator below is shared with the report — the same
+		// check, not the same reader.
 		const traceMarker = `"trace_id":${JSON.stringify(traceId)}`;
 		const invocationMarker = `"flow.invocation_id":${JSON.stringify(invocationId)}`;
 		const own: TraceSpanRecord[] = [];
 		const unclaimed: TraceSpanRecord[] = [];
 		let unreadable = 0;
-		for (const line of (await fs.readFile(traceFile, "utf8")).split("\n")) {
+		for (const line of (await readExtent(traceFile, extent.start)).split("\n")) {
 			if (!line.includes(traceMarker)) continue;
 			if (!line.includes(invocationMarker)) {
 				// A shared-trace-id row without this run's stamp. Another invocation's
