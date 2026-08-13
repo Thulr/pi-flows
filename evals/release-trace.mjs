@@ -51,7 +51,14 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	// still corruption. The lookup map prefers the invocation the trial's link
 	// names, falling back to the last trace:span row for links (and rows) that
 	// predate the stamp.
-	const spanKey = (traceId, spanId, invocation) => `${traceId ?? ""}:${spanId ?? ""}${invocation ? `:${invocation}` : ""}`;
+	// Components are escaped before joining — the same move encodeUnitKey makes
+	// for comma-joined lists — because artifact rows carry arbitrary ids: unescaped,
+	// a row with span_id "r:i" aliases the key of (span "r", invocation "i") and a
+	// forged or legacy root could stand in for a deleted invocation's. Escaped
+	// parts hold no raw colon, so two-part and three-part keys cannot collide
+	// either.
+	const keyPart = (value) => String(value ?? "").replaceAll("%", "%25").replaceAll(":", "%3A");
+	const spanKey = (traceId, spanId, invocation) => `${keyPart(traceId)}:${keyPart(spanId)}${invocation ? `:${keyPart(invocation)}` : ""}`;
 	const spans = new Map();
 	const seenRows = new Set();
 	for (const row of rows) {
