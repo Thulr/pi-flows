@@ -69,6 +69,9 @@ const IMPORT_RULES = {
  * see, never a data file a change can quietly grow — the same posture as the
  * foreign-import ledger, enforced at the point the escape hatch would
  * otherwise be.
+ *
+ * Every pattern must carry /g: matchAll throws on a non-global regex, so an
+ * entry authored without it crashes the gate loudly instead of under-counting.
  */
 const SPELLED_ONCE = [
   {
@@ -87,7 +90,10 @@ const SPELLED_ONCE = [
     // #130: refuse owns the model-visible cap over a refusal. Capping the
     // assembled message and slicing the formatted prefix back off is the trick
     // two modes independently reinvented before the cap moved into refuse.
-    pattern: /capModelVisibleText\([^\n]*\)\.slice\(/g,
+    // The span is bounded rather than single-line — this repo formats long
+    // calls across lines — but kept short enough that the pattern cannot leap
+    // from one expression into an unrelated .slice( further down the file.
+    pattern: /capModelVisibleText\([\s\S]{0,200}?\)\.slice\(/g,
     allowed: {},
   },
   {
