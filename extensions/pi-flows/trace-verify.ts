@@ -35,11 +35,18 @@ import { declaresOwnRoot, optionalNumericAttr, stringAttr, traceStructure, type 
  * exactly what the stable id deliberately does not. A row the flow wrote that
  * no longer parses, or that lost its invocation stamp, is caught by the count
  * instead: the trace comes back shorter than it declared. Stampless rows under
- * this trace id are decided by the report's own predicate — a whole run from a
- * pre-discriminator writer is ignored, a remainder no run claims refuses — so
- * the live and report gates agree. The residual is a writer forging both ids,
- * which no honest writer produces.
+ * this trace id inside the record extent are decided by the report's own
+ * predicate — a whole run from a pre-discriminator writer is ignored, a
+ * remainder no run claims refuses — so the live and report gates agree about
+ * everything this invocation could have affected; rows that predate the extent
+ * are the report's alone (see the extent note below). The residual is a writer
+ * forging both ids inside the extent, which no honest writer produces.
  */
+/** Where an invocation's record begins in its shared, append-only file — the glossary's Record extent (CONTEXT.md). */
+export interface RecordExtent {
+	start: number;
+}
+
 /**
  * The bytes of a shared, append-only file from `start` on — the region an
  * invocation's record occupies (#129). Reading from the extent instead of
@@ -85,7 +92,7 @@ async function readExtent(traceFile: string, start: number): Promise<string> {
  * the file is read whole, the same way rows appended after finalize already
  * are. The live verdict covers the region this invocation could have affected.
  */
-export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy, extent: { start: number } = { start: 0 }): Promise<FlowTraceStructure> {
+export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy, extent: RecordExtent = { start: 0 }): Promise<FlowTraceStructure> {
 	const { traceId, invocationId } = identity;
 	const { attempted, declared } = expectation;
 	try {

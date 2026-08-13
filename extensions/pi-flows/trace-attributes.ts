@@ -16,7 +16,7 @@ import type { BudgetSnapshot, CapturePolicy, DelegationContract, DelegationHando
 const LABEL_CAP = 512;
 const LIST_CAP = 1024;
 
-/** Bound on any one span attribute. Attributes are identifiers and structure, not payloads. */
+/** Bound on any one span attribute. Equal to LIST_CAP today but deliberately its own name: it bounds a different role and may diverge. */
 const ATTRIBUTE_CAP = 1024;
 
 /**
@@ -31,37 +31,6 @@ const ATTRIBUTE_CAP = 1024;
  */
 const STRUCTURAL_CAP = 8 * 1024;
 const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids", "flow.depends_on_unresolved"]);
-
-/**
- * How a value looks once written: redacted, then capped.
- *
- * Attribute values reach the sink from mode handlers, and several are operator-
- * or repo-supplied: an approval actor from PI_FLOWS_APPROVAL_ACTOR, a workflow
- * phase id, a graph node id, a branch name. They are identity rather than
- * content, so `recordContent:false` does not withhold them — but there is no
- * reason a configured actor of `token=…`, or a home path, should reach the
- * file verbatim when the same string is redacted everywhere else.
- */
-export function storedLabel(value: string, policy: CapturePolicy): string {
-	return sanitizeText(value, { ...policy, recordContent: true }, ATTRIBUTE_CAP);
-}
-
-/** How a structural key list looks once written: redacted, then capped at the structural bound. */
-export function storedStructural(value: string, policy: CapturePolicy): string {
-	return sanitizeText(value, { ...policy, recordContent: true }, STRUCTURAL_CAP);
-}
-
-/** A whole attribute map under the same rules, each key at the bound its role earns. */
-export function storedAttributes(attributes: Record<string, unknown> | undefined, policy: CapturePolicy): Record<string, unknown> {
-	if (!attributes) return {};
-	const stored: Record<string, unknown> = {};
-	for (const [key, value] of Object.entries(attributes)) {
-		stored[key] = typeof value === "string"
-			? sanitizeText(value, { ...policy, recordContent: true }, STRUCTURAL_ATTRIBUTES.has(key) ? STRUCTURAL_CAP : ATTRIBUTE_CAP)
-			: value;
-	}
-	return stored;
-}
 
 /** The eval-linkage identity as the sink stores it: redacted, bounded identifiers. */
 export function storedTraceContext(context: FlowTraceContext, policy: CapturePolicy): FlowTraceContext {
@@ -117,6 +86,35 @@ function label(value: string, policy: CapturePolicy, cap = LABEL_CAP): string {
 
 function list(values: string[], policy: CapturePolicy): string {
 	return label(values.join(","), policy, LIST_CAP);
+}
+
+/**
+ * How a value looks once written: redacted, then capped.
+ *
+ * Attribute values reach the sink from mode handlers, and several are operator-
+ * or repo-supplied: an approval actor from PI_FLOWS_APPROVAL_ACTOR, a workflow
+ * phase id, a graph node id, a branch name. They are identity rather than
+ * content, so `recordContent:false` does not withhold them — but there is no
+ * reason a configured actor of `token=…`, or a home path, should reach the
+ * file verbatim when the same string is redacted everywhere else.
+ */
+export function storedLabel(value: string, policy: CapturePolicy): string {
+	return label(value, policy, ATTRIBUTE_CAP);
+}
+
+/** How a structural key list looks once written: redacted, then capped at the structural bound. */
+export function storedStructural(value: string, policy: CapturePolicy): string {
+	return label(value, policy, STRUCTURAL_CAP);
+}
+
+/** A whole attribute map under the same rules, each key at the bound its role earns. */
+export function storedAttributes(attributes: Record<string, unknown> | undefined, policy: CapturePolicy): Record<string, unknown> {
+	if (!attributes) return {};
+	const stored: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(attributes)) {
+		stored[key] = typeof value === "string" ? label(value, policy, STRUCTURAL_ATTRIBUTES.has(key) ? STRUCTURAL_CAP : ATTRIBUTE_CAP) : value;
+	}
+	return stored;
 }
 
 export interface DelegationIdentity {

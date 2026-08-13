@@ -88,16 +88,13 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	// filters on instead; it lives beside the identity, never inside it.
 	const invocationId = spanId();
 	// Where this invocation's record begins: the file's size the moment the sink
-	// is born, before any of its rows can exist. The file is append-only, so the
-	// read-back (#129) reads only from here — everything earlier predates this
-	// invocation and cannot honestly carry its just-minted random id, while
-	// anything a concurrent writer lands from now on is inside the extent and
-	// judged as always. Captured at birth rather than at first write because the
-	// sink appends without awaiting: a row another writer gets onto disk ahead of
-	// the queued first append must not slip behind the boundary. Cross-process
-	// races can only under-estimate this (appends grow the file), which reads
-	// extra foreign rows — the safe direction; an unreadable path reads as 0 and
-	// falls back to the whole file.
+	// is born, before any of its rows can exist — the record extent the read-back
+	// is bounded by (#129; readExtent in trace-verify.ts holds why the boundary is
+	// sound). Captured at birth rather than at first write because the sink
+	// appends without awaiting: a row another writer gets onto disk ahead of the
+	// queued first append must not slip behind the boundary. Races can only
+	// under-estimate this (appends grow the file), which reads extra foreign rows
+	// — the safe direction; an unreadable path reads as 0, the whole file.
 	let extentStart = 0;
 	try {
 		extentStart = statSync(traceFile).size;

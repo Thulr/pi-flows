@@ -213,20 +213,21 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // tests/coordination-evidence.test.ts, not packaged; the domain-review
 // re-record is not packaged either). Headroom is ~403 B over the measured
 // 1_191_967, matching the previous raises.
-// Raised to 1_197_950 for the record extent (#129): trace-sink captures where
+// Raised to 1_199_000 for the record extent (#129): trace-sink captures where
 // the file had grown to at the sink's birth, trace-verify gains the one
 // bounded reader (readExtent) both readings go through and the boundary's
 // rationale, and the stored-attribute discipline (storedLabel /
 // storedStructural / storedAttributes and their caps) moves to
 // trace-attributes.ts — the module whose charter it is — because trace-sink
 // crossed the 500-line cap, which is not a thing to raise. Plus the
-// CONTEXT.md Record extent entry, the changelog's disclosed delta, and the
-// flow-reference wording the sync rule requires. The reading reuses the
-// existing markers and validator over fewer bytes, so this is interface and
-// prose, not new machinery. Same verification: the file set is unchanged at
-// 108 and none from tests/, scripts/, or evals/ (the new coverage is
+// CONTEXT.md Record extent entry, the changelog's disclosed deltas, and the
+// flow-reference / troubleshooting / AGENTS.md wording the sync rule and the
+// review round required. The reading reuses the existing markers and
+// validator over fewer bytes, so this is interface and prose, not new
+// machinery. Same verification: the file set is unchanged at 108 and none
+// from tests/, scripts/, or evals/ (the new coverage is
 // tests/trace-extent.test.ts, not packaged; the domain-review re-record is
-// not packaged either). Headroom is ~470 B over the measured 1_197_480,
+// not packaged either). Headroom is ~465 B over the measured 1_198_535,
 // matching the previous raises.
-assert.ok(pack.unpackedSize < 1_197_950, `package unpacked size too large: ${pack.unpackedSize}`);
+assert.ok(pack.unpackedSize < 1_199_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
