@@ -213,7 +213,7 @@ Whether the tool itself would admit a call rather than refuse it before any chil
 _Avoid_: validity, eligibility
 
 **Mirror**:
-A spawn-free re-derivation of a handler's pre-spawn decision, used to answer admissibility without running the flow. A mirror stays silent wherever the tool would refuse first for a different reason, so a refusal is never mislabeled. A mirror is a second derivation of a rule and must be kept in agreement with the first; prefer a **pre-spawn refusal** declaration, which removes the second copy entirely.
+A spawn-free re-derivation of a handler's pre-spawn decision, used to answer admissibility without running the flow. A mirror stays silent wherever the tool would refuse first for a different reason, so a refusal is never mislabeled. A mirror is a second derivation of a rule and must be kept in agreement with the first; prefer a **pre-spawn refusal** declaration, which removes the second copy entirely. Where a consolidation has already removed the second copy, the `SPELLED_ONCE` ledger (`scripts/domain-score.mjs`) holds the concept to its one home so a mirror cannot quietly grow back.
 _Avoid_: simulation, dry run
 
 **Mode pre-spawn refusal**:
