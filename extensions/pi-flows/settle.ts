@@ -1,3 +1,4 @@
+import { capModelVisibleText } from "./sanitize.ts";
 import { formatFlowError, type FlowDetails, type FlowError, type FlowMode, type FlowRunResult, type ModeOutput } from "./types.ts";
 
 /**
@@ -30,6 +31,7 @@ export class Settle {
 	readonly #tracked: FlowRunResult[] = [];
 	readonly #buildDetails: SettleDetailsBuilder;
 	#decorate: (details: FlowDetails) => FlowDetails = (details) => details;
+	#footer: () => string = () => "";
 
 	/** The mode this invocation settles under, fixed at construction. */
 	readonly mode: FlowMode;
@@ -66,12 +68,18 @@ export class Settle {
 
 	/**
 	 * The refusal shape every error return reduces to: the formatted error (plus
-	 * an optional verbatim footer, e.g. worktree's recovery locations) over
-	 * details that carry every tracked run and the error itself.
+	 * an optional footer, e.g. worktree's recovery locations) over details that
+	 * carry every tracked run and the error itself. The model-visible cap is
+	 * applied here, over the formatted error and the per-call footer together —
+	 * not at return sites, which is how two modes ended up hand-assembling the
+	 * capped message and slicing the formatted prefix back off. The registered
+	 * footer ({@link decorateFooter}) lands after the cap: it is the short
+	 * recovery pointer a truncated refusal needs most, so truncation must not
+	 * be able to swallow it.
 	 */
 	refuse(error: FlowError, options: { footer?: string } = {}): ModeOutput {
 		return {
-			content: [{ type: "text", text: `${formatFlowError(error)}${options.footer ?? ""}` }],
+			content: [{ type: "text", text: `${capModelVisibleText(`${formatFlowError(error)}${options.footer ?? ""}`)}${this.#footer()}` }],
 			details: this.details(error),
 		};
 	}
@@ -97,6 +105,18 @@ export class Settle {
 	 */
 	decorateDetails(decorator: (details: FlowDetails) => FlowDetails): void {
 		this.#decorate = decorator;
+	}
+
+	/**
+	 * Register a footer appended to every subsequent refusal — worktree's
+	 * integration-branch recovery pointer, once, after the branch exists —
+	 * instead of a string literal re-written at every return site, which is how
+	 * two refusals shipped telling users to inspect a branch they never named.
+	 * Refusal vocabulary only: {@link complete}'s text is the mode's own. The
+	 * latest registration wins; the footer reads live state through its closure.
+	 */
+	decorateFooter(footer: () => string): void {
+		this.#footer = footer;
 	}
 
 	/** Details over a snapshot of the tracked runs, so later tracking cannot rewrite an output already returned. */

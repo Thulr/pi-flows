@@ -103,7 +103,7 @@ A run (or a whole flow) that has reached a terminal state, whether it completed 
 _Avoid_: done, finished (both read as "succeeded")
 
 **Settle** (as an object):
-The per-invocation object (`settle.ts`) a mode handler finishes through. It holds the mode identity, fixed from the registry row at construction, and every run tracked so far; its refuse/complete outputs are the only outputs a handler returns, so an error output that drops already-spent runs is not a value a handler can build. Its details decorator and refusal footer are the extension points workflow and worktree use.
+The per-invocation object (`settle.ts`) a mode handler finishes through. It holds the mode identity, fixed from the registry row at construction, and every run tracked so far; its refuse/complete outputs are the only outputs a handler returns, so an error output that drops already-spent runs is not a value a handler can build. Its two decorators are the extension points workflow and worktree use: workflow decorates details with its approval receipts (`decorateDetails`), and worktree registers its integration-branch recovery pointer once as the refusal footer (`decorateFooter`), so a refusal written later cannot lose the pointer — which is how two shipped. `refuse` also owns the model-visible cap over the formatted error and per-call footer together (the registered pointer rides after the cap, so truncation cannot swallow it); a mode capping its own refusal text and slicing the formatted prefix back off is the duplication this ended.
 _Avoid_: output builder, result collector
 
 **Replay**:

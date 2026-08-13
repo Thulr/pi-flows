@@ -1,4 +1,4 @@
-import { MAX_PARALLEL_TASKS, flowError, formatFlowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
+import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { runWave } from "../runner.ts";
@@ -228,15 +228,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			cause,
 			'Set orchestrate.verifyPolicy:"note" to keep verifier output as advisory, raise verifyMaxIterations for revise policy, narrow the task, or address the verifier critique and rerun.',
 		);
-	// The visibility cap applies over the whole refusal, formatted error
-	// included, exactly as the hand-assembled return capped it — so the footer
-	// is the capped text minus the formatted prefix refuse re-prepends.
-	const verificationRefusal = (error: FlowError, header: string) => {
-		const formatted = formatFlowError(error);
-		return settle.refuse(error, {
-			footer: capModelVisibleText(`${formatted}\n\n${header}${deps.handoffs.warningSummary()}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`).slice(formatted.length),
-		});
-	};
+	const verificationRefusal = (error: FlowError, header: string) =>
+		settle.refuse(error, { footer: `\n\n${header}${deps.handoffs.warningSummary()}\n\n## Last synthesized answer\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}` });
 
 	// 4. Optional composability: verify the synthesized answer against the goal. The
 	// verifier can be advisory ("note"), a hard gate ("fail"), or a synthesize→verify

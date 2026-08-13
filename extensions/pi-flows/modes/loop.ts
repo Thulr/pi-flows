@@ -1,4 +1,4 @@
-import { flowError, formatFlowError, modeSettle, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
+import { flowError, modeSettle, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, clampLoopIterations } from "../validate.ts";
 import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
@@ -139,9 +139,5 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		return settle.complete(capModelVisibleText(`Flow loop: stop condition passed after ${Math.ceil(settle.results.length / (judgeRef ? 2 : 1))} iteration(s).\n\n${previous}`));
 	}
 	const error = flowError("LOOP_DID_NOT_CONVERGE", "Loop did not reach DONE/PASS within maxIterations.", "The bounded loop exhausted its iteration cap before the stop condition passed.", "Raise loop.maxIterations, narrow the task, improve the stop condition, or inspect the final critique.");
-	// The visibility cap applies over the whole message, formatted error
-	// included, exactly as the hand-assembled return capped it — so the footer
-	// is the capped text minus the formatted prefix refuse re-prepends.
-	const formatted = formatFlowError(error);
-	return settle.refuse(error, { footer: capModelVisibleText(`${formatted}\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}`).slice(formatted.length) });
+	return settle.refuse(error, { footer: `\n\n## Last output\n\n${previous}\n\n## Last feedback\n\n${critique}` });
 }
