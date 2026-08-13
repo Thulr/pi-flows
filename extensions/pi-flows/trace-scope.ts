@@ -70,6 +70,48 @@ export interface CoordinationEvent {
 export type RecordEvent = (event: CoordinationEvent) => void;
 
 /**
+ * The caller's half of a minted event — a coordination event recorded by the
+ * seam that performs the action rather than by the mode that requested it, the
+ * way the handoff consumer already records its own handoff/validation/artifact
+ * events. The caller owns the attribution: the event's name in its own
+ * vocabulary, its placement in the span tree, and any facts of its own. What
+ * actually happened — the event kind, the outcome — is the seam's statement,
+ * merged after the caller's so attribution cannot override it. `record` is
+ * required rather than optional so a caller with no sink says so
+ * (`record: undefined`) instead of the evidence being forgettable — a declared
+ * answer, never a fall-through. A stated absence is deliberately weaker than
+ * the child-span model, where no such statement exists: a seam caller can
+ * still decline evidence, but it must write the declination down where a
+ * review can see it, where a missing call was invisible.
+ */
+export interface EventAttribution {
+	/** The flow's event recorder, or its stated absence when no trace sink exists. */
+	record: RecordEvent | undefined;
+	/** Dotted event name in the caller's vocabulary, e.g. `workflow.gate`. */
+	name: string;
+	/** Where the outcome sits in the span tree: its unit key, stage, and dependencies. */
+	scope?: ChildSpanScope;
+	/** The caller's own attribution facts. The seam's outcome facts win over these. */
+	attributes?: Record<string, unknown>;
+}
+
+/**
+ * The one assembly home of a minted event: the seam's kind, outcome, and facts
+ * over the caller's attribution, with the seam's facts merged last so
+ * attribution cannot override what happened. Spelled once here rather than per
+ * seam, so a third seam cannot reverse the spread and silently let it.
+ */
+export function mintEvent(attribution: EventAttribution, minted: { kind: CoordinationEventKind; ok?: boolean; attributes: Record<string, unknown> }): void {
+	attribution.record?.({
+		kind: minted.kind,
+		name: attribution.name,
+		ok: minted.ok,
+		scope: attribution.scope,
+		attributes: { ...attribution.attributes, ...minted.attributes },
+	});
+}
+
+/**
  * Stable identity shared by an eval row and the runtime trace that produced it.
  * Identifiers only — never task content.
  */

@@ -279,10 +279,16 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				return settle.refuse(error);
 			}
 			// Consent becomes a receipt bound to exactly what it authorizes. It is
-			// minted unconsumed: it says the action may run, not that it has.
+			// minted unconsumed: it says the action may run, not that it has. The
+			// receipt attests its own issuance — the seam records the approval event.
 			const receipt = issueApprovalReceipt(approvalBindingFor(phases, phaseIndex, deps, digest), {
 				approvedBy: approverLabel(deps, policy, DEFAULT_APPROVAL_ACTOR),
 				ttlMs: approvalTtl.ttlMs,
+			}, {
+				record: deps.recordEvent,
+				name: "workflow.approval.issued",
+				scope: { key: phaseApprovalKey(phase.id), stage },
+				attributes: { "flow.approval.reopened": Boolean(reapprovalCause) },
 			});
 			state.receipts[phase.id] = receipt;
 			state.completedPhaseIds.push(phase.id);
@@ -291,21 +297,6 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			previous = state.outputs[phase.id];
 			state.updatedAt = new Date().toISOString();
 			await persistState(stateFile, state);
-			// Receipt identity and status only — the approved parameters stay inside
-			// the binding digest, so the trace can name the consent without leaking it.
-			deps.recordEvent?.({
-				kind: "approval",
-				name: "workflow.approval.issued",
-				scope: { key: phaseApprovalKey(phase.id), stage },
-				attributes: {
-					"flow.approval.receipt_id": receipt.receiptId,
-					"flow.approval.action": receipt.action,
-					"flow.approval.approved_by": receipt.approvedBy,
-					"flow.approval.expires_at": receipt.expiresAt ?? "(none)",
-					"flow.approval.validation": receipt.validation,
-					"flow.approval.reopened": Boolean(reapprovalCause),
-				},
-			});
 			recordPhaseState(deps, phase.id, "approval.granted", state, { "flow.approval.receipt_id": receipt.receiptId });
 			registerPhaseUnit(phaseApprovalKey(phase.id));
 			continue;
@@ -344,16 +335,14 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 
 		const output = handoff.text;
 		if (phase.checkCommand) {
-			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, resolveFlowCommandTimeoutMs(undefined, params.timeoutMs), policy, deps.signal);
-			deps.recordEvent?.({
-				kind: "validation",
+			const gate = await runCheckCommand(phase.checkCommand, phaseCwd, resolveFlowCommandTimeoutMs(undefined, params.timeoutMs), policy, {
+				record: deps.recordEvent,
 				name: "workflow.gate",
-				ok: gate.ok,
 				// The command ran against this phase's workspace, so a failed workflow
 				// ends at the output that failed rather than at a disconnected gate.
 				scope: { key: `${stage.key}.gate`, stage, dependsOn: [phaseWorkKey(phase.id)] },
-				attributes: { "flow.workflow.phase_id": phase.id, "flow.check.passed": gate.ok },
-			});
+				attributes: { "flow.workflow.phase_id": phase.id },
+			}, deps.signal);
 			if (!gate.ok) {
 				state.status = "failed";
 				state.updatedAt = new Date().toISOString();

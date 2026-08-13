@@ -178,6 +178,10 @@ _Avoid_: log, marker
 The recorded fact that a human approval point was reached and how it resolved. Covers both **Checkpoint** approvals and workflow-phase approval receipts, which is why the event kind is broader than either term.
 _Avoid_: gate (a gate is machine-evaluated)
 
+**Minted event**:
+A coordination event recorded by the seam that performs the action instead of by the mode that requested it — the runner's child spans, the handoff consumer's handoff/validation/artifact events, the aggregate's `mode.approval` decision, the deterministic gate runner's outcome (`runCheckCommand`), receipt issuance's approval (`issueApprovalReceipt`). The caller supplies an `EventAttribution` — the event's name in its own vocabulary, its span placement, its own facts, and the recorder or its stated absence — and the seam's kind and outcome merge last through the one assembly home (`mintEvent`, trace-scope.ts), so attribution cannot override what happened. Performing the action and stating where its evidence lands are one call: a handler cannot silently omit the event, though it can still state absence (`record: undefined`) — deliberately weaker than the child-span model, where no such statement exists, because a stated absence is reviewable where a missing call was invisible. A mode's own decisions — its state transitions, retries, and the verdicts its controllers parse from child output — have no shared seam performing them and stay hand-placed in the handler; that boundary is deliberate, and what it leaves open is tracked (#128, then #133) rather than mistaken for done.
+_Avoid_: framework event, auto-event
+
 **Trace health**:
 How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed. Strictly a *writer's* count — what the sink attempted against what reached the file — so it is answered while writing and cannot see anything that is only visible on reading the file back.
 _Avoid_: trace status, telemetry health
@@ -217,7 +221,7 @@ Whether the tool itself would admit a call rather than refuse it before any chil
 _Avoid_: validity, eligibility
 
 **Mirror**:
-A spawn-free re-derivation of a handler's pre-spawn decision, used to answer admissibility without running the flow. A mirror stays silent wherever the tool would refuse first for a different reason, so a refusal is never mislabeled. A mirror is a second derivation of a rule and must be kept in agreement with the first; prefer a **pre-spawn refusal** declaration, which removes the second copy entirely. Where a consolidation has already removed the second copy, the `SPELLED_ONCE` ledger (`scripts/domain-score.mjs`) holds the concept to its one home so a mirror cannot quietly grow back.
+A spawn-free re-derivation of a handler's pre-spawn decision, used to answer admissibility without running the flow. A mirror stays silent wherever the tool would refuse first for a different reason, so a refusal is never mislabeled. A mirror is a second derivation of a rule and must be kept in agreement with the first; prefer a **pre-spawn refusal** declaration, which removes the second copy entirely. Where a consolidation has already removed the second copy, the `SPELLED_ONCE` ledger (`scripts/domain-spelled-once.mjs`, enforced by `scripts/domain-score.mjs`) holds the concept to its one home so a mirror cannot quietly grow back.
 _Avoid_: simulation, dry run
 
 **Mode pre-spawn refusal**:
