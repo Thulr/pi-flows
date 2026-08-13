@@ -315,7 +315,7 @@ Child spans additionally identify the authority they ran under: `flow.agent_prom
 
 #### Trace health and strict mode
 
-The root span accounts for the export itself: `flow.trace.expected_spans`, `.observed_spans`, `.dropped_spans`, `.redacted_spans`, `.failed_exports`, and `.health` (`recorded` / `degraded` / `missing`). The same counters come back on `details.trace.spans`. Reading a trace back compares the declared expectation against the rows actually present, so spans lost *after* a successful write still register as dropped.
+The root span accounts for the export itself: `flow.trace.expected_spans`, `.observed_spans`, `.dropped_spans`, `.redacted_spans`, `.failed_exports`, and `.health` (`recorded` / `degraded` / `missing`). The same counters come back on `details.trace.spans`. Reading a trace back compares the declared expectation against the rows actually present, so spans lost *after* a successful write still register as dropped. A strict run additionally returns `details.trace.structure` (`FlowTraceStructure`): whether reading the export back found a span tree, with `issue` naming the fault when it did not. The field is present only when the run verified its own export — today `traceStrict` — and **absent means unverified, never verified-fine**. A strict root also declares one span beyond its pre-verification count: the slot for the certification event the reader requires, so a landed certification matches the declaration exactly and a missing one reads as loss.
 
 Trace health is deliberately not folded into execution success. A run whose spans were dropped is not a failed run — it is an unauditable one, and conflating the two turns every exporter hiccup into a phantom agent regression.
 
