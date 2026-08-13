@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { parseTraceJsonl, summarizeTraceSpans, traceReportIsComplete } from "../extensions/pi-flows/trace-report.ts";
+import { parseTraceJsonl, stringAttr, summarizeTraceSpans, traceReportIsComplete } from "../extensions/pi-flows/trace-report.ts";
 import { sha256Bytes } from "./release-system.mjs";
 
 export function validateProductionTrace(traceLink, { baseDir = process.cwd() } = {}) {
@@ -38,7 +38,17 @@ export function validateProductionTrace(traceLink, { baseDir = process.cwd() } =
 			issues.push(`production trace could not be read: ${error.message}`);
 		}
 	}
-	const roots = rows.filter((row) => row.trace_id === traceLink?.traceId && row.span_id === traceLink?.rootSpanId);
+	// A refusal-then-retry pair deliberately shares the stable trace and
+	// root-span ids, so the link's invocationId is the only discriminator
+	// between the two roots. A link that names one is held to it exactly; a
+	// link written before the stamp existed selects only unstamped roots, so it
+	// can never resolve a stamped invocation it cannot name — the same rule the
+	// release validator applies, read through the same accessor the gates use.
+	const roots = rows.filter((row) => row.trace_id === traceLink?.traceId
+		&& row.span_id === traceLink?.rootSpanId
+		&& (typeof traceLink?.invocationId === "string"
+			? stringAttr(row, "flow.invocation_id") === traceLink.invocationId
+			: stringAttr(row, "flow.invocation_id") === undefined));
 	const root = roots[0];
 	if (roots.length > 1) issues.push("production trace contains duplicate linked root spans");
 	if (!root) {

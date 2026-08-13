@@ -210,6 +210,42 @@ test("the live gate refuses a stampless remainder the report would count against
 	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE");
 });
 
+/**
+ * The failure-import gate reads the same shared file, so the link's
+ * invocationId is what separates the refusal's root from the retry's there
+ * too: a stamped link resolves exactly its own invocation instead of
+ * rejecting the pair as duplicates, and never another invocation's root.
+ */
+test("a production failure link resolves its own invocation among shared stable ids", async () => {
+	const { validateProductionTrace } = await import("../evals/failure-trace.mjs");
+	const { sha256Bytes } = await import("../evals/release-system.mjs");
+	const file = traceFile();
+	const context = { runId: "r6", caseId: "c6", trialId: "t6" };
+	await recordRefusal(file, context);
+	const retry = makeTraceSink(file, "single", policy, { context, verify: true });
+	retry.record(settledRun("recon"), { scope: { key: "single" } });
+	const link = await retry.finalize({ ok: true });
+
+	const traceLink = {
+		runId: context.runId,
+		caseId: context.caseId,
+		trialId: context.trialId,
+		traceFile: file,
+		traceId: link.traceId,
+		rootSpanId: link.rootSpanId,
+		invocationId: link.invocationId,
+		sha256: sha256Bytes(readFileSync(file)),
+	};
+	const validation = validateProductionTrace(traceLink, { baseDir: path.dirname(file) });
+	assert.deepEqual(validation.issues, [], "the stamped link resolves its own root, not a duplicate pair");
+	assert.equal(validation.valid, true);
+
+	// A link stripped of its discriminator must not fall back onto either
+	// stamped root — absence, not a quiet downgrade to stable-id matching.
+	const stripped = validateProductionTrace({ ...traceLink, invocationId: undefined }, { baseDir: path.dirname(file) });
+	assert.ok(stripped.issues.includes("production trace root span is absent"), stripped.issues.join("; "));
+});
+
 /** Every row the sink writes carries its stamp — the property the read-back's scoping stands on. */
 test("every exported row carries the invocation id its link reports", async () => {
 	const file = traceFile();
