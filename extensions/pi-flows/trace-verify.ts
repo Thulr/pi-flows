@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import { safePath, sanitizeText } from "./sanitize.ts";
 import type { CapturePolicy } from "./types.ts";
 import type { FlowTraceStructure } from "./trace-scope.ts";
-import { declaresOwnRoot, optionalNumericAttr, traceStructure, type TraceSpanRecord } from "./trace-structure.ts";
+import { declaresOwnRoot, optionalNumericAttr, stringAttr, traceStructure, type TraceSpanRecord } from "./trace-structure.ts";
 
 /**
  * Reading a finished export back. Kept apart from the sink that wrote it: the
@@ -72,7 +72,10 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 				// short.
 				try {
 					const row = JSON.parse(line) as TraceSpanRecord;
-					if (row.trace_id === traceId && row.attributes?.["flow.invocation_id"] === undefined) unclaimed.push(row);
+					// Absence through the same accessor the report's grouping reads, so
+					// a stamp rewritten into something unusable is "no stamp" at both
+					// gates rather than dropped here and counted against us there.
+					if (row.trace_id === traceId && stringAttr(row, "flow.invocation_id") === undefined) unclaimed.push(row);
 				} catch {}
 				continue;
 			}

@@ -51,15 +51,15 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	// still corruption. The lookup map prefers the invocation the trial's link
 	// names, falling back to the last trace:span row for links (and rows) that
 	// predate the stamp.
+	const spanKey = (traceId, spanId, invocation) => `${traceId ?? ""}:${spanId ?? ""}${invocation ? `:${invocation}` : ""}`;
 	const spans = new Map();
 	const seenRows = new Set();
 	for (const row of rows) {
 		const invocation = row.attributes?.["flow.invocation_id"] ?? "";
-		const key = `${row.trace_id ?? ""}:${row.span_id ?? ""}`;
-		const rowKey = `${key}:${invocation}`;
+		const rowKey = spanKey(row.trace_id, row.span_id, invocation);
 		if (seenRows.has(rowKey)) issues.push(`runtime trace contains duplicate span ${rowKey}`);
 		seenRows.add(rowKey);
-		spans.set(key, row);
+		spans.set(spanKey(row.trace_id, row.span_id), row);
 		if (invocation) spans.set(rowKey, row);
 	}
 
@@ -85,8 +85,8 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 				|| link.context?.trialId !== trial.trialId) {
 				issues.push(`${label} runtime-trace context does not match reliability identity`);
 			}
-			const root = (link.invocationId ? spans.get(`${link.traceId}:${link.rootSpanId}:${link.invocationId}`) : undefined)
-				?? spans.get(`${link.traceId}:${link.rootSpanId}`);
+			const root = (link.invocationId ? spans.get(spanKey(link.traceId, link.rootSpanId, link.invocationId)) : undefined)
+				?? spans.get(spanKey(link.traceId, link.rootSpanId));
 			if (!root) {
 				issues.push(`${label} linked runtime root span is absent`);
 				continue;
@@ -99,7 +99,11 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 				issues.push(`${label} linked span is not the matching runtime root`);
 				continue;
 			}
-			const rootKey = `${link.traceId}:${link.rootSpanId}:${link.invocationId ?? ""}`;
+			// Keyed by the row the link actually resolved to, not by the link's own
+			// claim: two links naming different invocations that both fall back to
+			// one unstamped physical root are still reusing one root, and keying on
+			// their claims would give them distinct keys and wave the reuse through.
+			const rootKey = spanKey(root.trace_id, root.span_id, root.attributes?.["flow.invocation_id"] ?? "");
 			if (matchedRoots.has(rootKey)) {
 				issues.push(`${label} reuses another reliability trial's runtime root`);
 				continue;

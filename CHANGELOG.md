@@ -83,7 +83,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   discriminator sharing the stable id — is judged as its own run, while a
   remainder no run claims counts against every invocation of the id, so the
   scoping cannot launder corruption past any gate, and a row that loses its
-  stamp still counts as loss. (#127)
+  stamp still counts as loss. One limit is accepted: two runs that *both*
+  predate the discriminator and share a stable id have nothing to separate
+  their rows, so the report still refuses that file — rerunning under the
+  stamped version is the way out. (#127)
+- Two worktree refusals — a failed commit of resolved integration conflicts,
   and a failed commit of integration review fixes — told users to inspect the
   retained integration branch without naming it. Both fire after the branch
   exists, so recovery was real but unfindable. The pointer is now registered

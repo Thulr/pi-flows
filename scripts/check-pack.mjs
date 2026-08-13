@@ -196,7 +196,7 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // this is interface and prose, not new machinery. Same verification: the file
 // set is unchanged at 108 and none from tests/, scripts/, or evals/ (the new
 // coverage is tests/trace-invocation-scope.test.ts, not packaged; the
-// domain-review re-record is not packaged either). Headroom is ~458 B over
-// the measured 1_184_872, matching the previous raises.
-assert.ok(pack.unpackedSize < 1_185_330, `package unpacked size too large: ${pack.unpackedSize}`);
+// domain-review re-record is not packaged either). Headroom is ~454 B over
+// the measured 1_185_406, matching the previous raises.
+assert.ok(pack.unpackedSize < 1_185_860, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
