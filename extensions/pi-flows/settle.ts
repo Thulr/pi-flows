@@ -10,6 +10,19 @@ import { formatFlowError, type FlowDetails, type FlowError, type FlowMode, type 
 const REGISTERED_FOOTER_CAP = 2 * 1024;
 
 /**
+ * The refusal cause's byte allowance inside the model-visible text. The cause
+ * is the one unbounded field a FlowError carries (git stderr, a failed child's
+ * whole report); the message, fix, and code are short literals. Capping the
+ * cause before formatting keeps the structured suffix — the Retryable/Fix/Code
+ * lines a reader recovers by — inside the model-visible cap no matter how long
+ * the cause runs, where capping only the assembled prefix would truncate the
+ * suffix away with the cause. Half the cap, so a long cause can never starve
+ * the suffix or a per-call footer entirely. Model-visible only: the details
+ * and trace evidence keep the error object uncut.
+ */
+const REFUSAL_CAUSE_CAP = 25 * 1024;
+
+/**
  * The curried details builder a settle is constructed over — the shape
  * `ModeDeps.makeDetails(mode)` returns, already bound to one mode.
  */
@@ -79,7 +92,9 @@ export class Settle {
 	 * an optional footer, e.g. worktree's recovery locations) over details that
 	 * carry every tracked run and the error itself. The model-visible cap is
 	 * applied here, over the formatted error and the per-call footer together —
-	 * not at return sites, which is how two modes ended up hand-assembling the
+	 * with the cause bounded first ({@link REFUSAL_CAUSE_CAP}), so a refusal
+	 * built over megabytes of git stderr still shows its Retryable/Fix/Code
+	 * lines — not at return sites, which is how two modes ended up hand-assembling the
 	 * capped message and slicing the formatted prefix back off. The registered
 	 * footer ({@link decorateFooter}) lands after the cap: it is the short
 	 * recovery pointer a truncated refusal needs most, so truncation must not
@@ -87,7 +102,8 @@ export class Settle {
 	 * the whole refusal stays capped without trusting the registering mode.
 	 */
 	refuse(error: FlowError, options: { footer?: string } = {}): ModeOutput {
-		const body = capModelVisibleText(`${formatFlowError(error)}${options.footer ?? ""}`);
+		const bounded = { ...error, cause: capBytes(error.cause, REFUSAL_CAUSE_CAP, "Cause") };
+		const body = capModelVisibleText(`${formatFlowError(bounded)}${options.footer ?? ""}`);
 		return {
 			content: [{ type: "text", text: `${body}${capBytes(this.#footer(), REGISTERED_FOOTER_CAP, "Recovery pointer")}` }],
 			details: this.details(error),

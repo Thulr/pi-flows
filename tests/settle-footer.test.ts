@@ -78,6 +78,22 @@ test("settle: refuse caps the model-visible text over the whole message, formatt
 	assert.match(output.content[0].text, /truncated: \d+ bytes omitted/);
 });
 
+test("settle: a refusal over an unbounded cause keeps its Retryable/Fix/Code lines and the recovery pointer", () => {
+	const settle = worktreeSettle();
+	settle.decorateFooter(() => "\n\nIntegration branch: `pi-flow/x/integration`");
+	// The one unbounded FlowError field: worktree passes raw git stderr (up to
+	// 4 MiB) and failed-child report text as causes.
+	const error = flowError("WORKTREE_INTEGRATION_FAILED", "Could not merge.", "g".repeat(256 * 1024), "Inspect the retained integration branch.");
+	const text = settle.refuse(error).content[0].text;
+	assert.match(text, /Cause truncated: \d+ bytes omitted/);
+	assert.match(text, /Retryable unchanged: no/);
+	assert.match(text, /Fix: Inspect the retained integration branch\./);
+	assert.match(text, /Code: WORKTREE_INTEGRATION_FAILED/);
+	assert.ok(text.endsWith("\n\nIntegration branch: `pi-flow/x/integration`"));
+	// Model-visible only: the details keep the error object uncut.
+	assert.equal(settle.refuse(error).details.error?.cause.length, 256 * 1024);
+});
+
 test("settle: the registered footer has its own small bound, so the refusal stays capped without trusting the registering mode", () => {
 	const settle = worktreeSettle();
 	settle.decorateFooter(() => `\n\n${"p".repeat(8 * 1024)}`);
