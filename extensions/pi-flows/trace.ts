@@ -191,7 +191,13 @@ export function strictTraceConfigError(strict: boolean, traceFile: string | unde
 
 export function strictTraceError(link: FlowTraceLink | undefined, strict: boolean): FlowError | null {
 	if (!strict) return null;
-	const issue = traceEvidenceIssue(link);
+	// The gate enforces the contract it documents instead of trusting the wiring
+	// that upholds it: absent structure means unverified, and a strict run may
+	// not certify what nothing read back. The wired path always verifies
+	// (flow.ts passes verify: traceStrict), so this arm is reachable only by a
+	// caller pairing strict with an unverifying sink — the pairing it exists to refuse.
+	const issue = traceEvidenceIssue(link)
+		?? (link && !link.structure ? `trace ${link.traceId} was never read back: an absent structural verdict is unverified evidence, not verified` : null);
 	if (!issue) return null;
 	return flowError(
 		"TRACE_INCOMPLETE",

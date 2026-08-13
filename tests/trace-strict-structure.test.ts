@@ -94,7 +94,13 @@ test("an unverified link is not treated as a verified one", () => {
 		rootSpanId: "def",
 		spans: { expectedSpans: 3, observedSpans: 3, droppedSpans: 0, redactedSpans: 0, failedExports: 0 },
 	};
-	assert.equal(traceEvidenceIssue(link), null, "a run that never asked for a read-back is still gated only on export accounting");
+	assert.equal(traceEvidenceIssue(link), null, "best-effort callers stay gated only on export accounting");
+	// But the strict gate enforces the public contract itself rather than
+	// trusting the wiring that upholds it (flow.ts passes verify: traceStrict):
+	// absent structure means unverified, and strict mode refuses to certify
+	// what nothing read back.
+	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE", "strict refuses a link that was never read back");
+	assert.equal(strictTraceError(link, false), null, "while best-effort passes it through");
 });
 
 /**
