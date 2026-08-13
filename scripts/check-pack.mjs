@@ -183,5 +183,20 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // unchanged at 108 and none from tests/, scripts/, or evals/ (the new
 // coverage is tests/settle-footer.test.ts, which is not packaged). Headroom
 // is ~469 B over the measured 1_174_286, matching the previous raises.
-assert.ok(pack.unpackedSize < 1_174_755, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_185_330 for the invocation-scoped read-back (#127): trace-sink
+// mints and stamps flow.invocation_id, trace-verify scopes its reading to it,
+// trace-report splits a shared stable trace id into per-invocation runs, and
+// FlowTraceLink gains invocationId — plus the CONTEXT.md Invocation id entry
+// (with its carve-out from the Run Avoid list), the changelog's Fixed entry,
+// the flow-reference/troubleshooting wording the sync rule requires, and the
+// AGENTS.md trace-test map. The review round added the shared declaresOwnRoot
+// predicate both gates decide a stampless remainder through, its live-gate
+// mirror, and the release validator's invocation-aware keys. The
+// discriminator rides the existing append path and the existing validator, so
+// this is interface and prose, not new machinery. Same verification: the file
+// set is unchanged at 108 and none from tests/, scripts/, or evals/ (the new
+// coverage is tests/trace-invocation-scope.test.ts, not packaged; the
+// domain-review re-record is not packaged either). Headroom is ~454 B over
+// the measured 1_185_406, matching the previous raises.
+assert.ok(pack.unpackedSize < 1_185_860, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

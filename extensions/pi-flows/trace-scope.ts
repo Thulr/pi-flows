@@ -123,6 +123,15 @@ export interface FlowTraceLink {
 	traceFile: string;
 	traceId: string;
 	rootSpanId: string;
+	/**
+	 * The random discriminator this call stamped on every row it wrote
+	 * (`flow.invocation_id`). The stable trace id is deliberately reusable —
+	 * it is how an eval row and its runtime trace correlate — so a refusal and
+	 * the retry after it share one; this id names which of them these rows are.
+	 * Absent on links whose writer predates the discriminator (the eval
+	 * baseline's single-row roots).
+	 */
+	invocationId?: string;
 	context?: FlowTraceContext;
 	spans?: FlowTraceHealth;
 	error?: string;
