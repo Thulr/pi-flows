@@ -90,14 +90,16 @@ const SPELLED_ONCE = [
     // #130: refuse owns the model-visible cap over a refusal. Capping the
     // assembled message and slicing the formatted prefix back off is the trick
     // two modes independently reinvented before the cap moved into refuse.
-    // The span crosses newlines — this repo formats long calls across lines —
-    // but never a semicolon, so a match cannot leap from one statement into an
-    // unrelated .slice( below it; and the slice must carry the defect's own
-    // signature, removing a just-measured prefix (.slice(x.length)), so a
-    // nearby .slice(0, n) on something else stays silent. A reinvention that
-    // precomputes the length into a bare variable evades this — a tripwire
-    // catches the honest regression, not an adversary.
-    pattern: /capModelVisibleText\([^;]{0,200}?\)\.slice\(\w+\.length/g,
+    // The .slice( is anchored to the cap call's own balanced close (nesting
+    // inside the argument handled two parens deep, which covers the historical
+    // orchestrate shape), so a nearby slice of something else — even in the
+    // same statement — stays silent, and the slice must carry the defect's
+    // signature: removing a just-measured prefix (.slice(x.length)). An
+    // argument nested three parens deep or a precomputed bare-variable length
+    // evades this — a tripwire catches the honest regression, not an
+    // adversary. Semicolons stay excluded so backtracking is confined to one
+    // statement.
+    pattern: /capModelVisibleText\((?:[^();]|\((?:[^();]|\([^();]*\))*\))*\)\.slice\(\w+\.length/g,
     allowed: {},
   },
   {
