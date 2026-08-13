@@ -171,5 +171,17 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // the reader's question, and keeping it in the writer put trace-sink.ts over
 // the 500-line cap, which is not a thing to raise. Headroom is ~486 B over the
 // measured 1_169_428, matching the previous raise.
-assert.ok(pack.unpackedSize < 1_169_900, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_174_755 for the refusal-footer change: settle.ts gains the
+// decorateFooter extension point, refuse's ownership of the model-visible
+// cap, and (from the pre-PR and PR review rounds) the registered footer's
+// own small byte allowance plus the per-field bounds (message/cause/fix)
+// that keep the Retryable/Fix/Code suffix inside the cap, plus the
+// CONTEXT.md Settle entry naming both decorators and the changelog entries
+// for the two worktree refusals that lost their recovery pointer.
+// worktree.ts shrinks (eight hand-written footers deleted), so this is
+// interface and prose, not new machinery. Same verification: the file set is
+// unchanged at 108 and none from tests/, scripts/, or evals/ (the new
+// coverage is tests/settle-footer.test.ts, which is not packaged). Headroom
+// is ~469 B over the measured 1_174_286, matching the previous raises.
+assert.ok(pack.unpackedSize < 1_174_755, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

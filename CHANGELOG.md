@@ -45,9 +45,37 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   valid tree and still passes, because the expectation the reading measures
   against is what the sink attempted, not what the mode owed. Tracked as #128;
   the read-back's own residual is #127.
+- A refusal's model-visible text is now capped by `refuse` itself, over the
+  formatted error and footer together. `loop` and `orchestrate` had each
+  hand-assembled the capped message and sliced the formatted prefix back off
+  for `refuse` to re-prepend; their refusal text is byte-identical after this
+  change (pinned by test). Other modes' refusals were previously uncapped, so
+  a pathological error cause is now bounded like all other model-visible text.
+  A recovery pointer a mode registers (see the worktree fix below) is appended
+  after the cap, so truncation cannot swallow the one line that names where
+  recovery lives — and is bounded by its own small allowance, so the refusal
+  stays capped no matter what a mode registers. The variable-length error
+  fields — message, cause, and fix (git stderr and failed-child reports reach
+  the cause; unbounded params like a worktree `baseRef` reach interpolated
+  messages) — are each bounded before formatting, with allowances that sum
+  under the cap, so a refusal built over megabytes of stderr still shows its
+  `Retryable`/`Fix`/`Code` lines instead of losing them to the truncation.
+  Details and trace evidence keep the error object uncut.
 
 ### Fixed
 
+- Two worktree refusals — a failed commit of resolved integration conflicts,
+  and a failed commit of integration review fixes — told users to inspect the
+  retained integration branch without naming it. Both fire after the branch
+  exists, so recovery was real but unfindable. The pointer is now registered
+  once on the settle (`decorateFooter`, the parallel of the details decorator
+  workflow uses) the moment the integration branch is created, so every
+  refusal from then on carries ``Integration branch: `pi-flow/<run>/integration` ``
+  — including refusals written later, which is how these two were lost, and
+  including the planning refusals on the conflict/review path that previously
+  carried no pointer at all. The eight hand-written copies of the footer are
+  deleted. Refusals before the integration branch exists keep their
+  worker-branch recovery footers unchanged.
 - Provider failures now show sanitized cause, runtime/context facts, and safe
   recovery in collapsed views; expansion keeps detail. Generated-token budgets
   are labeled output-only. (#122)

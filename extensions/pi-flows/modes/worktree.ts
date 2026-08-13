@@ -255,6 +255,10 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			return settle.refuse(error, { footer: `\n\nCommitted worker state retained for recovery:\n${recovery}` });
 		}
 		integrationCreated = true;
+		// From here every refusal exits through the finally with the integration
+		// branch kept on disk, so every one of them owes the reader its name —
+		// registered once so a refusal added later cannot lose the pointer.
+		settle.decorateFooter(() => `\n\nIntegration branch: \`${integrationBranch}\``);
 
 		const integrator: FlowAgentRefInput = { ...(spec.integrator?.agent ? spec.integrator : { agent: "operator" }), cwd: integrationCwd };
 		const integratedWorkers: WorkerWorktree[] = [];
@@ -264,7 +268,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		const resolvedConflictKeys: string[] = [];
 		for (const worker of usableWorkers.filter((candidate) => candidate.changed)) {
 			const preMergeHead = git(integrationCwd, ["rev-parse", "HEAD"]);
-			if (!preMergeHead.ok) return settle.refuse(flowError("WORKTREE_INTEGRATION_FAILED", "Could not inspect the integration branch before merging.", preMergeHead.stderr, "Inspect the retained integration and worker branches, then retry."), { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+			if (!preMergeHead.ok) return settle.refuse(flowError("WORKTREE_INTEGRATION_FAILED", "Could not inspect the integration branch before merging.", preMergeHead.stderr, "Inspect the retained integration and worker branches, then retry."));
 			const merged = git(integrationCwd, ["-c", "user.name=pi-flow", "-c", "user.email=pi-flow@local", "merge", "--no-ff", "--no-edit", worker.branch]);
 			if (merged.ok) {
 				integratedWorkers.push(worker);
@@ -273,7 +277,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			const unmerged = git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]);
 			if (!unmerged.stdout) {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Could not merge worker branch "${worker.branch}".`, merged.stderr, "Inspect the retained worker/integration branches and resolve the git error.");
-				return settle.refuse(error, { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+				return settle.refuse(error);
 			}
 			const conflictProvenance = [...integratedWorkers, worker].map((source) => {
 				const index = workers.indexOf(source);
@@ -311,13 +315,13 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			});
 			if (conflictPlan.error) return settle.refuse(conflictPlan.error);
 			const conflictDispatch = await dispatchIntegrationPlan(deps, conflictPlan.plan!, settle, { completion: "terminal", enforceCompletion: true });
-			if (conflictDispatch.status === "refused") return settle.refuse(conflictDispatch.error, { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+			if (conflictDispatch.status === "refused") return settle.refuse(conflictDispatch.error);
 			// A settled resolver run is not a resolution until git agrees: writing a
 			// conflicted file leaves it unmerged until it is staged, so leftover
 			// unmerged paths fail exactly the way a failed run does.
 			if (conflictDispatch.status === "failed" || git(integrationCwd, ["diff", "--name-only", "--diff-filter=U"]).stdout) {
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Integrator could not resolve merge conflicts from "${worker.branch}".`, resultText(conflictDispatch.result) || unmerged.stdout, "Inspect the retained integration and worker branches, resolve the conflicts, and verify before merging.");
-				return settle.refuse(error, { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+				return settle.refuse(error);
 			}
 			const committed = commitChanges(integrationCwd, `pi-flow: resolve ${worker.id} integration conflicts`);
 			if (!committed.ok) return settle.refuse(flowError("WORKTREE_INTEGRATION_FAILED", "Could not commit resolved integration conflicts.", committed.error ?? "git commit failed", "Inspect the retained integration branch and commit the resolved merge."));
@@ -326,7 +330,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			if (!previousPreserved || !workerPreserved) {
 				const dropped = [!previousPreserved ? "the previous integration head" : null, !workerPreserved ? "the incoming worker branch" : null].filter(Boolean).join(" and ");
 				const error = flowError("WORKTREE_INTEGRATION_FAILED", `Conflict resolution did not preserve ${dropped}.`, "The resolver cleared or rewrote merge state without retaining both sides as ancestors, so the incoming worker branch was not preserved.", "Inspect the retained integration and worker branches, redo the merge, and verify both parents before continuing.");
-				return settle.refuse(error, { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+				return settle.refuse(error);
 			}
 			integratedWorkers.push(worker);
 			resolvedConflictKeys.push(`conflict-${worker.id}`);
@@ -369,9 +373,9 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		const reviewDispatch = await dispatchIntegrationPlan(deps, reviewPlan.plan!, settle, { completion: "terminal", enforceCompletion: true });
 		if (reviewDispatch.status === "failed") {
 			const error = flowError("WORKTREE_INTEGRATION_FAILED", "Integration review agent failed.", resultText(reviewDispatch.result), "Inspect the retained integration branch and run review/verification manually.");
-			return settle.refuse(error, { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+			return settle.refuse(error);
 		}
-		if (reviewDispatch.status === "refused") return settle.refuse(reviewDispatch.error, { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+		if (reviewDispatch.status === "refused") return settle.refuse(reviewDispatch.error);
 		const reviewed = reviewDispatch.result;
 		const reviewCommit = commitChanges(integrationCwd, "pi-flow: integration review fixes");
 		if (!reviewCommit.ok) return settle.refuse(flowError("WORKTREE_INTEGRATION_FAILED", "Could not commit integration review fixes.", reviewCommit.error ?? "git commit failed", "Inspect and commit the retained integration branch."));
@@ -391,7 +395,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			});
 			if (!checked.ok) {
 				const error = flowError("WORKTREE_VERIFY_FAILED", "Integration branch failed its deterministic check.", checked.output || "The worktree checkCommand exited non-zero.", "Inspect the retained integration branch, fix the check failure, and rerun verification before merging.");
-				return settle.refuse(error, { footer: `\n\nIntegration branch: \`${integrationBranch}\`` });
+				return settle.refuse(error);
 			}
 			checkSummary = "Deterministic integration check passed.";
 		}

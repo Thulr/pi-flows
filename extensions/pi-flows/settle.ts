@@ -1,4 +1,30 @@
+import { capBytes, capModelVisibleText } from "./sanitize.ts";
 import { formatFlowError, type FlowDetails, type FlowError, type FlowMode, type FlowRunResult, type ModeOutput } from "./types.ts";
+
+/**
+ * The registered refusal footer's own byte allowance. A recovery pointer is a
+ * line or two; bounding it here keeps {@link Settle.refuse}'s bound structural
+ * — the full refusal never exceeds the model-visible cap plus this — instead
+ * of resting on the registering mode's discipline.
+ */
+const REGISTERED_FOOTER_CAP = 2 * 1024;
+
+/**
+ * Per-field byte allowances for a refusal's model-visible text. Message,
+ * cause, and fix are the variable-length fields a FlowError carries — git
+ * stderr and failed-child reports reach the cause, and user-supplied params
+ * (a worktree baseRef, say) reach interpolated messages — and capping the
+ * assembled text alone truncates from the tail, which is exactly where
+ * formatFlowError puts the Retryable/Fix/Code lines a reader recovers by.
+ * Bounding each field before formatting keeps their sum (37 KiB plus fixed
+ * labels and the code enum) under the 50 KiB model-visible cap, so the outer
+ * cap can only ever truncate a per-call footer and the structured suffix
+ * survives no matter what a caller interpolates. Model-visible only: the
+ * details and trace evidence keep the error object uncut.
+ */
+const REFUSAL_MESSAGE_CAP = 8 * 1024;
+const REFUSAL_CAUSE_CAP = 25 * 1024;
+const REFUSAL_FIX_CAP = 4 * 1024;
 
 /**
  * The curried details builder a settle is constructed over — the shape
@@ -30,6 +56,7 @@ export class Settle {
 	readonly #tracked: FlowRunResult[] = [];
 	readonly #buildDetails: SettleDetailsBuilder;
 	#decorate: (details: FlowDetails) => FlowDetails = (details) => details;
+	#footer: () => string = () => "";
 
 	/** The mode this invocation settles under, fixed at construction. */
 	readonly mode: FlowMode;
@@ -66,12 +93,29 @@ export class Settle {
 
 	/**
 	 * The refusal shape every error return reduces to: the formatted error (plus
-	 * an optional verbatim footer, e.g. worktree's recovery locations) over
-	 * details that carry every tracked run and the error itself.
+	 * an optional footer, e.g. worktree's recovery locations) over details that
+	 * carry every tracked run and the error itself. The model-visible cap is
+	 * applied here, over the formatted error and the per-call footer together —
+	 * with every variable-length field bounded first (the per-field allowances
+	 * above), so a refusal built over megabytes of git stderr or an unbounded
+	 * interpolated param still shows its Retryable/Fix/Code lines — not at
+	 * return sites, which is how two modes ended up hand-assembling the
+	 * capped message and slicing the formatted prefix back off. The registered
+	 * footer ({@link decorateFooter}) lands after the cap: it is the short
+	 * recovery pointer a truncated refusal needs most, so truncation must not
+	 * be able to swallow it — and it is bounded by its own small allowance, so
+	 * the whole refusal stays capped without trusting the registering mode.
 	 */
 	refuse(error: FlowError, options: { footer?: string } = {}): ModeOutput {
+		const bounded = {
+			...error,
+			message: capBytes(error.message, REFUSAL_MESSAGE_CAP, "Message"),
+			cause: capBytes(error.cause, REFUSAL_CAUSE_CAP, "Cause"),
+			fix: capBytes(error.fix, REFUSAL_FIX_CAP, "Fix"),
+		};
+		const body = capModelVisibleText(`${formatFlowError(bounded)}${options.footer ?? ""}`);
 		return {
-			content: [{ type: "text", text: `${formatFlowError(error)}${options.footer ?? ""}` }],
+			content: [{ type: "text", text: `${body}${capBytes(this.#footer(), REGISTERED_FOOTER_CAP, "Recovery pointer")}` }],
 			details: this.details(error),
 		};
 	}
@@ -97,6 +141,18 @@ export class Settle {
 	 */
 	decorateDetails(decorator: (details: FlowDetails) => FlowDetails): void {
 		this.#decorate = decorator;
+	}
+
+	/**
+	 * Register a footer appended to every subsequent refusal — worktree's
+	 * integration-branch recovery pointer, once, after the branch exists —
+	 * instead of a string literal re-written at every return site, which is how
+	 * two refusals shipped telling users to inspect a branch they never named.
+	 * Refusal vocabulary only: {@link complete}'s text is the mode's own. The
+	 * latest registration wins; the footer reads live state through its closure.
+	 */
+	decorateFooter(footer: () => string): void {
+		this.#footer = footer;
 	}
 
 	/** Details over a snapshot of the tracked runs, so later tracking cannot rewrite an output already returned. */
