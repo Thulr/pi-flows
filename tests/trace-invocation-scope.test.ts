@@ -131,6 +131,85 @@ test("a row no invocation claims corrupts every invocation of its trace id", asy
 	assert.equal(traceReportIsComplete(report), false, "so stripping a discriminator cannot launder a row past the gate");
 });
 
+/**
+ * A writer that predates the discriminator can share the stable id too — a
+ * pre-upgrade refusal already in the file when a post-upgrade retry runs. Its
+ * rows carry no stamp, but they declare their own root, so both gates judge
+ * them as the whole run they are instead of as anyone's corruption. Refusing
+ * the stamped run over them would be the same false refusal this fix closes,
+ * surfacing at whichever gate reads the file next.
+ */
+test("a pre-discriminator co-tenant run fails neither the live gate nor the report", async () => {
+	const file = traceFile();
+	const context = { runId: "r4", caseId: "c4", trialId: "t4" };
+	const { traceId, rootSpanId } = stableTraceIds(context, "single");
+	// The shape the sink wrote before flow.invocation_id existed: a whole,
+	// self-accounting trace — declared root, contained event, no stamps.
+	const event = {
+		trace_id: traceId,
+		span_id: "abababababababababababababababab",
+		parent_span_id: rootSpanId,
+		name: "flow.single.event.approval.project_preset",
+		start_time_unix_ms: 20,
+		end_time_unix_ms: 20,
+		status: { code: "ERROR" },
+		attributes: { "flow.span_role": "event", "flow.event_kind": "approval", "flow.mode": "single" },
+	};
+	const root = {
+		trace_id: traceId,
+		span_id: rootSpanId,
+		parent_span_id: null,
+		name: "flow.single",
+		start_time_unix_ms: 10,
+		end_time_unix_ms: 30,
+		status: { code: "ERROR" },
+		attributes: { "flow.span_role": "root", "flow.mode": "single", "flow.execution_success": false, "flow.trace.expected_spans": 2, "flow.trace.observed_spans": 2 },
+	};
+	appendFileSync(file, `${JSON.stringify(event)}\n${JSON.stringify(root)}\n`, "utf8");
+
+	const retry = makeTraceSink(file, "single", policy, { context, verify: true });
+	retry.record(settledRun("recon"), { scope: { key: "single" } });
+	const link = await retry.finalize({ ok: true });
+	assert.equal(link.structure!.valid, true, `a whole unstamped run is not this run's corruption: ${link.structure!.issue}`);
+	assert.equal(strictTraceError(link, true), null);
+
+	const parsed = parseTraceJsonl(readFileSync(file, "utf8"));
+	const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, file);
+	assert.equal(report.traces, 2, "the unstamped run is its own run");
+	assert.equal(report.incompleteTraces, 0);
+	assert.equal(traceReportIsComplete(report), true, "and the report gate agrees with the live gate");
+});
+
+/**
+ * The live half of the launder check: a stampless row that is not a whole run
+ * counts against this run at the report, so the live gate must refuse it too —
+ * certifying what the report rejects is the drift both gates exist to prevent.
+ */
+test("the live gate refuses a stampless remainder the report would count against it", async () => {
+	const file = traceFile();
+	const context = { runId: "r5", caseId: "c5", trialId: "t5" };
+	const { traceId, rootSpanId } = stableTraceIds(context, "single");
+
+	const sink = makeTraceSink(file, "single", policy, { context, verify: true });
+	sink.record(settledRun("recon"), { scope: { key: "single" } });
+	const now = Date.now();
+	appendFileSync(file, `${JSON.stringify({
+		trace_id: traceId,
+		span_id: "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+		parent_span_id: rootSpanId,
+		name: "flow.single.child (stripped)",
+		start_time_unix_ms: now,
+		end_time_unix_ms: now,
+		status: { code: "OK" },
+		attributes: { "flow.span_role": "child" },
+	})}\n`, "utf8");
+	const link = await sink.finalize({ ok: true });
+
+	assert.equal(link.structure!.valid, false, "rows no invocation claims are refused, not ignored");
+	assert.match(link.structure!.issue!, /no invocation claims/, link.structure!.issue);
+	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE");
+});
+
 /** Every row the sink writes carries its stamp — the property the read-back's scoping stands on. */
 test("every exported row carries the invocation id its link reports", async () => {
 	const file = traceFile();

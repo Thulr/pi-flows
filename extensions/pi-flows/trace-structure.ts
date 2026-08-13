@@ -61,6 +61,18 @@ export function optionalBoolAttr(span: TraceSpanRecord, key: string): boolean | 
 	return typeof value === "boolean" ? value : undefined;
 }
 
+/**
+ * A whole run announces itself: a row that declares the root role and answers
+ * to no parent. Both invocation-scoped readers (the runtime read-back and the
+ * report's grouping) use this one predicate to decide what a stampless
+ * remainder under a shared trace id is — a run from a writer that predates the
+ * discriminator, or rows no run claims — so the two gates cannot drift apart
+ * on the answer.
+ */
+export function declaresOwnRoot(spans: TraceSpanRecord[]): boolean {
+	return spans.some((span) => span.parent_span_id === null && stringAttr(span, "flow.span_role") === "root");
+}
+
 /** Traces written before span roles existed have only root and child spans, so an unlabeled span is a child. */
 export function spanRole(span: TraceSpanRecord, root: TraceSpanRecord | undefined): "root" | "child" | "stage" | "event" {
 	if (root && span === root) return "root";

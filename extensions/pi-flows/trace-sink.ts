@@ -44,6 +44,16 @@ interface StageRecord {
 
 const spanId = () => randomUUID().replace(/-/g, "");
 
+/**
+ * One JSONL row as this sink writes it. Only the attribute map is named — the
+ * one part `append` reaches into, to stamp the invocation id — while the
+ * identity and interval fields stay each call site's own statement.
+ */
+interface ExportRow {
+	attributes: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
 /** Bound on any one span attribute. Attributes are identifiers and structure, not payloads. */
 const ATTRIBUTE_CAP = 1024;
 
@@ -140,7 +150,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	// The invocation id is stamped here, on the one path every row leaves
 	// through, so no row this sink writes can be missing the discriminator the
 	// read-back and the report scope by.
-	const append = (row: { attributes: Record<string, unknown>; [key: string]: unknown }): Promise<void> => {
+	const append = (row: ExportRow): Promise<void> => {
 		row.attributes["flow.invocation_id"] = invocationId;
 		health.expectedSpans += 1;
 		const write = withFileMutationQueue(traceFile, async () => {

@@ -76,10 +76,14 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   discriminator (returned as `details.trace.invocationId`), and both the
   runtime read-back and the trace report judge each invocation only on its
   own rows — so the shared file's report shows two whole runs instead of one
-  corrupt one. The stable ids are untouched, so the eval linkage survives; a
-  row that loses its stamp still counts as loss, and a stamp-less row under a
-  discriminated trace id counts against every invocation of it, so the
-  scoping cannot launder corruption past either gate. (#127)
+  corrupt one. The stable ids are untouched, so the eval linkage survives.
+  Stamp-less rows under a discriminated trace id are decided by one shared
+  predicate at every gate (the runtime read-back, the report, the release
+  validator): a whole run that declares its own root — a writer predating the
+  discriminator sharing the stable id — is judged as its own run, while a
+  remainder no run claims counts against every invocation of the id, so the
+  scoping cannot launder corruption past any gate, and a row that loses its
+  stamp still counts as loss. (#127)
   and a failed commit of integration review fixes — told users to inspect the
   retained integration branch without naming it. Both fire after the branch
   exists, so recovery was real but unfindable. The pointer is now registered

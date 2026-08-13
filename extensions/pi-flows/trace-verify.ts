@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import { safePath, sanitizeText } from "./sanitize.ts";
 import type { CapturePolicy } from "./types.ts";
 import type { FlowTraceStructure } from "./trace-scope.ts";
-import { optionalNumericAttr, traceStructure, type TraceSpanRecord } from "./trace-structure.ts";
+import { declaresOwnRoot, optionalNumericAttr, traceStructure, type TraceSpanRecord } from "./trace-structure.ts";
 
 /**
  * Reading a finished export back. Kept apart from the sink that wrote it: the
@@ -34,8 +34,11 @@ import { optionalNumericAttr, traceStructure, type TraceSpanRecord } from "./tra
  * first one's rows. The invocation id is minted per sink, so it separates
  * exactly what the stable id deliberately does not. A row the flow wrote that
  * no longer parses, or that lost its invocation stamp, is caught by the count
- * instead: the trace comes back shorter than it declared. The residual is a
- * writer forging both ids, which no honest writer produces.
+ * instead: the trace comes back shorter than it declared. Stampless rows under
+ * this trace id are decided by the report's own predicate — a whole run from a
+ * pre-discriminator writer is ignored, a remainder no run claims refuses — so
+ * the live and report gates agree. The residual is a writer forging both ids,
+ * which no honest writer produces.
  */
 /**
  * `attempted` is what the run has written when this reading happens — the rows
@@ -55,9 +58,24 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 		const traceMarker = `"trace_id":${JSON.stringify(traceId)}`;
 		const invocationMarker = `"flow.invocation_id":${JSON.stringify(invocationId)}`;
 		const own: TraceSpanRecord[] = [];
+		const unclaimed: TraceSpanRecord[] = [];
 		let unreadable = 0;
 		for (const line of (await fs.readFile(traceFile, "utf8")).split("\n")) {
-			if (!line.includes(traceMarker) || !line.includes(invocationMarker)) continue;
+			if (!line.includes(traceMarker)) continue;
+			if (!line.includes(invocationMarker)) {
+				// A shared-trace-id row without this run's stamp. Another invocation's
+				// stamp makes it another run's evidence and none of this run's
+				// business. No stamp at all is decided below by the same predicate the
+				// report's grouping uses; a line that no longer parses is likewise
+				// nobody's to claim — one of this run's own rows corrupted that far
+				// lands in the missing count instead, so the trace still comes back
+				// short.
+				try {
+					const row = JSON.parse(line) as TraceSpanRecord;
+					if (row.trace_id === traceId && row.attributes?.["flow.invocation_id"] === undefined) unclaimed.push(row);
+				} catch {}
+				continue;
+			}
 			try {
 				const row = JSON.parse(line) as TraceSpanRecord;
 				// The substring can sit inside some other value of a foreign row;
@@ -66,12 +84,18 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 				if (row.attributes?.["flow.invocation_id"] === invocationId) own.push(row);
 			} catch {
 				// A line carrying both markers that no longer parses was this run's row
-				// — nothing else writes the invocation id. One of this run's rows
-				// corrupted beyond the markers is unattributable here and lands in the
-				// missing count below instead: either way the trace comes back short.
+				// — nothing else writes the invocation id.
 				unreadable += 1;
 			}
 		}
+		// The same decision the report's grouping makes, through the same
+		// predicate, so the live gate and the report gate cannot disagree about
+		// this run. A stampless remainder that declares its own root is a whole
+		// run from a writer that predates the discriminator sharing this stable
+		// trace id — not this run's problem; one that does not is rows no
+		// invocation claims, and the report will count them against this run, so
+		// this gate must refuse too rather than certify what the report rejects.
+		const unclaimedRemainder = unclaimed.length > 0 && !declaresOwnRoot(unclaimed);
 		const structure = traceStructure(own, { declared: attempted, present: true });
 		// Accept by the report's own disjunction (trace-report.ts), not a subset of
 		// it: `invalid` covers connectivity, attribution, and containment, while
@@ -80,7 +104,7 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 		// strict report then rejects. Surplus is the live case: a concurrent
 		// writer forging this run's trace and invocation ids leaves the tree
 		// connected, so only the count sees it.
-		const broken = structure.invalid || structure.duplicateSpans > 0 || structure.malformedSpans > 0 || structure.unexpectedSpans > 0;
+		const broken = structure.invalid || structure.duplicateSpans > 0 || structure.malformedSpans > 0 || structure.unexpectedSpans > 0 || unclaimedRemainder;
 		const missing = Math.max(0, attempted - own.length);
 		// The root records what the run attempted; if the persisted copy disagrees
 		// with what this run actually attempted, the row carrying every other
@@ -98,6 +122,7 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 			structure.duplicateSpans ? `${structure.duplicateSpans} duplicate span id(s)` : "",
 			structure.malformedSpans ? `${structure.malformedSpans} span(s) not reaching the root or outside its interval` : "",
 			structure.unexpectedSpans ? `${structure.unexpectedSpans} span(s) beyond the ${attempted} attempted` : "",
+			unclaimedRemainder ? `${unclaimed.length} row(s) under this trace id that no invocation claims` : "",
 		].filter(Boolean);
 		return { valid: false, issue: faults.join(", ") || "the exported rows are not a span tree" };
 	} catch (error) {

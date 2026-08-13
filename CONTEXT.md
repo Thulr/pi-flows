@@ -187,7 +187,7 @@ Whether an exported trace is a span tree at all — a root that reaches itself, 
 _Avoid_: trace health (that is the writer's count), trace validity
 
 **Invocation id**:
-The random discriminator one sink call stamps on every row it writes (`flow.invocation_id`). Deliberately not part of the trace identity: the trace and root-span ids are derived stably from the trace context and mode so an eval row and its runtime trace correlate, which means a traced refusal and the retry after it share them — so every reading (the strict read-back, the report) judges an invocation only on the rows carrying its own stamp.
+The random discriminator one sink call stamps on every row it writes (`flow.invocation_id`). Deliberately not part of the trace identity: the trace and root-span ids are derived stably from the trace context and mode so an eval row and its runtime trace correlate, which means a traced refusal and the retry after it share them — so every reading (the strict read-back, the report) judges an invocation only on the rows carrying its own stamp. "Invocation" here is the deliberate carve-out from the Run entry's Avoid list: that list rejects it as a synonym for one child run, and this term names one sink call — a whole flow call's export — which no Run-adjacent word says.
 _Avoid_: trace id (that is the stable eval linkage), attempt (that is part of the stable identity)
 
 **Execution success**:

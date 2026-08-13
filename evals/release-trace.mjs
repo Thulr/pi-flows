@@ -44,11 +44,23 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	}
 	if (rows.length === 0) issues.push("runtime trace contains no spans");
 
+	// Duplicates are judged per invocation: a stable trace id is deliberately
+	// reusable (a traced refusal and the retry after it share one, #127), so two
+	// invocations legitimately write the same root span id under it, each row
+	// carrying its own flow.invocation_id stamp. Two rows sharing all three are
+	// still corruption. The lookup map prefers the invocation the trial's link
+	// names, falling back to the last trace:span row for links (and rows) that
+	// predate the stamp.
 	const spans = new Map();
+	const seenRows = new Set();
 	for (const row of rows) {
+		const invocation = row.attributes?.["flow.invocation_id"] ?? "";
 		const key = `${row.trace_id ?? ""}:${row.span_id ?? ""}`;
-		if (spans.has(key)) issues.push(`runtime trace contains duplicate span ${key}`);
+		const rowKey = `${key}:${invocation}`;
+		if (seenRows.has(rowKey)) issues.push(`runtime trace contains duplicate span ${rowKey}`);
+		seenRows.add(rowKey);
 		spans.set(key, row);
+		if (invocation) spans.set(rowKey, row);
 	}
 
 	let matchedTrials = 0;
@@ -73,7 +85,8 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 				|| link.context?.trialId !== trial.trialId) {
 				issues.push(`${label} runtime-trace context does not match reliability identity`);
 			}
-			const root = spans.get(`${link.traceId}:${link.rootSpanId}`);
+			const root = (link.invocationId ? spans.get(`${link.traceId}:${link.rootSpanId}:${link.invocationId}`) : undefined)
+				?? spans.get(`${link.traceId}:${link.rootSpanId}`);
 			if (!root) {
 				issues.push(`${label} linked runtime root span is absent`);
 				continue;
@@ -86,7 +99,7 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 				issues.push(`${label} linked span is not the matching runtime root`);
 				continue;
 			}
-			const rootKey = `${link.traceId}:${link.rootSpanId}`;
+			const rootKey = `${link.traceId}:${link.rootSpanId}:${link.invocationId ?? ""}`;
 			if (matchedRoots.has(rootKey)) {
 				issues.push(`${label} reuses another reliability trial's runtime root`);
 				continue;
