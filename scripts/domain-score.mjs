@@ -72,6 +72,13 @@ const IMPORT_RULES = {
  *
  * Every pattern must carry /g: matchAll throws on a non-global regex, so an
  * entry authored without it crashes the gate loudly instead of under-counting.
+ *
+ * Matching is raw source text, comments included — the same posture as the
+ * import matchers above, and for the same reason: a comment parser correct
+ * about strings, templates, and regexes is a riskier resident of a required
+ * gate than the false positive it prevents. Instead, every pattern requires
+ * code-shaped text (operators, call syntax, escaped delimiters), which prose
+ * does not reproduce by accident.
  */
 const SPELLED_ONCE = [
   {
@@ -110,8 +117,11 @@ const SPELLED_ONCE = [
     // #130: worktree registers the pointer once, after creating the branch. A
     // second literal is a refusal site deciding again what every refusal
     // already carries — the shape that shipped two refusals pointing at a
-    // retained branch they never named.
-    pattern: /Integration branch:/g,
+    // retained branch they never named. The escaped backtick after the colon
+    // is the pointer's code shape (the branch name is always quoted), so the
+    // phrase in a comment or prompt heading stays silent; a copy that skips
+    // quoting the branch evades — the tripwire limit again.
+    pattern: /Integration branch: \\`/g,
     allowed: { "modes/worktree.ts": 1 },
   },
 ];
