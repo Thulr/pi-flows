@@ -150,7 +150,28 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		eventKinds: {},
 	};
 
-	for (const traceSpans of byTrace.values()) {
+	// A stable trace id is deliberately reusable — a refusal and the retry after
+	// it share one (#127) — so a trace id's rows are split by the invocation id
+	// each sink stamped, and each invocation is judged as its own run, the same
+	// scoping the runtime read-back applies. Splitting only when a second
+	// invocation actually appears keeps every single-writer trace — including
+	// legacy traces with no stamps at all — judged exactly as before. A row
+	// under a stamped trace id that carries no stamp is a row no invocation
+	// claims, so it joins every one of them: whichever run it would have
+	// corrupted when the rows were merged, it still corrupts when they are not.
+	const invocationRuns = (traceSpans: TraceSpanRecord[]): TraceSpanRecord[][] => {
+		const byInvocation = new Map<string, TraceSpanRecord[]>();
+		const unclaimed: TraceSpanRecord[] = [];
+		for (const span of traceSpans) {
+			const invocation = stringAttr(span, "flow.invocation_id");
+			if (invocation) byInvocation.set(invocation, [...(byInvocation.get(invocation) ?? []), span]);
+			else unclaimed.push(span);
+		}
+		if (byInvocation.size <= 1) return [traceSpans];
+		return [...byInvocation.values()].map((run) => (unclaimed.length ? [...run, ...unclaimed] : run));
+	};
+
+	for (const traceSpans of [...byTrace.values()].flatMap(invocationRuns)) {
 		// The expectation is read before the structure so the surplus check has
 		// something to compare against. Zero, negative, and fractional values are
 		// corruption rather than a count, so they are not usable as one.

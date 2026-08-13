@@ -11,10 +11,36 @@
  */
 import { canonicalSha256, delegationContractId } from "./delegation.ts";
 import { sanitizeText } from "./sanitize.ts";
-import type { BudgetSnapshot, CapturePolicy, DelegationContract, DelegationHandoffEnvelope, FlowError, HandoffPolicy, PreparedHandoff } from "./types.ts";
+import type { BudgetSnapshot, CapturePolicy, DelegationContract, DelegationHandoffEnvelope, FlowError, FlowTraceContext, HandoffPolicy, PreparedHandoff } from "./types.ts";
 
 const LABEL_CAP = 512;
 const LIST_CAP = 1024;
+
+/** The eval-linkage identity as the sink stores it: redacted, bounded identifiers. */
+export function storedTraceContext(context: FlowTraceContext, policy: CapturePolicy): FlowTraceContext {
+	const identifier = (value: string) => sanitizeText(value, { ...policy, recordContent: true }, 256);
+	return {
+		runId: identifier(context.runId),
+		caseId: identifier(context.caseId),
+		trialId: identifier(context.trialId),
+		...(context.trialIndex === undefined ? {} : { trialIndex: context.trialIndex }),
+		...(context.arm === undefined ? {} : { arm: identifier(context.arm) }),
+		...(context.attempt === undefined ? {} : { attempt: context.attempt }),
+	};
+}
+
+/** The same identity as span attributes, copied onto every row so any span alone names its run. */
+export function traceContextAttributes(context?: FlowTraceContext): Record<string, unknown> {
+	if (!context) return {};
+	return {
+		"flow.run_id": context.runId,
+		"flow.case_id": context.caseId,
+		"flow.trial_id": context.trialId,
+		"flow.trial_index": context.trialIndex,
+		"flow.arm": context.arm,
+		"flow.attempt": context.attempt,
+	};
+}
 
 function shortDigest(value: string): string {
 	return canonicalSha256(value).slice("sha256:".length, "sha256:".length + 12);

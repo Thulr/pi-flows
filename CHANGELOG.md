@@ -36,15 +36,15 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   `npm run trace:report -- --strict` by hand to find exactly this. The gate now
   performs that reading itself and refuses with `TRACE_INCOMPLETE` when the
   export is complete but is not a span tree. It reads only the rows carrying
-  its own `trace_id`, so flows sharing one trace file — an eval setting
-  `PI_FLOWS_TRACE_FILE` once for a whole run — do not judge each other.
+  its own `trace_id` and `flow.invocation_id` (see the #127 fix below), so
+  flows sharing one trace file — an eval setting `PI_FLOWS_TRACE_FILE` once
+  for a whole run — do not judge each other.
   Ordinary best-effort flows read nothing back and are unaffected.
 
   This does **not** make trace health see un-emitted coordination events. A
   mode that records no state transition, retry or approval still writes a
   valid tree and still passes, because the expectation the reading measures
-  against is what the sink attempted, not what the mode owed. Tracked as #128;
-  the read-back's own residual is #127.
+  against is what the sink attempted, not what the mode owed. Tracked as #128.
 - A refusal's model-visible text is now capped by `refuse` itself, over the
   formatted error and footer together. `loop` and `orchestrate` had each
   hand-assembled the capped message and sliced the formatted prefix back off
@@ -64,7 +64,22 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
-- Two worktree refusals — a failed commit of resolved integration conflicts,
+- The strict read-back no longer falsely refuses a healthy run whose stable
+  trace id is shared with an earlier call. `stableTraceIds` derives the id
+  from the trace context and the mode so an eval row and its runtime trace
+  correlate — which means a traced pre-spawn refusal (a project-preset
+  refusal, for example) and the retry after it write two roots under one id
+  into one file, and the retry's read-back reported the refusal's rows as its
+  own duplicates and surplus, failing with `TRACE_INCOMPLETE` in exactly the
+  strict eval/release population that shares `PI_FLOWS_TRACE_FILE`. Every row
+  a sink writes now carries `flow.invocation_id`, a random per-call
+  discriminator (returned as `details.trace.invocationId`), and both the
+  runtime read-back and the trace report judge each invocation only on its
+  own rows — so the shared file's report shows two whole runs instead of one
+  corrupt one. The stable ids are untouched, so the eval linkage survives; a
+  row that loses its stamp still counts as loss, and a stamp-less row under a
+  discriminated trace id counts against every invocation of it, so the
+  scoping cannot launder corruption past either gate. (#127)
   and a failed commit of integration review fixes — told users to inspect the
   retained integration branch without naming it. Both fire after the branch
   exists, so recovery was real but unfindable. The pointer is now registered

@@ -22,19 +22,20 @@ import { optionalNumericAttr, traceStructure, type TraceSpanRecord } from "./tra
  * A read that itself fails is reported as invalid rather than swallowed:
  * evidence nobody could re-read is not evidence.
  *
- * Scoped to this flow's own trace_id, the way the read-back report groups
- * before validating. One JSONL file routinely holds many flows — an eval sets
- * PI_FLOWS_TRACE_FILE once for a whole run — so validating the file whole
- * would judge every flow after the first against its predecessors' spans and
- * fail it for a surplus that is simply someone else's trace. A row the flow
- * wrote that no longer parses is caught by the count instead: the trace comes
- * back shorter than it declared.
- *
- * One residual it does not close (#127): stableTraceIds derives the id from the trace
- * context and mode, so two calls sharing both — a project-preset refusal and
- * the retry after it, into one file — write two roots under one id, and this
- * reading cannot tell them apart. It reports duplicates, which is honest about
- * what the file holds and wrong about the run.
+ * Scoped to this flow's own trace_id AND its invocation id, the way the
+ * read-back report groups before validating. One JSONL file routinely holds
+ * many flows — an eval sets PI_FLOWS_TRACE_FILE once for a whole run — so
+ * validating the file whole would judge every flow after the first against its
+ * predecessors' spans and fail it for a surplus that is simply someone else's
+ * trace. The trace id alone is not enough (#127): stableTraceIds derives it
+ * from the trace context and mode, so two calls sharing both — a project-preset
+ * refusal and the retry after it, into one file — write two roots under one id,
+ * and a reading scoped only to the id refused the second, healthy, run over the
+ * first one's rows. The invocation id is minted per sink, so it separates
+ * exactly what the stable id deliberately does not. A row the flow wrote that
+ * no longer parses, or that lost its invocation stamp, is caught by the count
+ * instead: the trace comes back shorter than it declared. The residual is a
+ * writer forging both ids, which no honest writer produces.
  */
 /**
  * `attempted` is what the run has written when this reading happens — the rows
@@ -42,22 +43,32 @@ import { optionalNumericAttr, traceStructure, type TraceSpanRecord } from "./tra
  * attempted, because the root reserves a slot for the certification this
  * reading produces afterwards.
  */
-export async function verifyExportedTrace(traceFile: string, traceId: string, expectation: { attempted: number; declared: number }, policy: CapturePolicy): Promise<FlowTraceStructure> {
+export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy): Promise<FlowTraceStructure> {
+	const { traceId, invocationId } = identity;
 	const { attempted, declared } = expectation;
 	try {
-		// Only this trace's rows are parsed. In the eval setup one file accumulates
-		// every flow of a run, so parsing all of it on each finalize would cost
-		// more with each call; a substring test is cheap and JSON.parse is not.
-		// The line filter is this module's, the validator below is shared with the
-		// report — the same check, not the same reader.
-		const marker = `"trace_id":${JSON.stringify(traceId)}`;
+		// Only this invocation's rows are parsed. In the eval setup one file
+		// accumulates every flow of a run, so parsing all of it on each finalize
+		// would cost more with each call; a substring test is cheap and JSON.parse
+		// is not. The line filter is this module's, the validator below is shared
+		// with the report — the same check, not the same reader.
+		const traceMarker = `"trace_id":${JSON.stringify(traceId)}`;
+		const invocationMarker = `"flow.invocation_id":${JSON.stringify(invocationId)}`;
 		const own: TraceSpanRecord[] = [];
 		let unreadable = 0;
 		for (const line of (await fs.readFile(traceFile, "utf8")).split("\n")) {
-			if (!line.includes(marker)) continue;
+			if (!line.includes(traceMarker) || !line.includes(invocationMarker)) continue;
 			try {
-				own.push(JSON.parse(line) as TraceSpanRecord);
+				const row = JSON.parse(line) as TraceSpanRecord;
+				// The substring can sit inside some other value of a foreign row;
+				// counting such a row as this run's would refuse a healthy run for a
+				// neighbour's payload. The attribute itself is the claim that counts.
+				if (row.attributes?.["flow.invocation_id"] === invocationId) own.push(row);
 			} catch {
+				// A line carrying both markers that no longer parses was this run's row
+				// — nothing else writes the invocation id. One of this run's rows
+				// corrupted beyond the markers is unattributable here and lands in the
+				// missing count below instead: either way the trace comes back short.
 				unreadable += 1;
 			}
 		}
@@ -67,8 +78,8 @@ export async function verifyExportedTrace(traceFile: string, traceId: string, ex
 		// duplicates, id-less rows, and surplus are separate counters there — and a
 		// verifier that ignores any of them certifies evidence the downstream
 		// strict report then rejects. Surplus is the live case: a concurrent
-		// writer under this trace id leaves the tree connected, so only the count
-		// sees it.
+		// writer forging this run's trace and invocation ids leaves the tree
+		// connected, so only the count sees it.
 		const broken = structure.invalid || structure.duplicateSpans > 0 || structure.malformedSpans > 0 || structure.unexpectedSpans > 0;
 		const missing = Math.max(0, attempted - own.length);
 		// The root records what the run attempted; if the persisted copy disagrees

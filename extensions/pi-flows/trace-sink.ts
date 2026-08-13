@@ -14,6 +14,7 @@ import type {
 	SpanStage,
 } from "./types.ts";
 import { emptyTraceHealth, encodeUnitKey, traceHealthStatus, type FlowTraceStructure } from "./trace-scope.ts";
+import { storedTraceContext, traceContextAttributes } from "./trace-attributes.ts";
 import { reconcileVerdicts, verifyExportedTrace } from "./trace-verify.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
 import { stableTraceIds } from "./trace-identity.mjs";
@@ -30,30 +31,6 @@ export interface TraceSink {
 	 * that health while the root record is still being composed.
 	 */
 	finalize: (status: { ok: boolean }, attributes?: Record<string, unknown> | ((health: FlowTraceHealth) => Record<string, unknown>)) => Promise<FlowTraceLink>;
-}
-
-function storedTraceContext(context: FlowTraceContext, policy: CapturePolicy): FlowTraceContext {
-	const identifier = (value: string) => sanitizeText(value, { ...policy, recordContent: true }, 256);
-	return {
-		runId: identifier(context.runId),
-		caseId: identifier(context.caseId),
-		trialId: identifier(context.trialId),
-		...(context.trialIndex === undefined ? {} : { trialIndex: context.trialIndex }),
-		...(context.arm === undefined ? {} : { arm: identifier(context.arm) }),
-		...(context.attempt === undefined ? {} : { attempt: context.attempt }),
-	};
-}
-
-function traceContextAttributes(context?: FlowTraceContext): Record<string, unknown> {
-	if (!context) return {};
-	return {
-		"flow.run_id": context.runId,
-		"flow.case_id": context.caseId,
-		"flow.trial_id": context.trialId,
-		"flow.trial_index": context.trialIndex,
-		"flow.arm": context.arm,
-		"flow.attempt": context.attempt,
-	};
 }
 
 interface StageRecord {
@@ -107,6 +84,14 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	const { traceLabel, context, verify = false } = options;
 	const ids = context ? stableTraceIds(context, mode) : { traceId: randomUUID().replace(/-/g, ""), rootSpanId: spanId() };
 	const { traceId, rootSpanId } = ids;
+	// One random id per sink, stamped on every row this invocation writes. The
+	// stable trace id is deliberately reusable — an eval row and its runtime
+	// trace correlate through it — so two calls sharing a trace context and mode
+	// (a project-preset refusal and the retry after it, into one file) share a
+	// trace id, and #127 was the second call's read-back refusing its own healthy
+	// run over the first call's rows. This id is the discriminator that scoping
+	// filters on instead; it lives beside the identity, never inside it.
+	const invocationId = spanId();
 	const storedContext = context ? storedTraceContext(context, policy) : undefined;
 	const storedTraceLabel = traceLabel ? sanitizeText(traceLabel, { ...policy, recordContent: true }, 256) : undefined;
 	const rootStart = Date.now();
@@ -152,11 +137,15 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		return stored;
 	};
 
-	const append = (obj: unknown): Promise<void> => {
+	// The invocation id is stamped here, on the one path every row leaves
+	// through, so no row this sink writes can be missing the discriminator the
+	// read-back and the report scope by.
+	const append = (row: { attributes: Record<string, unknown>; [key: string]: unknown }): Promise<void> => {
+		row.attributes["flow.invocation_id"] = invocationId;
 		health.expectedSpans += 1;
 		const write = withFileMutationQueue(traceFile, async () => {
 			try {
-				await fs.appendFile(traceFile, `${JSON.stringify(obj)}\n`, "utf8");
+				await fs.appendFile(traceFile, `${JSON.stringify(row)}\n`, "utf8");
 				health.observedSpans += 1;
 			} catch (error) {
 				health.failedExports += 1;
@@ -430,7 +419,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// record; it is not the verdict, because this finalize still has one write
 			// left. A row this run appends after its own reading is evidence its
 			// reading never saw.
-			const preCertification = verify ? await verifyExportedTrace(traceFile, traceId, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
+			const preCertification = verify ? await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
 			const appendStructureEvent = (certified: boolean, issue: string | undefined) => append({
 				trace_id: traceId,
 				span_id: spanId(),
@@ -461,7 +450,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// file that no longer exists; every row is now expected, so attempted and
 			// declared are the same number.
 			const structure = preCertification
-				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, traceId, { attempted: declaredExpectation, declared: declaredExpectation }, policy))
+				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: declaredExpectation, declared: declaredExpectation }, policy))
 				: undefined;
 			// A final failure after a positive certification would otherwise leave
 			// the file claiming verified while the live call refuses. Best-effort
@@ -486,6 +475,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				traceFile: sanitizeText(safePath(traceFile) ?? traceFile, { ...policy, recordContent: true }, 1024),
 				traceId,
 				rootSpanId,
+				invocationId,
 				spans,
 				...(storedContext ? { context: storedContext } : {}),
 				...(writeError ? { error: sanitizeText(writeError, { ...policy, recordContent: true }, 1024) } : {}),

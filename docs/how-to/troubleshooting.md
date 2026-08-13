@@ -740,7 +740,10 @@ The in-process gate sees both. It counts what the exporter failed to write, and
 before reporting a result it reads its own export back, so spans lost *after* a
 successful write (a truncating concurrent writer, a rotated file) fail the call
 too rather than passing on the writer's count. It reads only the rows carrying
-its own `trace_id`, so flows sharing one file do not judge each other.
+its own `trace_id` *and* its own `flow.invocation_id` (a random per-call stamp
+on every row), so flows sharing one file do not judge each other — including
+two calls that share a stable trace id outright, such as a traced pre-spawn
+refusal and the retry after it under the same trace context and mode.
 `npm run trace:report -- --strict <trace-file>` runs the same validator over a
 trace you still have, taking its expectation from the root span on disk instead
 of from the run that wrote it.

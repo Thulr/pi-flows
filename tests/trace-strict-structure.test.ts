@@ -11,6 +11,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { makeTraceSink } from "../extensions/pi-flows/trace-sink.ts";
 import { reconcileVerdicts } from "../extensions/pi-flows/trace-verify.ts";
 import { stableTraceIds } from "../extensions/pi-flows/trace-identity.mjs";
@@ -21,6 +22,25 @@ const policy = { recordContent: true, redactSecrets: true };
 
 function traceFile(): string {
 	return path.join(mkdtempSync(path.join(tmpdir(), "pi-flow-strict-")), "flow-trace.jsonl");
+}
+
+/**
+ * The read-back is scoped to the sink's own invocation id as well as its trace
+ * id, so a row that should break this run's trace has to carry both — the
+ * forged-identity residual the scoping cannot close. The id is random and
+ * internal, and the sink appends without awaiting, so a test playing the forger
+ * waits for a real row to land and reads the id off it.
+ */
+async function writtenInvocationId(file: string): Promise<string> {
+	for (let tries = 0; tries < 400; tries += 1) {
+		try {
+			const line = readFileSync(file, "utf8").split("\n").find((row) => row.trim());
+			const id = line ? (JSON.parse(line).attributes?.["flow.invocation_id"] as string | undefined) : undefined;
+			if (id) return id;
+		} catch {}
+		await delay(5);
+	}
+	throw new Error("no sink row reached the trace file");
 }
 
 function settledRun(agent: string): FlowRunResult {
@@ -137,10 +157,13 @@ test("flows sharing one trace file each verify only their own trace", async () =
 test("a failed verification revokes the root's verified-outcome claim", async () => {
 	const file = traceFile();
 	const context = { runId: "r1", caseId: "c1", trialId: "t1" };
-	// Seed a row under the id this sink will use, parented to a span that does
-	// not exist: the flow's own export will be complete, and the trace it belongs
-	// to still will not hold together.
 	const { traceId } = stableTraceIds(context, "parallel");
+
+	const sink = makeTraceSink(file, "parallel", policy, { context, verify: true });
+	sink.record(settledRun("recon"), { scope: { key: "a" } });
+	// Forge a row under this run's full identity — trace id and invocation id —
+	// parented to a span that does not exist: the flow's own export will be
+	// complete, and the trace it belongs to still will not hold together.
 	writeFileSync(file, `${JSON.stringify({
 		trace_id: traceId,
 		span_id: "ffffffffffffffffffffffffffffffff",
@@ -149,11 +172,8 @@ test("a failed verification revokes the root's verified-outcome claim", async ()
 		start_time_unix_ms: 1,
 		end_time_unix_ms: 2,
 		status: { code: "OK" },
-		attributes: { "flow.span_role": "child" },
-	})}\n`);
-
-	const sink = makeTraceSink(file, "parallel", policy, { context, verify: true });
-	sink.record(settledRun("recon"), { scope: { key: "a" } });
+		attributes: { "flow.span_role": "child", "flow.invocation_id": await writtenInvocationId(file) },
+	})}\n`, { flag: "a" });
 	const link = await sink.finalize({ ok: true }, { "flow.outcome_verified": true, "flow.outcome_success": true });
 
 	assert.equal(link.structure!.valid, false, `expected the seeded orphan to break the tree: ${link.structure!.issue}`);
@@ -265,11 +285,12 @@ test("a verified strict trace passes the read-back report whole", async () => {
 /**
  * The verifier and the report must accept by the same criteria, or the live
  * gate certifies evidence the downstream gate rejects. A surplus row — a
- * concurrent writer reusing this trace id — leaves the tree connected and
- * contained, so `structure.invalid` stays false; only `unexpectedSpans` sees
- * it, and the report refuses on that field. The verifier has to as well.
+ * concurrent writer forging this run's trace and invocation ids — leaves the
+ * tree connected and contained, so `structure.invalid` stays false; only
+ * `unexpectedSpans` sees it, and the report refuses on that field. The
+ * verifier has to as well.
  */
-test("a surplus row under this trace id fails verification, not just the report", async () => {
+test("a surplus row forging this run's identity fails verification, not just the report", async () => {
 	const file = traceFile();
 	const context = { runId: "r2", caseId: "c2", trialId: "t2" };
 	const { rootSpanId } = stableTraceIds(context, "single");
@@ -278,7 +299,8 @@ test("a surplus row under this trace id fails verification, not just the report"
 	const sink = makeTraceSink(file, "single", policy, { context, verify: true });
 	sink.record(settledRun("recon"), { scope: { key: "single" } });
 	// A well-formed, connected, contained row this run never wrote, appended by
-	// a concurrent writer under the same stable trace id.
+	// a concurrent writer forging both halves of its identity — the residual
+	// the invocation scoping cannot close, so the count has to.
 	const now = Date.now();
 	writeFileSync(file, `${JSON.stringify({
 		trace_id: traceId,
@@ -288,7 +310,7 @@ test("a surplus row under this trace id fails verification, not just the report"
 		start_time_unix_ms: now,
 		end_time_unix_ms: now,
 		status: { code: "OK" },
-		attributes: { "flow.span_role": "child" },
+		attributes: { "flow.span_role": "child", "flow.invocation_id": await writtenInvocationId(file) },
 	})}\n`, { flag: "a" });
 
 	const link = await sink.finalize({ ok: true });
