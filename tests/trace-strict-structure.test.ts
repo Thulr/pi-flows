@@ -348,3 +348,34 @@ test("a preliminary failure is never overturned by a recovering final reading", 
 	assert.deepEqual(reconcileVerdicts({ valid: true }, failed), failed, "while a final failure stands on its own");
 	assert.deepEqual(reconcileVerdicts({ valid: true }, recovered), recovered, "and agreement passes through");
 });
+
+/**
+ * When the final reading fails after a positive certification landed, the sink
+ * appends a best-effort revocation. Its durability is double: the flag itself,
+ * and — should a reader somehow miss it — its bare presence as one row past
+ * the declared count. Both directions pin here: revocation beats
+ * certification, and the surplus alone already withholds.
+ */
+test("a revocation after a certification withholds the claim twice over", () => {
+	const rootSpanId = "fafafafafafafafafafafafafafafafa";
+	const root = {
+		trace_id: "t4", span_id: rootSpanId, parent_span_id: null, name: "flow.single",
+		start_time_unix_ms: 1, end_time_unix_ms: 100, status: { code: "OK" },
+		attributes: {
+			"flow.span_role": "root", "flow.mode": "single",
+			"flow.outcome_verified": true, "flow.outcome_success": true,
+			"flow.trace.expected_spans": 2, "flow.trace.verification_pending": true,
+		},
+	};
+	const event = (id: string, verified: boolean) => ({
+		trace_id: "t4", span_id: id, parent_span_id: rootSpanId,
+		name: `flow.single.event.trace.${verified ? "structure_verified" : "structure_invalid"}`,
+		start_time_unix_ms: 50, end_time_unix_ms: 50, status: { code: verified ? "OK" : "ERROR" },
+		attributes: { "flow.span_role": "event", "flow.event_kind": "validation", ...(verified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }) },
+	});
+	const spans = [root, event("12121212121212121212121212121212", true), event("3434343434343434343434343434343434".slice(0, 32), false)] as unknown as Parameters<typeof summarizeTraceSpans>[0];
+
+	const report = summarizeTraceSpans(spans, 0, "t.jsonl");
+	assert.equal(report.verifiedOutcomes, 0, "the revocation wins over the surviving certification");
+	assert.equal(report.incompleteTraces, 1, "and the extra row alone already makes the trace incomplete");
+});

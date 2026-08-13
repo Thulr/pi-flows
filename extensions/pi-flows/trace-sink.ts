@@ -431,28 +431,28 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// left. A row this run appends after its own reading is evidence its
 			// reading never saw.
 			const preCertification = verify ? await verifyExportedTrace(traceFile, traceId, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
+			const appendStructureEvent = (certified: boolean, issue: string | undefined) => append({
+				trace_id: traceId,
+				span_id: spanId(),
+				parent_span_id: rootSpanId,
+				name: `flow.${mode}.event.trace.${certified ? "structure_verified" : "structure_invalid"}`,
+				start_time_unix_ms: end,
+				end_time_unix_ms: end,
+				status: { code: certified ? "OK" : "ERROR" },
+				attributes: {
+					"openinference.span.kind": "CHAIN",
+					"flow.span_role": "event",
+					"flow.event_kind": "validation",
+					"flow.event_name": `trace.${certified ? "structure_verified" : "structure_invalid"}`,
+					"flow.mode": mode,
+					"flow.trace_label": storedTraceLabel,
+					...(certified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }),
+					...storedAttributes({ "flow.trace.structure_issue": issue }),
+					...traceContextAttributes(storedContext),
+				},
+			});
 			if (preCertification) {
-				const certified = preCertification.valid;
-				await append({
-					trace_id: traceId,
-					span_id: spanId(),
-					parent_span_id: rootSpanId,
-					name: `flow.${mode}.event.trace.${certified ? "structure_verified" : "structure_invalid"}`,
-					start_time_unix_ms: end,
-					end_time_unix_ms: end,
-					status: { code: certified ? "OK" : "ERROR" },
-					attributes: {
-						"openinference.span.kind": "CHAIN",
-						"flow.span_role": "event",
-						"flow.event_kind": "validation",
-						"flow.event_name": `trace.${certified ? "structure_verified" : "structure_invalid"}`,
-						"flow.mode": mode,
-						"flow.trace_label": storedTraceLabel,
-						...(certified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }),
-						...storedAttributes({ "flow.trace.structure_issue": preCertification.issue }),
-						...traceContextAttributes(storedContext),
-					},
-				});
+				await appendStructureEvent(preCertification.valid, preCertification.issue);
 			}
 			// The verdict the link carries is of the file as this finalize leaves it —
 			// certification row included, so nothing this run wrote postdates what it
@@ -463,6 +463,15 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			const structure = preCertification
 				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, traceId, { attempted: declaredExpectation, declared: declaredExpectation }, policy))
 				: undefined;
+			// A final failure after a positive certification would otherwise leave
+			// the file claiming verified while the live call refuses. Best-effort
+			// like every append, but the reserved slot makes its bare arrival
+			// durable: one surplus row withholds on completeness before any reader
+			// sees the flag. Past this, a read and a write failing together is a
+			// window no append-only record can close from inside.
+			if (structure && !structure.valid && preCertification?.valid) {
+				await appendStructureEvent(false, structure.issue);
+			}
 			const spans: FlowTraceHealth = {
 				// The declared count, so a landed certification reads as observed ==
 				// expected rather than as one span of surplus.
