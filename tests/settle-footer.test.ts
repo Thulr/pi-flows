@@ -94,6 +94,18 @@ test("settle: a refusal over an unbounded cause keeps its Retryable/Fix/Code lin
 	assert.equal(settle.refuse(error).details.error?.cause.length, 256 * 1024);
 });
 
+test("settle: a refusal whose message carries an unbounded interpolation keeps its suffix", () => {
+	const settle = worktreeSettle();
+	// The message path: schema.ts puts no length bound on worktree.baseRef, and
+	// the handler interpolates the invalid value into the refusal message.
+	const error = flowError("WORKTREE_SETUP_FAILED", `Could not resolve worktree base ref "${"b".repeat(128 * 1024)}".`, "unknown revision", "Use an existing commit, branch, or tag as worktree.baseRef.");
+	const text = settle.refuse(error).content[0].text;
+	assert.match(text, /Message truncated: \d+ bytes omitted/);
+	assert.match(text, /Fix: Use an existing commit, branch, or tag as worktree\.baseRef\./);
+	assert.match(text, /Code: WORKTREE_SETUP_FAILED/);
+	assert.equal(settle.refuse(error).details.error?.message.length, error.message.length);
+});
+
 test("settle: the registered footer has its own small bound, so the refusal stays capped without trusting the registering mode", () => {
 	const settle = worktreeSettle();
 	settle.decorateFooter(() => `\n\n${"p".repeat(8 * 1024)}`);

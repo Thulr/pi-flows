@@ -54,11 +54,13 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   A recovery pointer a mode registers (see the worktree fix below) is appended
   after the cap, so truncation cannot swallow the one line that names where
   recovery lives — and is bounded by its own small allowance, so the refusal
-  stays capped no matter what a mode registers. The cause — the one unbounded
-  field a refusal carries (git stderr, a failed child's report) — is bounded
-  first, at half the cap, so a refusal built over megabytes of stderr still
-  shows its `Retryable`/`Fix`/`Code` lines instead of losing them to the
-  truncation. Details and trace evidence keep the error object uncut.
+  stays capped no matter what a mode registers. The variable-length error
+  fields — message, cause, and fix (git stderr and failed-child reports reach
+  the cause; unbounded params like a worktree `baseRef` reach interpolated
+  messages) — are each bounded before formatting, with allowances that sum
+  under the cap, so a refusal built over megabytes of stderr still shows its
+  `Retryable`/`Fix`/`Code` lines instead of losing them to the truncation.
+  Details and trace evidence keep the error object uncut.
 
 ### Fixed
 
