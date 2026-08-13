@@ -59,10 +59,16 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 	// either.
 	const keyPart = (value) => String(value ?? "").replaceAll("%", "%25").replaceAll(":", "%3A");
 	const spanKey = (traceId, spanId, invocation) => `${keyPart(traceId)}:${keyPart(spanId)}${invocation ? `:${keyPart(invocation)}` : ""}`;
+	// A stamp is a nonempty string or it is no stamp — the same rule stringAttr
+	// gives every gate. Coercing arbitrary JSON here would let a forged
+	// `["target-id"]` key as the string "target-id" while the report reads the
+	// same row as unstamped, so one row could pass as legacy and satisfy an
+	// exact invocation link at once.
+	const stamp = (value) => (typeof value === "string" && value.trim() ? value : "");
 	const spans = new Map();
 	const seenRows = new Set();
 	for (const row of rows) {
-		const invocation = row.attributes?.["flow.invocation_id"] ?? "";
+		const invocation = stamp(row.attributes?.["flow.invocation_id"]);
 		const rowKey = spanKey(row.trace_id, row.span_id, invocation);
 		if (seenRows.has(rowKey)) issues.push(`runtime trace contains duplicate span ${rowKey}`);
 		seenRows.add(rowKey);
@@ -99,9 +105,11 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 			// the unscoped row would let another invocation's root — the refusal
 			// beside a deleted retry, with identical run/case/trial attributes —
 			// stand in for evidence the file no longer holds. Only links written
-			// before the stamp existed may use the unscoped lookup.
-			const root = link.invocationId
-				? spans.get(spanKey(link.traceId, link.rootSpanId, link.invocationId))
+			// before the stamp existed may use the unscoped lookup; a link whose
+			// claim is not a usable string holds the same power as one omitting it.
+			const linkInvocation = stamp(link.invocationId);
+			const root = linkInvocation
+				? spans.get(spanKey(link.traceId, link.rootSpanId, linkInvocation))
 				: spans.get(spanKey(link.traceId, link.rootSpanId));
 			if (!root) {
 				issues.push(`${label} linked runtime root span is absent`);
@@ -119,7 +127,7 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 			// claim: two links naming different invocations that both fall back to
 			// one unstamped physical root are still reusing one root, and keying on
 			// their claims would give them distinct keys and wave the reuse through.
-			const rootKey = spanKey(root.trace_id, root.span_id, root.attributes?.["flow.invocation_id"] ?? "");
+			const rootKey = spanKey(root.trace_id, root.span_id, stamp(root.attributes?.["flow.invocation_id"]));
 			if (matchedRoots.has(rootKey)) {
 				issues.push(`${label} reuses another reliability trial's runtime root`);
 				continue;
