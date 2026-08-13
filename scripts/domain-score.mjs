@@ -80,8 +80,10 @@ const SPELLED_ONCE = [
     // #125: reading exit code -1 as "no child has exited yet" is runSettled's
     // one job — ten comparison sites collapsed to one. Constructing a result
     // with the sentinel is a write and stays free; comparing against it
-    // anywhere else is a second liveness derivation.
-    pattern: /exitCode\s*[!=]==?\s*-1/g,
+    // anywhere else is a second liveness derivation. Identifier-bounded on
+    // both sides: a distinct field like gitExitCode, or a different literal
+    // like -12, is not this concept.
+    pattern: /(?<![\w$])exitCode\s*[!=]==?\s*-1(?![\d.])/g,
     allowed: { "run.ts": 1 },
   },
   {
@@ -99,7 +101,7 @@ const SPELLED_ONCE = [
     // evades this — a tripwire catches the honest regression, not an
     // adversary. Semicolons stay excluded so backtracking is confined to one
     // statement.
-    pattern: /capModelVisibleText\((?:[^();]|\((?:[^();]|\([^();]*\))*\))*\)\.slice\(\w+\.length/g,
+    pattern: /capModelVisibleText\((?:[^();]|\((?:[^();]|\([^();]*\))*\))*\)\.slice\(\w+\.length(?![\w$])/g,
     allowed: {},
   },
   {
