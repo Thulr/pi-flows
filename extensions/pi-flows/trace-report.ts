@@ -196,12 +196,6 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const executionSuccess =
 			optionalBoolAttr(rootSpan, "flow.execution_success") ??
 			((root?.status?.code ?? "OK") === "OK" && !childSpans.some(childFailed));
-		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified");
-		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
-		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
-		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");
-		const routeChoice = stringAttr(rootSpan, "flow.route_choice");
-
 		// Two independent views of completeness: what the exporter admitted it
 		// failed to write, and what the file holds relative to what the root said to
 		// expect. The second catches loss *after* a successful write, in both
@@ -217,6 +211,46 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		const expectedSpans = usableExpectation ?? traceSpans.length;
 		const { observedSpans, duplicateSpans, malformedSpans, unexpectedSpans } = structure;
 		const droppedSpans = Math.max(failedExports, Math.max(0, expectedSpans - observedSpans));
+
+		// Same derivation the sink used when it stamped `flow.trace.health`, so a
+		// read-back verdict and a live one cannot disagree. A duplicated or
+		// unidentifiable row is its own disqualification: nothing downstream can
+		// tell which copy is real, or what an id-less row was meant to be.
+		const incomplete = expectationLost || structure.invalid || duplicateSpans > 0 || malformedSpans > 0 || unexpectedSpans > 0 || traceHealthStatus(
+			{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
+			Boolean(root),
+		) !== "recorded";
+
+		// A strict run writes its root before it can read the export back, so the
+		// root can claim a verified outcome the run then failed to evidence. Two
+		// independent corrections, because each covers the other's blind spot.
+		// `structure.invalid` is derived here from the rows themselves and needs
+		// nothing to have been written, so it survives the append that carries the
+		// revocation failing — a full disk is precisely when both the evidence and
+		// the correction go missing. The revocation event covers the converse: a
+		// fault only the writer could see, such as a root whose declared
+		// expectation was rewritten after the fact, which these rows alone look
+		// consistent with.
+		const structureRevoked = eventSpans.some((span) => boolAttr(span, "flow.trace.structure_revoked"));
+		// A root written by a strict run says its claims are contingent on a
+		// verification it could not perform yet. Honouring them needs the positive
+		// certification, not merely the absence of a complaint: a fault only the
+		// writer could see — a rewritten `expected_spans` that leaves these rows
+		// looking consistent — is invisible here, and the append that would have
+		// reported it is exactly what a full disk loses. Absent certification the
+		// claim is withheld rather than granted.
+		const verificationPending = boolAttr(rootSpan, "flow.trace.verification_pending");
+		const structureCertified = eventSpans.some((span) => boolAttr(span, "flow.trace.structure_verified"));
+		// Withheld on the whole completeness predicate, not on structural validity
+		// alone: a certified trace that later loses a row or gains a surplus one is
+		// still a tree, so `structure.invalid` stays false while `incomplete` does
+		// not — and incomplete evidence supports no verified outcome, whatever a
+		// surviving certification says.
+		const outcomeVerified = boolAttr(rootSpan, "flow.outcome_verified") && !structureRevoked && !incomplete && (!verificationPending || structureCertified);
+		const outcomeSuccess = outcomeVerified && boolAttr(rootSpan, "flow.outcome_success");
+		const budgetHit = boolAttr(rootSpan, "flow.budget_exceeded") || childSpans.some((span) => stringAttr(span, "flow.error_code") === "BUDGET_EXCEEDED");
+		const sameModelVoteWarning = boolAttr(rootSpan, "flow.same_model_vote_warning");
+		const routeChoice = stringAttr(rootSpan, "flow.route_choice");
 
 		const delta: TraceReportBucket = {
 			traces: 1,
@@ -241,14 +275,7 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			failedExports,
 			duplicateSpans,
 			malformedSpans,
-			// Same derivation the sink used when it stamped `flow.trace.health`, so a
-			// read-back verdict and a live one cannot disagree. A duplicated or
-			// unidentifiable row is its own disqualification: nothing downstream can
-			// tell which copy is real, or what an id-less row was meant to be.
-			incompleteTraces: expectationLost || structure.invalid || duplicateSpans > 0 || malformedSpans > 0 || unexpectedSpans > 0 || traceHealthStatus(
-				{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
-				Boolean(root),
-			) !== "recorded" ? 1 : 0,
+			incompleteTraces: incomplete ? 1 : 0,
 			structurallyInvalidTraces: structure.invalid ? 1 : 0,
 			danglingLinks: structure.danglingLinks,
 			coordinationEvents: eventSpans.length,

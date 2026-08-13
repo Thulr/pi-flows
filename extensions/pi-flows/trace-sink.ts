@@ -13,7 +13,8 @@ import type {
 	RecordSpan,
 	SpanStage,
 } from "./types.ts";
-import { emptyTraceHealth, encodeUnitKey, traceHealthStatus } from "./trace-scope.ts";
+import { emptyTraceHealth, encodeUnitKey, traceHealthStatus, type FlowTraceStructure } from "./trace-scope.ts";
+import { reconcileVerdicts, verifyExportedTrace } from "./trace-verify.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
 import { stableTraceIds } from "./trace-identity.mjs";
 
@@ -82,6 +83,14 @@ const ATTRIBUTE_CAP = 1024;
 const STRUCTURAL_CAP = 8 * 1024;
 const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids", "flow.depends_on_unresolved"]);
 
+/** What a caller configures beyond the file, the mode, and the capture policy. An object rather than three more positional slots, so a caller asking only for `verify` does not have to pass two `undefined`s to reach it. */
+export interface TraceSinkOptions {
+	traceLabel?: string;
+	context?: FlowTraceContext;
+	/** Read the export back once the root is written. Strict runs set it; ordinary flows do not, and pay nothing. */
+	verify?: boolean;
+}
+
 /**
  * Emit redacted OpenInference-shaped spans to JSONL: a root span, one span per
  * child run, lazily-created stage spans that keep waves/rounds/phases from
@@ -94,7 +103,8 @@ const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.
  * returned link can say how much evidence actually landed and a strict caller
  * can refuse to treat an incomplete trace as proof.
  */
-export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, traceLabel?: string, context?: FlowTraceContext): TraceSink {
+export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, options: TraceSinkOptions = {}): TraceSink {
+	const { traceLabel, context, verify = false } = options;
 	const ids = context ? stableTraceIds(context, mode) : { traceId: randomUUID().replace(/-/g, ""), rootSpanId: spanId() };
 	const { traceId, rootSpanId } = ids;
 	const storedContext = context ? storedTraceContext(context, policy) : undefined;
@@ -353,6 +363,21 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// covers everything including this row.
 			const expectedSpans = health.expectedSpans + 1;
 			const observedSpans = health.observedSpans + 1;
+			// A verifying run reserves one more slot: the certification the reader
+			// requires is itself a row, and it can only be written after this root has
+			// frozen the count. Without the reservation every healthy strict trace
+			// reads back one span over its declaration, and the strict report gate
+			// rejects exactly the traces that verified clean. A certification that
+			// never lands leaves the trace one row short of its declaration, which
+			// reads as loss — the failing-closed direction.
+			const declaredExpectation = expectedSpans + (verify ? 1 : 0);
+			// The certification is counted the way the root counts itself: in the
+			// write that precedes it. Both root counters then share one convention —
+			// the rows this finalize will have written when it completes — and match
+			// the link's on the healthy path. Neither append's own failure is
+			// recordable in a row already written; the link (which counts real
+			// appends) and the file's own shortfall carry that truth.
+			const declaredObserved = observedSpans + (verify ? 1 : 0);
 			const preRootHealth: FlowTraceHealth = {
 				expectedSpans,
 				observedSpans,
@@ -378,19 +403,79 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					...storedAttributes(rootAttributes),
 					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
 					"flow.execution_success": status.ok,
-					"flow.trace.expected_spans": expectedSpans,
-					"flow.trace.observed_spans": observedSpans,
+					"flow.trace.expected_spans": declaredExpectation,
+					"flow.trace.observed_spans": declaredObserved,
 					"flow.trace.dropped_spans": health.droppedSpans,
 					"flow.trace.redacted_spans": health.redactedSpans,
 					"flow.trace.failed_exports": health.failedExports,
 					"flow.trace.stage_count": stages.size,
 					"flow.trace.health": traceHealthStatus({ ...health, expectedSpans, observedSpans }, true),
+					// A strict run cannot verify itself before this row exists, so the row
+					// says its own claims are contingent. A reader then requires positive
+					// certification to honour them, which makes every way the certification
+					// can fail to arrive — including the append for it failing — read as
+					// unverified rather than verified.
+					...(verify ? { "flow.trace.verification_pending": true } : {}),
 				},
 			});
 			await rootAppend;
 			const rootWritten = health.observedSpans === observedSpans;
+			// The root is already on disk, and an exported span is immutable — so a
+			// verification that fails after it cannot unsay `flow.outcome_verified`.
+			// It records the revocation as a linked event instead, exactly as a revoked
+			// budget wrap-up does, and the report applies the correction. Only an
+			// already-failing trace gains this row, so no healthy export is pushed past
+			// its own declared count by it.
+			// The first reading decides only what the event below may truthfully
+			// record; it is not the verdict, because this finalize still has one write
+			// left. A row this run appends after its own reading is evidence its
+			// reading never saw.
+			const preCertification = verify ? await verifyExportedTrace(traceFile, traceId, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
+			const appendStructureEvent = (certified: boolean, issue: string | undefined) => append({
+				trace_id: traceId,
+				span_id: spanId(),
+				parent_span_id: rootSpanId,
+				name: `flow.${mode}.event.trace.${certified ? "structure_verified" : "structure_invalid"}`,
+				start_time_unix_ms: end,
+				end_time_unix_ms: end,
+				status: { code: certified ? "OK" : "ERROR" },
+				attributes: {
+					"openinference.span.kind": "CHAIN",
+					"flow.span_role": "event",
+					"flow.event_kind": "validation",
+					"flow.event_name": `trace.${certified ? "structure_verified" : "structure_invalid"}`,
+					"flow.mode": mode,
+					"flow.trace_label": storedTraceLabel,
+					...(certified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }),
+					...storedAttributes({ "flow.trace.structure_issue": issue }),
+					...traceContextAttributes(storedContext),
+				},
+			});
+			if (preCertification) {
+				await appendStructureEvent(preCertification.valid, preCertification.issue);
+			}
+			// The verdict the link carries is of the file as this finalize leaves it —
+			// certification row included, so nothing this run wrote postdates what it
+			// verified. A path rotated or truncated between the first reading and the
+			// event append lands here as missing rows rather than as a pass against a
+			// file that no longer exists; every row is now expected, so attempted and
+			// declared are the same number.
+			const structure = preCertification
+				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, traceId, { attempted: declaredExpectation, declared: declaredExpectation }, policy))
+				: undefined;
+			// A final failure after a positive certification would otherwise leave
+			// the file claiming verified while the live call refuses. Best-effort
+			// like every append, but the reserved slot makes its bare arrival
+			// durable: one surplus row withholds on completeness before any reader
+			// sees the flag. Past this, a read and a write failing together is a
+			// window no append-only record can close from inside.
+			if (structure && !structure.valid && preCertification?.valid) {
+				await appendStructureEvent(false, structure.issue);
+			}
 			const spans: FlowTraceHealth = {
-				expectedSpans,
+				// The declared count, so a landed certification reads as observed ==
+				// expected rather than as one span of surplus.
+				expectedSpans: declaredExpectation,
 				observedSpans: health.observedSpans,
 				droppedSpans: health.droppedSpans,
 				redactedSpans: health.redactedSpans,
@@ -404,6 +489,10 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				spans,
 				...(storedContext ? { context: storedContext } : {}),
 				...(writeError ? { error: sanitizeText(writeError, { ...policy, recordContent: true }, 1024) } : {}),
+				// Read back only when asked. An ordinary flow pays nothing; a strict run
+				// must not report evidence whose shape it never checked, and the root is
+				// on disk by now, so what the file holds is a complete tree or it is not.
+				...(structure ? { structure } : {}),
 			};
 		},
 	};

@@ -11,7 +11,7 @@ Not every part of this repo earns the same depth. This split says where to spend
 `scripts/domain-score.mjs` enforces this split — every module below is checked for placement and for which subdomains it may import from — so the classification cannot quietly go stale as modules are added.
 
 **Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
-_Modules_: `flow.ts`, `run.ts`, `settle.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
+_Modules_: `flow.ts`, `run.ts`, `settle.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-verify.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
 **Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
 _Modules_: `modes/*`, `presets.ts`, `preset-review.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-style.ts`, `ui-gantt.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `inspector.ts`.
@@ -179,8 +179,12 @@ The recorded fact that a human approval point was reached and how it resolved. C
 _Avoid_: gate (a gate is machine-evaluated)
 
 **Trace health**:
-How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed.
+How complete a flow's exported evidence is (`recorded`, `degraded`, `missing`), counted as expected vs observed spans. Reported separately from execution success: a run whose spans were dropped is unauditable, not failed. Strictly a *writer's* count — what the sink attempted against what reached the file — so it is answered while writing and cannot see anything that is only visible on reading the file back.
 _Avoid_: trace status, telemetry health
+
+**Trace structure**:
+Whether an exported trace is a span tree at all — a root that reaches itself, every span inside its parent's interval, no duplicate ids, no surplus rows. A second question from **Trace health**, deliberately not folded into it: a file can be written completely and still be unreadable as a tree, and reporting either answer as the other is how a strict run would certify evidence nothing checked. Answered only when a caller asks for the export to be read back, which today means a strict run; absent means unverified, never verified-fine.
+_Avoid_: trace health (that is the writer's count), trace validity
 
 **Execution success**:
 A run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct.

@@ -26,7 +26,7 @@ export async function traceProjectPresetRefusal(
 	interactive: boolean,
 ): Promise<FlowTraceLink | undefined> {
 	if (!settings.traceFile) return undefined;
-	const sink = makeTraceSink(path.resolve(cwd, settings.traceFile), mode, policy, settings.traceLabel, settings.traceContext);
+	const sink = makeTraceSink(path.resolve(cwd, settings.traceFile), mode, policy, { traceLabel: settings.traceLabel, context: settings.traceContext });
 	sink.event({
 		kind: "approval",
 		name: "project_preset",

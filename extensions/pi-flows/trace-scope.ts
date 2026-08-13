@@ -104,6 +104,20 @@ export interface FlowTraceHealth {
  */
 export type FlowTraceHealthStatus = "recorded" | "degraded" | "missing";
 
+/**
+ * What reading the exported trace back proved about its shape. Deliberately not
+ * folded into {@link FlowTraceHealthStatus}: health is export accounting the
+ * writer knows while writing, and a file can be written completely and still
+ * not be a span tree — a child parented to a stage nobody wrote, a root that
+ * does not reach itself. Two questions, two answers, so neither can be reported
+ * as the other.
+ */
+export interface FlowTraceStructure {
+	valid: boolean;
+	/** Why it is not a span tree. Absent when it is one. */
+	issue?: string;
+}
+
 export interface FlowTraceLink {
 	health: FlowTraceHealthStatus;
 	traceFile: string;
@@ -112,6 +126,12 @@ export interface FlowTraceLink {
 	context?: FlowTraceContext;
 	spans?: FlowTraceHealth;
 	error?: string;
+	/**
+	 * Present only when the caller asked for the export to be read back — today
+	 * a strict run, which must not report evidence it never verified. Absent
+	 * means unverified, never "verified fine".
+	 */
+	structure?: FlowTraceStructure;
 }
 
 /**
