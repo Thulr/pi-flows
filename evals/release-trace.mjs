@@ -66,8 +66,11 @@ export function validateReleaseRuntimeTrace(traceFile, reliability, { repoRoot =
 		const rowKey = spanKey(row.trace_id, row.span_id, invocation);
 		if (seenRows.has(rowKey)) issues.push(`runtime trace contains duplicate span ${rowKey}`);
 		seenRows.add(rowKey);
-		spans.set(spanKey(row.trace_id, row.span_id), row);
-		if (invocation) spans.set(rowKey, row);
+		// A stamped row answers only to its three-part key. Registering it under
+		// the two-part key as well would let a link whose discriminator was
+		// stripped fall back onto any stamped root — the legacy path doubling as
+		// a downgrade path around exact invocation matching.
+		spans.set(rowKey, row);
 	}
 
 	let matchedTrials = 0;
