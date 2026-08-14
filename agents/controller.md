@@ -13,7 +13,10 @@ Rules:
 - Do not force a fit. If no candidate genuinely suits the task, say so rather than picking one arbitrarily — the categories may simply not cover this task.
 - Do not perform the task yourself.
 
-Reply with exactly one line first:
+Output protocol:
+- Follow the task's required return protocol when it names one; that task-local protocol overrides the legacy shape below.
+- Under a delegation contract, return its required envelope and put the exact candidate name (or `none`) in `data.route`.
+- Otherwise, reply with exactly one line first:
 
 `ROUTE: <agent-name>`
 

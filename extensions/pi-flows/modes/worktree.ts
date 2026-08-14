@@ -5,10 +5,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowRunResult, type FlowError, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "../sanitize.ts";
-import { runWave } from "../runner.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
@@ -206,11 +205,15 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		// The write isolation here is each worker's own worktree cwd, assigned at
 		// plan time above — the wave's shared-write gate sees distinct cwds and
 		// stays silent, exactly as the per-worktree design intends.
-		const wave = await runWave(deps, settle, workerItems, {
+		const wave = await dispatchIntegrationWave(deps, settle, workerItems, {
 			statusText: (settled, total) => `Flow worktree: ${settled}/${total} isolated writers settled`,
 			stage: { key: "workers", name: "isolated writers" },
+			consume: { completion: "integrate" },
 		});
-		if (wave.status === "refused") return wave.output;
+		if (wave.status === "refused") {
+			retainFailureState = true;
+			return settle.refuse(wave.error, { footer: workerRecoveryDetails(workers, policy) });
+		}
 		const workerResults = wave.results;
 		const failedWorkerIds = workers.filter((_, index) => isFailed(workerResults[index])).map((worker) => worker.id);
 		if (failedWorkerIds.length > 0) {
@@ -218,15 +221,8 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			const error = flowError("WORKTREE_INTEGRATION_FAILED", "One or more required worktree writers failed.", `Failed worker ids: ${failedWorkerIds.join(", ")}. Partial implementation was not integrated.`, "Inspect the retained worker state, fix the failed tasks or provider/tool errors, then rerun all required worktree tasks.");
 			return settle.refuse(error, { footer: workerRecoveryDetails(workers, policy) });
 		}
-		const workerHandoffs = deps.handoffs.consumeResults(workerResults.map((result, index) => ({
-			result,
-			plan: workerItems[index],
-		})));
-		if (workerHandoffs.error) {
-			retainFailureState = true;
-			return settle.refuse(workerHandoffs.error, { footer: workerRecoveryDetails(workers, policy) });
-		}
-		const workerDependencyKey = (worker: WorkerWorktree) => workerHandoffs.items[workers.indexOf(worker)]?.dependencyKey;
+		const workerHandoffs = wave.consumptions;
+		const workerDependencyKey = (worker: WorkerWorktree) => workerHandoffs[workers.indexOf(worker)]?.dependencyKey;
 		for (let index = 0; index < workers.length; index += 1) {
 			const committed = commitChanges(workers[index].cwd, `pi-flow(${workers[index].id}): isolated worker changes`);
 			if (!committed.ok) {
@@ -281,7 +277,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			}
 			const conflictProvenance = [...integratedWorkers, worker].map((source) => {
 				const index = workers.indexOf(source);
-				return `### ${source.id} (${source.branch})\n${workerHandoffs.items[index]?.text ?? ""}`;
+				return `### ${source.id} (${source.branch})\n${workerHandoffs[index]?.text ?? ""}`;
 			}).join("\n\n");
 			const conflictTask = [
 				"## Integration goal", params.task ?? "Integrate the worker branches.",
@@ -339,7 +335,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 
 		const summaries = usableWorkers.map((worker) => {
 			const index = workers.indexOf(worker);
-			return `### ${worker.id} (${worker.branch}; ${worker.changed ? "changed" : "no changes"})\n\n${workerHandoffs.items[index]?.text ?? ""}`;
+			return `### ${worker.id} (${worker.branch}; ${worker.changed ? "changed" : "no changes"})\n\n${workerHandoffs[index]?.text ?? ""}`;
 		}).join("\n\n---\n\n");
 		const diffStat = git(integrationCwd, ["diff", "--stat", `${baseSha}...HEAD`]).stdout;
 		const reviewTask = [

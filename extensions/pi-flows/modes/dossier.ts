@@ -1,8 +1,7 @@
 import { flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { fanoutThenTailCriticalPath, plannedRefs, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
@@ -74,21 +73,20 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		if (planned.error) return settle.refuse(planned.error);
 		sectionItems.push(planned.plan!);
 	}
-	const wave = await runWave(deps, settle, sectionItems, { statusText: (settled, total) => `Flow dossier: ${settled}/${total} evidence sections extracted`, stage: { key: "sections", name: "evidence sections" } });
+	const wave = await dispatchIntegrationWave(deps, settle, sectionItems, { statusText: (settled, total) => `Flow dossier: ${settled}/${total} evidence sections extracted`, stage: { key: "sections", name: "evidence sections" }, consume: { completion: "integrate" } });
 	if (wave.status === "refused") return wave.output;
 	const sectionResults = wave.results;
 	const sectionEntries = sectionResults.flatMap((result, index) =>
 		isFailed(result) ? [] : [{ result, plan: sectionItems[index], index }],
 	);
-	const sectionHandoffs = deps.handoffs.consumeResults(sectionEntries);
-	if (sectionHandoffs.error) return settle.refuse(sectionHandoffs.error);
+	const sectionHandoffs = wave.consumptions.flatMap((handoff) => handoff ? [handoff] : []);
 	const successful = sectionResults.filter((result) => !isFailed(result));
 	if (successful.length < 2) {
 		return settle.refuse(flowError("DOSSIER_TOO_FEW_SECTIONS", "Fewer than two evidence extractors produced usable results.", `Only ${successful.length}/${sections.length} sections succeeded, so cross-source reconciliation would be misleading.`, "Fix the failed evidence assignments and rerun; use single mode if only one source is required."));
 	}
 
 	const evidence = sectionEntries
-		.map(({ index }, consumedIndex) => `### Evidence section ${index + 1}: ${sanitizeText(sections[index]?.task ?? "", policy, 1024)}\n\n${sectionHandoffs.items[consumedIndex]?.text ?? ""}`)
+		.map(({ index }, consumedIndex) => `### Evidence section ${index + 1}: ${sanitizeText(sections[index]?.task ?? "", policy, 1024)}\n\n${sectionHandoffs[consumedIndex]?.text ?? ""}`)
 		.join("\n\n---\n\n");
 	const debriefRef: FlowAgentRefInput = spec.debrief?.agent ? spec.debrief : { agent: "debrief" };
 	const synthesisTask = [
@@ -106,7 +104,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 		// Only the sections that succeeded reach the synthesis prompt, so only those
 		// belong in its dependency list — claiming it consumed a failed section's
 		// output would misreport what the answer actually rests on.
-		scope: { key: "debrief", dependsOn: sectionHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) },
+		scope: { key: "debrief", dependsOn: sectionHandoffs.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) },
 	});
 	if (planned.error) return settle.refuse(planned.error);
 	const debriefed = await dispatchIntegrationPlan(deps, planned.plan!, settle, { completion: "terminal", enforceCompletion: true });

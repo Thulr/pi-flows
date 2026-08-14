@@ -237,10 +237,13 @@ Fix: tighten the `controller` prompt, widen/adjust `route.candidates`, or set
 
 ### `ORCHESTRATE_NO_SUBTASKS`
 
-Cause: the `commander` decomposer did not return a JSON array of subtasks.
+Cause: the `commander` returned no usable subtask array: legacy output contained
+no non-empty JSON array with usable entries, or contracted envelope `data` was
+not a non-empty array of strings.
 
-Fix: tighten the `commander` prompt to return a JSON array of strings. For work
-that does not decompose, use `chain` or `single` mode instead.
+Fix: require a JSON string array directly, or in envelope `data` when
+`orchestrate.commander.contract` is set. For work that does not decompose, use
+`chain` or `single` mode instead.
 
 ### `FLOW_DEPTH_EXCEEDED`
 
@@ -607,8 +610,8 @@ authority/budget/side-effect value, or has a `returnSchema` that cannot compile.
 
 Fix: provide the complete delegation contract documented in
 [Flow reference](../reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation).
-Delegation-contract validation happens before the affected single, chain, or evaluate child
-is dispatched.
+Validation precedes the affected Child in every role. For a later invalid
+contract, prior Runs remain in `details.results`, but that role does not spawn.
 
 ### `RETURN_ENVELOPE_INVALID`
 

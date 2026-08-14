@@ -53,6 +53,7 @@ test("public schemas expose delegation contracts and runtime-enriched envelopes"
 	assert.ok(FlowContractTask.properties.contract);
 	assert.ok(FlowTask.properties.contract);
 	assert.ok(FlowReturnEnvelope.properties.contractId);
+	assert.ok(FlowReturnEnvelope.required?.includes("contractId"));
 	assert.ok(FlowReturnEnvelope.properties.usage);
 });
 

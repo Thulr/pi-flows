@@ -132,7 +132,7 @@ const CONSTRUCTION_KEY = Symbol("pi-flows.construction");
  * A delegation contract admitted to the transition path: shape-validated,
  * returnSchema compiled, identity digested — all at construction. Rendering,
  * contract budgets, and return validation exist only as methods here, so none
- * can run against an unvalidated contract or derive a divergent identity.
+ * can run against a raw contract or derive a divergent identity.
  */
 export class ResolvedDelegationContract {
 	readonly #checkReturnData: (data: unknown) => boolean;
@@ -181,6 +181,15 @@ export class ResolvedDelegationContract {
 			`Required fields: ${ENVELOPE_REQUIRED_FIELDS}.`,
 			"`data` must satisfy contract.returnSchema. Evidence items use {claim, source}. Artifact references use {path}. Digests use {artifact, algorithm:\"sha256\", value}.",
 			"Use empty arrays when no evidence, artifacts, digests, changed state, or unresolved questions exist. Do not report success as prose outside the envelope.",
+		].join("\n");
+	}
+
+	/** Render admitted terms as context for another Role without instructing it to use this contract's Return protocol. */
+	reviewContext(task: string | undefined): string {
+		return [
+			task?.trim() || this.contract.objective,
+			"\n## Delegation contract under review (context only)",
+			JSON.stringify(this.contract, null, 2),
 		].join("\n");
 	}
 

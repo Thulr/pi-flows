@@ -1,8 +1,7 @@
 import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowError, type FlowRunResult, type FlowTaskInput, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { maxRunDuration, plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
@@ -80,19 +79,14 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 		if (planned.error) return settle.refuse(planned.error);
 		plans.push(planned.plan!);
 	}
-	const wave = await runWave(deps, settle, plans, {
+	const wave = await dispatchIntegrationWave(deps, settle, plans, {
 		statusText: (settled, total) => `Flow parallel: ${settled}/${total} settled`,
 		stage: { key: "tasks", name: "parallel tasks" },
+		// No role boundary: these Returns go directly to the caller.
+		consume: { completion: "terminal", enforceCompletion: true },
 	});
 	if (wave.status === "refused") return wave.output;
 	const results = wave.results;
-	// Validated, but no boundary: these outputs go into the response the caller
-	// reads, and parallel spawns nothing that consumes them. Incomplete envelopes
-	// still fail closed — terminal recording changes the evidence, not the gate.
-	const handoffs = deps.handoffs.consumeResults(results.flatMap((result, index) =>
-		isFailed(result) ? [] : [{ plan: plans[index], result, completion: "terminal" as const, enforceCompletion: true }],
-	));
-	if (handoffs.error) return settle.refuse(handoffs.error);
 
 	const success = results.filter((result) => !isFailed(result)).length;
 	const summaries = results.map((result) => {

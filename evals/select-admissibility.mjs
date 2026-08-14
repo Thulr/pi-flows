@@ -10,7 +10,8 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentFlowDepth, nonSpawningFlowCall, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
-import { firstSpawnAgentRefs, modePreSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
+import { firstSpawnPlan, modePreSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
+import { plannedContract } from "../extensions/pi-flows/modes/plan.ts";
 import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
@@ -43,12 +44,6 @@ try {
 }
 export const scoringDiscovery = discoveredAgents;
 const scoringPresetDiscovery = discoveredPresets;
-
-/** The modes whose handlers apply the top-level params.contract to their FIRST child (verified per handler: single uses it directly; chain, parallel, vote, debate pass fallbackContract; evaluate's operator falls back to it). Dossier is deliberately absent: its fallback goes to the debrief synthesizer, and its first-spawn section plans carry only their own contracts. */
-const CONTRACT_FALLBACK_MODES = new Set(["single", "chain", "parallel", "vote", "debate", "evaluate"]);
-
-/** The modes whose openers run through integrationRunPlan, which resolves (and validates) each ref's own contract: the fallback modes plus graph nodes, dossier sections (modes/dossier.ts:33 — no fallback, own contracts only), and the orchestrate commander (modes/orchestrate.ts:53). route/search/loop openers use runAgentRef with no contract limits, so a role contract there is ignored by the tool and must be ignored here. Workflow phases also run through integrationRunPlan, but workflow is deliberately absent: its contract refusals land only after the fresh-state write, while the play-out policy classifies INVALID_DELEGATION_CONTRACT as an entry-guard code that may play out — scoring it here would let a refused workflow call re-run and write state at a model-supplied path. Workflow's first-spawn ref is scored for the roster rule only (#91). */
-const ROLE_CONTRACT_MODES = new Set([...CONTRACT_FALLBACK_MODES, "graph", "dossier", "orchestrate"]);
 
 // The tool resolves a preset before any gate runs, so admissibility must be
 // asked of the expanded call, not the raw preset reference: a permitted
@@ -184,26 +179,26 @@ export function callAdmissibilityFailure(args) {
 	// refusal follows the fresh-state write, so the play-out policy
 	// terminates it (actsBeforeRunner, select.mjs) instead of re-running it.
 	const known = new Set(scoringDiscovery.agents.map((agent) => agent.name));
+	const opening = firstSpawnPlan(effective ?? {});
+	// Workflow writes fresh state before resolving its first work phase. Its
+	// contract refusal is real, but not an entry refusal the eval may play out
+	// unchanged (#91), so only its roster rule is scored here.
+	const openingContractRule = mode === "workflow" ? undefined : opening.contracts;
 	const consumedContract = (ref) => {
-		const roleContract = ROLE_CONTRACT_MODES.has(mode) ? ref.contract : undefined;
-		const contract = roleContract ?? (CONTRACT_FALLBACK_MODES.has(mode) ? effective?.contract : undefined);
+		const contract = plannedContract(ref, effective?.contract, openingContractRule);
 		return contract && typeof contract === "object" && !Array.isArray(contract) ? contract : undefined;
 	};
 	const roleRefusal = (ref) => {
 		if (typeof ref.agent === "string" && !known.has(ref.agent)) return "UNKNOWN_AGENT";
-		// A contract counts only where the tool's opener actually consumes it:
-		// integrationRunPlan resolves ref.contract ?? the top-level fallback
-		// for the fallback modes; route/search/loop/orchestrate openers run
-		// with no contract limits, so neither source applies there — claiming
-		// a refusal for them would let the play-out branch execute a call the
-		// tool admits.
+		// A contract counts only where the opener's declared wave says it is
+		// enforced: own role contract, or role contract then call fallback.
 		const contract = consumedContract(ref);
 		if (contract && Budget.forContract(contract.budget)?.refusesSpawn()) {
 			return "BUDGET_EXCEEDED";
 		}
 		return null;
 	};
-	const firstSpawnRefs = firstSpawnAgentRefs(effective ?? {});
+	const firstSpawnRefs = opening.refs;
 	// integrationRunPlan validates each consumed contract while constructing
 	// plans, before any fanout starts — one invalid contract among the
 	// first-spawn roles refuses the whole call (INVALID_DELEGATION_CONTRACT),

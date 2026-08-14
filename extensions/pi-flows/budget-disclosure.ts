@@ -1,5 +1,5 @@
-import { resolveDelegationContract } from "./contract-resolution.ts";
 import { activeRunModes, planForMode } from "./modes/contract.ts";
+import { plannedContract } from "./modes/plan.ts";
 import { formatTokens } from "./trace.ts";
 import type { BudgetCeiling, DelegationContract, FlowError, RunMode } from "./types.ts";
 
@@ -50,14 +50,11 @@ function delegationContract(value: unknown): DelegationContract | undefined {
  * the missing-entry compile error moved to the table's `plan` member.
  */
 function plannedContracts(params: RecordValue, mode: RunMode): DelegationContract[] {
-	const fallback = delegationContract(params.contract);
 	const contracts: DelegationContract[] = [];
 	for (const wave of planForMode(mode, params).waves) {
 		if (!wave.contracts) continue;
 		for (const ref of wave.refs) {
-			const contract = wave.contracts === "own"
-				? delegationContract(ref.contract)
-				: resolveDelegationContract({ contract: delegationContract(ref.contract) }, fallback);
+			const contract = delegationContract(plannedContract(ref, params.contract, wave.contracts));
 			if (contract) contracts.push(contract);
 		}
 	}

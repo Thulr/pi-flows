@@ -3,8 +3,8 @@
  * it puts work through the child-run seam (`ModeDeps.runChild`).
  *
  * Split out of runner.ts so the seam's production adapter and the coordination
- * plumbing around it stay separately reviewable. Handlers keep importing both
- * from runner.ts, which re-exports this module.
+ * plumbing around it stay separately reviewable. integration.ts is the
+ * handler-facing interface and admits opaque plans before reaching this module.
  */
 import type { Budget, ChildSpanScope, DelegationContract, FlowAgentRefInput, FlowError, FlowMode, FlowRunResult, ModeDeps, ModeOutput, RunChildOptions, SpanStage } from "./types.ts";
 import { makeEmptyRunResult, sanitizeText } from "./sanitize.ts";
@@ -33,20 +33,21 @@ export async function mapWithConcurrency<TIn, TOut>(
 }
 
 export interface AgentFanoutItem {
-	ref: FlowAgentRefInput;
-	task: string;
-	placeholderTask?: string;
-	limits?: AgentRunLimits;
+	/** Raw delegation contracts stop at integrationRunPlan; generic dispatch receives only admitted limits. */
+	readonly ref: Omit<FlowAgentRefInput, "contract">;
+	readonly task: string;
+	readonly placeholderTask?: string;
+	readonly limits?: AgentRunLimits;
 	/** Per-item span placement: its own key and the units it consumed. The stage comes from the fan-out call. */
-	scope?: ChildSpanScope;
+	readonly scope?: ChildSpanScope;
 }
 
 export interface AgentRunLimits {
-	captureRawOutput?: boolean;
-	timeoutMs?: number;
-	contractBudget?: Budget;
+	readonly captureRawOutput?: boolean;
+	readonly timeoutMs?: number;
+	readonly contractBudget?: Budget;
 	/** Carried for trace identity only; the enforced ceiling is `contractBudget`. */
-	contract?: DelegationContract;
+	readonly contract?: DelegationContract;
 }
 
 function tighterTimeout(flowTimeoutMs: number | undefined, contractTimeoutMs: number | undefined): number | undefined {
@@ -56,7 +57,7 @@ function tighterTimeout(flowTimeoutMs: number | undefined, contractTimeoutMs: nu
 }
 
 /** The standard per-run plumbing (everything except onUpdate), built in exactly one place. */
-function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, limits: AgentRunLimits = {}, scope?: ChildSpanScope): Omit<RunChildOptions, "onUpdate"> {
+function childRunOptions(deps: ModeDeps, ref: Omit<FlowAgentRefInput, "contract">, task: string, mode: FlowMode, step: number | undefined, limits: AgentRunLimits = {}, scope?: ChildSpanScope): Omit<RunChildOptions, "onUpdate"> {
 	return {
 		defaultCwd: deps.defaultCwd,
 		agents: deps.discovery.agents,
@@ -80,7 +81,7 @@ function childRunOptions(deps: ModeDeps, ref: FlowAgentRefInput, task: string, m
 		redactSecrets: deps.params.redactSecrets,
 		captureRawOutput: limits.captureRawOutput,
 		contractBudget: limits.contractBudget,
-		contract: limits.contract ?? ref.contract,
+		contract: limits.contract,
 		delegationReason: typeof deps.params.why === "string" ? deps.params.why : undefined,
 		scope,
 		step,
@@ -98,7 +99,7 @@ function fanoutScope(stage: SpanStage | undefined, item: AgentFanoutItem, index:
 	return { ...(item.scope ?? {}), ...(stage ? { stage } : {}), key: item.scope?.key ?? (stage ? `${stage.key}.${index + 1}` : undefined) };
 }
 
-function emptyRun(ref: FlowAgentRefInput, task: string, deps: ModeDeps, error?: FlowRunResult["error"]): FlowRunResult {
+function emptyRun(ref: Omit<FlowAgentRefInput, "contract">, task: string, deps: ModeDeps, error?: FlowRunResult["error"]): FlowRunResult {
 	const result = makeEmptyRunResult(ref.agent, task, deps.policy, error);
 	result.role = ref.role === undefined ? undefined : sanitizeText(ref.role, deps.policy, 4 * 1024);
 	return result;
@@ -108,7 +109,8 @@ function emptyRun(ref: FlowAgentRefInput, task: string, deps: ModeDeps, error?: 
  * The bare concurrent fan-out behind {@link runWave} — the one fan-out loop.
  * Private on purpose: it neither enforces the shared-write guard nor feeds the
  * settle, so a caller reaching it directly would re-own both by hand, which is
- * exactly the ritual runWave exists to end.
+ * exactly the ritual runWave exists to end. Handler code reaches it only through
+ * dispatchIntegrationWave, which accepts plans admitted by integrationRunPlan.
  */
 async function runAgentFanout(
 	deps: ModeDeps,
@@ -117,7 +119,6 @@ async function runAgentFanout(
 	concurrency: number,
 	priorResults: FlowRunResult[],
 	statusText: (settled: number, total: number) => string,
-	stage?: SpanStage,
 ): Promise<FlowRunResult[]> {
 	if (deps.handoffs.blockingError) {
 		return items.map((item) => emptyRun(item.ref, item.placeholderTask ?? item.task, deps, deps.handoffs.blockingError));
@@ -132,11 +133,6 @@ async function runAgentFanout(
 	};
 	const baseStep = priorResults.length;
 	return mapWithConcurrency(items, concurrency, async (item, index) => {
-		// One placement per unit. The merged scope is written back onto the item
-		// because the item outlives this call: acceptance reads its scope later to
-		// place the handoff and artifact events, and a scope only `runChild` saw
-		// would leave those events stageless, or unkeyed and linked to nothing.
-		item.scope = fanoutScope(stage, item, index);
 		const result = await deps.runChild({
 			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1, item.limits, item.scope),
 			onUpdate: (partial) => {
@@ -161,7 +157,7 @@ export interface WaveRunOptions {
 /** How one wave settled: refused by the gate with zero children spawned, or run with its results (already tracked). */
 export type WaveDispatch =
 	| { status: "refused"; error: FlowError; output: ModeOutput }
-	| { status: "ok"; results: FlowRunResult[] };
+	| { status: "ok"; results: FlowRunResult[]; scopes: Array<ChildSpanScope | undefined> };
 
 /**
  * Dispatch one concurrent wave through the gate that governs it. The
@@ -182,19 +178,20 @@ export type WaveDispatch =
 export async function runWave(deps: ModeDeps, settle: Settle, items: AgentFanoutItem[], options: WaveRunOptions): Promise<WaveDispatch> {
 	const error = validateSharedWriteCwd(deps.discovery, deps.defaultCwd, items.map((item) => item.ref), deps.params.allowSharedWriteCwd, deps.concurrency);
 	if (error) return { status: "refused", error, output: settle.refuse(error) };
-	const results = await runAgentFanout(deps, settle.mode, items, deps.concurrency, [...settle.results], options.statusText, options.stage);
+	const scoped = items.map((item, index) => ({ ...item, scope: fanoutScope(options.stage, item, index) }));
+	const results = await runAgentFanout(deps, settle.mode, scoped, deps.concurrency, [...settle.results], options.statusText);
 	settle.track(...results);
-	return { status: "ok", results };
+	return { status: "ok", results, scopes: scoped.map((item) => item.scope) };
 }
 
 /** How one dispatch differs from the default: its contract-derived limits and where it sits in the span tree. */
 export interface AgentRunPlacement {
-	limits?: AgentRunLimits;
-	scope?: ChildSpanScope;
+	readonly limits?: AgentRunLimits;
+	readonly scope?: ChildSpanScope;
 }
 
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
-export function runAgentRef(deps: ModeDeps, ref: FlowAgentRefInput, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], placement: AgentRunPlacement = {}): Promise<FlowRunResult> {
+export function runAgentRef(deps: ModeDeps, ref: Omit<FlowAgentRefInput, "contract">, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], placement: AgentRunPlacement = {}): Promise<FlowRunResult> {
 	if (deps.handoffs.blockingError) return Promise.resolve(emptyRun(ref, task, deps, deps.handoffs.blockingError));
 	return deps.runChild({
 		...childRunOptions(deps, ref, task, mode, step, placement.limits ?? {}, placement.scope),

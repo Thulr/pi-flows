@@ -1,8 +1,7 @@
 import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { fanoutThenTailCriticalPath, plannedRefs, withinFanoutCap, type ModePlan, type PlannedWave } from "./plan.ts";
 
 /**
@@ -178,18 +177,15 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		if (planned.error) return settle.refuse(planned.error);
 		voterPlans.push(planned.plan!);
 	}
-	const voterWave = await runWave(deps, settle, voterPlans, {
+	const aggregatorRef: FlowAgentRefInput | undefined = spec.debrief?.agent ? spec.debrief : undefined;
+	const voterWave = await dispatchIntegrationWave(deps, settle, voterPlans, {
 		statusText: (settled, total) => `Flow vote: ${settled}/${total} voters settled`,
 		stage: { key: "voters", name: "voters" },
+		consume: { completion: aggregatorRef ? "integrate" : "terminal", enforceCompletion: true },
 	});
 	if (voterWave.status === "refused") return voterWave.output;
 	const voterResults = voterWave.results;
-	const aggregatorRef: FlowAgentRefInput | undefined = spec.debrief?.agent ? spec.debrief : undefined;
-	const voterEntries = voterResults.flatMap((result, index) =>
-		isFailed(result) ? [] : [{ result, plan: voterPlans[index], completion: aggregatorRef ? "integrate" as const : "terminal" as const, enforceCompletion: true }],
-	);
-	const voterHandoffs = deps.handoffs.consumeResults(voterEntries);
-	if (voterHandoffs.error) return settle.refuse(voterHandoffs.error);
+	const voterHandoffs = voterWave.consumptions.flatMap((handoff) => handoff ? [handoff] : []);
 
 	// Vendor-diversity check: same-model voters share training-data blind spots, so
 	// they can agree *wrongly* (effective-agent-patterns §Parallelization). Warn when
@@ -221,14 +217,14 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	// was never cast.
 	// Through each ballot's handoff: what the aggregator reads is the validated,
 	// filtered, injection-scanned text, not the voter's raw output.
-	const consumedBallotKeys = aggregatorRef ? voterHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) : [];
+	const consumedBallotKeys = aggregatorRef ? voterHandoffs.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []) : [];
 	if (succeeded.length === 0) {
 		return settle.complete(sanitizeText(`${diversityWarning}Flow vote: all ${voterResults.length} voters failed.`, policy));
 	}
 
 	// Ballots feed the aggregator prompt — a trust boundary. Clean + scan each.
 	const ballots = succeeded
-		.map((result, i) => `### Voter ${i + 1} (${result.agent})\n\n${voterHandoffs.items[i]?.text ?? ""}`)
+		.map((result, i) => `### Voter ${i + 1} (${result.agent})\n\n${voterHandoffs[i]?.text ?? ""}`)
 		.join("\n\n---\n\n");
 	const ballotSummary = deps.handoffs.warningSummary("Handoff injection check flagged in voter output").trim();
 	const ballotWarningNote = ballotSummary ? `${ballotSummary}\n\n` : "";

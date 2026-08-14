@@ -24,6 +24,8 @@ export interface PlannedRef {
 	contract?: Record<string, unknown>;
 }
 
+export type PlannedContractRule = "own" | "resolved";
+
 /**
  * One step of a mode's planned topology: the roles that would run at that step
  * (CONTEXT.md: Wave — the planned concurrent set; a stage is what the step
@@ -51,7 +53,7 @@ export interface PlannedWave {
 	 * inactive contract-shaped field is never advertised as an enforcement
 	 * boundary (budget-disclosure.ts).
 	 */
-	contracts?: "own" | "resolved";
+	contracts?: PlannedContractRule;
 }
 
 /**
@@ -82,6 +84,11 @@ export type ModePlanFn = (params: any) => ModePlan;
  * derivable — a declared answer, not a fall-through.
  */
 export type ModeCriticalPathFn = (params: any, results: FlowRunResult[]) => number | undefined;
+
+/** Apply a wave's declared contract rule for disclosure and pre-spawn readers. */
+export function plannedContract<T>(ref: { contract?: T }, fallback: T | undefined, rule: PlannedContractRule | undefined): T | undefined {
+	return rule === "own" ? ref.contract : rule === "resolved" ? ref.contract ?? fallback : undefined;
+}
 
 /**
  * What a mode pre-spawn refusal may know beyond its params. Only UI

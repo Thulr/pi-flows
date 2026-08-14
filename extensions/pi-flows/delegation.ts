@@ -3,12 +3,15 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { ENVELOPE_VERSION, ResolvedDelegationContract, canonicalSha256, isRecord, nonEmptyString, storedError, stringArray } from "./contract-resolution.ts";
 import { extractLastJsonBlock } from "./protocol.ts";
-import { Run } from "./run.ts";
+import { Run, type RejectedDelegationReturnEnvelope } from "./run.ts";
 import { capModelVisibleText, isFailed, redactValue, resultText } from "./sanitize.ts";
 import { flowError, type CapturePolicy, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
 
 // Contract identity/admission live in contract-resolution.ts; re-exported here.
 export { ResolvedDelegationContract, canonicalJsonValue, canonicalSha256, contractWrapUpRequirement, delegationContractId, isRecord, validateDelegationContract } from "./contract-resolution.ts";
+
+/** Keeps schema-checked Integration control data distinct from legacy prose protocols. */
+export type IntegrationControl = { source: "contract"; data: unknown } | { source: "legacy"; text: string };
 
 const ENVELOPE_STATUSES = new Set(["completed", "partial", "blocked", "failed"]);
 
@@ -34,7 +37,7 @@ function envelopeError(reason: string): FlowError {
 	);
 }
 
-function validateEnvelopeShape(value: unknown): value is DelegationReturnEnvelope {
+function validateEnvelopeShape(value: unknown): value is RejectedDelegationReturnEnvelope {
 	if (!isRecord(value) || value.schemaVersion !== ENVELOPE_VERSION || !ENVELOPE_STATUSES.has(value.status) || !nonEmptyString(value.summary)) return false;
 	if (value.contractId !== undefined && !/^sha256:[a-f0-9]{64}$/i.test(value.contractId)) return false;
 	if (!Array.isArray(value.evidence) || !value.evidence.every((item: unknown) => isRecord(item) && nonEmptyString(item.claim) && nonEmptyString(item.source))) return false;
@@ -68,7 +71,7 @@ function artifactFile(cwd: string, artifact: string): { file?: string; error?: F
 	}
 }
 
-function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowError | null {
+function validateDigests(envelope: RejectedDelegationReturnEnvelope, cwd: string): FlowError | null {
 	const referenced = new Set(envelope.artifactReferences.map((artifact) => artifact.path));
 	for (const artifact of referenced) {
 		const checked = artifactFile(cwd, artifact);
@@ -113,7 +116,7 @@ function validateDigests(envelope: DelegationReturnEnvelope, cwd: string): FlowE
  * instruction for it.
  */
 function validateEnvelopeAgainstContract(
-	envelope: DelegationReturnEnvelope,
+	envelope: RejectedDelegationReturnEnvelope,
 	contract: ResolvedDelegationContract,
 	cwd: string,
 ): { error: FlowError; claimsSurfaceable: boolean } | null {
@@ -135,7 +138,7 @@ function validateEnvelopeAgainstContract(
 	return null;
 }
 
-function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolicy): DelegationReturnEnvelope {
+function storedEnvelope<T extends RejectedDelegationReturnEnvelope>(envelope: T, policy: CapturePolicy): T {
 	const stored = (value: string) => redactValue(value, policy) as string;
 	return {
 		...envelope,
@@ -147,7 +150,7 @@ function storedEnvelope(envelope: DelegationReturnEnvelope, policy: CapturePolic
 		unresolvedQuestions: envelope.unresolvedQuestions.map(stored),
 		retry: { ...envelope.retry, ...(envelope.retry.reason ? { reason: stored(envelope.retry.reason) } : {}) },
 		data: redactValue(envelope.data, policy),
-	};
+	} as T;
 }
 
 /**
@@ -171,7 +174,7 @@ function validateReturnEnvelope(
 	contract: ResolvedDelegationContract,
 	cwd: string,
 	policy: CapturePolicy,
-): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: DelegationReturnEnvelope } {
+): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: RejectedDelegationReturnEnvelope } {
 	const run = Run.of(result);
 	const parsed = extractLastJsonBlock(run.takeEnvelopeCandidate() ?? resultText(result));
 	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
@@ -185,7 +188,7 @@ function validateReturnEnvelope(
 		if (validation.claimsSurfaceable) run.retainRejectedEnvelope(rejected);
 		return { error: storedError(validation.error, policy), rejected };
 	}
-	const validated = { ...parsed, usage: result.usage };
+	const validated: DelegationReturnEnvelope = { ...parsed, contractId: parsed.contractId!, usage: result.usage };
 	const envelope = storedEnvelope(validated, policy);
 	run.acceptReturnEnvelope(validated, envelope);
 	return { envelope };
@@ -399,7 +402,7 @@ export function prepareIntegrationHandoff(
 		/** Opaque receipt returned by a prior successful call for deferred consumption. */
 		validation?: object;
 	},
-): { handoff?: DelegationHandoffEnvelope; validation?: object; error?: FlowError; rejected?: DelegationReturnEnvelope } {
+): { handoff?: DelegationHandoffEnvelope; validation?: object; error?: FlowError; rejected?: RejectedDelegationReturnEnvelope } {
 	let handoff: DelegationHandoffEnvelope;
 	let returned: DelegationReturnEnvelope | undefined;
 	let validation = options.validation;
@@ -434,8 +437,13 @@ export function canonicalHandoff(handoff: DelegationHandoffEnvelope): string {
 	return JSON.stringify(handoff);
 }
 
-export function integrationControlText(result: FlowRunResult): string {
-	return result.handoff?.compatibility === "typed" ? JSON.stringify(result.handoff.data) : resultText(result);
+/** Schema-checked data or explicitly legacy prose, preserving the two Integration control forms. */
+export function integrationControl(result: FlowRunResult): IntegrationControl {
+	const validated = Run.of(result).validatedReturnData();
+	if (validated !== undefined) return { source: "contract", data: validated };
+	if (result.handoff?.compatibility === "typed") return { source: "contract", data: result.handoff.data };
+	if (result.envelope) return { source: "contract", data: result.envelope.data };
+	return { source: "legacy", text: resultText(result) };
 }
 
 export function incompleteHandoffSummary(results: FlowRunResult[], persistedHandoffs: DelegationHandoffEnvelope[] = []): string {

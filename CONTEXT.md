@@ -117,8 +117,12 @@ A machine-checked task definition that binds a child's objective, authority, con
 _Avoid_: typed contract, task contract
 
 **Resolved contract**:
-A delegation contract admitted to the transition path: shape-validated, its return schema compiled, and its identity digested, all at construction. Task rendering, contract budgets, and return validation accept only this form.
+A delegation contract admitted to the transition path: shape-validated, its return schema compiled, and its identity digested, all at construction. Task rendering, contract budgets, and return validation accept only this form. A contracted Role cannot spawn or steer coordination without it: its admitted plan is an unforgeable single-use capability bound to the flow that created it, and only a Result that plan dispatched can be consumed through it.
 _Avoid_: validated contract, compiled contract
+
+**Integration control**:
+The input from a settled Run in a Role that may steer coordination: either schema-checked data from its accepted return envelope or explicitly legacy prose from an uncontracted Role. The two forms remain distinct so validated strings cannot re-enter marker parsing and unvalidated prose cannot masquerade as contract data.
+_Avoid_: control value, parsed output, ambiguous string
 
 **Return requirements**:
 Prompt-enforced instructions that constrain a child's returned shape or evidence without creating a machine-checked delegation contract.

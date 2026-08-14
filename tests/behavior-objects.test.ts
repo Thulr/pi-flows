@@ -37,6 +37,9 @@ test("a resolved contract carries one identity and one compiled schema for every
 	const resolved = ResolvedDelegationContract.resolve(contract).resolved!;
 	assert.equal(resolved.id, delegationContractId(contract), "the identity is the canonical digest, computed once");
 	assert.match(resolved.renderTask("Do it"), new RegExp(resolved.id), "the rendered protocol names the same identity");
+	const reviewContext = resolved.reviewContext("Judge it");
+	assert.match(reviewContext, /Return answer 42/, "review context carries the admitted acceptance terms");
+	assert.doesNotMatch(reviewContext, /Required return protocol|contractId/, "review context cannot instruct another Role to return under this identity");
 	assert.equal(resolved.timeoutMs, 5_000, "the dispatch bound reads the same admitted data");
 	assert.equal(resolved.budget()?.snapshot().authority, "contract");
 	assert.equal(resolved.checkReturnData({ answer: 42 }), true);
