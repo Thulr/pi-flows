@@ -1,6 +1,6 @@
 import { DEFAULT_CONCURRENCY, DEFAULT_SEARCH_CANDIDATES, RUN_MODE_NAMES, type CoordinationEventKind, type FlowDiscovery, type FlowError, type FlowMode, type FlowRunResult, type ModeHandler, type RunMode } from "../types.ts";
 import { validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
-import type { ModeCriticalPathFn, ModePlan, ModePlanFn, ModePreSpawnRefusalFn, PlannedRef, PreSpawnContext } from "./plan.ts";
+import type { ModeCriticalPathFn, ModePlan, ModePlanFn, ModePreSpawnRefusalFn, PlannedRef, PlannedWave, PreSpawnContext } from "./plan.ts";
 import { criticalPathSingle, handleSingle, planSingle } from "./single.ts";
 import { criticalPathParallel, handleParallel, planParallel, preSpawnRefusalParallel } from "./parallel.ts";
 import { criticalPathChain, handleChain, planChain } from "./chain.ts";
@@ -320,7 +320,18 @@ export function preSpawnSharedWriteWaves(params: Record<string, any>): PlannedRe
  * state (#91) — and each declaration says so in its own mode file.
  */
 export function firstSpawnAgentRefs(params: Record<string, any>): PlannedRef[] {
-	return activePlan(params)?.opening ?? [];
+	return firstSpawnPlan(params).refs;
+}
+
+/** First-spawn refs and their declared own/resolved contract rule. */
+export function firstSpawnPlan(params: Record<string, any>): { refs: PlannedRef[]; contracts?: PlannedWave["contracts"] } {
+	const plan = activePlan(params);
+	if (!plan || plan.opening.length === 0) return { refs: [] };
+	const firstSpawningWave = plan.waves.find((wave) => wave.refs.length > 0);
+	return {
+		refs: plan.opening,
+		...(firstSpawningWave?.contracts ? { contracts: firstSpawningWave.contracts } : {}),
+	};
 }
 
 /**

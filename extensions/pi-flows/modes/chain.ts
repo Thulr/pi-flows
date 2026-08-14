@@ -46,10 +46,12 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 		const rendered = renderTaskTemplate(step.task, params.task ?? params.contract?.objective, previous);
 		const planned = integrationRunPlan(
 			deps,
-			{ agent: step.agent, cwd: step.cwd, model: step.model, tier: step.tier, thinking: step.thinking, tools: step.tools },
+			{ agent: step.agent, cwd: step.cwd, model: step.model, tier: step.tier, thinking: step.thinking, tools: step.tools, contract: step.contract },
 			rendered,
 			{
-				resolvedContract: contract,
+				// Each chain step is a distinct delegation, even when it inherits the same contract value.
+				shareContractBudget: false,
+				fallbackContract: params.contract,
 				returnContract: step.returnContract ?? params.returnContract,
 				requireEvidence: step.requireEvidence ?? params.requireEvidence,
 				// A chain step consumed the previous step's output; the link records

@@ -1,9 +1,8 @@
 import { flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { runWave } from "../runner.ts";
 import { debateRounds, successfulRuns } from "../topology.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { maxRunDuration, plannedRefs, runDuration, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
@@ -104,28 +103,23 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 			if (planned.error) return settle.refuse(planned.error);
 			items.push(planned.plan!);
 		}
-		const roundWave = await runWave(deps, settle, items, {
+		const roundWave = await dispatchIntegrationWave(deps, settle, items, {
 			statusText: (settled, total) => `Flow debate: round ${round}/${rounds}, ${settled}/${total} advocates settled`,
 			stage: { key: `round-${round}`, name: `round ${round}` },
+			consume: { completion: "integrate" },
 		});
 		if (roundWave.status === "refused") return roundWave.output;
 		const roundResults = roundWave.results;
-		const roundEntries = roundResults.flatMap((result, index) =>
-			isFailed(result) ? [] : [{ result, plan: items[index] }],
-		);
-		const handoffs = deps.handoffs.consumeResults(roundEntries);
-		if (handoffs.error) return settle.refuse(handoffs.error);
 		if (successfulRuns(roundResults).length < 2) {
 			return settle.complete("Flow debate stopped: fewer than two advocates produced usable arguments.");
 		}
-		let consumedIndex = 0;
-		priorArguments = roundResults.map((result) => {
+		priorArguments = roundResults.map((result, index) => {
 			if (isFailed(result)) return "[advocate failed]";
-			return handoffs.items[consumedIndex++]?.text ?? "";
+			return roundWave.consumptions[index]?.text ?? "";
 		});
 		// The transcript is built from each advocate's validated handoff, so that is
 		// what the next round and the adjudicator actually read.
-		consumedAdvocateKeys = handoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []);
+		consumedAdvocateKeys = roundWave.consumptions.flatMap((handoff) => handoff?.dependencyKey ? [handoff.dependencyKey] : []);
 	}
 
 	const adjudicator: FlowAgentRefInput = spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" };

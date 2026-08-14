@@ -110,6 +110,17 @@ test("the validated return envelope is consumed once, as an isolated clone", () 
 	assert.equal(run.takeValidatedReturnEnvelope(), undefined);
 });
 
+test("schema-checked Integration control stays private, clone-isolated, and available to the final formatter", () => {
+	const result = childResult();
+	const run = Run.of(result);
+	const validated = returnEnvelope();
+	run.acceptReturnEnvelope(validated, { ...validated, data: { answer: "[content omitted]" } });
+	const control = run.validatedReturnData() as { answer: string };
+	control.answer = "tampered";
+	assert.deepEqual(run.validatedReturnData(), { answer: "report.txt" });
+	assert.deepEqual(run.takeValidatedReturnEnvelope()?.data, { answer: "report.txt" });
+});
+
 test("accepting a handoff is the transition that attaches it to the result", () => {
 	const result = childResult();
 	const handoff = handoffEnvelope();

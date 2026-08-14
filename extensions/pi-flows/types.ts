@@ -336,7 +336,7 @@ export interface DelegationContract {
 
 export interface DelegationReturnEnvelope {
 	schemaVersion: "pi-flows.return-envelope.v1";
-	contractId?: string;
+	contractId: string;
 	status: "completed" | "partial" | "blocked" | "failed";
 	summary: string;
 	evidence: Array<{ claim: string; source: string }>;
@@ -357,6 +357,7 @@ export interface FlowAgentRefInput {
 	thinking?: ThinkingLevel;
 	tools?: string;
 	cwd?: string;
+	/** Resolved before this Role spawns; its Return validates before use. */
 	contract?: DelegationContract;
 }
 
@@ -488,7 +489,7 @@ export interface ModeDeps {
 	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
 	/** The mode's settle object (settle.ts): tracked runs and the outputs that carry them. The registry builds it per dispatch from the handler's own table entry (modes/registry.ts), binding mode identity by construction; optional in the type only because the aggregate supplies deps before that binding — every dispatched handler receives one (`modeSettle` is the checked accessor). */
 	settle?: Settle;
-	/** The child-run seam. Handlers reach it via the runner helpers (runAgentRef/runWave/dispatchIntegrationPlan), which execute every child through this — so tests can inject an in-process fake. */
+	/** The child-run seam. Handlers reach it through opaque plans from integrationRunPlan (dispatchIntegrationPlan/dispatchIntegrationWave), which execute every child through this — so tests can inject an in-process fake. */
 	runChild: RunChild;
 	/** Fan-out concurrency, validated and defaulted by the dispatch core — handlers never re-derive it. */
 	concurrency: number;

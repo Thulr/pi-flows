@@ -1,21 +1,21 @@
 import * as path from "node:path";
 import { DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, flowError, modeSettle, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
-import { runAgentRef } from "../runner.ts";
+import { capModelVisibleText, resultText, sanitizeText } from "../sanitize.ts";
 import { resolveFlowCommandTimeoutMs, runProbeCommand } from "../commands.ts";
+import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
  * Monitor's plan: the reactor role with the handler's analyst default, never
  * guarded and never an opening — the reactor spawns only if the probe ever
  * trips the trigger, so no spawn is statically certain and a completed watch
- * may hold zero runs. The reactor dispatches with no contract limits.
+	 * may hold zero runs. The reactor carries only its own contract.
  */
 export function planMonitor(params: any): ModePlan {
 	if (!params.monitor) return { waves: [], opening: [] };
 	const spec = params.monitor ?? {};
 	const reactor = plannedRefs([spec.reactor?.agent ? spec.reactor : { agent: "analyst" }]);
-	return { waves: [{ refs: reactor, guarded: false }], opening: [] };
+	return { waves: [{ refs: reactor, guarded: false, contracts: "own" }], opening: [] };
 }
 
 /**
@@ -153,8 +153,10 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 	].join("\n");
 	// The reactor's whole input is the triggering observation, so the diagnosis
 	// must not export as independent of what it diagnosed.
-	const reacted = await runAgentRef(deps, reactor, reactTask, settle.mode, settle.nextStep, [...settle.results], { scope: { key: "reactor", dependsOn: [prepared.dependencyKey!] } });
-	settle.track(reacted);
-	if (isFailed(reacted)) return settle.complete(sanitizeText(`Flow monitor triggered on check ${triggered.check}, but reactor ${reactor.agent} failed.\n\n${resultText(reacted)}`, policy));
-	return settle.complete(capModelVisibleText(`Flow monitor: trigger "${trigger}" fired on check ${triggered.check}/${maxChecks}; reactor ${reactor.agent} completed.${prepared.warnings.length ? " Probe output contained injection-like text and was treated as data." : ""}\n\n${sanitizeText(resultText(reacted), policy)}`));
+	const reactorPlan = integrationRunPlan(deps, reactor, reactTask, { scope: { key: "reactor", dependsOn: [prepared.dependencyKey!] } });
+	if (reactorPlan.error) return settle.refuse(reactorPlan.error);
+	const reactorDispatch = await dispatchIntegrationPlan(deps, reactorPlan.plan!, settle, { completion: "terminal", enforceCompletion: true, payload: "source" });
+	if (reactorDispatch.status === "failed") return settle.complete(sanitizeText(`Flow monitor triggered on check ${triggered.check}, but reactor ${reactor.agent} failed.\n\n${resultText(reactorDispatch.result)}`, policy));
+	if (reactorDispatch.status === "refused") return reactorDispatch.output;
+	return settle.complete(capModelVisibleText(`Flow monitor: trigger "${trigger}" fired on check ${triggered.check}/${maxChecks}; reactor ${reactor.agent} completed.${prepared.warnings.length ? " Probe output contained injection-like text and was treated as data." : ""}\n\n${sanitizeText(resultText(reactorDispatch.result), policy)}`));
 }

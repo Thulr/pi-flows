@@ -140,7 +140,7 @@ test("plan-derived first-spawn refs reproduce the old opening derivations", () =
 
 // One place the plan's contract markers meet the old switch's disclosure
 // output: the contracts hanging off the planned refs, per mode.
-test("plan-derived budget disclosure reproduces the old per-mode switch across all 15 modes", () => {
+test("plan-derived budget disclosure matches enforced contract roles across all 15 modes", () => {
 	const contract = (budget: Record<string, number>) => ({
 		objective: "Inspect the assigned area",
 		constraints: [],
@@ -158,25 +158,24 @@ test("plan-derived budget disclosure reproduces the old per-mode switch across a
 	const OWN = { authority: "contract", maxGeneratedTokens: 2000 };
 	const FALLBACK = { authority: "contract", maxTokens: 9000 };
 
-	// Old collectBudgetCeilings outputs, captured as literals.
+	// Literal outputs of each mode's declared own/resolved contract rules.
 	const cases: Array<{ mode: RunMode; params: Record<string, unknown>; expected: unknown[] }> = [
 		{ mode: "single", params: { agent: "recon", task: "t", contract: fallback }, expected: [FALLBACK] },
 		{ mode: "parallel", params: { contract: fallback, tasks: [{ agent: "recon", task: "A", contract: own }, { agent: "recon", task: "B" }] }, expected: [OWN, FALLBACK] },
 		{ mode: "chain", params: { contract: fallback, chain: [{ agent: "recon", task: "A" }, { agent: "debrief", task: "B", contract: own }] }, expected: [FALLBACK, OWN] },
-		// Evaluate enforces a contract budget on its operator only — critics carry none.
-		{ mode: "evaluate", params: { task: "t", contract: fallback, evaluate: { redteam: [{ agent: "critic", contract: own }] } }, expected: [FALLBACK] },
+		{ mode: "evaluate", params: { task: "t", contract: fallback, evaluate: { redteam: [{ agent: "critic", contract: own }] } }, expected: [FALLBACK, OWN] },
 		{ mode: "vote", params: { task: "t", contract: fallback, vote: { voters: [{ agent: "recon", contract: own }, { agent: "analyst" }], debrief: { agent: "debrief" } } }, expected: [OWN, FALLBACK] },
-		{ mode: "route", params: { task: "t", contract: fallback, route: { controller: { agent: "controller", contract: own }, candidates: ["recon"] } }, expected: [] },
+		{ mode: "route", params: { task: "t", contract: fallback, route: { controller: { agent: "controller", contract: own }, candidates: ["recon"] } }, expected: [OWN] },
 		{ mode: "orchestrate", params: { task: "t", contract: fallback, orchestrate: { commander: { agent: "commander", contract: own } } }, expected: [OWN, FALLBACK] },
 		{ mode: "graph", params: { contract: fallback, graph: { nodes: [{ id: "a", agent: "node-a", task: "A", contract: own }], debrief: { agent: "merge" } } }, expected: [OWN, FALLBACK] },
-		{ mode: "loop", params: { task: "t", contract: fallback, loop: { body: { agent: "operator", contract: own } } }, expected: [] },
-		{ mode: "search", params: { task: "t", contract: fallback, search: { generator: { agent: "strategist", contract: own } } }, expected: [] },
+		{ mode: "loop", params: { task: "t", contract: fallback, loop: { body: { agent: "operator", contract: own } } }, expected: [OWN] },
+		{ mode: "search", params: { task: "t", contract: fallback, search: { generator: { agent: "strategist", contract: own } } }, expected: [OWN] },
 		{ mode: "workflow", params: { contract: fallback, workflow: { phases: [{ id: "w", agent: "operator", task: "do", contract: own }], debrief: { agent: "debrief" } } }, expected: [OWN, FALLBACK] },
 		{ mode: "worktree", params: { task: "t", contract: fallback, worktree: { tasks: [{ id: "a", agent: "w1", task: "A", contract: own }, { id: "b", agent: "w2", task: "B" }] } }, expected: [OWN, FALLBACK] },
 		{ mode: "debate", params: { task: "t", contract: fallback, debate: { participants: [{ agent: "a1", contract: own }, { agent: "a2" }] } }, expected: [OWN, FALLBACK] },
 		// Dossier sections carry only their own contracts; the fallback goes to the synthesizer.
 		{ mode: "dossier", params: { task: "t", contract: fallback, dossier: { sections: [{ agent: "s1", task: "A", contract: own }, { agent: "s2", task: "B" }] } }, expected: [OWN, FALLBACK] },
-		{ mode: "monitor", params: { task: "t", contract: fallback, monitor: { command: "probe", reactor: { agent: "analyst", contract: own } } }, expected: [] },
+		{ mode: "monitor", params: { task: "t", contract: fallback, monitor: { command: "probe", reactor: { agent: "analyst", contract: own } } }, expected: [OWN] },
 	];
 	for (const { mode, params, expected } of cases) {
 		assert.deepEqual(collectBudgetCeilings(params), expected, `${mode}: disclosure must equal the old switch output`);

@@ -1,7 +1,7 @@
 import { resolveDelegationContract } from "./contract-resolution.ts";
 import { ResolvedDelegationContract } from "./delegation.ts";
+import { runAgentRef, runWave, type AgentFanoutItem, type AgentRunLimits, type WaveRunOptions } from "./dispatch.ts";
 import type { HandoffConsumption } from "./handoff-consumption.ts";
-import { runAgentRef, type AgentFanoutItem, type AgentRunLimits } from "./runner.ts";
 import { isFailed } from "./sanitize.ts";
 import type { Settle } from "./settle.ts";
 import type {
@@ -10,7 +10,6 @@ import type {
 	DelegationContract,
 	FlowAgentRefInput,
 	FlowError,
-	FlowMode,
 	FlowRunResult,
 	IncompleteHandoffPolicy,
 	ModeDeps,
@@ -18,159 +17,227 @@ import type {
 } from "./types.ts";
 import { appendReturnRequirements, resolvedCwd } from "./validate.ts";
 
-export interface IntegrationRunPlan extends AgentFanoutItem {
-	contract?: ResolvedDelegationContract;
-	cwd: string;
+const INTEGRATION_RUN_PLAN = Symbol("pi-flows.integration-run-plan");
+const CONTRACT_BUDGETS = new WeakMap<ModeDeps, Map<string, Budget | undefined>>();
+
+/** Opaque capability for one admitted Child run; construct it through {@link integrationRunPlan}. */
+export interface IntegrationRunPlan {
+	readonly [INTEGRATION_RUN_PLAN]: true;
+}
+
+interface IntegrationRunState extends AgentFanoutItem {
+	readonly contract?: ResolvedDelegationContract;
+	readonly cwd: string;
+}
+
+interface IntegrationPlanState {
+	readonly owner: ModeDeps;
+	readonly run: IntegrationRunState;
+	dispatched: boolean;
+}
+
+interface DispatchedIntegrationRun {
+	readonly run: IntegrationRunState;
+	readonly scope?: ChildSpanScope;
+}
+
+const RUN_PLANS = new WeakMap<IntegrationRunPlan, IntegrationPlanState>();
+const DISPATCHED_RUNS = new WeakMap<FlowRunResult, DispatchedIntegrationRun>();
+
+function admittedPlan(deps: ModeDeps, plan: IntegrationRunPlan): IntegrationPlanState {
+	const state = RUN_PLANS.get(plan);
+	if (!state) throw new TypeError("IntegrationRunPlan must come from integrationRunPlan().");
+	if (state.owner !== deps) throw new TypeError("IntegrationRunPlan can run only in the flow that admitted it.");
+	return state;
+}
+
+function admittedRun(deps: ModeDeps, plan: IntegrationRunPlan): IntegrationRunState {
+	return admittedPlan(deps, plan).run;
+}
+
+function spendPlan(state: IntegrationPlanState): void {
+	if (state.dispatched) throw new TypeError("IntegrationRunPlan has already been dispatched.");
+	state.dispatched = true;
+}
+
+function bindResult(result: FlowRunResult, run: IntegrationRunState, scope: ChildSpanScope | undefined): void {
+	const existing = DISPATCHED_RUNS.get(result);
+	if (existing && existing.run !== run) throw new TypeError("A Child Result cannot belong to two integration plans.");
+	DISPATCHED_RUNS.set(result, { run, scope });
 }
 
 export interface IntegrationRunPlanOptions {
 	fallbackContract?: DelegationContract;
-	/**
-	 * A contract the caller already resolved — fail-fast prevalidation of every
-	 * step before the first spawn (chain), or one resolution reused across
-	 * iterations (evaluate). Wins over ref/fallback resolution: the plan carries
-	 * it as-is, so admissibility is never re-derived from raw data.
-	 */
-	resolvedContract?: ResolvedDelegationContract;
-	/**
-	 * Share one contract budget across several plans of the same contract, so
-	 * an iterating mode accumulates spend against a single ceiling instead of
-	 * minting a fresh budget per plan. Defaults to a budget minted from the
-	 * resolved contract.
-	 */
-	contractBudget?: Budget;
+	/** Set false only when an equal contract governs a distinct delegation, as with separate chain steps. The ceiling always comes from the resolved contract. */
+	shareContractBudget?: boolean;
 	returnContract?: string;
 	requireEvidence?: boolean;
-	/**
-	 * The task already carries its rendered contract sections and return
-	 * requirements (a revision prompt embedding a previously rendered goal);
-	 * dispatch it verbatim. Limits and consumption still come from the resolved
-	 * contract — only the second rendering is skipped.
-	 */
-	prerendered?: boolean;
 	placeholderTask?: string;
 	scope?: ChildSpanScope;
 }
 
-function runLimits(contract: ResolvedDelegationContract | undefined, sharedBudget: Budget | undefined): AgentRunLimits | undefined {
+function contractBudget(deps: ModeDeps, contract: ResolvedDelegationContract): Budget | undefined {
+	let budgets = CONTRACT_BUDGETS.get(deps);
+	if (!budgets) CONTRACT_BUDGETS.set(deps, budgets = new Map());
+	if (!budgets.has(contract.id)) budgets.set(contract.id, contract.budget());
+	return budgets.get(contract.id);
+}
+
+function runLimits(deps: ModeDeps, contract: ResolvedDelegationContract | undefined, shareContractBudget: boolean): AgentRunLimits | undefined {
 	if (!contract) return undefined;
 	return {
 		captureRawOutput: true,
 		timeoutMs: contract.timeoutMs,
-		contractBudget: sharedBudget ?? contract.budget(),
-		// Trace identity reads contract DATA, not the resolved object.
+		contractBudget: shareContractBudget ? contractBudget(deps, contract) : contract.budget(),
 		contract: contract.contract,
 	};
 }
 
-/**
- * Validate and render one child plan before dispatch. The contract crosses
- * into the plan only as a ResolvedDelegationContract, so downstream dispatch
- * and handoff consumption work against a contract that passed admissibility.
- * Handoff validation/consumption happen later through ModeDeps.handoffs.
- */
+/** Resolve the role contract and bind its Task, limits, cwd, and later Return validation. */
 export function integrationRunPlan(
 	deps: ModeDeps,
 	ref: FlowAgentRefInput,
 	task: string,
 	options: IntegrationRunPlanOptions = {},
 ): { plan?: IntegrationRunPlan; error?: FlowError } {
-	let contract = options.resolvedContract;
-	if (!contract) {
-		const rawContract = resolveDelegationContract(ref, options.fallbackContract);
-		if (rawContract) {
-			const resolution = ResolvedDelegationContract.resolve(rawContract, deps.policy);
-			if (resolution.error) return { error: resolution.error };
-			contract = resolution.resolved;
-		}
+	let contract: ResolvedDelegationContract | undefined;
+	const rawContract = resolveDelegationContract(ref, options.fallbackContract);
+	if (rawContract) {
+		const resolution = ResolvedDelegationContract.resolve(rawContract, deps.policy);
+		if (resolution.error) return { error: resolution.error };
+		contract = resolution.resolved;
 	}
-	const renderedTask = options.prerendered
-		? task
-		: contract
-			? contract.renderTask(task, options.returnContract, options.requireEvidence)
-			: appendReturnRequirements(task, options.returnContract, options.requireEvidence);
+	const renderedTask = contract
+		? contract.renderTask(task, options.returnContract, options.requireEvidence)
+		: appendReturnRequirements(task, options.returnContract, options.requireEvidence);
+	const dispatchRef = Object.freeze(withoutContract(ref));
+	const limits = runLimits(deps, contract, options.shareContractBudget !== false);
+	if (limits) Object.freeze(limits);
+	const scope = options.scope ? Object.freeze({ ...options.scope }) : undefined;
+	const state = Object.freeze({
+		ref: dispatchRef,
+		task: renderedTask,
+		placeholderTask: options.placeholderTask ?? task,
+		limits,
+		contract,
+		cwd: resolvedCwd(deps.defaultCwd, ref.cwd),
+		...(scope ? { scope } : {}),
+	});
+	const plan = Object.freeze({ [INTEGRATION_RUN_PLAN]: true as const });
+	RUN_PLANS.set(plan, { owner: deps, run: state, dispatched: false });
 	return {
-		plan: {
-			ref,
-			task: renderedTask,
-			placeholderTask: options.placeholderTask ?? task,
-			limits: runLimits(contract, options.contractBudget),
-			contract,
-			cwd: resolvedCwd(deps.defaultCwd, ref.cwd),
-			...(options.scope ? { scope: options.scope } : {}),
-		},
+		plan,
 	};
 }
 
-/**
- * Dispatch a validated plan without unpacking its contract limits or span
- * scope. Private on purpose: {@link dispatchIntegrationPlan} is the
- * handler-facing entry point, and it owns the track/isFailed/consume ordering
- * a bare dispatch would hand back to the caller.
- */
-function runIntegrationPlan(
-	deps: ModeDeps,
-	plan: IntegrationRunPlan,
-	mode: FlowMode,
-	step: number | undefined,
-	priorResults: FlowRunResult[],
-): Promise<FlowRunResult> {
-	return runAgentRef(deps, plan.ref, plan.task, mode, step, priorResults, {
-		limits: plan.limits,
-		scope: plan.scope,
-	});
+function withoutContract({ contract: _contract, ...ref }: FlowAgentRefInput): Omit<FlowAgentRefInput, "contract"> {
+	return ref;
 }
 
 /** Whether another role consumes the dispatched result — see ConsumeResultOptions.completion. */
 export type IntegrationCompletion = "integrate" | "terminal";
 
-/**
- * An integrating consumption's handoff: another role consumes it, so a
- * dependency key was minted — typed present, ending the per-mode non-null
- * assertions. A terminal consumption crosses to the parent, mints no key, and
- * stays the plain {@link HandoffConsumption}.
- */
-export interface IntegrationHandoff extends HandoffConsumption {
-	dependencyKey: string;
-}
-
-/** The handoff shape a dispatch settles with, by its completion: only a statically integrating dispatch may rely on the key. */
-export type DispatchedHandoff<C extends IntegrationCompletion> = "terminal" extends C ? HandoffConsumption : IntegrationHandoff;
-
-/**
- * How one plan dispatch settled. `failed` hands the run back for the mode's
- * own failure prose (that text differs per mode and stays the handler's);
- * `refused` is the uniform consumption refusal, already shaped as the mode's
- * output; `ok` carries the settled run and its consumed handoff.
- */
-export type IntegrationDispatch<H extends HandoffConsumption = HandoffConsumption> =
-	| { status: "failed"; result: FlowRunResult }
-	| { status: "refused"; error: FlowError; output: ModeOutput }
-	| { status: "ok"; result: FlowRunResult; handoff: H };
-
-/** Consumption options passed through to `ModeDeps.handoffs.consumeResult`; the plan supplies contract, cwd, and span scope. */
 export interface IntegrationDispatchOptions<C extends IntegrationCompletion> {
 	completion?: C;
 	enforceCompletion?: boolean;
 	incompletePolicy?: IncompleteHandoffPolicy;
 	payload?: "handoff" | "source";
 	noticeLabel?: string;
-	/** Consume-time span override; defaults to the plan's own scope. */
 	scope?: ChildSpanScope;
 }
 
+export type IntegrationWaveConsumption = IntegrationDispatchOptions<IntegrationCompletion> & { completion: IntegrationCompletion };
+
+/** Wave policy is explicit so successful Returns cannot escape validation. */
+export interface IntegrationWaveOptions extends WaveRunOptions {
+	consume: IntegrationWaveConsumption | ((index: number) => IntegrationWaveConsumption);
+}
+
+export type IntegrationWaveDispatch =
+	| { status: "refused"; error: FlowError; output: ModeOutput }
+	| { status: "ok"; results: FlowRunResult[]; consumptions: Array<HandoffConsumption | undefined> };
+
+/** Dispatch admitted plans, then validate every successful Return before exposing the wave. */
+export async function dispatchIntegrationWave(
+	deps: ModeDeps,
+	settle: Settle,
+	plans: IntegrationRunPlan[],
+	options: IntegrationWaveOptions,
+): Promise<IntegrationWaveDispatch> {
+	const { consume, ...runOptions } = options;
+	const admitted = plans.map((plan) => admittedPlan(deps, plan));
+	if (new Set(admitted).size !== admitted.length) throw new TypeError("An IntegrationRunPlan can appear only once in a wave.");
+	if (admitted.some((state) => state.dispatched)) throw new TypeError("IntegrationRunPlan has already been dispatched.");
+	admitted.forEach((state) => { state.dispatched = true; });
+	const states = admitted.map((state) => state.run);
+	const wave = await runWave(deps, settle, states, runOptions);
+	if (wave.status === "refused") {
+		admitted.forEach((state) => { state.dispatched = false; });
+		return wave;
+	}
+	wave.results.forEach((result, index) => bindResult(result, states[index], wave.scopes[index]));
+	const indexes = wave.results.flatMap((result, index) => isFailed(result) ? [] : [index]);
+	const accepted = deps.handoffs.consumeResults(indexes.map((index) => {
+		const policy = typeof consume === "function" ? consume(index) : consume;
+		return {
+			completion: policy.completion,
+			enforceCompletion: policy.enforceCompletion,
+			incompletePolicy: policy.incompletePolicy,
+			payload: policy.payload,
+			noticeLabel: policy.noticeLabel,
+			result: wave.results[index],
+			plan: states[index],
+			scope: policy.scope ?? wave.scopes[index],
+		};
+	}));
+	if (accepted.error) return { status: "refused", error: accepted.error, output: settle.refuse(accepted.error) };
+	let consumed = 0;
+	return { status: "ok", results: wave.results, consumptions: wave.results.map((result) => isFailed(result) ? undefined : accepted.items[consumed++]) };
+}
+
+/** An integrating consumption always mints an addressable dependency key. */
+export interface IntegrationHandoff extends HandoffConsumption {
+	dependencyKey: string;
+}
+
+export type DispatchedHandoff<C extends IntegrationCompletion> = "terminal" extends C ? HandoffConsumption : IntegrationHandoff;
+
+/** A failed Run, a uniform consumption refusal, or a consumed result. */
+export type IntegrationDispatch<H extends HandoffConsumption = HandoffConsumption> =
+	| { status: "failed"; result: FlowRunResult }
+	| { status: "refused"; error: FlowError; output: ModeOutput }
+	| { status: "ok"; result: FlowRunResult; handoff: H };
+
+/** Re-consume a validated result through its opaque admitted plan. */
+export function consumeIntegrationResult(
+	deps: ModeDeps,
+	plan: IntegrationRunPlan,
+	result: FlowRunResult,
+	options: IntegrationDispatchOptions<IntegrationCompletion> = {},
+): HandoffConsumption {
+	const admitted = admittedRun(deps, plan);
+	const dispatched = DISPATCHED_RUNS.get(result);
+	if (dispatched?.run !== admitted) throw new TypeError("IntegrationRunPlan did not dispatch this Result.");
+	const completion = options.completion ?? "integrate";
+	const scope = options.scope ?? dispatched.scope;
+	if (completion === "integrate" && !scope?.key) {
+		throw new Error("consumeIntegrationResult: integrating consumption requires a keyed span scope.");
+	}
+	return deps.handoffs.consumeResult({
+		plan: admitted,
+		result,
+		completion,
+		enforceCompletion: options.enforceCompletion,
+		incompletePolicy: options.incompletePolicy,
+		payload: options.payload,
+		noticeLabel: options.noticeLabel,
+		...(scope ? { scope } : {}),
+	});
+}
+
 /**
- * Run one plan to completion: dispatch (step derived from the settle), track
- * the result before any return path, hand a failed run back untouched, and
- * consume a settled success through the flow's handoff consumer. The four
- * ordering constraints every ritual site sequenced by hand — push before
- * return, isFailed before consume, step arithmetic, dependency-key presence —
- * are owned here and are not re-orderable from a handler.
- *
- * An integrating dispatch requires an addressable plan (a keyed span scope),
- * or its handoff could mint no dependency key; that absence is a mode wiring
- * bug and throws before any spawn rather than surfacing as a FlowError the
- * model is asked to fix.
+ * Dispatch, track before every return, then consume. Integrating plans require
+ * a keyed scope so their handoff can be referenced.
  */
 export async function dispatchIntegrationPlan<C extends IntegrationCompletion = "integrate">(
 	deps: ModeDeps,
@@ -178,24 +245,18 @@ export async function dispatchIntegrationPlan<C extends IntegrationCompletion = 
 	settle: Settle,
 	options: IntegrationDispatchOptions<C> = {},
 ): Promise<IntegrationDispatch<DispatchedHandoff<C>>> {
+	const state = admittedPlan(deps, plan);
+	const admitted = state.run;
 	const completion: IntegrationCompletion = options.completion ?? "integrate";
-	if (completion === "integrate" && !(options.scope ?? plan.scope)?.key) {
-		throw new Error("dispatchIntegrationPlan: an integrating consumption needs a keyed span scope on the plan or the options — without one its handoff mints no dependency key. Key the plan's scope; this is mode wiring, not a child failure.");
+	if (completion === "integrate" && !(options.scope ?? admitted.scope)?.key) {
+		throw new Error("dispatchIntegrationPlan: integrating consumption requires a keyed span scope.");
 	}
-	const result = await runIntegrationPlan(deps, plan, settle.mode, settle.nextStep, [...settle.results]);
+	spendPlan(state);
+	const result = await runAgentRef(deps, admitted.ref, admitted.task, settle.mode, settle.nextStep, [...settle.results], { limits: admitted.limits, scope: admitted.scope });
+	bindResult(result, admitted, admitted.scope);
 	settle.track(result);
 	if (isFailed(result)) return { status: "failed", result };
-	const handoff = deps.handoffs.consumeResult({
-		plan,
-		result,
-		completion,
-		enforceCompletion: options.enforceCompletion,
-		incompletePolicy: options.incompletePolicy,
-		payload: options.payload,
-		noticeLabel: options.noticeLabel,
-		...(options.scope ? { scope: options.scope } : {}),
-	});
+	const handoff = consumeIntegrationResult(deps, plan, result, { ...options, completion });
 	if (handoff.error) return { status: "refused", error: handoff.error, output: settle.refuse(handoff.error) };
-	// The integrate guard above pinned a keyed scope, so consumeResult minted the key.
 	return { status: "ok", result, handoff: handoff as DispatchedHandoff<C> };
 }

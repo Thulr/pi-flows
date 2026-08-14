@@ -29,7 +29,7 @@ import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type Fa
 import { flowLifecycleScenarios } from "./fault-flow-scenarios.ts";
 import { wrapUpScenarios } from "./fault-wrapup-scenarios.ts";
 import { handoffPolicyScenarios } from "./fault-handoff-scenarios.ts";
-
+import { contractRoleScenarios } from "./fault-contract-role-scenarios.ts";
 export const FAULT_SUITE = "fault-injection";
 
 export interface FaultChecks {
@@ -769,7 +769,6 @@ function traceSuppressionScenario(): FaultScenario {
 }
 
 // --- manifest --------------------------------------------------------------
-
 export function faultScenarios(): FaultScenario[] {
 	return [
 		corruptedArtifactScenario(),
@@ -792,6 +791,7 @@ export function faultScenarios(): FaultScenario[] {
 		...flowLifecycleScenarios(),
 		...handoffPolicyScenarios(),
 		...wrapUpScenarios(),
+		...contractRoleScenarios(),
 	];
 }
 

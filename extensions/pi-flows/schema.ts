@@ -36,12 +36,12 @@ export const FlowDelegationContract = Type.Object({
 	returnSchema: Type.Record(Type.String(), Type.Any(), { description: "JSON Schema applied to the return envelope's data field." }),
 	owner: Type.String({ minLength: 1 }),
 }, {
-	description: "Machine-checked delegation contract. When present, the child must return a validated pi-flows.return-envelope.v1 JSON object.",
+	description: "Machine-checked contract, resolved before its task or role spawns. It binds objective, Return shape, timeout, cost/token ceilings, and a validated pi-flows.return-envelope.v1 response.",
 });
 
 export const FlowReturnEnvelope = Type.Object({
 	schemaVersion: Type.Literal("pi-flows.return-envelope.v1"),
-	contractId: Type.Optional(Type.String({ pattern: "^sha256:[a-fA-F0-9]{64}$", description: "Stable digest of the dispatched delegation contract. Required when an integration mode consumes the envelope." })),
+	contractId: Type.String({ pattern: "^sha256:[a-fA-F0-9]{64}$", description: "Stable digest required whenever a delegation contract governs the child, including control and terminal roles." }),
 	status: StringEnum(["completed", "partial", "blocked", "failed"] as const),
 	summary: Type.String({ minLength: 1 }),
 	evidence: Type.Array(Type.Object({ claim: Type.String({ minLength: 1 }), source: Type.String({ minLength: 1 }) })),
@@ -102,6 +102,8 @@ export const FlowAgentRef = Type.Object({
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this role's process" })),
 	contract: Type.Optional(FlowDelegationContract),
+}, {
+	description: "An agent filling a role. Its contract resolves before spawn and validates the Return before coordination can use it.",
 });
 
 export const FlowEvaluateOperatorRef = Type.Object({
@@ -119,7 +121,7 @@ export const FlowEvaluate = Type.Object({
 	operator: Type.Optional(FlowEvaluateOperatorRef),
 	redteam: Type.Optional(
 		Type.Union([FlowAgentRef, Type.Array(FlowAgentRef, { minItems: 1, maxItems: MAX_PARALLEL_TASKS })], {
-			description: "The critic. A single agent, or an array of critics (a decomposed panel — e.g. one per dimension: correctness, security, tests). With a panel, PASS requires every critic to pass; their REVISE critiques are merged for the next round.",
+			description: "One critic or a decomposed panel. Uncontracted critics return PASS/REVISE prose; contracted critics use validated data.verdict. With a panel, every critic must pass and REVISE critiques are merged.",
 		}),
 	),
 	checkCommand: Type.Optional(
@@ -154,7 +156,7 @@ export const FlowRoute = Type.Object({
 	candidates: Type.Array(Type.String(), { description: "Agent names the `controller` may choose from.", minItems: 1 }),
 	fallback: Type.Optional(Type.String({ description: "Agent to run if the `controller` fails or names no valid candidate." })),
 }, {
-	description: "Routing mode: the `controller` classifies `task` and dispatches it to exactly one of `candidates`.",
+	description: "Routing mode: the controller classifies task and dispatches one candidate. A contracted controller selects through validated data.route; legacy prose applies only without a contract.",
 });
 
 export const FlowOrchestrate = Type.Object({
@@ -174,7 +176,7 @@ export const FlowOrchestrate = Type.Object({
 	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
 	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on decomposed subtasks (also bounded by maxParallelTasks). Integer 1..${MAX_PARALLEL_TASKS}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS })),
 }, {
-	description: "Orchestrator-workers mode: the `commander` decomposes `task` into subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results. An optional `verify` critic checks the merged answer.",
+	description: "Orchestrator-workers mode: commander decomposes task, recon workers run in parallel, and debrief merges results. commander.contract carries its subtask array in validated envelope data; verify.contract uses validated data.verdict instead of legacy prose.",
 });
 
 export const FlowGraphNode = Type.Object({
@@ -204,7 +206,7 @@ export const FlowLoop = Type.Object({
 	judge: Type.Optional(FlowAgentRef),
 	maxIterations: Type.Optional(Type.Number({ description: `Max loop iterations. Integer 1..${MAX_LOOP_ITERATIONS}. Default ${DEFAULT_LOOP_ITERATIONS}.`, minimum: 1, maximum: MAX_LOOP_ITERATIONS, default: DEFAULT_LOOP_ITERATIONS })),
 }, {
-	description: 'Generic bounded loop mode. The body repeats until it emits "LOOP: DONE" (without judge) or an optional judge emits "VERDICT: PASS"; otherwise it stops at maxIterations.',
+	description: 'Generic bounded loop mode. Without role contracts, the body emits "LOOP: DONE" or the judge emits "VERDICT: PASS". Contracted roles use validated data.loop or data.verdict; otherwise the loop stops at maxIterations.',
 });
 
 export const FlowSearch = Type.Object({
@@ -215,7 +217,7 @@ export const FlowSearch = Type.Object({
 	beamWidth: Type.Optional(Type.Number({ description: `Candidates retained per round. Default ${DEFAULT_SEARCH_BEAM_WIDTH}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS, default: DEFAULT_SEARCH_BEAM_WIDTH })),
 	maxRounds: Type.Optional(Type.Number({ description: `Search/refinement rounds. Integer 1..4. Default ${DEFAULT_SEARCH_ROUNDS}.`, minimum: 1, maximum: 4, default: DEFAULT_SEARCH_ROUNDS })),
 }, {
-	description: "Bounded tree/beam-search mode: generate candidate paths, score each with SCORE: 0..100, retain a beam, repeat, then debrief the winning beam.",
+	description: "Bounded tree/beam-search mode: generate candidates, score each with legacy SCORE: 0..100 or contracted data.score, retain a beam, repeat, then debrief the winner.",
 });
 
 export const FlowWorkflowPhase = Type.Object({

@@ -257,5 +257,24 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // path, not new machinery, plus the CONTEXT.md and changelog sentences that
 // round required. Headroom is ~461 B over the measured 1_220_339, matching
 // the previous raises.
-assert.ok(pack.unpackedSize < 1_220_800, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_228_200 for #137's review rounds: wave dispatch requires Return
+// consumption before exposing results; admitted plans keep their state behind
+// a flow/Result-bound unforgeable capability; validated controls cannot fall
+// back to legacy prose; contract identities share spend; and prompts, schema,
+// and role tables document those semantics. The file set remains 108 with no
+// tests/, scripts/, or evals/; headroom is ~489 B over measured 1_227_711.
+// Raised to 1_230_600 after #137's final review made admitted plans single-use,
+// kept trusted wave-consumption fields outside policy output, ignored
+// quarantined route control, and aligned the bundled control-agent prompts and
+// public orchestrate documentation. The file set remains 108; headroom is
+// ~590 B over measured 1_230_010.
+// Raised to 1_231_300 after the closure review made structured control ranges
+// exact and split a contract-bound Return envelope from its unbound rejected
+// candidate. The file set remains 108; headroom is ~541 B over measured
+// 1_230_759.
+// Raised to 1_231_900 after the prompt-boundary review added contract review
+// context without a competing Return protocol and documented empty contracted
+// subtask refusal. The file set remains 108; headroom is ~432 B over measured
+// 1_231_468.
+assert.ok(pack.unpackedSize < 1_231_900, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

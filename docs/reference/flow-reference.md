@@ -184,7 +184,7 @@ if no justification can be stated, the task belongs in the parent context.
 | `modeHandoffPolicy` | (none) | Per-mode minimums, e.g. `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`; a call cannot downgrade a high-consequence mode. |
 | `returnContract` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
-| `contract` | (none) | Machine-checked delegation contract. It may replace prose `task` in single/evaluate, acts as the final-role fallback in integration modes, and requires a validated `pi-flows.return-envelope.v1` response. Fan-out tasks, graph nodes, workflow phases, worktree tasks, voters/participants, dossier sections, and agent refs can set role-specific delegation contracts. |
+| `contract` | (none) | Machine-checked delegation contract. It may replace `task` in single/evaluate or be a documented `resolved`-role fallback. Every task/role contract resolves before that Child spawns and requires a validated `pi-flows.return-envelope.v1`; role contracts override fallbacks. |
 | `incompleteHandoffPolicy` | `fail` | Integration modes reject `partial`/`blocked` return envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
@@ -359,11 +359,24 @@ that identity as `contractId`, so missing/stale returns fail with
 merge can consume them. JSON Schema, artifact-boundary, and digest validation
 also happen before integration.
 
-Single/evaluate use the top-level delegation contract and chain uses it as the step fallback.
-Parallel tasks and vote/debate roles may use it directly; graph nodes, workflow
-phases, worktree tasks, dossier sections, and orchestrate roles can set their own
-delegation contract because their objectives and return schemas often differ. Final
-debrief/integrator roles fall back to the top-level delegation contract.
+Single and the evaluate operator use the top-level delegation contract, and chain
+uses it as the step fallback. Parallel tasks and vote/debate roles may use it
+directly; graph nodes, workflow phases, worktree tasks, dossier sections, and
+orchestrate roles can set their own delegation contract because their objectives
+and return schemas often differ. Final debrief/integrator roles in those modes
+fall back to the top-level delegation contract where their mode plan declares a
+`resolved` role.
+
+Every agent-reference role enforces its own `contract`, including evaluate critics,
+route controller, loop body/judge, search generator/scorer/debrief, and monitor
+reactor. Unless documented as `resolved`, it does not inherit the top-level contract.
+Control decisions read schema-checked `data` directly, never marker-scanning a
+serialized copy or summary prose. Contracted readers accept only their documented
+structured fields and values; schema-valid strings, booleans, or legacy synonyms
+are not coerced into verdicts, loop status, or scores. With `recordContent:false`, stored data remains
+omitted while schema-checked Integration control stays usable ephemerally. Concurrent waves
+validate every successful Return before exposing any result, retaining all spent
+Runs and rejection evidence if one or more Returns fail.
 
 Every consumed result becomes a **handoff envelope** (`pi-flows.handoff-envelope.v1`)
 with source agent and step provenance. Return envelopes retain delegation-contract identity, status, evidence,
@@ -373,10 +386,10 @@ remain supported as `compatibility:"legacy-prose"` handoff envelopes with
 instead of trusting unlabelled prose. Partial and blocked return envelopes fail
 closed unless `incompleteHandoffPolicy:"include"` is explicitly selected.
 
-Contract budgets apply at dispatch: timeout tightens the top-level limit, while
-cost and token limits are independently enforced. Chain resets the contract
-budget per step; evaluate shares it across generator revisions. Flow budgets
-remain shared across the flow.
+Contract budgets apply at dispatch: timeout tightens each run's top-level limit,
+while cost/token spend is shared by contract identity within the flow. Chain
+deliberately resets that spend per step because each step is a distinct
+delegation. Flow budgets remain shared across the flow.
 
 ```json
 {
@@ -411,7 +424,7 @@ The child must return `pi-flows.return-envelope.v1` with `status`, `summary`,
 `returnSchema`; declared SHA-256 digests are checked against files inside the
 child `cwd`; runtime usage is attached when available. Invalid schema data,
 unsafe/missing artifacts, or digest mismatches fail closed with a structured
-error before a chain step or evaluate critic can consume the handoff. The
+error before the Return can drive a dependent role or coordination decision. The
 validated envelope is retained on `details.results[].envelope`.
 
 Existing `task`, `returnContract`, and `requireEvidence` calls remain prose-based
@@ -515,13 +528,13 @@ Two reliability levers beyond the single LLM critic:
 
 | Field | Default | Notes |
 |---|---|---|
-| `evaluate.operator` | `{ agent: "operator" }` | Builds the artifact. Accepts `agent`, `model`, `tools`, `cwd`, and optional `task` as the goal fallback when top-level `task` is omitted. |
-| `evaluate.redteam` | `{ agent: "redteam" }` | The critic: a single agent **or an array** of critics (a decomposed panel). With a panel, `PASS` needs every critic to pass. |
+| `evaluate.operator` | `{ agent: "operator" }` | Builds the artifact. Its optional `contract` overrides the top-level contract; `task` can supply the goal when top-level `task` is omitted. |
+| `evaluate.redteam` | `{ agent: "redteam" }` | One critic or an array. Each accepts its own `contract` (no top-level fallback); contracted verdicts come from `data.verdict`. With a panel, `PASS` needs every critic to pass. |
 | `evaluate.checkCommand` | (none) | Deterministic gate: a shell command that must exit `0` each round. Non-zero → forced `REVISE`; non-runnable → `CHECK_COMMAND_FAILED`. |
 | `evaluate.maxIterations` | `3` | Integer `1..8`. Hard cap on generate→evaluate rounds. |
 | `evaluate.passContract` | (none) | Explicit acceptance criteria appended to the critic's rubric. Concrete criteria make the verdict reliable. |
 
-The `redteam` signals its verdict with a `VERDICT: PASS` or `VERDICT: REVISE` line (a JSON `{ "verdict": "pass" }` block is also accepted). An unparseable verdict is treated as `REVISE`, so a misbehaving critic keeps iterating under the cap rather than falsely passing. `details.results` holds the full transcript: `operator` and `redteam` runs interleaved (with a panel, all critics for a round appear after that round's generator).
+Without a role contract, `redteam` signals `VERDICT: PASS|REVISE` (or JSON `{ "verdict": "pass" }`). With a contract, validated `data.verdict` is authoritative and marker-like text in other fields is ignored. When both roles are contracted, the critic sees the operator's admitted terms as review context, but only the critic's own contract supplies its required Return protocol and identity. An unparseable verdict means `REVISE`. `details.results` interleaves each operator run with that round's critic panel.
 
 ## Vote mode (parallelization / voting)
 
@@ -558,11 +571,11 @@ The `controller` reads the `task` plus the candidate descriptions and picks one 
 
 | Field | Default | Notes |
 |---|---|---|
-| `route.controller` | `{ agent: "controller" }` | Classifier. Sees the task and each candidate's description. |
+| `route.controller` | `{ agent: "controller" }` | Classifier. Sees the task and candidate descriptions; accepts its own `contract`, whose validated `data.route` is authoritative. |
 | `route.candidates` | (required) | Agent names the `controller` may choose from. |
 | `route.fallback` | (none) | Agent to run if the `controller` names no valid candidate. Without it, an unresolved route returns `ROUTE_UNRESOLVED`. |
 
-The `controller` signals its choice with a `ROUTE: <agent>` line (JSON `{ "route": "<agent>" }` and a whole-word mention are also accepted, validated against `candidates`). If no candidate genuinely fits, the `controller` emits `ROUTE: none`; this resolves to no valid candidate and triggers `route.fallback` (or `ROUTE_UNRESOLVED` when no fallback is set), so a poor-fit task falls back instead of being force-routed.
+Without a contract, the controller may return `ROUTE: <agent>`, JSON `{ "route": "<agent>" }`, or one unambiguous candidate mention. A contracted controller uses only validated `data.route`; embedded marker text cannot override it. A quarantined controller payload cannot select a candidate and falls back like `none`; without `route.fallback`, either case returns `ROUTE_UNRESOLVED`.
 
 ## Orchestrate mode (decompose → fan out → synthesize)
 
@@ -583,10 +596,10 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 | Field | Default | Notes |
 |---|---|---|
 | `orchestrate.task` | (none) | Goal fallback when top-level `task` is omitted. Prefer top-level `task` for new calls. |
-| `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON array of subtask strings. |
+| `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON subtask array without a contract; its own contract carries that array as validated envelope `data`. |
 | `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel, with the overall goal or delegation contract included for context. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
-| `orchestrate.verify` | (none) | Optional critic that checks the merged answer against the goal or delegation contract (orchestrator-workers composed with evaluator-optimizer). |
+| `orchestrate.verify` | (none) | Optional critic. Without its own contract it returns PASS/REVISE prose; with one, validated `data.verdict` controls the decision. |
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict; `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`; `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
 | `orchestrate.workerReturnContract` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
@@ -639,8 +652,9 @@ output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
 
 ## Loop mode (generic bounded loop)
 
-`loop` repeats a body agent until the body emits `LOOP: DONE`, or until an
-optional judge emits `VERDICT: PASS`.
+`loop` repeats a body agent until an uncontracted body emits `LOOP: DONE`, or an
+uncontracted judge emits `VERDICT: PASS`; contracted roles use validated
+`data.loop` / `data.verdict` instead.
 
 ```json
 {
@@ -653,14 +667,20 @@ optional judge emits `VERDICT: PASS`.
 }
 ```
 
+| Field | Default | Notes |
+|---|---|---|
+| `loop.body` | (required) | Iteration agent. Accepts its own `contract`; without a judge, contracted `data.loop` controls DONE/CONTINUE. |
+| `loop.judge` | (none) | Optional critic with its own `contract`; contracted `data.verdict` controls PASS/REVISE. |
+| `loop.maxIterations` | `3` | Bounded iteration cap. |
+
 If the loop reaches `maxIterations` without a stop signal, pi-flows returns
 `LOOP_DID_NOT_CONVERGE` with the last output/critique.
 
 ## Search mode (bounded beam search)
 
-`search` generates candidate paths, scores each candidate with `SCORE: 0..100`,
-keeps the best beam, optionally refines for more rounds, then debriefs the
-winning beam.
+`search` generates candidate paths, scores them with legacy `SCORE: 0..100` or
+contracted `data.score`, keeps the best beam, optionally refines, then debriefs
+the winner.
 
 ```json
 {
@@ -675,6 +695,13 @@ winning beam.
   }
 }
 ```
+
+| Field | Default | Notes |
+|---|---|---|
+| `search.generator` | `{ agent: "strategist" }` | Accepts its own `contract`; every successful Return validates before reaching a scorer. |
+| `search.scorer` | `{ agent: "redteam", tools: "none" }` | Accepts its own `contract`; contracted scores come from validated `data.score`. |
+| `search.debrief` | `{ agent: "debrief" }` | Finalizer with its own contract; its terminal Return validates before reporting success. |
+| `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation, retained beam, and refinement rounds. |
 
 Use `search` when several plausible plans or artifacts should be explored and
 ranked before synthesis. It is intentionally bounded by candidate count, beam
@@ -944,7 +971,7 @@ becomes untrusted evidence for one reactor agent.
 | `monitor.intervalMs` | `5000` | Delay between probes, `10..60000` ms. |
 | `monitor.maxChecks` | `6` | Hard attempt bound, `1..20`. |
 | `monitor.checkTimeoutMs` | flow timeout | Per-probe command timeout; minimum 1000 ms. |
-| `monitor.reactor` | `{ agent: "analyst" }` | Diagnoses impact/cause, recommends bounded actions, and names missing evidence after a trigger. |
+| `monitor.reactor` | `{ agent: "analyst" }` | Diagnoses impact/cause and bounded actions after a trigger; accepts its own `contract`, whose terminal Return validates before success. |
 
 If no trigger fires, the mode returns retryable `MONITOR_NOT_TRIGGERED` plus the
 bounded observations. `monitor` is not durable scheduling: it stops when the flow

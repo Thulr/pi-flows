@@ -2,7 +2,7 @@ import { emptyUsage, flowError, type CoordinationEventKind, type FlowError, type
 import { runSettled } from "./run.ts";
 import { isFailed } from "./sanitize.ts";
 import { parseVerdict } from "./parse.ts";
-import { integrationControlText } from "./delegation.ts";
+import { integrationControl } from "./delegation.ts";
 import { formatTokens } from "./trace-report.ts";
 
 // trace.ts is the trace facade: sink, report, and the root-span summary all
@@ -97,7 +97,7 @@ function verifiedOutcome(mode: FlowMode, params: any, output: ModeOutput): { ver
 	if (mode === "orchestrate" && params.orchestrate?.verify?.agent) {
 		const verifier = acceptedVerifierResult(params, output);
 		if (verifier) {
-			return { verified: true, success: parseVerdict(integrationControlText(verifier)) === "pass" };
+			return { verified: true, success: parseVerdict(integrationControl(verifier)) === "pass" };
 		}
 	}
 	return { verified: false };
@@ -158,7 +158,7 @@ export function traceSummaryAttributes(mode: FlowMode, params: any, output: Mode
 	}
 	if (mode === "orchestrate" && params.orchestrate?.verify) {
 		const verifier = acceptedVerifierResult(params, output);
-		if (verifier) attrs["flow.verify_verdict"] = parseVerdict(integrationControlText(verifier));
+		if (verifier) attrs["flow.verify_verdict"] = parseVerdict(integrationControl(verifier));
 	}
 	return attrs;
 }

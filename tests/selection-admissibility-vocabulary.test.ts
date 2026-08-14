@@ -290,16 +290,15 @@ test("inherited flow depth and initially exhausted budgets are refused, not cred
 	assert.equal(letRefusalPlayOut({ ...admissible, maxCostUsd: 0 }, 1, budgeted), true);
 });
 
-test("contracts count only where the opener consumes them", () => {
-	// handleRoute runs its controller with no contract limits; search and
-	// loop likewise — neither the top-level fallback nor a role contract
-	// reaches those openers, so claiming a refusal would let the play-out
-	// branch execute a call the tool admits and spawn a live child.
+test("contract budget refusals follow the opener's declared contract rule", () => {
+	// Route, search, and loop role contracts now govern their openers. Their
+	// top-level fallback remains inactive because those waves declare "own".
 	const zeroBudgetContract = fullContract({ timeoutMs: 60_000, maxTokens: 0, maxGeneratedTokens: 100 });
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, route: { candidates: ["recon", "analyst"] } }), null);
 	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", contract: zeroBudgetContract, search: {} }), null);
-	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", route: { candidates: ["recon", "analyst"], controller: { agent: "controller", contract: zeroBudgetContract } } }), null);
-	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", search: { generator: { agent: "strategist", contract: zeroBudgetContract } } }), null);
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", route: { candidates: ["recon", "analyst"], controller: { agent: "controller", contract: zeroBudgetContract } } })?.code, "BUDGET_EXCEEDED");
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", search: { generator: { agent: "strategist", contract: zeroBudgetContract } } })?.code, "BUDGET_EXCEEDED");
+	assert.equal(callAdmissibilityFailure({ why: "x", task: "t", loop: { body: { agent: "operator", contract: zeroBudgetContract } } })?.code, "BUDGET_EXCEEDED");
 	// Workflow phases DO consume their own contracts at plan construction, but
 	// that refusal lands only after the fresh-state write, and the play-out
 	// policy treats INVALID_DELEGATION_CONTRACT as an entry-guard code that

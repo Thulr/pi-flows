@@ -35,6 +35,7 @@ function toChildMessage(message: Message): ChildMessage {
 	return { role: message.role, content, ...(typeof toolName === "string" ? { toolName } : {}) };
 }
 
+
 // Portable model tiers: agents (and flow calls) declare a capability tier instead
 // of a vendor model, so flows run on whatever model the user has pi set up with.
 // No model ids are hard-coded here, and none ever will be — a map this repo
@@ -444,8 +445,3 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		await Promise.all(tempFiles.map((tmp) => fs.rm(tmp.dir, { recursive: true, force: true }).catch(() => undefined)));
 	}
 }
-
-
-// The fan-out/dispatch plumbing moved to dispatch.ts to keep this module focused
-// on the seam's production adapter. Handlers import both from here.
-export { mapWithConcurrency, runAgentRef, runWave, type AgentFanoutItem, type AgentRunLimits, type AgentRunPlacement, type WaveDispatch, type WaveRunOptions } from "./dispatch.ts";

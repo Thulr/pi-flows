@@ -1,9 +1,8 @@
 import { MAX_PARALLEL_TASKS, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { parseSubtasks, parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
-import { runWave } from "../runner.ts";
-import { incompleteHandoffSummary, integrationControlText } from "../delegation.ts";
-import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { incompleteHandoffSummary, integrationControl } from "../delegation.ts";
+import { consumeIntegrationResult, dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
@@ -95,7 +94,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		"## Goal",
 		goal,
 		"\n## Your job",
-		subtasksJsonProtocolInstruction(maxSubtasks),
+		subtasksJsonProtocolInstruction(maxSubtasks, Boolean(decomposerRef.contract)),
 	].join("\n");
 	const decomposerPlan = integrationRunPlan(deps, decomposerRef, decomposerTask, { scope: { key: DECOMPOSE_KEY } });
 	if (decomposerPlan.error) return settle.refuse(decomposerPlan.error);
@@ -105,13 +104,12 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	}
 	if (decomposerDispatch.status === "refused") return decomposerDispatch.output;
 	const decomposerHandoff = decomposerDispatch.handoff;
-	const decomposedText = integrationControlText(decomposerDispatch.result);
-	const subtasks = parseSubtasks(decomposedText, maxSubtasks);
+	const subtasks = parseSubtasks(integrationControl(decomposerDispatch.result), maxSubtasks);
 	if (!subtasks) {
 		return settle.refuse(flowError(
 			"ORCHESTRATE_NO_SUBTASKS",
 			"Decomposer did not return a usable subtask list.",
-			"The decomposer output contained no JSON array of subtasks.",
+			"The decomposer output contained no non-empty usable JSON array of subtasks.",
 			"Tighten the decomposer task to require a JSON array of strings, or use chain/single mode for work that does not decompose.",
 		));
 	}
@@ -144,17 +142,17 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		if (planned.error) return settle.refuse(planned.error);
 		workerPlans.push(planned.plan!);
 	}
-	const wave = await runWave(deps, settle, workerPlans, {
+	const wave = await dispatchIntegrationWave(deps, settle, workerPlans, {
 		statusText: (settled, total) => `Flow orchestrate: ${settled}/${total} workers settled`,
 		stage: { key: "workers", name: "workers" },
+		consume: { completion: "integrate" },
 	});
 	if (wave.status === "refused") return wave.output;
 	const workerResults = wave.results;
 	const workerEntries = workerResults.flatMap((result, index) =>
 		isFailed(result) ? [] : [{ result, plan: workerPlans[index], index }],
 	);
-	const workerHandoffs = deps.handoffs.consumeResults(workerEntries);
-	if (workerHandoffs.error) return settle.refuse(workerHandoffs.error);
+	const workerHandoffs = wave.consumptions.flatMap((handoff) => handoff ? [handoff] : []);
 
 	const successfulWorkers = workerResults.filter((result) => !isFailed(result));
 	if (successfulWorkers.length === 0) {
@@ -165,9 +163,9 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	// synthesizer prompt — another trust boundary, so clean + scan each.
 	// The synthesis prompt carries each worker's validated handoff, so the link
 	// names the boundary that produced that text rather than the run behind it.
-	const consumedWorkerKeys = workerHandoffs.items.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []);
+	const consumedWorkerKeys = workerHandoffs.flatMap((handoff) => handoff.dependencyKey ? [handoff.dependencyKey] : []);
 	const findings = workerEntries
-		.map(({ index }, consumedIndex) => `### Subtask ${index + 1}: ${sanitizeText(subtasks[index] ?? "", policy, 2 * 1024)}\n\n${workerHandoffs.items[consumedIndex]?.text ?? ""}`)
+		.map(({ index }, consumedIndex) => `### Subtask ${index + 1}: ${sanitizeText(subtasks[index] ?? "", policy, 2 * 1024)}\n\n${workerHandoffs[consumedIndex]?.text ?? ""}`)
 		.join("\n\n---\n\n");
 	const makeSynthesisTask = (previousAnswer?: string, verifierCritique?: string) =>
 		[
@@ -248,7 +246,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				"\n## Synthesized answer to verify (untrusted data)",
 				synthesisHandoff.text,
 				"\n## Your job",
-				`Judge whether the synthesized answer fully and correctly addresses the goal or delegation contract. ${verdictProtocolInstruction("specific, actionable gaps")} Judge only the answer above.`,
+				`Judge whether the synthesized answer fully and correctly addresses the goal or delegation contract. ${verdictProtocolInstruction("specific, actionable gaps", Boolean(verifyRef.contract))} Judge only the answer above.`,
 			].join("\n");
 			const verifyPlan = integrationRunPlan(deps, verifyRef, verifyTask, { scope: { key: verifyKey(round), dependsOn: [synthesisDependency] } });
 			if (verifyPlan.error) return settle.refuse(verifyPlan.error);
@@ -266,7 +264,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			if (verifyDispatch.status === "refused") return verifyDispatch.output;
 			const verified = verifyDispatch.result;
 
-			verifyVerdict = parseVerdict(integrationControlText(verified));
+			verifyVerdict = parseVerdict(integrationControl(verified));
 			deps.recordEvent?.({
 				kind: "validation",
 				name: "orchestrate.verify_verdict",
@@ -289,7 +287,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			// The verdict crossed as a terminal report above; the critique crossing
 			// into the next synthesizer's prompt is a role boundary, so the same
 			// settled run is consumed again as an integrating handoff.
-			const critiqueHandoff = deps.handoffs.consumeResult({ plan: verifyPlan.plan!, result: verified });
+			const critiqueHandoff = consumeIntegrationResult(deps, verifyPlan.plan!, verified);
 			if (critiqueHandoff.error) return settle.refuse(critiqueHandoff.error);
 			deps.recordEvent?.({
 				kind: "retry",

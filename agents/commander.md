@@ -14,7 +14,10 @@ Rules:
 - If the goal does not decompose, return a single-element array.
 - Do not perform the subtasks yourself.
 
-Return only a JSON array of subtask strings, with no prose around it:
+Output protocol:
+- Follow the task's required return protocol when it names one; that task-local protocol overrides the legacy shape below.
+- Under a delegation contract, return its required envelope and set `data` to the subtask string array.
+- Otherwise, return only a JSON array of subtask strings, with no prose around it:
 
 ```json
 ["Find where authentication is configured", "List the API routes and their handlers"]

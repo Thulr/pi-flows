@@ -10,6 +10,15 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Every agent-reference `contract` now resolves before its Child can spawn
+  (#137), binding Task, budget/timeout, Return validation, and trace authority
+  for evaluator, controller, loop, search, and monitor roles. Unforgeable,
+  flow/Result-bound single-use plan capabilities and trusted wave consumption close bypasses;
+  Integration control distinguishes exact validated fields from legacy prose even
+  when content is not recorded, contract spend is shared by identity, and rejected waves
+  retain every spent Run and rejection event. Budget disclosure and opener
+  admissibility derive from the same role rule.
+
 - Every mode now declares its **owed event kinds** — the coordination-event
   kinds its own handler records by hand (state transitions, retries,
   controller-parsed verdicts) — once beside its handler on the mode table,
@@ -209,7 +218,7 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   A new mode without a plan or critical path is a compile error; the
   admissibility mirror moved out of Core onto the mode table.
 - Mode handlers settle through a per-invocation **Settle** object and dispatch
-  through `dispatchIntegrationPlan`/`runWave`. The shared-write gate is now
+  through `dispatchIntegrationPlan`/`dispatchIntegrationWave`. The shared-write gate is now
   enforced inside the fan-out itself (no hand-called guard to forget), a
   refusal structurally carries every run that already spent, and contracted
   dispatch derives its limits, cwd, and step in exactly one place. Refusal

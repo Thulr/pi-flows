@@ -1,9 +1,8 @@
 import { MAX_GRAPH_NODES, encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { graphDependsOn, validGraphNodes } from "../validate.ts";
-import { runWave } from "../runner.ts";
 import { incompleteHandoffSummary } from "../delegation.ts";
-import { dispatchIntegrationPlan, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
+import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { plannedRefs, runDuration, type ModePlan, type PlannedWave } from "./plan.ts";
 
 /**
@@ -163,35 +162,25 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 			if (planned.error) return settle.refuse(planned.error);
 			waveItems.push(planned.plan!);
 		}
-		const dispatched = await runWave(deps, settle, waveItems, {
+		const dispatched = await dispatchIntegrationWave(deps, settle, waveItems, {
 			statusText: (settled) => `Flow graph: ${completed.size + settled}/${nodes.length} nodes settled`,
 			stage: { key: `wave-${wave}`, name: `wave ${wave}` },
+			consume: (index) => ({
+				completion: nodeHasConsumer(ready[index].id) ? "integrate" : "terminal",
+				enforceCompletion: true,
+				noticeLabel: `graph node ${ready[index].id} output`,
+			}),
 		});
 		if (dispatched.status === "refused") return dispatched.output;
 		const waveRunResults = dispatched.results;
-		const preparedOutputs = new Map<FlowRunResult, ReturnType<typeof deps.handoffs.consumeResult>>();
-		for (const [index, result] of waveRunResults.entries()) {
-			if (isFailed(result)) continue;
-			const node = ready[index];
-			const consumed = nodeHasConsumer(node.id);
-			const handoff = deps.handoffs.consumeResult({
-				plan: waveItems[index],
-				result,
-				completion: consumed ? "integrate" : "terminal",
-				enforceCompletion: true,
-				noticeLabel: `graph node ${node.id} output`,
-			});
-			if (handoff.error) return settle.refuse(handoff.error);
-			preparedOutputs.set(result, handoff);
-		}
 		const waveResults = waveRunResults.map((result, index) => ({ node: ready[index], result }));
-		for (const { node, result } of waveResults) {
+		for (const [index, { node, result }] of waveResults.entries()) {
 			remaining.delete(node.id);
 			if (isFailed(result)) {
 				return settle.complete(sanitizeText(`Flow graph stopped at node "${node.id}" (${node.agent}) in wave ${wave}:\n\n${resultText(result)}`, policy));
 			}
-			outputs.set(node.id, preparedOutputs.get(result)?.text ?? "");
-			const dependencyKey = preparedOutputs.get(result)?.dependencyKey;
+			outputs.set(node.id, dispatched.consumptions[index]?.text ?? "");
+			const dependencyKey = dispatched.consumptions[index]?.dependencyKey;
 			if (dependencyKey) outputKeys.set(node.id, dependencyKey);
 			completed.add(node.id);
 		}

@@ -1,6 +1,9 @@
 import { capBytes, getFinalAssistantText, isFailed, type ChildMessage } from "./sanitize.ts";
 import { MODEL_VISIBLE_OUTPUT_CAP, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
 
+/** Structurally recognizable child output rejected before it became a contract-bound Return envelope. */
+export type RejectedDelegationReturnEnvelope = Omit<DelegationReturnEnvelope, "contractId"> & { contractId?: string };
+
 /** The four states a run can be in, as every surface names them (CONTEXT.md: Run state). */
 export type RunState = "queued" | "running" | "completed" | "failed";
 
@@ -75,7 +78,7 @@ export class Run {
 	readonly #result: FlowRunResult;
 	#envelopeCandidate?: string;
 	#validatedReturnEnvelope?: DelegationReturnEnvelope;
-	#rejectedReturnEnvelope?: DelegationReturnEnvelope;
+	#rejectedReturnEnvelope?: RejectedDelegationReturnEnvelope;
 
 	private constructor(result: FlowRunResult) {
 		this.#result = result;
@@ -122,6 +125,11 @@ export class Run {
 		return envelope === undefined ? undefined : structuredClone(envelope);
 	}
 
+	/** Read schema-checked Integration control data without exposing it on the stored result. */
+	validatedReturnData(): unknown {
+		return this.#validatedReturnEnvelope === undefined ? undefined : structuredClone(this.#validatedReturnEnvelope.data);
+	}
+
 	/** The one transition through which a prepared handoff reaches the result. */
 	acceptHandoff(handoff: DelegationHandoffEnvelope): void {
 		this.#result.handoff = handoff;
@@ -162,12 +170,12 @@ export class Run {
 	 * why. Retaining anything else would put claims in front of the parent that
 	 * the glossary promises are never shown.
 	 */
-	retainRejectedEnvelope(stored: DelegationReturnEnvelope): void {
+	retainRejectedEnvelope(stored: RejectedDelegationReturnEnvelope): void {
 		this.#rejectedReturnEnvelope = structuredClone(stored);
 	}
 
 	/** Consume the retained rejected envelope, as an isolated clone. */
-	takeRejectedReturnEnvelope(): DelegationReturnEnvelope | undefined {
+	takeRejectedReturnEnvelope(): RejectedDelegationReturnEnvelope | undefined {
 		const envelope = this.#rejectedReturnEnvelope;
 		this.#rejectedReturnEnvelope = undefined;
 		return envelope === undefined ? undefined : structuredClone(envelope);

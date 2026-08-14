@@ -98,7 +98,7 @@ To hack on pi-flows or try unreleased `main`, work from a checkout: `git clone h
 
 ## What it adds
 
-- The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`, plus machine-checked [delegation contracts](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation) and validated return envelopes.
+- The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`, plus machine-checked [delegation contracts](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation) on every task and agent-reference role, with validated return envelopes before coordination can act on them.
 - The `/flows` command and [live TUI monitoring](./docs/reference/flow-reference.md#live-tui-monitoring): a live tool row, `/flows inspect`, and a durable flow card — every configured cost/token ceiling is disclosed with its authority before work starts.
 - Nine bundled agents in [`agents/`](./agents/) and three workflow presets in [`presets/`](./presets/).
 - Your own agents and presets, no code required — one markdown file each, user- or project-scoped, trust-gated and shadowed with visible diagnostics. See [Custom agents](./docs/how-to/custom-agents.md).

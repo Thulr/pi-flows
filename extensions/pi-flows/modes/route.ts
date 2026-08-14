@@ -1,17 +1,12 @@
 import { flowError, modeSettle, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
-import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
+import { capModelVisibleText, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements } from "../validate.ts";
 import { parseRoute, routeProtocolInstruction } from "../protocol.ts";
-import { runAgentRef } from "../runner.ts";
+import { integrationControl } from "../delegation.ts";
+import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { plannedRefs, sumRunDurations, type ModePlan, type PlannedWave } from "./plan.ts";
 
-/**
- * Route's plan: the controller, then the candidate step — every name the
- * controller may choose from (one of them runs), then the fallback if named.
- * Nothing is guarded (two sequential single-ref spawns cannot collide) and no
- * wave carries contract budgets: the route opener dispatches with no contract
- * limits.
- */
+/** Contracted controller, every selectable candidate, then optional fallback. */
 export function planRoute(params: any): ModePlan {
 	if (!params.route) return { waves: [], opening: [] };
 	const spec = params.route ?? {};
@@ -21,27 +16,21 @@ export function planRoute(params: any): ModePlan {
 		.map((name: string) => ({ agent: name }));
 	const fallback = typeof spec.fallback === "string" ? [{ agent: spec.fallback }] : [];
 	const waves: PlannedWave[] = [
-		{ refs: controller, guarded: false },
+		{ refs: controller, guarded: false, contracts: "own" },
 		...(candidates.length > 0 ? [{ refs: candidates, guarded: false }] : []),
 		...(fallback.length > 0 ? [{ refs: fallback, guarded: false }] : []),
 	];
 	return { waves, opening: controller };
 }
 
-/** Router, then exactly one selected candidate: sequential. */
 export function criticalPathRoute(_params: any, results: FlowRunResult[]): number | undefined {
 	return sumRunDurations(results);
 }
 
-/** One place each route unit key is derived, so the selected run's dependency link names the router that chose it. */
 const ROUTER_KEY = "router";
 const SELECTION_KEY = "selection";
 
-/**
- * Route's pre-spawn refusal (modes/contract.ts): the router needs something to
- * classify and a candidate set to choose from, and refuses INVALID_MODE for
- * either before it spawns. Total over raw model args.
- */
+/** Refuse a missing task or candidate set before the controller spawns. */
 export function preSpawnRefusalRoute(params: any): FlowError | null {
 	if (params?.route === undefined) return null;
 	const spec = params.route ?? {};
@@ -87,17 +76,21 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 			})
 			.join("\n"),
 		"\n## Your job",
-		`Pick the single best-fit agent for this task. ${routeProtocolInstruction()}`,
+		`Pick the single best-fit agent for this task. ${routeProtocolInstruction(Boolean(routerRef.contract))}`,
 	].join("\n");
-	const routed = await runAgentRef(deps, routerRef, routerTask, settle.mode, settle.nextStep, [...settle.results], { scope: { key: ROUTER_KEY } });
-	settle.track(routed);
-	if (isFailed(routed)) {
-		return settle.complete(sanitizeText(`Flow route: router "${routerRef.agent}" failed.\n\n${resultText(routed)}`, policy));
+	const routerPlan = integrationRunPlan(deps, routerRef, routerTask, { scope: { key: ROUTER_KEY } });
+	if (routerPlan.error) return settle.refuse(routerPlan.error);
+	const routerDispatch = await dispatchIntegrationPlan(deps, routerPlan.plan!, settle, { payload: "source", enforceCompletion: true });
+	if (routerDispatch.status === "failed") {
+		return settle.complete(sanitizeText(`Flow route: router "${routerRef.agent}" failed.\n\n${resultText(routerDispatch.result)}`, policy));
 	}
+	if (routerDispatch.status === "refused") return routerDispatch.output;
+	const routed = routerDispatch.result;
 
-	const routingMetadata = deps.handoffs.consumeResult({ result: routed, scope: { key: ROUTER_KEY }, payload: "source" });
-	if (routingMetadata.error) return settle.refuse(routingMetadata.error);
-	let choice = parseRoute(routingMetadata.text, candidates);
+	const routingMetadata = routerDispatch.handoff;
+	const controlData = integrationControl(routed);
+	const parsedChoice = routingMetadata.action === "quarantine" ? null : parseRoute(controlData, candidates);
+	let choice = parsedChoice;
 	if (!choice && spec.fallback) choice = spec.fallback;
 	if (!choice) {
 		return settle.refuse(flowError(
@@ -108,11 +101,13 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 		));
 	}
 
-	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [routingMetadata.dependencyKey!] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parseRoute(routingMetadata.text, candidates), "flow.handoff.policy": deps.handoffs.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
-	const selected = await runAgentRef(deps, { agent: choice }, contractedGoal, settle.mode, settle.nextStep, [...settle.results], { scope: { key: "selected", dependsOn: [SELECTION_KEY] } });
-	settle.track(selected);
-	if (isFailed(selected)) {
-		return settle.complete(sanitizeText(`Flow route: ${routerRef.agent} → ${choice}, but "${choice}" failed.\n\n${resultText(selected)}`, policy));
+	deps.recordEvent?.({ kind: "state", name: "route.selected", scope: { key: SELECTION_KEY, dependsOn: [routingMetadata.dependencyKey] }, attributes: { "flow.route.choice": choice, "flow.route.candidates": candidates.join(","), "flow.route.fallback_used": !parsedChoice, "flow.handoff.policy": deps.handoffs.resolution.effective, "flow.handoff.policy_action": routingMetadata.action } });
+	const selectedPlan = integrationRunPlan(deps, { agent: choice }, contractedGoal, { scope: { key: "selected", dependsOn: [SELECTION_KEY] } });
+	if (selectedPlan.error) return settle.refuse(selectedPlan.error);
+	const selectedDispatch = await dispatchIntegrationPlan(deps, selectedPlan.plan!, settle, { completion: "terminal", payload: "source" });
+	if (selectedDispatch.status === "failed") {
+		return settle.complete(sanitizeText(`Flow route: ${routerRef.agent} → ${choice}, but "${choice}" failed.\n\n${resultText(selectedDispatch.result)}`, policy));
 	}
-	return settle.complete(capModelVisibleText(`Flow route: ${routerRef.agent} → ${choice}.\n\n${sanitizeText(resultText(selected), policy)}`));
+	if (selectedDispatch.status === "refused") return selectedDispatch.output;
+	return settle.complete(capModelVisibleText(`Flow route: ${routerRef.agent} → ${choice}.\n\n${sanitizeText(resultText(selectedDispatch.result), policy)}`));
 }
