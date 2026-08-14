@@ -27,7 +27,11 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   still refuses the file), the same way rows appended after finalize were
   always beyond the live verdict. (A pre-extent row forging both of the run's
   ids likewise goes unread — a shape no honest writer can produce, since the
-  invocation id does not exist until the sink is born.)
+  invocation id does not exist until the sink is born.) The reading keeps the
+  file's own line boundaries: when the pre-existing content ends in a torn row
+  with no terminator, the sink's first append is physically part of that line,
+  and the read-back refuses it as missing exactly as the whole-file report
+  refuses the concatenated line as unparseable.
 
 - The two coordination actions that already pass through framework seams now
   mint their own trace evidence instead of leaving it to handler discipline

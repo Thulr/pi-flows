@@ -213,7 +213,7 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // tests/coordination-evidence.test.ts, not packaged; the domain-review
 // re-record is not packaged either). Headroom is ~403 B over the measured
 // 1_191_967, matching the previous raises.
-// Raised to 1_199_000 for the record extent (#129): trace-sink captures where
+// Raised to 1_200_350 for the record extent (#129): trace-sink captures where
 // the file had grown to at the sink's birth, trace-verify gains the one
 // bounded reader (readExtent) both readings go through and the boundary's
 // rationale, and the stored-attribute discipline (storedLabel /
@@ -227,7 +227,9 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // machinery. Same verification: the file set is unchanged at 108 and none
 // from tests/, scripts/, or evals/ (the new coverage is
 // tests/trace-extent.test.ts, not packaged; the domain-review re-record is
-// not packaged either). Headroom is ~475 B over the measured 1_198_525,
+// not packaged either). The PR review round added the torn-boundary rule in
+// readExtent and its changelog sentence. Headroom is ~479 B over the
+// measured 1_199_871,
 // matching the previous raises.
-assert.ok(pack.unpackedSize < 1_199_000, `package unpacked size too large: ${pack.unpackedSize}`);
+assert.ok(pack.unpackedSize < 1_200_350, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

@@ -25,25 +25,42 @@ export interface RecordExtent {
  * sound because the file only grows: everything before the extent was on disk
  * before the sink existed, so it cannot carry the sink's random invocation id
  * honestly, and everything a concurrent writer lands afterwards is inside the
- * region and judged as before. `start` may cut a foreign line — a recorded
- * extent under-estimates when a cross-process append raced its capture — and
- * the fragment is skipped by the same marker test as any other foreign row.
+ * region and judged as before.
+ *
+ * The report's parse unit is the whole-file line, so this reader must not
+ * invent a line boundary at `start` that the file does not have. The byte
+ * before the extent says whether one exists: when it is not a newline, the
+ * pre-existing content ends in a torn row (a crashed writer, no terminator),
+ * and whatever this sink appended first is physically concatenated onto it —
+ * one line the report judges as unparseable. Treating the suffix as a fresh
+ * line here would certify a row the report refuses, so everything up to the
+ * region's first newline is the torn line's remainder and is not this
+ * reading's to parse; a row of ours lost with it lands in the missing count,
+ * the failing-closed direction. The same rule covers an under-estimated
+ * `start` (a cross-process append racing the capture) cutting a foreign line:
+ * the fragment is dropped at the boundary instead of parsed.
  */
 async function readExtent(traceFile: string, start: number): Promise<string> {
 	if (start <= 0) return fs.readFile(traceFile, "utf8");
 	const handle = await fs.open(traceFile, "r");
 	try {
 		const { size } = await handle.stat();
-		const length = Math.max(0, size - start);
+		// One byte back, so the region carries its own boundary evidence. '\n'
+		// never occurs inside a multi-byte UTF-8 sequence, so the byte test is safe.
+		const from = start - 1;
+		const length = Math.max(0, size - from);
 		if (length === 0) return "";
 		const buffer = Buffer.alloc(length);
 		let offset = 0;
 		while (offset < length) {
-			const { bytesRead } = await handle.read(buffer, offset, length - offset, start + offset);
+			const { bytesRead } = await handle.read(buffer, offset, length - offset, from + offset);
 			if (bytesRead === 0) break;
 			offset += bytesRead;
 		}
-		return buffer.toString("utf8", 0, offset);
+		const region = buffer.toString("utf8", 0, offset);
+		if (region.startsWith("\n")) return region.slice(1);
+		const boundary = region.indexOf("\n");
+		return boundary === -1 ? "" : region.slice(boundary + 1);
 	} finally {
 		await handle.close();
 	}

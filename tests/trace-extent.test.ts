@@ -177,6 +177,36 @@ test("a stampless row landing after the sink is born is still refused", async ()
 });
 
 /**
+ * The extent must not invent a line boundary the file does not have (PR #135
+ * review, Codex P1). A crashed writer can leave the file ending in a torn row
+ * with no terminator; the sink's first append then physically concatenates
+ * onto it, and the whole-file report judges that line as one unparseable row —
+ * the appended span is missing from its tree. Reading exactly from the extent
+ * would strip the torn prefix, parse the suffix as a healthy row, and certify
+ * a trace the report refuses. The reader instead checks the byte before the
+ * extent and surrenders everything up to the region's first newline to the
+ * torn line, so the concatenated row lands in the missing count and both
+ * gates refuse together.
+ */
+test("a torn row at the extent boundary refuses the live gate the way it refuses the report", async () => {
+	const file = traceFile();
+	appendFileSync(file, '{"trace_id":"99999999999999999999999999999999","span_id":"torn', "utf8");
+
+	const sink = makeTraceSink(file, "single", policy, { verify: true });
+	sink.record(settledRun("recon"), { scope: { key: "single" } });
+	const link = await sink.finalize({ ok: true });
+
+	assert.equal(link.structure!.valid, false, "the row concatenated onto the torn prefix is not a fresh line");
+	assert.match(link.structure!.issue!, /missing/, link.structure!.issue);
+	assert.equal(strictTraceError(link, true)?.code, "TRACE_INCOMPLETE");
+
+	const parsed = parseTraceJsonl(readFileSync(file, "utf8"));
+	assert.ok(parsed.parseErrors >= 1, "the report sees the concatenated line as unparseable");
+	const report = summarizeTraceSpans(parsed.spans, parsed.parseErrors, file);
+	assert.equal(traceReportIsComplete(report), false, "and refuses the file — the two gates agree");
+});
+
+/**
  * The eval shape itself: flows appending to one file in sequence, each strict.
  * Every flow must verify clean on its own extent with predecessors of any
  * size ahead of it — the population the quadratic read taxed, and the
