@@ -68,19 +68,11 @@ const scoringAgentProfiles = {
   },
 };
 
-function scoringAgentProfilesFor(params) {
-	// The public flow schema defines `model` fields as exact pins. The scorer has
-	// no live Pi registry, so add those authored identities to its synthetic
-	// registry rather than falsely comparing them only with eval/*. Production
-	// still requires the same pin to exist in Pi's actual current roster.
-	const workflow = params?.workflow;
-	const authored = [
-		params?.model,
-		...(Array.isArray(workflow?.phases) ? workflow.phases.map((phase) => phase?.model) : []),
-		workflow?.debrief?.model,
-		...scoringDiscovery.agents.map((agent) => agent.model),
-	];
-	const references = [...new Set(authored
+function scoringAgentProfilesFor(knownSubjectModels) {
+	// The scorer has no live Pi registry. Add only identities the harness knows
+	// the subject loaded; accepting arbitrary authored provider/id strings would
+	// credit typos and fuzzy selectors that the real profile resolver refuses.
+	const references = [...new Set(knownSubjectModels
 		.filter((value) => typeof value === "string" && value.trim())
 		.map((value) => parseModelSpec(value).model)
 		.filter((value) => value.includes("/") && !value.endsWith("/")))];
@@ -158,7 +150,7 @@ function effectiveCallParams(args) {
 // modePreSpawnRefusalForParams resolves the active one, so a new mode joins this
 // gate by existing. What stays this seam's own decision is which of those
 // codes to score — SCORED_PRE_SPAWN_CODES above.
-export function callAdmissibilityFailure(args) {
+export function callAdmissibilityFailure(args, { knownSubjectModels = [] } = {}) {
 	// pi validates the raw call against the public flow schema before execute
 	// ever runs, so a schema-invalid call is refused ahead of every gate below
 	// — including list/showConfig and preset resolution. No FlowError code
@@ -211,7 +203,7 @@ export function callAdmissibilityFailure(args) {
 	// headless, so an approval gate that needs a UI refuses here. A mode added
 	// to the table is covered without touching this file; only the scored
 	// vocabulary above is this seam's own decision.
-	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true, agentProfiles: scoringAgentProfilesFor(effective ?? {}) });
+	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true, agentProfiles: scoringAgentProfilesFor(knownSubjectModels) });
 	if (modeRefusal && SCORED_PRE_SPAWN_CODES.has(modeRefusal.code)) {
 		return { code: modeRefusal.code, reason: modeRefusal.message.replace(/\.$/, "") };
 	}

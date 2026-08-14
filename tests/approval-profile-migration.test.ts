@@ -22,7 +22,7 @@ const resumeParams = { ...params, workflow: { ...params.workflow, resume: true }
 const readState = async (cwd: string) => JSON.parse(await readFile(path.join(cwd, "workflow.json"), "utf8"));
 const writeState = async (cwd: string, state: unknown) => writeFile(path.join(cwd, "workflow.json"), `${JSON.stringify(state, null, 2)}\n`);
 
-function historicalV3Binding(digest: string): ApprovalBinding {
+function historicalV3Binding(digest: string, profile: { model?: string; thinking?: string } = {}): ApprovalBinding {
 	return {
 		action: "workflow.phase:approve",
 		parameters: {
@@ -36,8 +36,8 @@ function historicalV3Binding(digest: string): ApprovalBinding {
 				task: "Ship it",
 				cwd: null,
 				tier: null,
-				model: "test-provider/strong-model",
-				thinking: "high",
+				model: profile.model ?? "test-provider/strong-model",
+				thinking: profile.thinking ?? "high",
 				tools: null,
 				checkCommand: null,
 				contract: null,
@@ -161,6 +161,37 @@ test("a completed v3 receipt migrates after its exact model leaves the current r
 	const resumed = await runFlow({ ...pinnedParams, workflow: { ...pinnedParams.workflow, resume: true } }, {}, { cwd, registry });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
+	assert.equal((await readState(cwd)).version, 4);
+});
+
+test("a completed v3 receipt reconstructs clamped Thinking after model metadata disappears", async () => {
+	const cwd = await freshDir();
+	const model = "test-provider/plain-model";
+	const plainParams = {
+		...params,
+		workflow: {
+			...params.workflow,
+			phases: [params.workflow.phases[0], { ...params.workflow.phases[1], model, thinking: "high" }],
+		},
+	};
+	const registry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			{ id: "plain-model", provider: "test-provider", reasoning: false, contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 2 } },
+		],
+	};
+	await runFlow(plainParams, {}, { cwd, registry });
+	await runFlow({ ...plainParams, workflow: { ...plainParams.workflow, resume: true } }, { strategist: "SHIPPED" }, { cwd, hasUI: true, registry });
+	const state = await readState(cwd);
+	const binding = historicalV3Binding(state.digest, { model, thinking: "off" });
+	state.version = 3;
+	state.receipts.approve = asHistoricalReceipt(state.receipts.approve, binding);
+	await writeState(cwd, state);
+
+	const resumed = await runFlow({ ...plainParams, workflow: { ...plainParams.workflow, resume: true } }, { strategist: "MUST NOT RUN" }, { cwd });
+	assert.equal(resumed.result.details.error, undefined);
+	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
+	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 1);
 	assert.equal((await readState(cwd)).version, 4);
 });
 

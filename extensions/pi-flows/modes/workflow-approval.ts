@@ -8,11 +8,12 @@
 import { sanitizeText } from "../sanitize.ts";
 import { WORKFLOW_COMPLETE_STEP, type ApprovalAuthorization, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
 import { resolveAgentProfile, type AgentProfileEnvironment, type EffectiveAgentProfile } from "../agent-profile.ts";
-import { flowError, type CapturePolicy, type FlowError, type ModeDeps } from "../types.ts";
+import { THINKING_LEVELS, flowError, type CapturePolicy, type FlowError, type ModeDeps, type ThinkingLevel } from "../types.ts";
 
 /** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
 const APPROVER_LABEL_CAP = 256;
 const PROFILE_REFUSAL_POLICY: CapturePolicy = { recordContent: true, redactSecrets: true };
+const V3_THINKING_CANDIDATE_LIMIT = 20_000;
 
 /** The state schema version an approval is granted against. */
 export const WORKFLOW_STATE_VERSION = 4;
@@ -209,23 +210,32 @@ function normalizeGatedDebrief(params: any, deps: ModeDeps): Record<string, unkn
 }
 
 /**
- * The under-bound v3 projection, retained only to verify fully spent receipts
- * before migrating them to audit-only compatibility evidence. It must remain an
- * exact statement of the old schema; outstanding v3 consent is never rebuilt.
+ * The under-bound v3 projections used only to verify spent compatibility
+ * evidence. When an exact model disappeared, its old metadata can no longer
+ * reproduce v3's Thinking clamp; bounded alternatives let the receipt digest
+ * select that historical value without making the model currently bindable.
  */
-export function historicalApprovalBindingForV3(phases: any[], index: number, deps: ModeDeps, digest: string): ApprovalBinding {
+export function* historicalApprovalBindingsForV3(phases: any[], index: number, deps: ModeDeps, digest: string): Generator<ApprovalBinding> {
 	const gatedIds = new Set(gatedPhaseIds(phases, index));
 	const gated = phases.filter((phase: any) => gatedIds.has(phase.id));
 	const environment = workflowProfileEnvironment(deps);
+	const uncertain = new Map<string, { targets: Record<string, unknown>[]; preferred: ThinkingLevel }>();
 	const historicalPhase = (phase: any) => {
 		const profile = effectiveProfile(phase, deps.params, environment);
-		return {
+		const historical = {
 			...gatedPhaseTerms(phase, deps.params),
 			cwd: phase.cwd ?? null,
 			model: profile.modelChoice.model ?? null,
 			thinking: profile.modelChoice.thinking ?? null,
 			tools: phase.tools ?? null,
 		};
+		if (profile.modelChoice.model && profile.modelChoice.thinking && !profile.modelChoice.thinkingVerified) {
+			const key = `${profile.modelChoice.model}\0${profile.modelChoice.thinking}`;
+			const slot = uncertain.get(key) ?? { targets: [], preferred: profile.modelChoice.thinking };
+			slot.targets.push(historical);
+			uncertain.set(key, slot);
+		}
+		return historical;
 	};
 	const debrief = deps.params.workflow?.debrief;
 	const gatesDebrief = Boolean(debrief?.agent && index + gatedIds.size + 1 >= phases.length);
@@ -240,7 +250,13 @@ export function historicalApprovalBindingForV3(phases: any[], index: number, dep
 				thinking: debriefProfile?.modelChoice.thinking ?? null,
 			}
 		: null;
-	return {
+	if (historicalDebrief && debriefProfile?.modelChoice.model && debriefProfile.modelChoice.thinking && !debriefProfile.modelChoice.thinkingVerified) {
+		const key = `${debriefProfile.modelChoice.model}\0${debriefProfile.modelChoice.thinking}`;
+		const slot = uncertain.get(key) ?? { targets: [], preferred: debriefProfile.modelChoice.thinking };
+		slot.targets.push(historicalDebrief);
+		uncertain.set(key, slot);
+	}
+	const binding: ApprovalBinding = {
 		action: approvalActionId(phases[index]),
 		parameters: {
 			approvalMessage: phases[index].approval.message,
@@ -254,6 +270,24 @@ export function historicalApprovalBindingForV3(phases: any[], index: number, dep
 		workflowDigest: digest,
 		stateVersion: 3,
 	};
+	const slots = [...uncertain.values()];
+	let yielded = 0;
+	function* candidates(position: number): Generator<ApprovalBinding> {
+		if (yielded >= V3_THINKING_CANDIDATE_LIMIT) return;
+		if (position === slots.length) {
+			yielded += 1;
+			yield structuredClone(binding);
+			return;
+		}
+		const slot = slots[position];
+		const levels = [slot.preferred, ...THINKING_LEVELS.filter((level) => level !== slot.preferred)];
+		for (const level of levels) {
+			for (const target of slot.targets) target.thinking = level;
+			yield* candidates(position + 1);
+			if (yielded >= V3_THINKING_CANDIDATE_LIMIT) return;
+		}
+	}
+	yield* candidates(0);
 }
 
 /**

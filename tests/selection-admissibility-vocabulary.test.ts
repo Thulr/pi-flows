@@ -7,10 +7,18 @@
 // selection-sequence.test.ts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { callAdmissibilityFailure, letRefusalPlayOut, observationCap, scoreSelection } from "../evals/select.mjs";
+import { callAdmissibilityFailure, letRefusalPlayOut, modelReferencesFromList, observationCap, scoreSelection } from "../evals/select.mjs";
 import { SELECTION_CASES } from "../evals/selection-cases.mjs";
 
 const reviewCase = SELECTION_CASES.find((testCase: any) => testCase.name === "independent-review-safe-first-call");
+
+test("selection preflight reads exact subject model identities", () => {
+	assert.deepEqual(modelReferencesFromList([
+		"provider      model                 context  max-out  thinking  images",
+		"vendor        exact-model           128K     16K      yes       no",
+		"openai-codex  gpt-5.4-mini:variant  272K     128K     yes       yes",
+	].join("\n")), ["vendor/exact-model", "openai-codex/gpt-5.4-mini:variant"]);
+});
 
 /** A complete public-schema delegation contract; budget ceilings vary per test. */
 function fullContract(budget: Record<string, number>): Record<string, unknown> {
@@ -182,12 +190,18 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 		task: "t",
 		workflow: { phases: [{ id: "a", agent: "recon", task: "A" }, { id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "made-up", task: "B" }] },
 	})?.code, "WORKFLOW_INVALID", "a later approval's missing profile is still a pre-first-Child refusal");
-	assert.equal(callAdmissibilityFailure({
+	const exactPinWorkflow = {
 		why: "x",
 		task: "t",
 		thinking: "low",
 		workflow: { phases: [{ id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "recon", model: "vendor/exact-model", task: "B" }] },
-	})?.code, "WORKFLOW_APPROVAL_REQUIRED", "an authored exact pin is judged against the subject's runtime roster, not only eval/* identities");
+	};
+	assert.equal(callAdmissibilityFailure(exactPinWorkflow)?.code, "WORKFLOW_INVALID", "an authored model is not evidence that the subject installed it");
+	assert.equal(callAdmissibilityFailure(exactPinWorkflow, { knownSubjectModels: ["vendor/exact-model"] })?.code, "WORKFLOW_APPROVAL_REQUIRED", "a pin guaranteed by the subject roster reaches the headless approval refusal");
+	assert.equal(callAdmissibilityFailure({
+		...exactPinWorkflow,
+		workflow: { ...exactPinWorkflow.workflow, phases: [exactPinWorkflow.workflow.phases[0], { ...exactPinWorkflow.workflow.phases[1], model: "vendor/model-prefix" }] },
+	}, { knownSubjectModels: ["vendor/model-prefix-v2"] })?.code, "WORKFLOW_INVALID", "a fuzzy selector cannot borrow a nearby subject model identity");
 	// A resume derives nothing: which phase spawns first lives in persisted
 	// state the static mirror cannot read, and a fresh subject is refused
 	// WORKFLOW_STATE_INVALID — outside the vocabulary — before any roster

@@ -13,7 +13,7 @@ import type { DelegationHandoffEnvelope, FlowError, ModeDeps } from "../types.ts
 import { sanitizeText } from "../sanitize.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, type PersistedHandoffAttestation } from "../delegation.ts";
 import { legacyApprovalReceipt, migrateSpentApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
-import { approvalBindingFor, approvalProfileRefusal, gatedPhaseIds, historicalApprovalBindingForV3, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
+import { approvalBindingFor, approvalProfileRefusal, gatedPhaseIds, historicalApprovalBindingsForV3, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 
 export interface WorkflowState {
 	version: typeof WORKFLOW_STATE_VERSION;
@@ -146,15 +146,24 @@ export function migrateWorkflowStateV3(legacy: any, phases: any[], deps: ModeDep
 		const stored = state.receipts[phase.id];
 		if (outstanding && typeof stored?.consumedAt !== "string") continue;
 
-		const historical = historicalApprovalBindingForV3(phases, index, deps, digest);
 		const current = approvalBindingFor(phases, index, deps, digest);
-		const migrated = migrateSpentApprovalReceipt(stored, historical, current);
-		if (migrated.error) return { state, error: migrated.error };
+		let receipt: ApprovalReceipt | undefined;
+		let stale: FlowError | undefined;
+		for (const historical of historicalApprovalBindingsForV3(phases, index, deps, digest)) {
+			const migrated = migrateSpentApprovalReceipt(stored, historical, current);
+			if (!migrated.error) {
+				receipt = migrated.receipt;
+				break;
+			}
+			if (migrated.error.code !== "APPROVAL_RECEIPT_STALE") return { state, error: migrated.error };
+			stale = migrated.error;
+		}
+		if (!receipt) return { state, error: stale! };
 		if (outstanding) {
 			const profileError = approvalProfileRefusal(phases, index, deps.params, workflowProfileEnvironment(deps));
 			if (profileError) return { state, error: profileError };
 		}
-		state.receipts[phase.id] = migrated.receipt;
+		state.receipts[phase.id] = receipt;
 	}
 	return { state };
 }

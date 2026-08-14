@@ -397,7 +397,7 @@ function flowCallShapeMismatch(args, shape) {
 	return null;
 }
 
-export function flowCallMatchesExpectation(call, expected) {
+export function flowCallMatchesExpectation(call, expected, admissibility = {}) {
 	const args = call?.arguments ?? {};
 	const mismatch = flowCallShapeMismatch(args, expected);
 	if (mismatch) return { pass: false, notes: mismatch };
@@ -405,7 +405,7 @@ export function flowCallMatchesExpectation(call, expected) {
 	// Checked after the shape checks so a gate regression is diagnosable as
 	// "picked the right shape but the tool would have refused the call", which
 	// is a different failure from picking the wrong shape.
-	const inadmissible = callAdmissibilityFailure(args);
+	const inadmissible = callAdmissibilityFailure(args, admissibility);
 	if (inadmissible) {
 		return { pass: false, notes: `${modeOf(args)} call matches the expected shape, but the tool would refuse it before any child spawns: ${inadmissible.reason} (${inadmissible.code})` };
 	}
@@ -413,7 +413,7 @@ export function flowCallMatchesExpectation(call, expected) {
 	return { pass: true, notes: `${modeOf(args)} flow call matched` };
 }
 
-function scoreFlowCallExpectations(testCase, result) {
+function scoreFlowCallExpectations(testCase, result, admissibility) {
 	const expectations = values(testCase.expectedFlowCall ?? testCase.expectedFlowCalls);
 	const forbidden = values(testCase.forbiddenFlowCall ?? testCase.forbiddenFlowCalls);
 	const calls = result.flowCallArgs ?? [];
@@ -435,7 +435,7 @@ function scoreFlowCallExpectations(testCase, result) {
 	// vocabulary can name — a pre-dispatch refusal outside it (say a failed
 	// preset resolution) is not counted, so the note names the codes.
 	if (testCase.maxRefusedCalls !== undefined) {
-		const refusals = calls.map((args) => callAdmissibilityFailure(args)).filter(Boolean);
+		const refusals = calls.map((args) => callAdmissibilityFailure(args, admissibility)).filter(Boolean);
 		if (refusals.length > testCase.maxRefusedCalls) {
 			failures.push(`${refusals.length} call(s) refused by the scored admissibility vocabulary (${[...new Set(refusals.map((refusal) => refusal.code))].join(",")}) exceed the case budget of ${testCase.maxRefusedCalls}`);
 		}
@@ -444,12 +444,12 @@ function scoreFlowCallExpectations(testCase, result) {
 	for (const expectation of expectations) {
 		if (expectation.firstCall) {
 			const match = calls.length > 0
-				? flowCallMatchesExpectation({ arguments: calls[0] }, expectation)
+				? flowCallMatchesExpectation({ arguments: calls[0] }, expectation, admissibility)
 				: { pass: false, notes: "no flow call was emitted" };
 			if (!match.pass) failures.push(`the first flow call must already satisfy the expectation: ${match.notes}`);
 			continue;
 		}
-		const matches = calls.map((call) => flowCallMatchesExpectation({ arguments: call }, expectation));
+		const matches = calls.map((call) => flowCallMatchesExpectation({ arguments: call }, expectation, admissibility));
 		if (!matches.some((match) => match.pass)) {
 			failures.push(matches[0]?.notes ?? "no flow call matched");
 		}
@@ -461,7 +461,7 @@ function scoreFlowCallExpectations(testCase, result) {
 	return { pass: true, notes: "flow arguments matched" };
 }
 
-export function scoreSelection(testCase, result) {
+export function scoreSelection(testCase, result, admissibility = {}) {
 	if (result.inconclusive || result.timedOut) {
 		return {
 			pass: false,
@@ -477,7 +477,7 @@ export function scoreSelection(testCase, result) {
 	const selectionOk = flowUsed === testCase.expectFlow;
 	const answerRequired = testCase.answerPattern && !(testCase.expectFlow && result.stoppedAfterFlowCall);
 	const answerOk = answerRequired ? new RegExp(testCase.answerPattern, "i").test(result.answer ?? "") : true;
-	const argsOk = testCase.expectFlow ? scoreFlowCallExpectations(testCase, result) : { pass: true, notes: "no flow expected" };
+	const argsOk = testCase.expectFlow ? scoreFlowCallExpectations(testCase, result, admissibility) : { pass: true, notes: "no flow expected" };
 	return {
 		pass: !result.error && selectionOk && answerOk && argsOk.pass,
 		selectionOk,

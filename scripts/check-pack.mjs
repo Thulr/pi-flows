@@ -286,5 +286,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // so Pi cannot fuzzy-retarget a vanished pin. The file set grows to 109 only for
 // agent-profile.ts; tests and fault scenarios remain unpackaged. Headroom is
 // ~497 B over the measured 1_250_653.
-assert.ok(pack.unpackedSize < 1_251_150, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_253_600 after #138's third review: historical v3 verification
+// now tries a bounded set of Thinking clamps when a pinned model's old metadata
+// has left the roster. The scorer parity fix and all new coverage live under
+// evals/ and tests/, so the packaged file set remains 109. Headroom is ~500 B
+// over the measured size, matching previous raises.
+assert.ok(pack.unpackedSize < 1_253_600, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
