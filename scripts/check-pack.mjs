@@ -245,7 +245,9 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Declarations and stamps over the existing event path, not new machinery.
 // Same verification: the file set is unchanged at 108 and none from tests/,
 // scripts/, or evals/ (the new coverage is tests/trace-owed-events.test.ts,
-// not packaged). Headroom is ~460 B over the measured 1_216_890, matching
-// the previous raises.
-assert.ok(pack.unpackedSize < 1_217_350, `package unpacked size too large: ${pack.unpackedSize}`);
+// not packaged). The PR review round added the owedEventKinds member to
+// AGENTS.md's add-a-mode recipe and compile-error list, which is packaged.
+// Headroom is ~481 B over the measured 1_217_369, matching the previous
+// raises.
+assert.ok(pack.unpackedSize < 1_217_850, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
