@@ -255,7 +255,16 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // attributes, so a caller cannot forge the kind, the stamp, or the placement
 // the read-back gates on. Types and merge order over the existing event
 // path, not new machinery, plus the CONTEXT.md and changelog sentences that
-// round required. Headroom is ~461 B over the measured 1_220_339, matching
-// the previous raises.
-assert.ok(pack.unpackedSize < 1_220_800, `package unpacked size too large: ${pack.unpackedSize}`);
+// round required.
+//
+// Raised again for a glossary-only audit pass: no code moved and no file was
+// added or removed (the set is still 108, still none from tests/, scripts/,
+// or evals/). CONTEXT.md gains Critical path and Artifact reference — two
+// shipped concepts the glossary was already leaning on, one of them the only
+// required mode-table member without an entry — and the Wave entry gains the
+// plan's `opening` and its fourth reader. Prose in the two packaged docs is
+// the whole delta, which is why the raise is ~2.8 KB against a file set that
+// did not move. Headroom is ~446 B over the measured 1_223_554, matching the
+// previous raises.
+assert.ok(pack.unpackedSize < 1_224_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

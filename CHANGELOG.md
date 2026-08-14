@@ -30,6 +30,19 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   before the declaration existed stay exempt. Four verdicts that were parsed
   but never recorded now leave `validation` evidence: `loop.judge_verdict`,
   `debate.judge_verdict`, `vote.tally`, and `search.scores`.
+- `CONTEXT.md` defines **Critical path** and **Artifact reference**, two
+  shipped concepts the glossary had been leaning on without naming. Critical
+  path is the fourth required member of the mode table and the only one with
+  no entry beside `plan`, `preSpawnRefusal`, and `owedEventKinds`; its entry
+  records that the arithmetic is the mode's own, that `undefined` is a
+  declared answer rather than a fall-through, and that it is not the worker
+  time or elapsed time printed beside it. Artifact reference names the
+  containment-and-digest sense that **Rejected envelope** and **Unvalidated
+  claims** already defined themselves against, and puts the bare word
+  "artifact" — ordinary prose for a child's work product, asserting no
+  containment and no digest — on its Avoid list. The **Wave** entry now names
+  the plan's `opening` and the selection eval's roster rule, the fourth reader
+  of a declaration it had listed three readers for.
 
 ### Changed
 

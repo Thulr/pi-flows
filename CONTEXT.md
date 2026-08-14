@@ -76,7 +76,7 @@ The slot in a mode's topology that an agent fills (generator, critic, worker, ad
 _Avoid_: position
 
 **Wave**:
-The set of roles a mode spawns concurrently at one step of its topology. A wave is the planned concurrent set; a stage is the recorded span that step becomes in the trace. Each mode declares its pre-spawn waves once as its plan (`modes/plan.ts` vocabulary, a `plan` member on the mode table beside the handler); requested agents, the shared-write admissibility mirror, and budget disclosure read that declaration rather than re-deriving the topology by hand.
+The set of roles a mode spawns concurrently at one step of its topology. A wave is the planned concurrent set; a stage is the recorded span that step becomes in the trace. Each mode declares its pre-spawn waves once as its plan (`modes/plan.ts` vocabulary, a `plan` member on the mode table beside the handler), along with the plan's **opening** — the refs that call would spawn first, declared empty where the first spawn is not statically certain (monitor's reactor waits on its probe, worktree's writers on a repository scan, a workflow resume on persisted state). Requested agents, the shared-write admissibility mirror, budget disclosure, and the selection eval's roster rule read that declaration rather than re-deriving the topology by hand.
 _Avoid_: batch, group
 
 **Task**:
@@ -127,6 +127,10 @@ _Avoid_: return contract
 **Return envelope**:
 A structured child result bound to the delegation contract under which it was produced.
 _Avoid_: response object, result contract
+
+**Artifact reference**:
+A path a child declares in its return envelope as a product of its work, admitted only if it resolves inside the child's cwd and matches any digest declared for it. The check is what separates a checkable claim about a file from a claim about a file, which is why an escaped path or a failed digest is an integrity failure that costs the envelope its **Unvalidated claims** rather than a conformance failure that does not. Recorded per declared reference as an `artifact.referenced` or `artifact.rejected` coordination event, whether or not the result crossed a role boundary. The bare word "artifact" is also ordinary prose here for whatever a child produced — evaluate's operator builds one, workflow persists them per phase — and in that use claims no containment and no digest; say the full term wherever the guardrail sense is meant.
+_Avoid_: attachment, output file, the bare "artifact" (that names a child's work product and asserts nothing about it)
 
 **Rejected envelope**:
 A structurally valid envelope that failed contract validation — its identity did not bind, its artifacts were uncontained or did not match their digests, or its `data` did not satisfy the return schema. It is never a handoff and never reaches `result.envelope`, but it is retained as trace evidence of what the spend produced: a digest mismatch's artifact claim is the record of the corruption. Not a kind of return envelope — the term above asserts a binding a rejected envelope may not have.
@@ -201,6 +205,10 @@ _Avoid_: trace id (that is the stable eval linkage), attempt (that is part of th
 **Record extent**:
 Where one invocation's record begins in a shared, append-only trace file — the file's size the moment its sink was born, before any of its rows could exist. The strict read-back reads only from there (#129): earlier bytes predate the invocation and cannot honestly carry its just-minted **Invocation id**, so a stampless remainder among them is a predecessor's record, judged by whole-file readers (the report) rather than by the live gate — the same way rows appended after finalize always were. Everything a concurrent writer lands after the sink exists falls inside the extent and is judged as before. Races can only under-estimate the boundary (appends grow the file), which reads extra foreign rows, never fewer own rows.
 _Avoid_: offset (a byte position claims no ownership), byte range
+
+**Critical path**:
+The serial time a mode's topology forced over its settled runs — the sum where steps are sequential, the slowest run where a wave is concurrent, the longest dependency chain through a graph. Declared per mode as its own arithmetic beside its handler (a `criticalPath` member on the mode table, like `plan`), because only the mode knows which runs were made to wait on which; `undefined` is a declared answer for a mode whose path no duration arithmetic reflects — monitor's probe waits are unmeasured wall clock around at most one reactor run — never a fall-through, and the report counts availability separately and prints `n/a` rather than a `0` that would read as "instant". Distinct from the two quantities beside it on the same report line: **worker time** sums every child regardless of concurrency, and **elapsed time** is the flow's wall clock.
+_Avoid_: longest path, elapsed time (that is wall clock), worker time (that is the sum over every child)
 
 **Execution success**:
 A run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct.
