@@ -182,6 +182,12 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 		task: "t",
 		workflow: { phases: [{ id: "a", agent: "recon", task: "A" }, { id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "made-up", task: "B" }] },
 	})?.code, "WORKFLOW_INVALID", "a later approval's missing profile is still a pre-first-Child refusal");
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		thinking: "low",
+		workflow: { phases: [{ id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "recon", model: "vendor/exact-model", task: "B" }] },
+	})?.code, "WORKFLOW_APPROVAL_REQUIRED", "an authored exact pin is judged against the subject's runtime roster, not only eval/* identities");
 	// A resume derives nothing: which phase spawns first lives in persisted
 	// state the static mirror cannot read, and a fresh subject is refused
 	// WORKFLOW_STATE_INVALID — outside the vocabulary — before any roster

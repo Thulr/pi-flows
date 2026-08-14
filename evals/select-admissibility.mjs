@@ -12,11 +12,12 @@ import { fileURLToPath } from "node:url";
 import { currentFlowDepth, nonSpawningFlowCall, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { firstSpawnPlan, modePreSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
 import { plannedContract } from "../extensions/pi-flows/modes/plan.ts";
-import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
+import { MAX_FLOW_DEPTH, THINKING_LEVELS } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
+import { parseModelSpec } from "../extensions/pi-flows/model-roster.ts";
 import { flowParamsSchemaError } from "../extensions/pi-flows/schema.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
 import { strictTraceConfigError } from "../extensions/pi-flows/trace.ts";
@@ -66,6 +67,38 @@ const scoringAgentProfiles = {
     issues: [],
   },
 };
+
+function scoringAgentProfilesFor(params) {
+	// The public flow schema defines `model` fields as exact pins. The scorer has
+	// no live Pi registry, so add those authored identities to its synthetic
+	// registry rather than falsely comparing them only with eval/*. Production
+	// still requires the same pin to exist in Pi's actual current roster.
+	const workflow = params?.workflow;
+	const authored = [
+		params?.model,
+		...(Array.isArray(workflow?.phases) ? workflow.phases.map((phase) => phase?.model) : []),
+		workflow?.debrief?.model,
+		...scoringDiscovery.agents.map((agent) => agent.model),
+	];
+	const references = [...new Set(authored
+		.filter((value) => typeof value === "string" && value.trim())
+		.map((value) => parseModelSpec(value).model)
+		.filter((value) => value.includes("/") && !value.endsWith("/")))];
+	const known = new Set(scoringAgentProfiles.roster.available.map((model) => model.reference));
+	const added = references.filter((reference) => !known.has(reference)).map((reference) => {
+		const slash = reference.indexOf("/");
+		return {
+			reference,
+			provider: reference.slice(0, slash),
+			id: reference.slice(slash + 1),
+			reasoning: true,
+			thinkingLevels: [...THINKING_LEVELS],
+			contextWindow: 100_000,
+		};
+	});
+	if (added.length === 0) return scoringAgentProfiles;
+	return { ...scoringAgentProfiles, roster: { ...scoringAgentProfiles.roster, available: [...scoringAgentProfiles.roster.available, ...added] } };
+}
 
 // The tool resolves a preset before any gate runs, so admissibility must be
 // asked of the expanded call, not the raw preset reference: a permitted
@@ -178,7 +211,7 @@ export function callAdmissibilityFailure(args) {
 	// headless, so an approval gate that needs a UI refuses here. A mode added
 	// to the table is covered without touching this file; only the scored
 	// vocabulary above is this seam's own decision.
-	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true, agentProfiles: scoringAgentProfiles });
+	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true, agentProfiles: scoringAgentProfilesFor(effective ?? {}) });
 	if (modeRefusal && SCORED_PRE_SPAWN_CODES.has(modeRefusal.code)) {
 		return { code: modeRefusal.code, reason: modeRefusal.message.replace(/\.$/, "") };
 	}
