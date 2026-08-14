@@ -353,10 +353,9 @@ type SpentApprovalMigration =
 	| { receipt?: undefined; error: FlowError };
 
 /**
- * Verify and rebind a v3 receipt already spent on a completed action as
- * audit-only v4 compatibility evidence. This seam checks both properties itself:
- * no caller can turn a merely issued receipt into current authorization by
- * invoking a low-level re-sealer.
+ * Verify and rebind a v3 receipt already spent on its action. Completed actions
+ * retain audit evidence; in-progress actions retain their same-action retry.
+ * Checking consumption here prevents callers from re-sealing merely issued consent.
  */
 export function migrateSpentApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): SpentApprovalMigration {
 	const verified = ApprovalAuthorization.verify(receipt, historical, { consumer: historical.action });
@@ -366,9 +365,9 @@ export function migrateSpentApprovalReceipt(receipt: unknown, historical: Approv
 		return {
 			error: flowError(
 				"APPROVAL_RECEIPT_INVALID",
-				"A historical approval receipt is inconsistent with completed workflow state.",
-				`Receipt ${stored.receiptId} was never spent on the action the state records as completed.`,
-				"Restore the original state file or start a fresh workflow; unspent historical consent cannot be migrated as completed evidence.",
+				"A historical approval receipt is inconsistent with workflow state.",
+				`Receipt ${stored.receiptId} was never spent on the action the state records as started.`,
+				"Restore the original state file or start a fresh workflow; unspent historical consent cannot become spent compatibility evidence.",
 			),
 		};
 	}

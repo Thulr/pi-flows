@@ -853,11 +853,11 @@ attribution, not an authenticated identity.
 Version-2 state files migrate on resume: a completed approval recorded as
 `APPROVED` becomes a `legacy-compatibility` receipt with no approver and no
 expiry, which still binds the gated action. Version-3 receipts predate effective
-Agent-profile binding. Outstanding v3 consent reopens for approval; a valid v3
-receipt already spent on fully completed work becomes audit-only
-`legacy-compatibility` evidence while preserving its receipt id, actor, and real
-issue/consumption times. Malformed and replayed v3 receipts remain hard failures
-rather than being replaced by a fresh prompt.
+Agent-profile binding. Unconsumed outstanding v3 consent reopens. A valid receipt
+consumed by its own action keeps its identity as `legacy-compatibility`: audit-only
+after completion, or able to resume the same interrupted gated run or debrief.
+That one migration binds new profile fields to the current bindable profile;
+later drift is caught. Malformed and replayed v3 receipts remain hard failures.
 
 This protects against replay and drift in a local state file, not against an
 attacker who can write that file — there is no key to sign a receipt with that

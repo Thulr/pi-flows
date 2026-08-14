@@ -218,26 +218,26 @@ export function historicalApprovalBindingForV3(phases: any[], index: number, dep
 	const gated = phases.filter((phase: any) => gatedIds.has(phase.id));
 	const environment = workflowProfileEnvironment(deps);
 	const historicalPhase = (phase: any) => {
-		const profile = effectiveProfile(phase, deps.params, environment).identity;
+		const profile = effectiveProfile(phase, deps.params, environment);
 		return {
 			...gatedPhaseTerms(phase, deps.params),
 			cwd: phase.cwd ?? null,
-			model: profile.model,
-			thinking: profile.thinking,
+			model: profile.modelChoice.model ?? null,
+			thinking: profile.modelChoice.thinking ?? null,
 			tools: phase.tools ?? null,
 		};
 	};
 	const debrief = deps.params.workflow?.debrief;
 	const gatesDebrief = Boolean(debrief?.agent && index + gatedIds.size + 1 >= phases.length);
-	const debriefProfile = gatesDebrief ? effectiveProfile(debrief, deps.params, environment).identity : null;
+	const debriefProfile = gatesDebrief ? effectiveProfile(debrief, deps.params, environment) : null;
 	const historicalDebrief = gatesDebrief
 		? {
 				contract: deps.params.contract ?? null,
 				returnContract: deps.params.returnContract ?? null,
 				requireEvidence: deps.params.requireEvidence ?? false,
 				tier: debrief.tier ?? deps.params.tier ?? null,
-				model: debriefProfile?.model ?? null,
-				thinking: debriefProfile?.thinking ?? null,
+				model: debriefProfile?.modelChoice.model ?? null,
+				thinking: debriefProfile?.modelChoice.thinking ?? null,
 			}
 		: null;
 	return {

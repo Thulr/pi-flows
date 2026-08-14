@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { ApprovalAuthorization, approvalBindingDigest, approvalReceiptDigest, type ApprovalBinding, type ApprovalReceipt } from "../extensions/pi-flows/approval.ts";
-import { freshDir, runFlow } from "./stub-harness.ts";
+import { freshDir, runFlow, STUB_REGISTRY } from "./stub-harness.ts";
 
 const params = {
 	task: "Ship the release.",
@@ -62,9 +62,10 @@ function asHistoricalReceipt(receipt: ApprovalReceipt, binding: ApprovalBinding,
 	return { ...unsealed, receiptDigest: approvalReceiptDigest(unsealed) };
 }
 
-async function historicalState(cwd: string, child: unknown) {
-	await runFlow(params, {}, { cwd });
-	await runFlow(resumeParams, { strategist: child }, { cwd, hasUI: true });
+async function historicalState(cwd: string, child: unknown, workflowParams: any = params) {
+	const resumedParams = { ...workflowParams, workflow: { ...workflowParams.workflow, resume: true } };
+	await runFlow(workflowParams, {}, { cwd });
+	await runFlow(resumedParams, { strategist: child }, { cwd, hasUI: true });
 	const state = await readState(cwd);
 	const binding = historicalV3Binding(state.digest);
 	state.version = 3;
@@ -144,6 +145,25 @@ test("a fully spent historical receipt migrates as audit evidence without author
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 1, "completed work is not dispatched again");
 });
 
+test("a completed v3 receipt migrates after its exact model leaves the current roster", async () => {
+	const cwd = await freshDir();
+	const pinnedParams = {
+		...params,
+		workflow: {
+			...params.workflow,
+			phases: [params.workflow.phases[0], { ...params.workflow.phases[1], model: "test-provider/strong-model" }],
+		},
+	};
+	const { state } = await historicalState(cwd, "SHIPPED", pinnedParams);
+	await writeState(cwd, state);
+	const registry = { getAvailable: () => STUB_REGISTRY.getAvailable().filter((model) => model.id !== "strong-model") };
+
+	const resumed = await runFlow({ ...pinnedParams, workflow: { ...pinnedParams.workflow, resume: true } }, {}, { cwd, registry });
+	assert.equal(resumed.result.details.error, undefined);
+	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
+	assert.equal((await readState(cwd)).version, 4);
+});
+
 test("a stale fully spent v3 receipt keeps its version so restoring conditions can retry migration", async () => {
 	const cwd = await freshDir();
 	const { state } = await historicalState(cwd, "SHIPPED");
@@ -182,7 +202,7 @@ test("a completed state missing one of its phases is refused instead of treated 
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, completed.calls.filter((call) => call.agent === "strategist").length);
 });
 
-test("a completed historical debrief receipt keeps its audit identity and cannot rerun the debrief", async () => {
+test("a consumed v3 receipt resumes its interrupted debrief", async () => {
 	const cwd = await freshDir();
 	const debriefParams = {
 		task: "Analyze and summarize.",
@@ -195,6 +215,53 @@ test("a completed historical debrief receipt keeps its audit identity and cannot
 				{ id: "signoff", approval: { message: "Approve synthesis" } },
 			],
 			debrief: { agent: "debrief" },
+		},
+	};
+	await runFlow(debriefParams, { recon: "ANALYSIS", debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+	const state = await readState(cwd);
+	const original = { ...state.receipts.signoff };
+	const historical: ApprovalBinding = {
+		action: "workflow.phase:signoff",
+		parameters: {
+			approvalMessage: "Approve synthesis",
+			agentScope: "user",
+			incompleteHandoffPolicy: "fail",
+			handoffPolicy: { call: "warn", effective: "warn" },
+			gatedPhases: [],
+			debrief: { contract: null, returnContract: null, requireEvidence: false, tier: null, model: "test-provider/session-model", thinking: "low" },
+		},
+		requestedBy: "flow:workflow",
+		workflowDigest: state.digest,
+		stateVersion: 3,
+	};
+	state.version = 3;
+	state.receipts.signoff = asHistoricalReceipt(state.receipts.signoff, historical);
+	await writeState(cwd, state);
+
+	const resumed = await runFlow({ ...debriefParams, workflow: { ...debriefParams.workflow, resume: true } }, { debrief: "SUMMARY" }, { cwd });
+	assert.equal(resumed.result.details.error, undefined);
+	assert.equal(resumed.calls.filter((call) => call.agent === "debrief").length, 2);
+	const migrated = await readState(cwd);
+	assert.equal(migrated.version, 4);
+	assert.equal(migrated.status, "completed");
+	assert.equal(migrated.receipts.signoff.validation, "legacy-compatibility");
+	assert.equal(migrated.receipts.signoff.receiptId, original.receiptId);
+	assert.equal(migrated.receipts.signoff.consumedAt, original.consumedAt);
+});
+
+test("a completed historical debrief receipt migrates after its exact model leaves the roster", async () => {
+	const cwd = await freshDir();
+	const debriefParams = {
+		task: "Analyze and summarize.",
+		agentScope: "user",
+		thinking: "low",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "analyze", agent: "recon", task: "Analyze" },
+				{ id: "signoff", approval: { message: "Approve synthesis" } },
+			],
+			debrief: { agent: "debrief", model: "test-provider/session-model" },
 		},
 	};
 	await runFlow(debriefParams, { recon: "ANALYSIS", debrief: "SUMMARY" }, { cwd, hasUI: true });
@@ -218,7 +285,8 @@ test("a completed historical debrief receipt keeps its audit identity and cannot
 	state.receipts.signoff = asHistoricalReceipt(state.receipts.signoff, historical);
 	await writeState(cwd, state);
 
-	const resumed = await runFlow({ ...debriefParams, workflow: { ...debriefParams.workflow, resume: true } }, { debrief: "MUST NOT RUN" }, { cwd });
+	const registry = { getAvailable: () => STUB_REGISTRY.getAvailable().filter((model) => model.id !== "session-model") };
+	const resumed = await runFlow({ ...debriefParams, workflow: { ...debriefParams.workflow, resume: true } }, { debrief: "MUST NOT RUN" }, { cwd, registry });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.calls.filter((call) => call.agent === "debrief").length, 1);
 	const migrated = (await readState(cwd)).receipts.signoff;

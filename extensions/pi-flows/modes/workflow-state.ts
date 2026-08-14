@@ -13,7 +13,7 @@ import type { DelegationHandoffEnvelope, FlowError, ModeDeps } from "../types.ts
 import { sanitizeText } from "../sanitize.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, type PersistedHandoffAttestation } from "../delegation.ts";
 import { legacyApprovalReceipt, migrateSpentApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
-import { approvalBindingFor, gatedPhaseIds, historicalApprovalBindingForV3, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
+import { approvalBindingFor, approvalProfileRefusal, gatedPhaseIds, historicalApprovalBindingForV3, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 
 export interface WorkflowState {
 	version: typeof WORKFLOW_STATE_VERSION;
@@ -131,9 +131,9 @@ export function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDep
 }
 
 /**
- * v3 -> v4: outstanding consent re-verifies stale and follows the ordinary
- * reapproval path. Only a valid receipt already spent on fully completed work
- * is rebound, as legacy compatibility evidence that can authorize nothing new.
+ * v3 -> v4: unspent outstanding consent reopens. Spent same-action receipts
+ * become compatibility evidence: audit-only if complete, or retaining their
+ * retry while the action remains in progress.
  */
 export function migrateWorkflowStateV3(legacy: any, phases: any[], deps: ModeDeps, digest: string): { state: WorkflowState; error?: FlowError } {
 	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, receipts: { ...legacy.receipts } };
@@ -143,13 +143,17 @@ export function migrateWorkflowStateV3(legacy: any, phases: any[], deps: ModeDep
 		const authorizesCompletion = index + gated.length + 1 >= phases.length;
 		const outstanding = gated.some((id) => !state.completedPhaseIds.includes(id))
 			|| (authorizesCompletion && legacy.status !== "completed");
-		if (outstanding) continue;
+		const stored = state.receipts[phase.id];
+		if (outstanding && typeof stored?.consumedAt !== "string") continue;
 
 		const historical = historicalApprovalBindingForV3(phases, index, deps, digest);
-		const stored = state.receipts[phase.id];
 		const current = approvalBindingFor(phases, index, deps, digest);
 		const migrated = migrateSpentApprovalReceipt(stored, historical, current);
 		if (migrated.error) return { state, error: migrated.error };
+		if (outstanding) {
+			const profileError = approvalProfileRefusal(phases, index, deps.params, workflowProfileEnvironment(deps));
+			if (profileError) return { state, error: profileError };
+		}
 		state.receipts[phase.id] = migrated.receipt;
 	}
 	return { state };
