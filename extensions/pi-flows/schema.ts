@@ -225,7 +225,7 @@ export const FlowWorkflowPhase = Type.Object({
 	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent for a work phase. Omit only for an approval phase." })),
 	task: Type.Optional(Type.String({ minLength: 1, description: "Work phase task. Supports {task}, {previous}, and {phase.<id>} output placeholders." })),
 	approval: Type.Optional(Type.Object({
-		message: Type.String({ minLength: 1, description: "Approval question shown in an interactive UI. Headless runs pause and persist resumable state." }),
+		message: Type.String({ minLength: 1, description: "Approval question shown in an interactive UI. Consent binds every gated Role's selected Agent source, prompt digest, effective tools, resolved cwd, model, and Thinking level; headless runs pause and persist resumable state." }),
 	})),
 	checkCommand: Type.Optional(Type.String({ minLength: 1, description: "Deterministic gate run after this work phase. The workflow stops if it exits non-zero." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this phase and its checkCommand." })),
@@ -241,11 +241,11 @@ export const FlowWorkflowPhase = Type.Object({
 export const FlowWorkflow = Type.Object({
 	phases: Type.Array(FlowWorkflowPhase, { minItems: 1, maxItems: MAX_WORKFLOW_PHASES, description: "Ordered work and approval phases. Exactly one of agent+task or approval is required per phase." }),
 	stateFile: Type.Optional(Type.String({ description: "Persist redacted phase state for audit/resume. Defaults to .pi/flow-workflows/<workflow-digest>.json." })),
-	resume: Type.Optional(Type.Boolean({ description: "Resume completed phases from stateFile. The workflow digest must match.", default: false })),
+	resume: Type.Optional(Type.Boolean({ description: "Resume completed phases from stateFile. The workflow digest must match and outstanding receipts are rechecked against the effective Agent profiles that would run now. An already completed workflow is an audit-only no-op.", default: false })),
 	approvalTtlMs: Type.Optional(Type.Number({ description: `How long an approval receipt authorizes its gated action, in milliseconds. A resume after this window needs a fresh approval. Default ${DEFAULT_APPROVAL_TTL_MS} (24h).`, minimum: MIN_APPROVAL_TTL_MS, maximum: MAX_APPROVAL_TTL_MS, default: DEFAULT_APPROVAL_TTL_MS })),
 	debrief: Type.Optional(FlowAgentRef),
 }, {
-	description: "Phase-gated state-machine mode: execute ordered work phases, enforce deterministic gates, pause at resumable human approval nodes, persist artifacts, then optionally debrief the completed phase outputs.",
+	description: "Phase-gated state-machine mode: execute ordered work phases, enforce deterministic gates, bind durable approval to effective Agent profiles, persist artifacts, then optionally debrief the completed phase outputs.",
 });
 
 export const FlowWorktreeTask = Type.Object({

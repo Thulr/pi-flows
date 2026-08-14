@@ -7,14 +7,15 @@
 // state shape stays workflow.ts's business.
 import { sanitizeText } from "../sanitize.ts";
 import { WORKFLOW_COMPLETE_STEP, type ApprovalAuthorization, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
-import type { CapturePolicy, ModeDeps } from "../types.ts";
-import { resolveChildModel } from "../runner.ts";
+import { resolveAgentProfile, type AgentProfileEnvironment, type EffectiveAgentProfile } from "../agent-profile.ts";
+import { flowError, type CapturePolicy, type FlowError, type ModeDeps } from "../types.ts";
 
 /** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
 const APPROVER_LABEL_CAP = 256;
+const PROFILE_REFUSAL_POLICY: CapturePolicy = { recordContent: true, redactSecrets: true };
 
 /** The state schema version an approval is granted against. */
-export const WORKFLOW_STATE_VERSION = 3;
+export const WORKFLOW_STATE_VERSION = 4;
 
 /**
  * Receipt failures a human can simply answer again: the approved action changed,
@@ -62,13 +63,9 @@ export function gatedPhaseIds(phases: any[], index: number): string[] {
 	return gated;
 }
 
-/** Has any of the run this approval gates already executed? */
-export const gatedRunStarted = (phases: any[], index: number, completedPhaseIds: string[]): boolean =>
-	gatedPhaseIds(phases, index).some((id) => completedPhaseIds.includes(id));
-
 /**
- * What one gated ref will actually run as: the concrete model and thinking
- * level, resolved exactly the way dispatch resolves them.
+ * What one gated ref will actually run as, resolved through the same effective
+ * Agent-profile seam the child-process adapter uses.
  *
  * The tier NAME is not enough to bind. `tier:"deep"` is a question, not an
  * answer — it resolves through the per-install roster, so a config override, a
@@ -77,55 +74,92 @@ export const gatedRunStarted = (phases: any[], index: number, completedPhaseIds:
  * that recorded only the word would still verify while the child ran materially
  * different work, which is the one thing a binding digest exists to prevent.
  *
- * Resolved through `resolveChildModel` rather than re-derived here so the
- * receipt and the dispatch can never disagree about what a tier means.
+ * The receipt and dispatch share this resolver so source selection, inherited
+ * tools, cwd, model, and Thinking cannot drift between them.
  */
-function resolvedDispatch(ref: any, params: any, deps: ModeDeps): { model: string | null; thinking: string | null; unbound: boolean } {
-	const agent = deps.discovery.agents.find((candidate) => candidate.name === ref.agent);
-	const choice = resolveChildModel(
-		{ model: agent?.model, tier: agent?.tier, thinking: agent?.thinking },
-		// Mirrors childRunOptions exactly, including keeping the role's own level
-		// apart from the flow-wide fallback — a binding that resolved differently
-		// from the dispatch would be worse than no binding.
-		{ model: ref.model ?? params.model, tier: ref.tier ?? params.tier, thinking: ref.thinking, flowThinking: params.thinking },
-		deps.roster,
-	);
-	// `null` here means "this phase names no model, so the child loads pi's
-	// configured default" — genuinely unknowable to an extension, and therefore
-	// unbindable. `unbound` carries that fact up so the approval can refuse rather
-	// than issue a receipt that silently under-binds; substituting the session
-	// model would close the gap on paper while recording a model the child does
-	// not run.
-	return { model: choice.model ?? null, thinking: choice.thinking ?? null, unbound: choice.model === undefined };
+function effectiveProfile(ref: any, params: any, environment: AgentProfileEnvironment): EffectiveAgentProfile {
+	return resolveAgentProfile({
+		agents: environment.agents,
+		agentName: ref.agent,
+		defaultCwd: environment.defaultCwd,
+		cwd: ref.cwd,
+		model: ref.model ?? params.model,
+		tier: ref.tier ?? params.tier,
+		thinking: ref.thinking,
+		flowThinking: params.thinking,
+		tools: ref.tools,
+		roster: environment.roster,
+	});
 }
 
+/** Project ModeDeps onto the invocation facts effective-profile resolution owns. */
+export const workflowProfileEnvironment = (deps: ModeDeps): AgentProfileEnvironment => ({
+	agents: deps.discovery.agents,
+	defaultCwd: deps.defaultCwd,
+	roster: deps.roster,
+});
+
 /**
- * Gated refs whose model cannot be bound, by phase id.
+ * Gated refs whose effective Agent profile cannot be bound, by phase id.
  *
- * A receipt claims to bind the exact conditions it authorizes. When a ref names
- * no model, no tier, and runs an agent that declares neither, what it executes
- * is pi's configured default — which can change before a persisted workflow
- * resumes, under consent that still verifies. This codebase already refuses in
- * the analogous case rather than pretend: `BUDGET_UNOBSERVABLE` stops a run when
- * the cost telemetry a ceiling depends on is missing.
- *
- * Reported whether or not the roster resolved. A broken registry does not make
- * the risk smaller — it makes every tier unresolvable, so *more* work runs on a
- * model nobody recorded — and the operator can still act on it by naming a model
- * outright. Excluding that case would have left the refusal absent exactly when
- * it matters most.
+ * A receipt claims to bind exact conditions. A missing Agent leaves source and
+ * prompt unknown; Pi-default tools and implicit model/Thinking settings can
+ * change outside the workflow before resume. Those profiles are refused before
+ * consent rather than represented by a value the runner may later interpret
+ * differently.
  */
-export function unbindableGatedRefs(phases: any[], index: number, deps: ModeDeps): string[] {
+function unboundGatedRefs(phases: any[], index: number, params: any, environment: AgentProfileEnvironment): string[] {
 	const gatedIds = new Set(gatedPhaseIds(phases, index));
 	const unbindable = phases
 		.filter((phase: any) => gatedIds.has(phase.id) && phase.agent)
-		.filter((phase: any) => resolvedDispatch(phase, deps.params, deps).unbound)
+		.filter((phase: any) => effectiveProfile(phase, params, environment).unbound.length > 0)
 		.map((phase: any) => phase.id);
-	const debrief = deps.params.workflow?.debrief;
-	if (debrief?.agent && index + gatedIds.size + 1 >= phases.length && resolvedDispatch(debrief, deps.params, deps).unbound) {
+	const debrief = params.workflow?.debrief;
+	if (debrief?.agent && index + gatedIds.size + 1 >= phases.length && effectiveProfile(debrief, params, environment).unbound.length > 0) {
 		unbindable.push("debrief");
 	}
 	return unbindable;
+}
+
+/** The one refusal produced when an approval would under-bind a gated profile. */
+export function approvalProfileRefusal(phases: any[], index: number, params: any, environment: AgentProfileEnvironment): FlowError | null {
+	const unbindable = unboundGatedRefs(phases, index, params, environment);
+	if (unbindable.length === 0) return null;
+	const phase = phases[index];
+	const phaseId = sanitizeText(String(phase.id), PROFILE_REFUSAL_POLICY, 256);
+	const gatedIds = sanitizeText(unbindable.join(", "), PROFILE_REFUSAL_POLICY, 1024);
+	return flowError(
+		"WORKFLOW_INVALID",
+		`Approval phase "${phaseId}" gates work whose effective Agent profile cannot be recorded.`,
+		`These gated steps do not resolve every condition a receipt must bind (selected Agent source and prompt identity, effective tools, resolved cwd, concrete model, and Thinking level): ${gatedIds}. Missing Agents, Pi-default tools, model selectors without an exact current registry match, or implicit Thinking settings can change before resume without an exact value to compare.${environment.roster?.source === "unavailable" ? " No model registry was readable, so no model or tier could be bound here." : ""}`,
+		"Select a discovered Agent and give each listed step explicit tools, model (or a resolvable tier), and Thinking level wherever its Agent profile does not supply them.",
+	);
+}
+
+/** Fresh-workflow profile refusal declared before its first Child can spawn. */
+export function workflowApprovalProfileRefusal(params: any, environment: AgentProfileEnvironment): FlowError | null {
+	if (params.workflow?.resume) return null;
+	const phases = Array.isArray(params.workflow?.phases) ? params.workflow.phases : [];
+	for (const [index, phase] of phases.entries()) {
+		if (!phase?.approval?.message) continue;
+		const refusal = approvalProfileRefusal(phases, index, params, environment);
+		if (refusal) return refusal;
+	}
+	return null;
+}
+
+/** Authored and inherited phase terms shared by current and historical bindings. */
+function gatedPhaseTerms(phase: any, params: any): Record<string, unknown> {
+	return {
+		id: phase.id,
+		agent: phase.agent ?? null,
+		task: phase.task ?? null,
+		tier: phase.tier ?? params.tier ?? null,
+		checkCommand: phase.checkCommand ?? null,
+		contract: phase.contract ?? null,
+		returnContract: phase.returnContract ?? params.returnContract ?? null,
+		requireEvidence: phase.requireEvidence ?? params.requireEvidence ?? false,
+	};
 }
 
 /**
@@ -136,22 +170,15 @@ export function unbindableGatedRefs(phases: any[], index: number, deps: ModeDeps
  * rather than inherited.
  */
 export function normalizeGatedPhase(phase: any, params: any, deps: ModeDeps): Record<string, unknown> {
-	const dispatch = resolvedDispatch(phase, params, deps);
+	const profile = effectiveProfile(phase, params, workflowProfileEnvironment(deps)).identity;
 	return {
-		id: phase.id,
-		agent: phase.agent ?? null,
-		task: phase.task ?? null,
-		cwd: phase.cwd ?? null,
-		// The tier is kept for legibility — it is what the operator read — but what
-		// binds is what it resolves to, so roster drift invalidates the receipt.
-		tier: phase.tier ?? params.tier ?? null,
-		model: dispatch.model,
-		thinking: dispatch.thinking,
-		tools: phase.tools ?? null,
-		checkCommand: phase.checkCommand ?? null,
-		contract: phase.contract ?? null,
-		returnContract: phase.returnContract ?? params.returnContract ?? null,
-		requireEvidence: phase.requireEvidence ?? params.requireEvidence ?? false,
+		...gatedPhaseTerms(phase, params),
+		source: profile.source,
+		promptDigest: profile.promptDigest,
+		cwd: profile.resolvedCwd,
+		model: profile.model,
+		thinking: profile.thinking,
+		tools: profile.effectiveTools,
 	};
 }
 
@@ -165,14 +192,67 @@ export function normalizeGatedPhase(phase: any, params: any, deps: ModeDeps): Re
 function normalizeGatedDebrief(params: any, deps: ModeDeps): Record<string, unknown> | null {
 	const debrief = params.workflow?.debrief;
 	if (!debrief?.agent) return null;
-	const dispatch = resolvedDispatch(debrief, params, deps);
+	const profile = effectiveProfile(debrief, params, workflowProfileEnvironment(deps)).identity;
 	return {
-		contract: params.contract ?? null,
+		agent: debrief.agent,
+		source: profile.source,
+		promptDigest: profile.promptDigest,
+		tools: profile.effectiveTools,
+		cwd: profile.resolvedCwd,
+		contract: debrief.contract ?? params.contract ?? null,
 		returnContract: params.returnContract ?? null,
 		requireEvidence: params.requireEvidence ?? false,
 		tier: debrief.tier ?? params.tier ?? null,
-		model: dispatch.model,
-		thinking: dispatch.thinking,
+		model: profile.model,
+		thinking: profile.thinking,
+	};
+}
+
+/**
+ * The under-bound v3 projection, retained only to verify fully spent receipts
+ * before migrating them to audit-only compatibility evidence. It must remain an
+ * exact statement of the old schema; outstanding v3 consent is never rebuilt.
+ */
+export function historicalApprovalBindingForV3(phases: any[], index: number, deps: ModeDeps, digest: string): ApprovalBinding {
+	const gatedIds = new Set(gatedPhaseIds(phases, index));
+	const gated = phases.filter((phase: any) => gatedIds.has(phase.id));
+	const environment = workflowProfileEnvironment(deps);
+	const historicalPhase = (phase: any) => {
+		const profile = effectiveProfile(phase, deps.params, environment).identity;
+		return {
+			...gatedPhaseTerms(phase, deps.params),
+			cwd: phase.cwd ?? null,
+			model: profile.model,
+			thinking: profile.thinking,
+			tools: phase.tools ?? null,
+		};
+	};
+	const debrief = deps.params.workflow?.debrief;
+	const gatesDebrief = Boolean(debrief?.agent && index + gatedIds.size + 1 >= phases.length);
+	const debriefProfile = gatesDebrief ? effectiveProfile(debrief, deps.params, environment).identity : null;
+	const historicalDebrief = gatesDebrief
+		? {
+				contract: deps.params.contract ?? null,
+				returnContract: deps.params.returnContract ?? null,
+				requireEvidence: deps.params.requireEvidence ?? false,
+				tier: debrief.tier ?? deps.params.tier ?? null,
+				model: debriefProfile?.model ?? null,
+				thinking: debriefProfile?.thinking ?? null,
+			}
+		: null;
+	return {
+		action: approvalActionId(phases[index]),
+		parameters: {
+			approvalMessage: phases[index].approval.message,
+			agentScope: deps.agentScope,
+			incompleteHandoffPolicy: deps.params.incompleteHandoffPolicy ?? "fail",
+			handoffPolicy: deps.handoffs.resolution,
+			gatedPhases: gated.map(historicalPhase),
+			debrief: historicalDebrief,
+		},
+		requestedBy: "flow:workflow",
+		workflowDigest: digest,
+		stateVersion: 3,
 	};
 }
 

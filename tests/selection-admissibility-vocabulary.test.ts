@@ -170,13 +170,18 @@ test("a first call whose every reviewer is an invented agent is refused, not adm
 		task: "t",
 		workflow: { phases: [{ id: "a", agent: "recon", task: "A" }, { id: "b", agent: "made-up", task: "B" }] },
 	}), null);
-	// An approval opener is refused WORKFLOW_APPROVAL_REQUIRED before any
-	// roster check, exactly as the handler pauses before resolving agents.
+	// The mode declaration resolves every profile a fresh approval would bind
+	// before the headless UI question, exactly as the handler does before work.
 	assert.equal(callAdmissibilityFailure({
 		why: "x",
 		task: "t",
 		workflow: { phases: [{ id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "made-up", task: "B" }] },
-	})?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	})?.code, "WORKFLOW_INVALID");
+	assert.equal(callAdmissibilityFailure({
+		why: "x",
+		task: "t",
+		workflow: { phases: [{ id: "a", agent: "recon", task: "A" }, { id: "gate", approval: { message: "Approve?" } }, { id: "b", agent: "made-up", task: "B" }] },
+	})?.code, "WORKFLOW_INVALID", "a later approval's missing profile is still a pre-first-Child refusal");
 	// A resume derives nothing: which phase spawns first lives in persisted
 	// state the static mirror cannot read, and a fresh subject is refused
 	// WORKFLOW_STATE_INVALID — outside the vocabulary — before any roster

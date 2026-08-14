@@ -7,8 +7,8 @@ import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { ResolvedDelegationContract, canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
-import { approvalAuthorizations, approvalBindingFor, approverLabel, consumeAuthorization, gatedPhaseIds, gatedRunStarted, REAPPROVABLE_RECEIPT_ERRORS, unbindableGatedRefs, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
-import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
+import { approvalAuthorizations, approvalBindingFor, approvalProfileRefusal, approverLabel, consumeAuthorization, gatedPhaseIds, REAPPROVABLE_RECEIPT_ERRORS, workflowApprovalProfileRefusal, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
+import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, migrateWorkflowStateV3, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
 import { isWorkflowWorkPhase, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../validate.ts";
 import { plannedRefs, sumRunDurations, type ModePlan, type PreSpawnContext } from "./plan.ts";
 
@@ -54,7 +54,9 @@ export function criticalPathWorkflow(_params: any, results: FlowRunResult[]): nu
  * through this declaration.
  */
 export function preSpawnRefusalWorkflow(params: any, context: PreSpawnContext): FlowError | null {
-	return workflowPhasesRefusal(params ?? {}) ?? (context.headless ? workflowHeadlessApprovalRefusal(params ?? {}) : null);
+	return workflowPhasesRefusal(params ?? {})
+		?? (context.agentProfiles ? workflowApprovalProfileRefusal(params ?? {}, context.agentProfiles) : null)
+		?? (context.headless ? workflowHeadlessApprovalRefusal(params ?? {}) : null);
 }
 
 /** One place both sides of a phase dependency link derive the key, so they cannot drift. */
@@ -71,6 +73,24 @@ function renderPhaseTask(template: string, task: string | undefined, previous: s
 		rendered = rendered.replace(new RegExp(`\\{phase\\.${escapeRegExp(id)}\\}`, "g"), output);
 	}
 	return rendered;
+}
+
+/** Recheck a completed work phase without trusting or rewriting its persisted output. */
+function resumedPhaseHandoff(phase: any, state: WorkflowState, params: any, policy: ModeDeps["policy"]): { handoff?: DelegationHandoffEnvelope; error?: FlowError } {
+	let phaseContract: ResolvedDelegationContract | undefined;
+	if (phase.contract) {
+		const resolution = ResolvedDelegationContract.resolve(phase.contract, policy);
+		if (resolution.error) return { error: resolution.error };
+		phaseContract = resolution.resolved;
+	}
+	const handoff = state.handoffs[phase.id];
+	const error = validatePersistedIntegrationHandoff(handoff, {
+		attestation: state.attestations[phase.id],
+		contract: phaseContract,
+		policy,
+		incompletePolicy: params.incompleteHandoffPolicy,
+	});
+	return error ? { error } : { handoff };
 }
 
 /**
@@ -104,7 +124,8 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	// Shared with the selection eval's admissibility seam: an invalid phase
 	// refuses the call whole before any state write or spawn (#88). The
 	// normalized spec keeps validation unskippable even if activation changes.
-	const phasesRefusal = workflowPhasesRefusal({ workflow: spec });
+	const profiles = workflowProfileEnvironment(deps);
+	const phasesRefusal = preSpawnRefusalWorkflow(params, { headless: false, agentProfiles: profiles });
 	if (phasesRefusal) return settle.refuse(phasesRefusal);
 
 	const approvalTtl = resolveApprovalTtlMs(spec.approvalTtlMs);
@@ -117,13 +138,22 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	if (spec.resume) {
 		try {
 			const loaded = JSON.parse(await readFile(stateFile, "utf8")) as any;
-			if (![1, 2, WORKFLOW_STATE_VERSION].includes(loaded.version) || loaded.digest !== digest || !Array.isArray(loaded.completedPhaseIds)
+			if (![1, 2, 3, WORKFLOW_STATE_VERSION].includes(loaded.version) || loaded.digest !== digest || !Array.isArray(loaded.completedPhaseIds)
 				|| !loaded.outputs || typeof loaded.outputs !== "object" || Array.isArray(loaded.outputs)) throw new Error("state does not match this workflow");
 			let restored = loaded.version === 1 ? migrateWorkflowStateV1(loaded, phases, policy) : loaded;
 			if (!isRecord(restored.handoffs) || !isRecord(restored.attestations)) throw new Error("state does not match this workflow");
-			if (restored.version < WORKFLOW_STATE_VERSION) restored = migrateWorkflowStateV2(restored, phases, deps, digest);
+			if (restored.version === 2) restored = migrateWorkflowStateV2(restored, phases, deps, digest);
+			if (restored.version === 3) {
+				if (!isRecord(restored.receipts)) throw new Error("state does not match this workflow");
+				const migrated = migrateWorkflowStateV3(restored, phases, deps, digest);
+				if (migrated.error) return settle.refuse(migrated.error);
+				restored = migrated.state;
+			}
 			if (!isRecord(restored.receipts)) throw new Error("state does not match this workflow");
 			state = restored as WorkflowState;
+			if (state.status === "completed" && phases.some((phase: any) => !state.completedPhaseIds.includes(phase.id))) {
+				throw new Error("completed state omits one or more workflow phases");
+			}
 			if (loaded.version !== WORKFLOW_STATE_VERSION) await persistState(stateFile, state);
 		} catch (cause) {
 			const error = flowError("WORKFLOW_STATE_INVALID", "Workflow resume state is missing or incompatible.", `Could not resume ${sanitizeText(stateFile, policy)}: ${cause instanceof Error ? cause.message : String(cause)}.`, "Use the same task/phases/stateFile that created the state, or omit resume to start a fresh workflow.");
@@ -132,6 +162,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	} else {
 		await persistState(stateFile, state);
 	}
+	const resumedCompleted = Boolean(spec.resume && state.status === "completed");
 
 	// Every output from here on carries the receipts this run issued or spent —
 	// identifiers and status, never the approved parameters. Registered once the
@@ -142,6 +173,20 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		if (approvals.length) details.approvals = approvals;
 		return details;
 	});
+	if (resumedCompleted) {
+		for (const [phaseIndex, phase] of phases.entries()) {
+			if (phase.approval?.message) {
+				const binding = approvalBindingFor(phases, phaseIndex, deps, digest);
+				const auditError = ApprovalAuthorization.verify(state.receipts[phase.id], binding, { consumer: binding.action }).error;
+				if (auditError && !REAPPROVABLE_RECEIPT_ERRORS.has(auditError.code)) return settle.refuse(auditError);
+			} else if (state.completedPhaseIds.includes(phase.id)) {
+				const resumed = resumedPhaseHandoff(phase, state, params, policy);
+				if (resumed.error) return settle.refuse(resumed.error);
+			}
+		}
+		const approvals = Object.values(state.receipts).map(approvalReceiptSummary).map((receipt) => `\n  ${formatApprovalReceipt(receipt)}`).join("");
+		return settle.complete(capModelVisibleText(`Flow workflow: ${phases.length} phases were already completed; no Child reran. State: ${sanitizeText(path.relative(defaultCwd, stateFile), policy)}${approvals ? `\nApprovals:${approvals}` : ""}`));
+	}
 	const resumedHandoffs: DelegationHandoffEnvelope[] = [];
 	let previous = "";
 	// The unit a following phase depends on differs by how the prior phase ran: a
@@ -170,12 +215,14 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				// again in this same pass; headless runs still fail closed below.
 				const binding = approvalBindingFor(phases, phaseIndex, deps, digest);
 				const stale = ApprovalAuthorization.verify(state.receipts[phase.id], binding, { consumer: binding.action }).error;
+				const completedGatedPhases = gatedPhaseIds(phases, phaseIndex).filter((id) => state.completedPhaseIds.includes(id));
+				const authorizationStarted = completedGatedPhases.length > 0 || typeof state.receipts[phase.id]?.consumedAt === "string";
 				// Reopening is only safe while none of the gated run has happened. Once
 				// part of it has, a fresh receipt would claim to authorize work that
 				// actually ran under the old parameters — one receipt describing two
 				// different actions — and would erase the receipt that authorized the
 				// completed half. That is a judgement call for a person, not a retry.
-				if (stale && REAPPROVABLE_RECEIPT_ERRORS.has(stale.code) && !gatedRunStarted(phases, phaseIndex, state.completedPhaseIds)) {
+				if (stale && REAPPROVABLE_RECEIPT_ERRORS.has(stale.code) && !authorizationStarted) {
 					reapprovalCause = stale.cause;
 					state.completedPhaseIds = state.completedPhaseIds.filter((id) => id !== phase.id);
 					delete state.receipts[phase.id];
@@ -186,9 +233,14 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 					return settle.refuse(flowError(
 						stale.code,
 						`The approval for "${binding.action}" no longer matches, and part of what it authorized has already run.`,
-						`${stale.cause} Phases ${gatedPhaseIds(phases, phaseIndex).filter((id) => state.completedPhaseIds.includes(id)).join(", ")} already ran under the parameters that were approved, so re-approving now would authorize a mix of old and new.`,
+						`${stale.cause} ${completedGatedPhases.length > 0 ? `Phases ${completedGatedPhases.join(", ")} already ran` : "The receipt was already consumed when its gated debrief began"} under the conditions that were approved, so re-approving now would authorize a mix of old and new.`,
 						"Restore the parameters that were approved and resume, or start a fresh run so the whole gated sequence executes under one approval.",
 					));
+				} else if (stale) {
+					state.status = "failed";
+					state.updatedAt = new Date().toISOString();
+					await persistState(stateFile, state);
+					return settle.refuse(stale);
 				} else {
 					previous = state.outputs[phase.id] ?? previous;
 					recordPhaseState(deps, phase.id, "approval.resumed", state, { "flow.approval.receipt_id": state.receipts[phase.id]?.receiptId ?? "(none)" });
@@ -196,29 +248,16 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 					continue;
 				}
 			} else {
-			const persisted = state.handoffs[phase.id];
-			// Re-resolve so the persisted handoff is checked against a contract
-			// that passed admissibility, not raw spec data.
-			let phaseContract: ResolvedDelegationContract | undefined;
-			if (phase.contract) {
-				const resolution = ResolvedDelegationContract.resolve(phase.contract, policy);
-				if (resolution.error) return settle.refuse(resolution.error);
-				phaseContract = resolution.resolved;
-			}
-			const persistedError = validatePersistedIntegrationHandoff(persisted, {
-				attestation: state.attestations[phase.id],
-				contract: phaseContract,
-				policy,
-				incompletePolicy: params.incompleteHandoffPolicy,
-			});
-			if (persistedError) return settle.refuse(persistedError);
-			if (persisted.status !== "completed") resumedHandoffs.push(persisted);
-			const validatedOutput = params.recordContent === false ? "[content not recorded]" : canonicalHandoff(persisted);
-			state.outputs[phase.id] = validatedOutput;
-			previous = validatedOutput;
-			recordPhaseState(deps, phase.id, "phase.resumed", state, { "flow.handoff.status": persisted.status, "flow.handoff.compatibility": persisted.compatibility });
-			registerPhaseUnit(phaseStateKey(phase.id));
-			continue;
+				const resumed = resumedPhaseHandoff(phase, state, params, policy);
+				if (resumed.error) return settle.refuse(resumed.error);
+				const persisted = resumed.handoff!;
+				if (persisted.status !== "completed") resumedHandoffs.push(persisted);
+				const validatedOutput = params.recordContent === false ? "[content not recorded]" : canonicalHandoff(persisted);
+				state.outputs[phase.id] = validatedOutput;
+				previous = validatedOutput;
+				recordPhaseState(deps, phase.id, "phase.resumed", state, { "flow.handoff.status": persisted.status, "flow.handoff.compatibility": persisted.compatibility });
+				registerPhaseUnit(phaseStateKey(phase.id));
+				continue;
 			}
 		}
 
@@ -247,18 +286,12 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 
 		if (phase.approval?.message) {
 			// Refused before the human is asked, not after: consent given to an
-			// action whose model cannot be recorded would be consent this receipt
-			// cannot honour on resume, and asking for it first would waste it.
-			const unbindable = unbindableGatedRefs(phases, phaseIndex, deps);
-			if (unbindable.length > 0) {
-				const error = flowError(
-					"WORKFLOW_INVALID",
-					`Approval phase "${phase.id}" gates work whose model cannot be recorded.`,
-					`These gated steps resolve to no model, so each runs whatever model pi is configured to default to: ${unbindable.join(", ")}. That model can change before this workflow resumes, and the approval receipt would still verify — authorizing work on a model, and possibly a provider, the approver never saw.${deps.roster && deps.roster.source === "unavailable" ? " No model registry was readable, so no tier could resolve here; naming a model outright is the way through." : ""}`,
-					"Give each of those steps a model (or a tier, when the model registry is readable), so the approval records what it authorizes.",
-				);
-				recordPhaseState(deps, phase.id, "approval.blocked", state, { "flow.error_code": error.code });
-				return settle.refuse(error);
+			// action whose effective profile cannot be recorded would be consent
+			// this receipt cannot honour on resume, and asking first would waste it.
+			const profileError = approvalProfileRefusal(phases, phaseIndex, params, profiles);
+			if (profileError) {
+				recordPhaseState(deps, phase.id, "approval.blocked", state, { "flow.error_code": profileError.code });
+				return settle.refuse(profileError);
 			}
 			const prompt = reapprovalCause ? `${phase.approval.message}\n\nRe-approval needed: ${reapprovalCause}` : phase.approval.message;
 			const decision = await deps.requestApproval?.("Approve workflow phase?", prompt) ?? "required";
@@ -367,7 +400,6 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		// child dependency instead of inventing a handoff to the caller.
 		registerPhaseUnit(handoff.dependencyKey ?? phaseWorkKey(phase.id));
 	}
-
 	// A trailing approval gates the workflow's own completion (and its debrief),
 	// so it is verified and spent here rather than by a following phase.
 	const tailApproval = authorizations.get(WORKFLOW_COMPLETE_STEP);
@@ -381,6 +413,12 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			return settle.refuse(tailVerified.error);
 		}
 		consumeAuthorization(state.receipts, phases, tailApproval, tailVerified.authorization);
+		if (spec.debrief?.agent) {
+			// The debrief is the authorized action: make consumption durable before
+			// its Child can start, so a process crash cannot reopen spent consent.
+			state.updatedAt = new Date().toISOString();
+			await persistState(stateFile, state);
+		}
 	}
 
 	let finalText = previous;

@@ -9,11 +9,11 @@
 import { createHash } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import type { DelegationHandoffEnvelope, ModeDeps } from "../types.ts";
+import type { DelegationHandoffEnvelope, FlowError, ModeDeps } from "../types.ts";
 import { sanitizeText } from "../sanitize.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, type PersistedHandoffAttestation } from "../delegation.ts";
-import { legacyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
-import { approvalBindingFor, gatedPhaseIds, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
+import { legacyApprovalReceipt, migrateSpentApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
+import { approvalBindingFor, gatedPhaseIds, historicalApprovalBindingForV3, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 
 export interface WorkflowState {
 	version: typeof WORKFLOW_STATE_VERSION;
@@ -66,7 +66,7 @@ function legacyCompatibilityHandoff(phase: any, output: string, step: number, po
 	};
 }
 
-/** v1 -> v2: reconstruct the typed handoff layer. Chained into the v3 receipt migration by the resume path. */
+/** v1 -> v2: reconstruct the typed handoff layer. Chained through later migrations by the resume path. */
 export function migrateWorkflowStateV1(legacy: any, phases: any[], policy: ModeDeps["policy"]): any {
 	const state = {
 		...legacy,
@@ -128,4 +128,29 @@ export function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDep
 		});
 	}
 	return state;
+}
+
+/**
+ * v3 -> v4: outstanding consent re-verifies stale and follows the ordinary
+ * reapproval path. Only a valid receipt already spent on fully completed work
+ * is rebound, as legacy compatibility evidence that can authorize nothing new.
+ */
+export function migrateWorkflowStateV3(legacy: any, phases: any[], deps: ModeDeps, digest: string): { state: WorkflowState; error?: FlowError } {
+	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, receipts: { ...legacy.receipts } };
+	for (const [index, phase] of phases.entries()) {
+		if (!phase?.approval?.message || !state.completedPhaseIds.includes(phase.id)) continue;
+		const gated = gatedPhaseIds(phases, index);
+		const authorizesCompletion = index + gated.length + 1 >= phases.length;
+		const outstanding = gated.some((id) => !state.completedPhaseIds.includes(id))
+			|| (authorizesCompletion && legacy.status !== "completed");
+		if (outstanding) continue;
+
+		const historical = historicalApprovalBindingForV3(phases, index, deps, digest);
+		const stored = state.receipts[phase.id];
+		const current = approvalBindingFor(phases, index, deps, digest);
+		const migrated = migrateSpentApprovalReceipt(stored, historical, current);
+		if (migrated.error) return { state, error: migrated.error };
+		state.receipts[phase.id] = migrated.receipt;
+	}
+	return { state };
 }

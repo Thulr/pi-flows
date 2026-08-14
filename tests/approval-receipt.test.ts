@@ -20,8 +20,8 @@ import {
 	resolveApprovalTtlMs,
 	type ApprovalBinding,
 } from "../extensions/pi-flows/approval.ts";
-import { normalizeGatedPhase, unbindableGatedRefs } from "../extensions/pi-flows/modes/workflow-approval.ts";
-import { freshDir, runFlow, UNRECORDED, type Call } from "./stub-harness.ts";
+import { approvalProfileRefusal, normalizeGatedPhase } from "../extensions/pi-flows/modes/workflow-approval.ts";
+import { freshDir, runFlow, STUB_REGISTRY, UNRECORDED, type Call } from "./stub-harness.ts";
 
 const binding = (overrides: Partial<ApprovalBinding> = {}): ApprovalBinding => ({
 	action: "workflow.phase:approve",
@@ -184,7 +184,7 @@ test("a receipt no path re-verified is reported as unverified, not repeated as f
 	const summary = approvalReceiptSummary(tampered);
 	assert.equal(summary.validation, "unverified", "the audit line must not launder an edited record");
 	const line = formatApprovalReceipt(summary);
-	assert.match(line, /^UNVERIFIED \(receipt digest mismatch\)/, "the caveat leads, so a reader who stops early is not misled");
+	assert.match(line, /^UNVERIFIED \(receipt invalid\)/, "the caveat leads, so a reader who stops early is not misled");
 	assert.match(line, /someone-else/, "the claimed value is still shown, just not vouched for");
 });
 
@@ -408,7 +408,7 @@ test("every phase an approval gates re-verifies, not just the first", async () =
 	// even in an interactive session — the operator decides, not a retry.
 	const widened = await runFlow(resumeTwoStep({ agentScope: "all", confirmProjectAgents: false }), { recon: "VERIFIED" }, { cwd, hasUI: true });
 	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE", "the second gated phase must be checked too");
-	assert.match(widened.result.details.error?.cause ?? "", /Phases ship already ran under the parameters that were approved/);
+	assert.match(widened.result.details.error?.cause ?? "", /Phases ship already ran under the conditions that were approved/);
 	assert.match(widened.result.details.error?.fix ?? "", /start a fresh run/);
 	assert.equal(verifyCalls(widened.calls), verifyCalls(crashed.calls));
 
@@ -424,6 +424,7 @@ test("a trailing approval binds the debrief it gates, not just the phases", asyn
 	const params = {
 		task: "Sign off, then synthesize.",
 		requireEvidence: false,
+		thinking: "low",
 		workflow: {
 			stateFile: "workflow.json",
 			phases: [
@@ -445,10 +446,10 @@ test("a trailing approval binds the debrief it gates, not just the phases", asyn
 	// from the top-level params — so changing it after approval must not ride the
 	// old consent.
 	const changed = await runFlow(resume({ requireEvidence: true }), { debrief: "SUMMARY" }, { cwd });
-	assert.equal(changed.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
-	assert.match(changed.result.details.error?.cause ?? "", /no longer holds/);
+	assert.equal(changed.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
+	assert.match(changed.result.details.error?.cause ?? "", /gated debrief began/);
 
-	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd, hasUI: true });
+	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd });
 	assert.equal(unchanged.result.details.error, undefined);
 	assert.ok(debriefCalls(unchanged.calls) > debriefCalls(changed.calls), "the re-approved debrief runs");
 });
@@ -481,7 +482,7 @@ test("a flow-level model or thinking change invalidates a receipt the phase inhe
 
 	// Same for the model: approving on one vendor's model and resuming on
 	// another's is the same class of change.
-	const revendored = await runFlow(resume({ model: "test-provider/other-model" }), { strategist: "SHIPPED" }, { cwd });
+	const revendored = await runFlow(resume({ model: "test-provider/session-model" }), { strategist: "SHIPPED" }, { cwd });
 	assert.equal(revendored.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
 
 	const unchanged = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
@@ -505,25 +506,22 @@ test("roster drift under a bound tier invalidates the receipt", async () => {
 		},
 	};
 	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
-	const prevDeep = process.env.PI_FLOWS_DEEP_MODEL;
-	process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-one";
-	try {
-		await runFlow(params, {}, { cwd });
-		await runFlow(resume(), { strategist: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+	const registry = (id: string) => ({
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			{ id, provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 100, output: 100 } },
+		],
+	});
+	await runFlow(params, {}, { cwd, registry: registry("deep-one") });
+	await runFlow(resume(), { strategist: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true, registry: registry("deep-one") });
 
-		// Same spec, same tier name — only what "deep" resolves to has moved.
-		process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-two";
-		const drifted = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd });
-		assert.equal(drifted.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the tier resolves elsewhere now, so the old consent does not cover it");
-		assert.match(drifted.result.details.error?.cause ?? "", /no longer holds/);
+	// Same spec, same tier name — only what "deep" resolves to has moved.
+	const drifted = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, registry: registry("deep-two") });
+	assert.equal(drifted.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the tier resolves elsewhere now, so the old consent does not cover it");
+	assert.match(drifted.result.details.error?.cause ?? "", /no longer holds/);
 
-		process.env.PI_FLOWS_DEEP_MODEL = "test-provider/deep-one";
-		const restored = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
-		assert.equal(restored.result.details.error, undefined, "restoring what was approved lets the original receipt stand");
-	} finally {
-		if (prevDeep === undefined) delete process.env.PI_FLOWS_DEEP_MODEL;
-		else process.env.PI_FLOWS_DEEP_MODEL = prevDeep;
-	}
+	const restored = await runFlow(resume(), { strategist: "SHIPPED" }, { cwd, hasUI: true, registry: registry("deep-one") });
+	assert.equal(restored.result.details.error, undefined, "restoring what was approved lets the original receipt stand");
 });
 
 test("a capable-tier phase binds the session model, and moving it invalidates the receipt", () => {
@@ -535,12 +533,12 @@ test("a capable-tier phase binds the session model, and moving it invalidates th
 		fast: { model: "p/cheap", thinking: "low", why: "t" },
 		capable: { model: sessionModel, thinking: "medium", why: "t" },
 		deep: { model: "p/strong", thinking: "max", why: "t" },
-		available: [],
+		available: [{ reference: sessionModel, provider: "p", id: sessionModel.slice(2), reasoning: true, thinkingLevels: ["medium"], contextWindow: 100_000 }],
 		sessionModel,
 		source: "derived" as const,
 		issues: [],
 	});
-	const deps = (sessionModel: string) => ({ discovery: { agents: [] }, roster: roster(sessionModel) } as any);
+	const deps = (sessionModel: string) => ({ discovery: { agents: [] }, defaultCwd: "/workspace", roster: roster(sessionModel) } as any);
 	const phase = { id: "ship", agent: "operator", task: "Ship it", tier: "capable" };
 
 	const before = normalizeGatedPhase(phase, {}, deps("p/original"));
@@ -553,7 +551,7 @@ test("a capable-tier phase binds the session model, and moving it invalidates th
 	// receipt records null rather than a model the child will not run.
 	const unpinned = { id: "ship", agent: "operator", task: "Ship it" };
 	assert.equal(normalizeGatedPhase(unpinned, {}, deps("p/original")).model, null);
-	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] } } as any).model, null, "an unresolvable roster binds null too");
+	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] }, defaultCwd: "/workspace" } as any).model, null, "an unresolvable roster binds null too");
 });
 
 test("a trailing approval binds the debrief's model and thinking, not just its contract", async () => {
@@ -577,10 +575,10 @@ test("a trailing approval binds the debrief's model and thinking, not just its c
 	await runFlow(resume(), { debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
 
 	const raised = await runFlow(resume({ thinking: "max" }), { debrief: "SUMMARY" }, { cwd });
-	assert.equal(raised.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "the debrief would run at an effort the operator never approved");
-	assert.match(raised.result.details.error?.cause ?? "", /no longer holds/);
+	assert.equal(raised.result.details.error?.code, "APPROVAL_RECEIPT_STALE", "the debrief would run at an effort the operator never approved");
+	assert.match(raised.result.details.error?.cause ?? "", /gated debrief began/);
 
-	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd, hasUI: true });
+	const unchanged = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd });
 	assert.equal(unchanged.result.details.error, undefined);
 });
 
@@ -629,34 +627,6 @@ test("a trailing approval gates the workflow's own completion", async () => {
 	const resumed = await runFlow({ ...params, workflow: { ...params.workflow, resume: true } }, {}, { cwd, hasUI: true });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].consumedBy, "workflow.phase:signoff");
-});
-
-test("a pre-receipt state migrates to a bound receipt once its gated work has run", async () => {
-	const cwd = await freshDir();
-	await pausedAtApproval(cwd);
-	// Spend the consent: the gated phase runs, so the approval is fully answered.
-	await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd, hasUI: true });
-	const state = await readState(cwd);
-
-	// Rewind to exactly what a v2 state looked like: consent as a bare string.
-	state.version = 2;
-	state.outputs.approve = "APPROVED";
-	delete state.receipts;
-	await writeState(cwd, state);
-
-	const resumed = await runFlow(resumeParams(), { strategist: "SHIPPED" }, { cwd });
-	assert.equal(resumed.result.details.error, undefined);
-	const migrated = resumed.result.details.approvals?.[0];
-	assert.equal(migrated?.validation, "legacy-compatibility");
-	assert.equal(migrated?.expiresAt, null);
-	assert.equal(migrated?.consumedBy, "workflow.phase:approve");
-	assert.equal((await readState(cwd)).version, 3);
-
-	// Migrated consent still binds: widening the scope hits the part-executed
-	// refusal rather than a re-prompt.
-	const widened = await runFlow(resumeParams({ agentScope: "all", confirmProjectAgents: false }), { strategist: "SHIPPED" }, { cwd, hasUI: true });
-	assert.equal(widened.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
-	assert.match(widened.result.details.error?.cause ?? "", /already ran under the parameters that were approved/);
 });
 
 test("a pre-receipt approval whose gated work never ran is re-asked, not reconstructed", async () => {
@@ -738,7 +708,14 @@ test("an approval is refused when the work it gates names no model to bind", () 
 		fast: { model: "p/cheap", thinking: "low", why: "t" },
 		capable: { model: "p/session", thinking: "medium", why: "t" },
 		deep: { model: "p/strong", thinking: "max", why: "t" },
-		available: [],
+		available: ["p/cheap", "p/session", "p/strong", "p/explicit"].map((reference) => ({
+			reference,
+			provider: "p",
+			id: reference.slice(2),
+			reasoning: true,
+			thinkingLevels: ["low", "medium", "max"],
+			contextWindow: 100_000,
+		})),
 		sessionModel: "p/session",
 		source: "derived" as const,
 		issues: [],
@@ -747,23 +724,24 @@ test("an approval is refused when the work it gates names no model to bind", () 
 		{ id: "approve", approval: { message: "Approve" } },
 		{ id: "ship", agent: "operator", task: "Ship it" },
 	];
-	const deps = (agents: any[], params: any = {}) => ({ discovery: { agents }, roster, params } as any);
+	const agent = (overrides: Record<string, unknown> = {}) => ({ name: "operator", description: "Approval fixture.", tools: ["read"], thinking: "low", systemPrompt: "", source: "package", filePath: "/pkg/operator.md", ...overrides });
+	const refusal = (target: any[], agents: any[], params: any = {}, selectedRoster: any = roster) => approvalProfileRefusal(target, 0, params, { agents, defaultCwd: "/workspace", roster: selectedRoster });
 
 	// The agent declares no tier, and neither does the phase.
-	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator" }])), ["ship"]);
+	assert.equal(refusal(phases, [agent()])?.code, "WORKFLOW_INVALID");
 
 	// Any of the three ways of naming one closes it.
-	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator", tier: "capable" }])), []);
-	assert.deepEqual(unbindableGatedRefs(phases, 0, deps([{ name: "operator" }], { tier: "fast" })), []);
+	assert.equal(refusal(phases, [agent({ tier: "capable" })]), null);
+	assert.equal(refusal(phases, [agent()], { tier: "fast" }), null);
 	const pinned = [phases[0], { ...phases[1], model: "p/explicit" }];
-	assert.deepEqual(unbindableGatedRefs(pinned, 0, deps([{ name: "operator" }])), []);
+	assert.equal(refusal(pinned, [agent()]), null);
 
 	// A broken registry does not make the risk smaller — it makes every tier
 	// unresolvable, so more work runs on a model nobody recorded. The refusal has
 	// to be loudest exactly there, and naming a model outright is the way through.
-	const blind = { discovery: { agents: [{ name: "operator", tier: "capable" }] }, params: {}, roster: { ...roster, fast: { why: "x" }, capable: { why: "x" }, deep: { why: "x" }, source: "unavailable" as const } } as any;
-	assert.deepEqual(unbindableGatedRefs(phases, 0, blind), ["ship"], "a tier that cannot resolve is not a bound model");
-	assert.deepEqual(unbindableGatedRefs(pinned, 0, blind), [], "an explicit model still binds without a registry");
+	const blind = { ...roster, fast: { why: "x" }, capable: { why: "x" }, deep: { why: "x" }, available: [], source: "unavailable" as const };
+	assert.equal(refusal(phases, [agent({ tier: "capable" })], {}, blind)?.code, "WORKFLOW_INVALID", "a tier that cannot resolve is not a bound model");
+	assert.equal(refusal(pinned, [agent()], {}, blind)?.code, "WORKFLOW_INVALID", "a model selector without a registry cannot prove its exact target");
 });
 
 test("a trailing legacy approval is re-asked while its debrief is still outstanding", async () => {
@@ -773,6 +751,7 @@ test("a trailing legacy approval is re-asked while its debrief is still outstand
 	const cwd = await freshDir();
 	const params = {
 		task: "Analyze, then sign off.",
+		thinking: "low",
 		workflow: {
 			stateFile: "workflow.json",
 			phases: [
@@ -784,16 +763,13 @@ test("a trailing legacy approval is re-asked while its debrief is still outstand
 	};
 	const resume = (o: Record<string, any> = {}) => ({ ...params, ...o, workflow: { ...params.workflow, resume: true } });
 	await runFlow(params, { recon: "ANALYSIS" }, { cwd });
-	// Approve, then fail the debrief so the workflow never reaches "completed".
 	await runFlow(resume(), { debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
-
 	const state = await readState(cwd);
 	assert.notEqual(state.status, "completed", "the debrief this approval gates has not run");
 	state.version = 2;
 	state.outputs.signoff = "APPROVED";
 	delete state.receipts;
 	await writeState(cwd, state);
-
 	const headless = await runFlow(resume(), { debrief: "SUMMARY" }, { cwd });
 	assert.equal(headless.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED", "consent that has not been spent is re-asked, not reconstructed");
 });

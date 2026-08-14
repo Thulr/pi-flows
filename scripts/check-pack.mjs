@@ -276,5 +276,15 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // context without a competing Return protocol and documented empty contracted
 // subtask refusal. The file set remains 108; headroom is ~432 B over measured
 // 1_231_468.
-assert.ok(pack.unpackedSize < 1_231_900, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_251_150 for effective Agent-profile approval binding (#138): one
+// new Core module resolves source, prompt identity, tools, cwd, model, and
+// Thinking once for approval and dispatch; workflow state gains the v3 -> v4
+// migration; and the public reference, troubleshooting, privacy, glossary, and
+// schema help state the exact consent contract. Review rounds added canonical
+// receipt validation, non-stranding migration, durable debrief consumption, and
+// completed-state audit validation, then required an exact current roster model
+// so Pi cannot fuzzy-retarget a vanished pin. The file set grows to 109 only for
+// agent-profile.ts; tests and fault scenarios remain unpackaged. Headroom is
+// ~497 B over the measured 1_250_653.
+assert.ok(pack.unpackedSize < 1_251_150, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

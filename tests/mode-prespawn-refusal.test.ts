@@ -177,6 +177,25 @@ test("workflow's approval rule reads the context; its phase rule does not", () =
 	}
 });
 
+test("workflow declares the same unbindable-profile refusal its handler enforces", async () => {
+	const params = {
+		why: "w",
+		model: "p/model",
+		thinking: "low",
+		workflow: { phases: [
+			{ id: "gate", approval: { message: "Approve?" } },
+			{ id: "work", agent: "missing-agent", task: "work", tools: "read" },
+		] },
+	};
+	const declared = preSpawnRefusalWorkflow(params, {
+		headless: true,
+		agentProfiles: { agents: discovery.agents, defaultCwd: "/tmp" },
+	});
+	assert.equal(declared?.code, "WORKFLOW_INVALID");
+	const output = await RUN_MODE_CONTRACTS.find((contract) => contract.mode === "workflow")!.handler(makeDeps(params, neverSpawns));
+	assert.deepEqual(output.details.error, declared);
+});
+
 test("every mode declares a pre-spawn refusal that is total over hostile params", () => {
 	const hostile: Array<Record<string, any>> = [
 		{},

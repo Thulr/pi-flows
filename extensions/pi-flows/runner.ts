@@ -17,6 +17,7 @@ import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
 import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
 import { buildChildArgs, getPiInvocation } from "./commands.ts";
 import { describeProviderFailure, modelContextWindow, providerFailureGuidance, providerFailureRetryable } from "./provider-failure.ts";
+import { resolveAgentProfile } from "./agent-profile.ts";
 
 /**
  * The ACL translation for child transcript messages: project the child
@@ -126,7 +127,19 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		result.role = capturedRole;
 		return result;
 	}
-	const agent = options.agents.find((candidate) => candidate.name === options.agentName);
+	const profile = resolveAgentProfile({
+		agents: options.agents,
+		agentName: options.agentName,
+		defaultCwd: options.defaultCwd,
+		cwd: options.cwd,
+		model: options.model,
+		tier: options.tier,
+		thinking: options.thinking,
+		flowThinking: options.flowThinking,
+		tools: options.tools,
+		roster: options.roster,
+	});
+	const agent = profile.agent;
 	if (!agent) {
 		const available = options.agents.map((candidate) => `"${candidate.name}"`).join(", ") || "none";
 		const error = flowError(
@@ -157,7 +170,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const timeoutMs = normalizeTimeout(options.timeoutMs);
 	// Resolved once: the same choice fills the result, the span, and the argv, so
 	// a run can never report a model or level it did not actually spawn with.
-	const choice = resolveChildModel(agent, { model: options.model, tier: options.tier, thinking: options.thinking, flowThinking: options.flowThinking }, options.roster);
+	const choice = profile.modelChoice;
 	if (choice.refusal) {
 		// Spawning anyway would launch the child unpinned — pi's configured
 		// default, possibly a model the session scope excludes. Refused like the
@@ -195,7 +208,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		});
 	};
 
-	const { args, tools, enforcement, error: bashRoError } = buildChildArgs({ model: choice.model, thinking: choice.thinking, noExtensions: childExtensionsDisabled(), toolsOverride: options.tools, agentTools: agent.tools });
+	const { args, tools, enforcement, error: bashRoError } = buildChildArgs({ model: choice.model, thinking: choice.thinking, noExtensions: childExtensionsDisabled(), effectiveTools: profile.effectiveTools });
 	if (bashRoError) {
 		options.recordEvent?.({ kind: "validation", name: "dispatch.bash_readonly_unenforceable", ok: false, minted: true, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": bashRoError.code } });
 		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, bashRoError), { role: capturedRole });
@@ -220,7 +233,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		// lifetime; it is offered only to a child that runs under some budget.
 		const wrapUpFile = path.join(taskPrompt.dir, "wrap-up.md");
 
-		const childCwd = path.resolve(options.defaultCwd, options.cwd ?? options.defaultCwd);
+		const childCwd = profile.identity.resolvedCwd;
 		let invocation = getPiInvocation(args);
 		// null wrap only if the host lost the sandbox since the check; the -e allowlist enforcer already rode along, so the child stays enforced.
 		const sandboxed = enforcement === "sandbox" ? await applyReadonlySandbox(invocation, childCwd) : null;

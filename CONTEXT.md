@@ -11,7 +11,7 @@ Not every part of this repo earns the same depth. This split says where to spend
 `scripts/domain-score.mjs` enforces this split — every module below is checked for placement and for which subdomains it may import from — so the classification cannot quietly go stale as modules are added.
 
 **Core — coordination under guardrails.** Delegation contracts and their identity, return and handoff envelopes, injection policy, artifact digests, approval receipts, budget authority, capture policy, and the coordination evidence that shows what actually happened. This is the part that makes a returned finding checkable rather than merely plausible. Model it deeply, give every new concept a glossary entry below, and expect changes here to come with a test that names the invariant and, where it is a coordination failure, a fault-scenario entry.
-_Modules_: `flow.ts`, `run.ts`, `settle.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-verify.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
+_Modules_: `flow.ts`, `run.ts`, `settle.ts`, `delegation.ts`, `handoff.ts`, `handoff-types.ts`, `handoff-consumption.ts`, `approval.ts`, `agent-profile.ts`, `budget.ts`, `integration.ts`, `contract-resolution.ts`, `validate.ts`, `validate-workflow.ts`, `bash-readonly.ts`, `sanitize.ts`, `trace.ts`, `trace-scope.ts`, `trace-sink.ts`, `trace-verify.ts`, `trace-attributes.ts`, `trace-structure.ts`, `trace-report.ts`, `trace-identity.mjs`.
 
 **Supporting — coordination patterns and the views onto them.** The modes and their topologies, preset and agent discovery, reflexion, and the live/settled surfaces (inspector, flow card, live board). Necessary, and often the reason someone reaches for the tool, but they recombine the core's primitives rather than being the differentiator. Build them plainly and resist per-mode special cases a new mode would have to re-implement; the views must speak the glossary's terms but hold no invariants of their own.
 _Modules_: `modes/*`, `presets.ts`, `preset-review.ts`, `preset-catalog.ts`, `preset-approval.ts`, `agents.ts`, `agent-catalog.ts`, `reflexion.ts`, `budget-disclosure.ts`, `ui.ts`, `ui-style.ts`, `ui-gantt.ts`, `ui-live-row.ts`, `ui-flow-card.ts`, `inspector.ts`.
@@ -70,6 +70,10 @@ _Avoid_: sub-agent, spawn
 **Agent**:
 A named profile — prompt, tools, model or tier — that a child runs as, discovered from package, user, or project sources.
 _Avoid_: persona, specialist, subagent
+
+**Effective Agent profile**:
+The selected Agent source plus the execution conditions after Role overrides and flow fallbacks resolve: prompt identity, tools, cwd, model, and Thinking level. It is both what durable workflow approval authorizes and what the Child runs as. Raw prompt text is execution content; its SHA-256 identity is the approval-safe term.
+_Avoid_: authored Agent (that is only the discovered definition), requested profile, executable profile
 
 **Role**:
 The slot in a mode's topology that an agent fills (generator, critic, worker, adjudicator).
@@ -249,7 +253,7 @@ A toolset token granting a child bash that cannot write the reviewed checkout, n
 _Avoid_: safe bash (the sandbox is real, but the allowlist fallback is best-effort)
 
 **Approval receipt**:
-A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes.
+A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes, including every gated Role's **Effective Agent profile** and a gated debrief's profile. A receipt persists only binding identity and status, never raw prompt or parameter content.
 _Avoid_: approval marker, checkpoint receipt
 
 **Approval authorization**:

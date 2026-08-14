@@ -10,7 +10,7 @@ The nine bundled agents are markdown files, and yours work exactly the same way:
 | `user` | `~/.pi/agent/flow-agents/` | `agentScope: "user"` (the default) or `"all"` |
 | `project` | the nearest `.pi/flow-agents/` walking up from the working directory | `agentScope: "project"` or `"all"` |
 
-Later sources win: a `user` agent shadows a `package` agent with the same `name`, and a `project` agent shadows both. Shadowing is allowed but flagged — `/flows status` reports an `AGENT_NAME_SHADOWED` warning with both file paths so an override is always visible, never silent.
+Later sources win: a `user` agent shadows a `package` agent with the same `name`, and a `project` agent shadows both. Shadowing is allowed but flagged — `/flows status` reports an `AGENT_NAME_SHADOWED` warning with both file paths so an override is always visible, never silent. If resumable workflow consent gates that Agent, selecting a different same-name source invalidates the old receipt and requires fresh approval.
 
 ## A minimal working example
 
@@ -56,6 +56,13 @@ A file missing `name` or `description` is skipped with an `AGENT_FRONTMATTER_INV
 
 Everything below the frontmatter is the agent's system prompt. Write it for a child that starts with zero context: state the task, the output shape, and that the parent only sees the final summary. The bundled [`agents/*.md`](../../agents/) are working examples of the style.
 
+Durable workflow approval binds the selected source, a SHA-256 identity of this
+prompt body, effective tools, resolved cwd, concrete model, and Thinking level.
+Changing any effective value requires reapproval. Raw prompt text is not copied
+into the receipt or workflow state. Because Pi's default tools and implicit
+model/Thinking settings are not concrete before spawn, an approval-gated Role
+must resolve those values from its Agent, Role overrides, or flow fallbacks.
+
 ## Verify what's loaded
 
 ```text
@@ -67,6 +74,6 @@ Everything below the frontmatter is the agent's system prompt. Write it for a ch
 
 ## Project agents and trust
 
-Project agents (`.pi/flow-agents/`) are **repo-controlled prompts**: cloning a repository must not silently hand it a delegation surface. So they only load under an explicit `agentScope` of `"project"` or `"all"`, interactive sessions ask for confirmation before running them, and headless runs **fail closed** with `PROJECT_AGENT_APPROVAL_REQUIRED` unless `confirmProjectAgents:false` is passed after reviewing the files. Details in the [README safety model](../../README.md#safety-model) and [troubleshooting](./troubleshooting.md).
+Project agents (`.pi/flow-agents/`) are **repo-controlled prompts**: cloning a repository must not silently hand it a delegation surface. So they only load under an explicit `agentScope` of `"project"` or `"all"`, interactive sessions ask for confirmation before running them, and headless runs **fail closed** with `PROJECT_AGENT_APPROVAL_REQUIRED` unless `confirmProjectAgents:false` is passed after reviewing the files. That project-source trust decision is separate from a workflow receipt: trusting the source does not let an edited or newly shadowed profile reuse earlier workflow consent. Details in the [README safety model](../../README.md#safety-model) and [troubleshooting](./troubleshooting.md).
 
 Use `user` agents for your personal toolkit, and `project` agents for prompts a team should version and review together.

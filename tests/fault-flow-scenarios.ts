@@ -11,10 +11,11 @@ import path from "node:path";
 import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { Flow, type FlowPorts } from "../extensions/pi-flows/flow.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
+import { handleWorkflow } from "../extensions/pi-flows/modes/workflow.ts";
 import { parseTraceJsonl } from "../extensions/pi-flows/trace.ts";
 import { formatFlowError, type FlowErrorCode, type ModeOutput } from "../extensions/pi-flows/types.ts";
 import { checkpointApproval } from "../extensions/pi-flows/ui.ts";
-import { FaultLedger, faultDiscovery, makeFaultAdapter, type FaultAdapter } from "./fault-adapter.ts";
+import { FaultLedger, faultDeps, faultDiscovery, makeFaultAdapter, type FaultAdapter } from "./fault-adapter.ts";
 import { FAULT_SUITE, type FaultChecks, type FaultScenario } from "./fault-scenarios.ts";
 
 function workspace(): string {
@@ -159,6 +160,68 @@ function settleWithoutDispatchScenario(): FaultScenario {
 	};
 }
 
+function approvalProfileScenario(drift: boolean): FaultScenario {
+	const cwd = workspace();
+	const id = drift ? "approval-profile-drift-contained" : "approval-profile-unchanged-control";
+	return {
+		id,
+		suite: FAULT_SUITE,
+		portfolio: drift ? "adversarial" : "control",
+		faults: [],
+		faultKind: "none",
+		description: drift
+			? "A persisted unspent approval meets an edited effective Agent profile; resume must reopen before dispatch."
+			: "A persisted unspent approval meets the unchanged effective Agent profile; resume must not be falsely blocked.",
+		attackOpportunities: drift ? 1 : 0,
+		benignOpportunities: drift ? 0 : 1,
+		expected: {
+			outcome: { errorCode: drift ? "WORKFLOW_APPROVAL_REQUIRED" : null },
+			process: { dispatched: drift ? 0 : 1, refused: 0, unreached: drift ? ["operator"] : [] },
+			policy: { contained: drift, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: drift ? 0 : 1 },
+		},
+		run: async () => {
+			const roster = {
+				fast: { model: "p/model", thinking: "low" as const, why: "fault fixture" },
+				capable: { model: "p/model", thinking: "low" as const, why: "fault fixture" },
+				deep: { model: "p/model", thinking: "low" as const, why: "fault fixture" },
+				available: [{ reference: "p/model", provider: "p", id: "model", reasoning: true, thinkingLevels: ["low" as const], contextWindow: 100_000 }],
+				sessionModel: "p/model",
+				source: "derived" as const,
+				issues: [],
+			};
+			const base = {
+				task: "ship",
+				model: "p/model",
+				thinking: "low",
+				workflow: {
+					stateFile: "workflow.json",
+					phases: [
+						{ id: "approve", approval: { message: "Ship?" } },
+						{ id: "ship", agent: "operator", task: "Ship" },
+					],
+				},
+			};
+			// A failed first attempt leaves a valid issued receipt on disk.
+			const setup = makeFaultAdapter({ replies: { operator: { reply: "provider failed", turnErrored: true } } });
+			await handleWorkflow(faultDeps(base, setup, cwd, { requestApproval: async () => "approved", roster }));
+
+			const resumed = makeFaultAdapter({ replies: { operator: "shipped" } });
+			const discovery = faultDiscovery();
+			if (drift) {
+				discovery.agents = discovery.agents.map((agent) => agent.name === "operator" ? { ...agent, systemPrompt: "edited operator prompt" } : agent);
+			}
+			const output = await handleWorkflow(faultDeps(
+				{ ...base, workflow: { ...base.workflow, resume: true } },
+				resumed,
+				cwd,
+				{ discovery, roster },
+			));
+			return observeFlow(output, resumed.ledger, ["operator"], { contained: drift });
+		},
+	};
+}
+
 export function flowLifecycleScenarios(): FaultScenario[] {
-	return [checkpointSkippedScenario(), settleWithoutDispatchScenario()];
+	return [checkpointSkippedScenario(), settleWithoutDispatchScenario(), approvalProfileScenario(true), approvalProfileScenario(false)];
 }

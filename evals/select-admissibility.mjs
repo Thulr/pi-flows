@@ -44,6 +44,28 @@ try {
 }
 export const scoringDiscovery = discoveredAgents;
 const scoringPresetDiscovery = discoveredPresets;
+// Profile bindability needs concrete tier answers, but not a live provider: the
+// selection seam asks whether a value exists, while model-quality scoring lives
+// elsewhere. Stable synthetic identities keep this predicate deterministic and
+// let the mode declaration catch missing Agents/default tools exactly as the
+// headless subject does with its real roster.
+const scoringAgentProfiles = {
+  agents: scoringDiscovery.agents,
+  defaultCwd: repoRoot,
+  roster: {
+    fast: { model: "eval/fast", thinking: "low", why: "selection bindability" },
+    capable: { model: "eval/capable", thinking: "medium", why: "selection bindability" },
+    deep: { model: "eval/deep", thinking: "max", why: "selection bindability" },
+    available: [
+      { reference: "eval/fast", provider: "eval", id: "fast", reasoning: true, thinkingLevels: ["low"], contextWindow: 100_000 },
+      { reference: "eval/capable", provider: "eval", id: "capable", reasoning: true, thinkingLevels: ["medium"], contextWindow: 100_000 },
+      { reference: "eval/deep", provider: "eval", id: "deep", reasoning: true, thinkingLevels: ["max"], contextWindow: 100_000 },
+    ],
+    sessionModel: "eval/capable",
+    source: "derived",
+    issues: [],
+  },
+};
 
 // The tool resolves a preset before any gate runs, so admissibility must be
 // asked of the expanded call, not the raw preset reference: a permitted
@@ -156,7 +178,7 @@ export function callAdmissibilityFailure(args) {
 	// headless, so an approval gate that needs a UI refuses here. A mode added
 	// to the table is covered without touching this file; only the scored
 	// vocabulary above is this seam's own decision.
-	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true });
+	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true, agentProfiles: scoringAgentProfiles });
 	if (modeRefusal && SCORED_PRE_SPAWN_CODES.has(modeRefusal.code)) {
 		return { code: modeRefusal.code, reason: modeRefusal.message.replace(/\.$/, "") };
 	}

@@ -9,12 +9,11 @@
 // The workflow digest already covers the workflow's SHAPE (top-level task,
 // phases, debrief) and rejects a resume whose state describes a different
 // workflow. The receipt covers what that digest cannot see: the EFFECTIVE
-// parameters the gated phases resolve to — agentScope, returnContract,
-// requireEvidence, incompleteHandoffPolicy, the enforced injection-handoff
-// policy, and the resolved delegation contract.
-// Flipping agentScope from "user" to "project" between approval and execution
-// swaps which repo-controlled prompt actually runs; that now needs a fresh
-// approval instead of riding the old one.
+// parameters the gated phases resolve to — each effective Agent profile,
+// agentScope, returnContract, requireEvidence, incompleteHandoffPolicy, the
+// enforced injection-handoff policy, and the resolved delegation contract.
+// Source shadowing, a prompt/tool edit, or a changed default cwd therefore needs
+// fresh approval instead of riding the old one.
 //
 // Threat model: this is replay and drift protection for a local 0o600 state
 // file, not authentication. Anyone who can write that file can write any receipt
@@ -196,6 +195,11 @@ export function legacyApprovalReceipt(binding: ApprovalBinding, { issuedAt, cons
 	});
 }
 
+function canonicalIsoTimestamp(value: string): boolean {
+	const parsed = Date.parse(value);
+	return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
 function shapeIssue(value: unknown): string | null {
 	if (!isRecord(value)) return "no receipt was recorded for the approval that authorizes this action";
 	if (value.schemaVersion !== APPROVAL_RECEIPT_SCHEMA_VERSION) return `receipt schemaVersion must be "${APPROVAL_RECEIPT_SCHEMA_VERSION}"`;
@@ -210,6 +214,10 @@ function shapeIssue(value: unknown): string | null {
 	if (typeof value.receiptDigest !== "string") return "receipt.receiptDigest must be a string";
 	if (value.receiptDigest !== approvalReceiptDigest(value as ApprovalReceipt)) {
 		return "receipt.receiptDigest does not match the receipt's contents; a recorded field (actor, issue time, expiry, or consumption) was changed after it was written";
+	}
+	if ((value.consumedAt === null) !== (value.consumedBy === null)) return "receipt.consumedAt and receipt.consumedBy must either both be null or both be set";
+	for (const field of ["issuedAt", "expiresAt", "consumedAt"] as const) {
+		if (value[field] !== null && !canonicalIsoTimestamp(value[field] as string)) return `receipt.${field} must be a canonical ISO timestamp`;
 	}
 	return null;
 }
@@ -297,12 +305,20 @@ function receiptIssue(
 		);
 	}
 	const stored = receipt as ApprovalReceipt;
+	if (stored.consumedAt !== null && stored.consumedBy !== consumer) {
+		return flowError(
+			"APPROVAL_RECEIPT_CONSUMED",
+			`The approval for "${binding.action}" was already spent.`,
+			`Receipt ${stored.receiptId} was consumed by "${stored.consumedBy}" and cannot also authorize "${consumer}".`,
+			"Approvals are single use. Re-run in an interactive Pi UI to approve this action on its own.",
+		);
+	}
 	const expected = approvalBindingDigest(binding);
 	if (stored.bindingDigest !== expected || stored.action !== binding.action) {
 		return flowError(
 			"APPROVAL_RECEIPT_STALE",
 			`The approval for "${binding.action}" no longer matches the action it would authorize.`,
-			"The approved action or its effective parameters (agent scope, return requirements, evidence requirement, incomplete-handoff policy, injection-handoff policy, or delegation contract) changed after approval was granted.",
+			"The approved action or its effective conditions (selected Agent source, prompt identity, effective tools, resolved cwd, model, Thinking level, agent scope, return/evidence requirements, handoff policy, or delegation contract) changed after approval was granted.",
 			"Re-run in an interactive Pi UI to approve the current action, or restore the parameters that were approved and resume again.",
 		);
 	}
@@ -329,15 +345,44 @@ function receiptIssue(
 			);
 		}
 	}
-	if (stored.consumedAt !== null && stored.consumedBy !== consumer) {
-		return flowError(
-			"APPROVAL_RECEIPT_CONSUMED",
-			`The approval for "${binding.action}" was already spent.`,
-			`Receipt ${stored.receiptId} was consumed by "${stored.consumedBy}" and cannot also authorize "${consumer}".`,
-			"Approvals are single use. Re-run in an interactive Pi UI to approve this action on its own.",
-		);
-	}
 	return null;
+}
+
+type SpentApprovalMigration =
+	| { receipt: ApprovalReceipt; error?: undefined }
+	| { receipt?: undefined; error: FlowError };
+
+/**
+ * Verify and rebind a v3 receipt already spent on a completed action as
+ * audit-only v4 compatibility evidence. This seam checks both properties itself:
+ * no caller can turn a merely issued receipt into current authorization by
+ * invoking a low-level re-sealer.
+ */
+export function migrateSpentApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): SpentApprovalMigration {
+	const verified = ApprovalAuthorization.verify(receipt, historical, { consumer: historical.action });
+	if (verified.error) return { error: verified.error };
+	const stored = receipt as ApprovalReceipt;
+	if (stored.consumedAt === null || stored.consumedBy !== historical.action) {
+		return {
+			error: flowError(
+				"APPROVAL_RECEIPT_INVALID",
+				"A historical approval receipt is inconsistent with completed workflow state.",
+				`Receipt ${stored.receiptId} was never spent on the action the state records as completed.`,
+				"Restore the original state file or start a fresh workflow; unspent historical consent cannot be migrated as completed evidence.",
+			),
+		};
+	}
+	return {
+		receipt: sealReceipt({
+			...stored,
+			action: current.action,
+			bindingDigest: approvalBindingDigest(current),
+			requestedBy: current.requestedBy,
+			workflowDigest: current.workflowDigest,
+			stateVersion: current.stateVersion,
+			validation: "legacy-compatibility",
+		}),
+	};
 }
 
 /**
@@ -355,7 +400,7 @@ export function approvalReceiptSummary(receipt: unknown): ApprovalReceiptSummary
 		return { receiptId: "(none)", action: "(unreadable)", approvedBy: "(unreadable)", issuedAt: "(unreadable)", expiresAt: null, status: "issued", consumedBy: null, validation: "unverified" };
 	}
 	const stored = receipt as ApprovalReceipt;
-	const intact = stored.receiptDigest === approvalReceiptDigest(stored);
+	const intact = shapeIssue(stored) === null;
 	return {
 		receiptId: String(stored.receiptId ?? "(none)"),
 		action: String(stored.action ?? "(unreadable)"),
@@ -372,7 +417,7 @@ export function formatApprovalReceipt(summary: ApprovalReceiptSummary): string {
 	const window = summary.expiresAt ? ` expires ${summary.expiresAt}` : " no expiry (migrated)";
 	// The caveat goes first. A reader who stops after the first clause must not
 	// come away believing a record that does not hold together.
-	const caveat = summary.validation === "unverified" ? "UNVERIFIED (receipt digest mismatch) · " : "";
+	const caveat = summary.validation === "unverified" ? "UNVERIFIED (receipt invalid) · " : "";
 	return `${caveat}${summary.action} · receipt ${summary.receiptId} · ${summary.status}${summary.consumedBy ? ` by ${summary.consumedBy}` : ""} · approved by ${summary.approvedBy} ·${window}`;
 }
 

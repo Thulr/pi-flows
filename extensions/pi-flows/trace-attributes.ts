@@ -10,6 +10,7 @@
  * evidence prose, or the `data` body those identifiers point at.
  */
 import { canonicalSha256, delegationContractId } from "./delegation.ts";
+import { agentPromptDigest } from "./agent-profile.ts";
 import { sanitizeText } from "./sanitize.ts";
 import type { BudgetSnapshot, CapturePolicy, DelegationContract, DelegationHandoffEnvelope, FlowError, FlowTraceContext, HandoffPolicy, PreparedHandoff } from "./types.ts";
 
@@ -64,7 +65,7 @@ function shortDigest(value: string): string {
 
 /** Identity of an agent's system prompt. Two runs of the same agent text share it; an edited prompt does not. */
 export function promptVersion(systemPrompt: string): string {
-	return systemPrompt.trim() ? `sha256:${shortDigest(systemPrompt)}` : "(empty)";
+	return systemPrompt.trim() ? agentPromptDigest(systemPrompt).slice(0, "sha256:".length + 12) : "(empty)";
 }
 
 /**

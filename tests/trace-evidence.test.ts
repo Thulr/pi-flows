@@ -320,7 +320,7 @@ test("coordination event attributes are redacted like everything else on the tra
 				traceFile: TRACE,
 				workflow: {
 					stateFile: ".pi/flow-workflows/redacted-actor.json",
-					phases: [{ id: "gate", approval: { message: "Ship?" } }, { id: "release", agent: "operator", task: "go" }],
+					phases: [{ id: "gate", approval: { message: "Ship?" } }, { id: "release", agent: "operator", task: "go", tools: "none", thinking: "medium" }],
 				},
 			},
 			{ operator: "released" },

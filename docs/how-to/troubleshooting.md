@@ -358,11 +358,17 @@ suited to the work, or inspect scorer output for overly strict scoring.
 
 ### `WORKFLOW_INVALID`
 
-Cause: `workflow.phases` is empty, exceeds the phase cap, repeats an id, or a
-phase does not select exactly one of `agent`+`task` and `approval`.
+Cause: `workflow.phases` is empty, exceeds the phase cap, repeats an id, a phase
+does not select exactly one of `agent`+`task` and `approval`, or an approval gates
+an Agent profile whose source/prompt, effective tools, cwd, model, or Thinking
+level cannot all be identified before consent.
 
 Fix: provide 1-12 uniquely named phases. Work phases need both `agent` and
-`task`; approval phases need only `approval.message`.
+`task`; approval phases need only `approval.message`. For gated work, select a
+discovered Agent and make tools, model/tier, and Thinking explicit wherever the
+Agent profile does not supply a concrete value; `tools:"default"` is not a
+concrete approval toolset, and a direct model must exactly match a model in the
+current registry rather than relying on Pi's alias or pattern matching.
 
 ### `WORKFLOW_STATE_INVALID`
 
@@ -381,8 +387,9 @@ then resume the workflow after the failure is addressed.
 
 ### `WORKFLOW_APPROVAL_REQUIRED`
 
-Cause: a headless workflow reached an approval phase. Progress was persisted,
-but no interactive UI was available to collect a decision.
+Cause: a headless workflow reached an approval phase, or a stale, expired, or
+under-bound version-3 receipt reopened and needs fresh consent. Progress was
+persisted, but no interactive UI was available to collect a decision.
 
 Fix: resume the same workflow in interactive pi, or replace the human approval
 with a deterministic `checkCommand` for unattended runs.
@@ -408,23 +415,25 @@ actual approval.
 
 ### `APPROVAL_RECEIPT_STALE`
 
-Cause: an approval was granted, then the action it authorizes changed. A receipt
-binds the gated phases' effective definitions — agent, task template, cwd, model,
-tier, tools, checkCommand, delegation contract — plus the `agentScope`,
-`returnContract`, `requireEvidence`, and `incompleteHandoffPolicy` in force when
-consent was given. Editing any of them between approval and resume means the
-approval no longer covers what would run. Flipping `agentScope` to `project` is
-the case worth naming: it swaps which repo-controlled prompt executes.
+Cause: an approval was granted, then the action it authorizes changed. For every
+gated Role and gated debrief, a receipt binds the selected Agent source, SHA-256
+prompt identity, effective tools after overrides/inheritance, absolute resolved
+cwd, concrete model, and Thinking level. It also binds the task/gate terms,
+effective delegation contract, `agentScope`, Return/evidence requirements, and
+handoff policies. Same-name source shadowing, an edited Agent body, expanded
+inherited tools, a changed model roster, or a different default cwd therefore
+invalidates consent even when the phase-authored fields are unchanged.
 
 Fix: resume in an interactive Pi UI — the approval phase reopens automatically
 and asks again, naming what changed. Restoring the approved parameters is not
 enough on its own: reopening discards consent that no longer held, so the phase
 still needs a fresh approval.
 
-If part of the gated run already executed, the approval is **not** reopened and
-this stays a hard refusal naming the phases that ran. Restore the parameters that
-were approved and resume, or start a fresh run so the whole gated sequence
-executes under one approval.
+If part of the gated run already executed, or a gated debrief began and consumed
+the receipt, the approval is **not** reopened. This stays a hard refusal naming
+the completed phases or begun debrief. Restore the effective profile that was
+approved and resume, or start a fresh run so the whole gated sequence executes
+under one approval.
 
 ### `APPROVAL_RECEIPT_EXPIRED`
 
