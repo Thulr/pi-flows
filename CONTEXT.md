@@ -194,6 +194,10 @@ _Avoid_: trace health (that is the writer's count), trace validity
 The random discriminator one sink call stamps on every row it writes (`flow.invocation_id`). Deliberately not part of the trace identity: the trace and root-span ids are derived stably from the trace context and mode so an eval row and its runtime trace correlate, which means a traced refusal and the retry after it share them — so every reading (the strict read-back, the report) judges an invocation only on the rows carrying its own stamp. "Invocation" here is the deliberate carve-out from the Run entry's Avoid list: that list rejects it as a synonym for one child run, and this term names one sink call — a whole flow call's export — which no Run-adjacent word says.
 _Avoid_: trace id (that is the stable eval linkage), attempt (that is part of the stable identity)
 
+**Record extent**:
+Where one invocation's record begins in a shared, append-only trace file — the file's size the moment its sink was born, before any of its rows could exist. The strict read-back reads only from there (#129): earlier bytes predate the invocation and cannot honestly carry its just-minted **Invocation id**, so a stampless remainder among them is a predecessor's record, judged by whole-file readers (the report) rather than by the live gate — the same way rows appended after finalize always were. Everything a concurrent writer lands after the sink exists falls inside the extent and is judged as before. Races can only under-estimate the boundary (appends grow the file), which reads extra foreign rows, never fewer own rows.
+_Avoid_: offset (a byte position claims no ownership), byte range
+
 **Execution success**:
 A run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct.
 _Avoid_: task success, verified success

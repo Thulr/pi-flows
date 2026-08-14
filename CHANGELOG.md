@@ -10,6 +10,29 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- The strict read-back no longer rereads the whole shared trace file on every
+  finalize (#129). The sink records where the file had grown to the moment it
+  was created — the file is append-only, so nothing before that byte can carry
+  the invocation's just-minted random id — and both readings read only from
+  there, keeping each finalize's I/O proportional to its own rows plus
+  whatever co-tenants append while it runs — zero in the documented eval setup
+  (every flow appending to one `PI_FLOWS_TRACE_FILE` in sequence), which
+  previously paid for all its predecessors, quadratically across a run. Every
+  in-extent verdict is unchanged: forged-identity surplus, stampless
+  remainders, and co-tenant runs landing after the sink exists are judged
+  exactly as before. One disclosed delta: rows under the same trace id already
+  in the file *before* the flow call began are no longer read, so a stampless
+  remainder there no longer refuses the live gate — it is a predecessor's
+  record, judged by whole-file readers (`npm run trace:report -- --strict`
+  still refuses the file), the same way rows appended after finalize were
+  always beyond the live verdict. (A pre-extent row forging both of the run's
+  ids likewise goes unread — a shape no honest writer can produce, since the
+  invocation id does not exist until the sink is born.) The reading keeps the
+  file's own line boundaries: when the pre-existing content ends in a torn row
+  with no terminator, the sink's first append is physically part of that line,
+  and the read-back refuses it as missing exactly as the whole-file report
+  refuses the concatenated line as unparseable.
+
 - The two coordination actions that already pass through framework seams now
   mint their own trace evidence instead of leaving it to handler discipline
   (#128). Running a deterministic gate (`runCheckCommand`) records the

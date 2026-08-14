@@ -213,5 +213,23 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // tests/coordination-evidence.test.ts, not packaged; the domain-review
 // re-record is not packaged either). Headroom is ~403 B over the measured
 // 1_191_967, matching the previous raises.
-assert.ok(pack.unpackedSize < 1_192_370, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_200_350 for the record extent (#129): trace-sink captures where
+// the file had grown to at the sink's birth, trace-verify gains the one
+// bounded reader (readExtent) both readings go through and the boundary's
+// rationale, and the stored-attribute discipline (storedLabel /
+// storedStructural / storedAttributes and their caps) moves to
+// trace-attributes.ts — the module whose charter it is — because trace-sink
+// crossed the 500-line cap, which is not a thing to raise. Plus the
+// CONTEXT.md Record extent entry, the changelog's disclosed deltas, and the
+// flow-reference / troubleshooting / AGENTS.md wording the sync rule and the
+// review round required. The reading reuses the existing markers and
+// validator over fewer bytes, so this is interface and prose, not new
+// machinery. Same verification: the file set is unchanged at 108 and none
+// from tests/, scripts/, or evals/ (the new coverage is
+// tests/trace-extent.test.ts, not packaged; the domain-review re-record is
+// not packaged either). The PR review round added the torn-boundary rule in
+// readExtent and its changelog sentence. Headroom is ~479 B over the
+// measured 1_199_871,
+// matching the previous raises.
+assert.ok(pack.unpackedSize < 1_200_350, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

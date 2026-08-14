@@ -11,6 +11,61 @@ import { declaresOwnRoot, optionalNumericAttr, stringAttr, traceStructure, type 
  * also keeps the writer from importing a reader to check its own work.
  */
 
+/** Where an invocation's record begins in its shared, append-only file — the glossary's Record extent (CONTEXT.md). */
+export interface RecordExtent {
+	start: number;
+}
+
+/**
+ * The bytes of a shared, append-only file from `start` on — the region an
+ * invocation's record occupies (#129). Reading from the extent instead of
+ * byte 0 is what keeps a finalize's cost proportional to its own record: in
+ * the eval setup one file accumulates every flow of a run, and a whole-file
+ * read made flow N traverse flows 1..N-1 just to skip them. The boundary is
+ * sound because the file only grows: everything before the extent was on disk
+ * before the sink existed, so it cannot carry the sink's random invocation id
+ * honestly, and everything a concurrent writer lands afterwards is inside the
+ * region and judged as before.
+ *
+ * The report's parse unit is the whole-file line, so this reader must not
+ * invent a line boundary at `start` that the file does not have. The byte
+ * before the extent says whether one exists: when it is not a newline, the
+ * pre-existing content ends in a torn row (a crashed writer, no terminator),
+ * and whatever this sink appended first is physically concatenated onto it —
+ * one line the report judges as unparseable. Treating the suffix as a fresh
+ * line here would certify a row the report refuses, so everything up to the
+ * region's first newline is the torn line's remainder and is not this
+ * reading's to parse; a row of ours lost with it lands in the missing count,
+ * the failing-closed direction. The same rule covers an under-estimated
+ * `start` (a cross-process append racing the capture) cutting a foreign line:
+ * the fragment is dropped at the boundary instead of parsed.
+ */
+async function readExtent(traceFile: string, start: number): Promise<string> {
+	if (start <= 0) return fs.readFile(traceFile, "utf8");
+	const handle = await fs.open(traceFile, "r");
+	try {
+		const { size } = await handle.stat();
+		// One byte back, so the region carries its own boundary evidence. '\n'
+		// never occurs inside a multi-byte UTF-8 sequence, so the byte test is safe.
+		const from = start - 1;
+		const length = Math.max(0, size - from);
+		if (length === 0) return "";
+		const buffer = Buffer.alloc(length);
+		let offset = 0;
+		while (offset < length) {
+			const { bytesRead } = await handle.read(buffer, offset, length - offset, from + offset);
+			if (bytesRead === 0) break;
+			offset += bytesRead;
+		}
+		const region = buffer.toString("utf8", 0, offset);
+		if (region.startsWith("\n")) return region.slice(1);
+		const boundary = region.indexOf("\n");
+		return boundary === -1 ? "" : region.slice(boundary + 1);
+	} finally {
+		await handle.close();
+	}
+}
+
 /**
  * Read the finished export back and say whether it is a span tree. The strict
  * gate used to answer only from write-time accounting, which cannot see a
@@ -35,32 +90,38 @@ import { declaresOwnRoot, optionalNumericAttr, stringAttr, traceStructure, type 
  * exactly what the stable id deliberately does not. A row the flow wrote that
  * no longer parses, or that lost its invocation stamp, is caught by the count
  * instead: the trace comes back shorter than it declared. Stampless rows under
- * this trace id are decided by the report's own predicate — a whole run from a
- * pre-discriminator writer is ignored, a remainder no run claims refuses — so
- * the live and report gates agree. The residual is a writer forging both ids,
- * which no honest writer produces.
- */
-/**
+ * this trace id inside the record extent are decided by the report's own
+ * predicate — a whole run from a pre-discriminator writer is ignored, a
+ * remainder no run claims refuses — so the live and report gates agree about
+ * everything this invocation could have affected; rows that predate the extent
+ * are the report's alone (see readExtent above). The residual is a writer
+ * forging both ids inside the extent, which no honest writer produces.
+ *
  * `attempted` is what the run has written when this reading happens — the rows
  * that must be present now. `declared` is what the root says, one more than
  * attempted, because the root reserves a slot for the certification this
- * reading produces afterwards.
+ * reading produces afterwards. `extent.start` is where the invocation's record
+ * begins — the file's size when its sink was born; the default reads the file
+ * whole. Rows before the extent predate the invocation: stamped ones were
+ * always another run's evidence, and a stampless remainder there is a
+ * predecessor's torn record — the whole-file report's business, judged when
+ * the file is read whole, the same way rows appended after finalize already
+ * are. The live verdict covers the region this invocation could have affected.
  */
-export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy): Promise<FlowTraceStructure> {
+export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy, extent: RecordExtent = { start: 0 }): Promise<FlowTraceStructure> {
 	const { traceId, invocationId } = identity;
 	const { attempted, declared } = expectation;
 	try {
-		// Only this invocation's rows are parsed. In the eval setup one file
-		// accumulates every flow of a run, so parsing all of it on each finalize
-		// would cost more with each call; a substring test is cheap and JSON.parse
-		// is not. The line filter is this module's, the validator below is shared
-		// with the report — the same check, not the same reader.
+		// Only this invocation's rows are parsed, and only its own extent is read.
+		// A substring test is cheap and JSON.parse is not. The line filter is this
+		// module's, the validator below is shared with the report — the same
+		// check, not the same reader.
 		const traceMarker = `"trace_id":${JSON.stringify(traceId)}`;
 		const invocationMarker = `"flow.invocation_id":${JSON.stringify(invocationId)}`;
 		const own: TraceSpanRecord[] = [];
 		const unclaimed: TraceSpanRecord[] = [];
 		let unreadable = 0;
-		for (const line of (await fs.readFile(traceFile, "utf8")).split("\n")) {
+		for (const line of (await readExtent(traceFile, extent.start)).split("\n")) {
 			if (!line.includes(traceMarker)) continue;
 			if (!line.includes(invocationMarker)) {
 				// A shared-trace-id row without this run's stamp. Another invocation's

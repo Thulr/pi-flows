@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import type {
@@ -14,7 +15,7 @@ import type {
 	SpanStage,
 } from "./types.ts";
 import { emptyTraceHealth, encodeUnitKey, traceHealthStatus, type FlowTraceStructure } from "./trace-scope.ts";
-import { storedTraceContext, traceContextAttributes } from "./trace-attributes.ts";
+import { storedAttributes, storedLabel, storedStructural, storedTraceContext, traceContextAttributes } from "./trace-attributes.ts";
 import { reconcileVerdicts, verifyExportedTrace } from "./trace-verify.ts";
 import { capModelVisibleText, isFailed, resultText, safePath, sanitizeText } from "./sanitize.ts";
 import { stableTraceIds } from "./trace-identity.mjs";
@@ -54,22 +55,6 @@ interface ExportRow {
 	[key: string]: unknown;
 }
 
-/** Bound on any one span attribute. Attributes are identifiers and structure, not payloads. */
-const ATTRIBUTE_CAP = 1024;
-
-/**
- * Structural keys get their own, larger bound. They are machine identifiers the
- * report parses to check the attribution chain, and a truncated one would read as
- * a broken chain — a valid run failing the gate because its ids were long.
- *
- * All five share the bound deliberately. A key capped on one side and intact on
- * the other cannot be matched to itself, so capping them differently would break
- * exactly the comparison they exist for. The unresolved list is part of that
- * comparison: its entries are declared keys, matched against the declared list.
- */
-const STRUCTURAL_CAP = 8 * 1024;
-const STRUCTURAL_ATTRIBUTES = new Set(["flow.unit_key", "flow.stage_key", "flow.depends_on", "flow.depends_on_span_ids", "flow.depends_on_unresolved"]);
-
 /** What a caller configures beyond the file, the mode, and the capture policy. An object rather than three more positional slots, so a caller asking only for `verify` does not have to pass two `undefined`s to reach it. */
 export interface TraceSinkOptions {
 	traceLabel?: string;
@@ -102,6 +87,18 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	// run over the first call's rows. This id is the discriminator that scoping
 	// filters on instead; it lives beside the identity, never inside it.
 	const invocationId = spanId();
+	// Where this invocation's record begins: the file's size the moment the sink
+	// is born, before any of its rows can exist — the record extent the read-back
+	// is bounded by (#129; readExtent in trace-verify.ts holds why the boundary is
+	// sound). Captured at birth rather than at first write because the sink
+	// appends without awaiting: a row another writer gets onto disk ahead of the
+	// queued first append must not slip behind the boundary. Races can only
+	// under-estimate this (appends grow the file), which reads extra foreign rows
+	// — the safe direction; an unreadable path reads as 0, the whole file.
+	let extentStart = 0;
+	try {
+		extentStart = statSync(traceFile).size;
+	} catch {}
 	const storedContext = context ? storedTraceContext(context, policy) : undefined;
 	const storedTraceLabel = traceLabel ? sanitizeText(traceLabel, { ...policy, recordContent: true }, 256) : undefined;
 	const rootStart = Date.now();
@@ -120,32 +117,6 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 	const stageSpanIdByKey = new Map<string, string>();
 	const pending: Array<Promise<void>> = [];
 	let writeError: string | undefined;
-
-	const storedLabel = (value: string) => sanitizeText(value, { ...policy, recordContent: true }, ATTRIBUTE_CAP);
-
-	/**
-	 * Redact and cap every string an attribute map carries.
-	 *
-	 * Attributes reach the sink from mode handlers, and several are operator- or
-	 * repo-supplied: an approval actor from PI_FLOWS_APPROVAL_ACTOR, a workflow
-	 * phase id, a graph node id, a branch name. They are identity rather than
-	 * content, so `recordContent:false` does not withhold them — but there is no
-	 * reason a configured actor of `token=…`, or a home path, should reach the
-	 * file verbatim when the same string is redacted everywhere else.
-	 */
-	/** How a structural key list looks once written: redacted, then capped. */
-	const storedStructural = (value: string) => sanitizeText(value, { ...policy, recordContent: true }, STRUCTURAL_CAP);
-
-	const storedAttributes = (attributes: Record<string, unknown> | undefined): Record<string, unknown> => {
-		if (!attributes) return {};
-		const stored: Record<string, unknown> = {};
-		for (const [key, value] of Object.entries(attributes)) {
-			stored[key] = typeof value === "string"
-				? sanitizeText(value, { ...policy, recordContent: true }, STRUCTURAL_ATTRIBUTES.has(key) ? STRUCTURAL_CAP : ATTRIBUTE_CAP)
-				: value;
-		}
-		return stored;
-	};
 
 	// The invocation id is stamped here, on the one path every row leaves
 	// through, so no row this sink writes can be missing the discriminator the
@@ -212,7 +183,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// reaches the file: redaction can shorten an over-cap list back under the
 			// cap, and a flag derived from the raw string would then claim a
 			// truncation the reader cannot see — failing a healthy run.
-			const stored = storedStructural(dependsOn.map(encodeUnitKey).join(","));
+			const stored = storedStructural(dependsOn.map(encodeUnitKey).join(","), policy);
 			attributes["flow.depends_on"] = stored;
 			// Capping is the one reason a healthy run's key list is shorter than its
 			// count, so the writer says when it happens. Without that signal a reader
@@ -239,7 +210,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			if (unresolved.length) {
 				// Stored, measured, and flagged under the same rules as the declared
 				// list above, so the two lists stay matchable to each other.
-				const storedUnresolved = storedStructural(unresolved.map(encodeUnitKey).join(","));
+				const storedUnresolved = storedStructural(unresolved.map(encodeUnitKey).join(","), policy);
 				attributes["flow.depends_on_unresolved"] = storedUnresolved;
 				if (storedUnresolved.split(",").filter(Boolean).length < unresolved.length) attributes["flow.depends_on_unresolved_truncated"] = true;
 			}
@@ -268,8 +239,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				"flow.duration_ms": result.durationMs,
 				"flow.stop_reason": result.stopReason,
 				"flow.error_code": result.error?.code,
-				...storedAttributes(placementAttributes),
-				...storedAttributes(span?.attributes),
+				...storedAttributes(placementAttributes, policy),
+				...storedAttributes(span?.attributes, policy),
 				...traceContextAttributes(storedContext),
 				"llm.model_name": result.model,
 				"llm.token_count.prompt": result.usage.input,
@@ -325,8 +296,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.event_name": coordination.name,
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
-					...storedAttributes(placementAttributes),
-					...storedAttributes(coordination.attributes),
+					...storedAttributes(placementAttributes, policy),
+					...storedAttributes(coordination.attributes, policy),
 					...traceContextAttributes(storedContext),
 				},
 			});
@@ -341,7 +312,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					trace_id: traceId,
 					span_id: stage.spanId,
 					parent_span_id: stage.parentSpanId,
-					name: `flow.${mode}.stage.${storedLabel(stage.name)}`,
+					name: `flow.${mode}.stage.${storedLabel(stage.name, policy)}`,
 					start_time_unix_ms: stage.startMs,
 					end_time_unix_ms: stage.endMs,
 					status: { code: "OK" },
@@ -350,7 +321,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 						"flow.span_role": "stage",
 						"flow.mode": mode,
 						"flow.trace_label": storedTraceLabel,
-						"flow.stage_key": sanitizeText(encodeUnitKey(key), { ...policy, recordContent: true }, STRUCTURAL_CAP),
+						"flow.stage_key": storedStructural(encodeUnitKey(key), policy),
 						"flow.stage_span_count": stage.spans,
 						...traceContextAttributes(storedContext),
 					},
@@ -399,7 +370,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
 					...traceContextAttributes(storedContext),
-					...storedAttributes(rootAttributes),
+					...storedAttributes(rootAttributes, policy),
 					"flow.elapsed_time_ms": Math.max(0, end - rootStart),
 					"flow.execution_success": status.ok,
 					"flow.trace.expected_spans": declaredExpectation,
@@ -429,7 +400,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// record; it is not the verdict, because this finalize still has one write
 			// left. A row this run appends after its own reading is evidence its
 			// reading never saw.
-			const preCertification = verify ? await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: expectedSpans, declared: declaredExpectation }, policy) : undefined;
+			const preCertification = verify ? await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: expectedSpans, declared: declaredExpectation }, policy, { start: extentStart }) : undefined;
 			const appendStructureEvent = (certified: boolean, issue: string | undefined) => append({
 				trace_id: traceId,
 				span_id: spanId(),
@@ -446,7 +417,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
 					...(certified ? { "flow.trace.structure_verified": true } : { "flow.trace.structure_revoked": true }),
-					...storedAttributes({ "flow.trace.structure_issue": issue }),
+					...storedAttributes({ "flow.trace.structure_issue": issue }, policy),
 					...traceContextAttributes(storedContext),
 				},
 			});
@@ -460,7 +431,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// file that no longer exists; every row is now expected, so attempted and
 			// declared are the same number.
 			const structure = preCertification
-				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: declaredExpectation, declared: declaredExpectation }, policy))
+				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: declaredExpectation, declared: declaredExpectation }, policy, { start: extentStart }))
 				: undefined;
 			// A final failure after a positive certification would otherwise leave
 			// the file claiming verified while the live call refuses. Best-effort
