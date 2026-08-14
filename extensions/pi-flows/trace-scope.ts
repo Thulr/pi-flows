@@ -64,6 +64,14 @@ export interface CoordinationEvent {
 	attributes?: Record<string, unknown>;
 	/** Defaults to true. False records the event span with ERROR status. */
 	ok?: boolean;
+	/**
+	 * Set only by the seams that perform an action (the glossary's Minted
+	 * event), never by a mode handler. The sink stores it as the row attribute
+	 * `flow.event_minted` (omitted when falsy, never `false`), and the trace
+	 * read-back exempts such rows from the mode's owed-event-kinds declaration:
+	 * the statement is the seam's own, not the mode's.
+	 */
+	minted?: boolean;
 }
 
 /** Records one coordination boundary crossing. See makeTraceSink. */
@@ -106,6 +114,9 @@ export function mintEvent(attribution: EventAttribution, minted: { kind: Coordin
 		kind: minted.kind,
 		name: attribution.name,
 		ok: minted.ok,
+		// The seam performed the action, so the event is its statement — marked
+		// here, in the one home, so every mint seam is covered by one line.
+		minted: true,
 		scope: attribution.scope,
 		attributes: { ...attribution.attributes, ...minted.attributes },
 	});

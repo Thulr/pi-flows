@@ -60,11 +60,20 @@ export function subtasksJsonProtocolInstruction(maxSubtasks: number): string {
  * line, falls back to a JSON `{verdict}` field, and defaults to "revise".
  */
 export function parseVerdict(text: string): "pass" | "revise" {
+	return parsedVerdict(text) ?? "revise";
+}
+
+/**
+ * The verdict the text explicitly states, or null when {@link parseVerdict}
+ * would fall back to its "revise" default. One derivation for both readers, so
+ * a recorder saying "the parse fell back" cannot drift from the parse itself.
+ */
+export function parsedVerdict(text: string): "pass" | "revise" | null {
 	const markerMatch = text.match(/VERDICT\s*[:=]\s*([A-Za-z]+)/i);
 	if (markerMatch) return isPassWord(markerMatch[1]) ? "pass" : "revise";
 	const json = extractLastJsonBlock(text);
 	if (json && typeof json.verdict === "string") return isPassWord(json.verdict) ? "pass" : "revise";
-	return "revise";
+	return null;
 }
 
 export function parseLoopStatus(text: string): "done" | "continue" {

@@ -77,6 +77,7 @@ export class ChildBudgets {
 			kind: "budget",
 			name: "child.refused",
 			ok: false,
+			minted: true,
 			scope: this.scope,
 			attributes: {
 				"flow.budget.refused_agent": agentName,
@@ -229,6 +230,7 @@ export class ChildBudgets {
 			this.recordEvent?.({
 				kind: "budget",
 				name: "child.wrap_up",
+				minted: true,
 				scope: this.eventScope("wrapup"),
 				attributes: {
 					"flow.budget.wrapup_agent": agentName,
@@ -243,6 +245,7 @@ export class ChildBudgets {
 				kind: "budget",
 				name: this.budgetStop.reason === "unobservable" ? "child.unobservable" : "child.exhausted",
 				ok: false,
+				minted: true,
 				scope: this.eventScope("budget"),
 				attributes: {
 					"flow.budget.terminated_agent": agentName,

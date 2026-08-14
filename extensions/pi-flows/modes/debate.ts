@@ -153,5 +153,21 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	if (dispatched.status === "failed") return settle.complete(sanitizeText(`Flow debate: adjudicator failed.\n\n${resultText(dispatched.result)}`, policy));
 	if (dispatched.status === "refused") return dispatched.output;
 
+	// The adjudicator's decision record is debate's verdict — accepted here,
+	// where its dispatch settled, not parsed for a PASS/REVISE marker: the
+	// decision is the record itself. A failed adjudicator returns above and
+	// leaves no verdict to record.
+	deps.recordEvent?.({
+		kind: "validation",
+		name: "debate.judge_verdict",
+		ok: true,
+		scope: { key: "adjudicator.verdict", dependsOn: ["adjudicator"] },
+		attributes: {
+			"flow.verdict.adjudicator": adjudicator.agent,
+			"flow.verdict.rounds": rounds,
+			"flow.verdict.advocate_count": participants.length,
+		},
+	});
+
 	return settle.complete(capModelVisibleText(`Flow debate: ${participants.length} advocates, ${rounds} round(s), adjudicated by ${adjudicator.agent}.${incompleteHandoffSummary([...settle.results])}${deps.handoffs.warningSummary()}\n\n${sanitizeText(resultText(dispatched.result), policy)}`));
 }

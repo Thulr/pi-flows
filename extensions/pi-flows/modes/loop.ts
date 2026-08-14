@@ -1,7 +1,7 @@
 import { flowError, modeSettle, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { appendReturnRequirements, clampLoopIterations } from "../validate.ts";
-import { loopProtocolInstruction, parseLoopStatus, parseVerdict, verdictProtocolInstruction } from "../protocol.ts";
+import { loopProtocolInstruction, parseLoopStatus, parsedVerdict, verdictProtocolInstruction } from "../protocol.ts";
 import { runAgentRef } from "../runner.ts";
 import { plannedRefs, sumRunDurations, type ModePlan } from "./plan.ts";
 
@@ -118,7 +118,22 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 		const judged = await runAgentRef(deps, judgeRef, judgeTask, settle.mode, settle.nextStep, [...settle.results], { scope: { stage, key: `${stage.key}.judge`, dependsOn: [bodyHandoff.dependencyKey!] } });
 		settle.track(judged);
 		if (isFailed(judged)) return settle.complete(sanitizeText(`Flow loop: judge "${judgeRef.agent}" failed at iteration ${iteration}.\n\n${resultText(judged)}`, policy));
-		done = parseVerdict(resultText(judged)) === "pass";
+		const verdict = parsedVerdict(resultText(judged));
+		done = verdict === "pass";
+		// The parsed verdict is the loop's stop decision, so it is recorded here,
+		// where it is decided — like evaluate's panel verdict, hanging off the
+		// judge that produced it so the next iteration's retry can point at it.
+		deps.recordEvent?.({
+			kind: "validation",
+			name: "loop.judge_verdict",
+			ok: done,
+			scope: { stage, key: `${stage.key}.verdict`, dependsOn: [`${stage.key}.judge`] },
+			attributes: {
+				"flow.verdict.value": verdict ?? "revise",
+				"flow.verdict.iteration": iteration,
+				"flow.verdict.fallback_used": verdict === null,
+			},
+		});
 		if (done) break;
 		const critiqueConsumed = iteration < maxIterations;
 		const critiqueHandoff = deps.handoffs.consumeResult({

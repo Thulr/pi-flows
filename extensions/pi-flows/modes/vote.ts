@@ -200,6 +200,22 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		: "";
 
 	const succeeded = voterResults.filter((result) => !isFailed(result));
+	// The tally is the ballot count's one decision point — recorded before the
+	// all-failed exit below so a vote that stops here still shows why. It
+	// depends only on the voters whose ballots were actually counted: a failed
+	// voter cast nothing, and naming it would claim the tally rested on a vote
+	// that never happened.
+	deps.recordEvent?.({
+		kind: "validation",
+		name: "vote.tally",
+		ok: succeeded.length > 0,
+		scope: { key: "tally", dependsOn: voterResults.flatMap((result, index) => (isFailed(result) ? [] : [voterKey(index)])) },
+		attributes: {
+			"flow.verdict.voter_count": voterResults.length,
+			"flow.verdict.ballots_cast": succeeded.length,
+			"flow.verdict.failed_voters": voterResults.length - succeeded.length,
+		},
+	});
 	// Only the ballots that reached the aggregator prompt: a failed voter's output
 	// is filtered out, so naming it would claim a consensus rested on a vote that
 	// was never cast.

@@ -6,6 +6,7 @@ import type {
 	CapturePolicy,
 	ChildSpanScope,
 	CoordinationEvent,
+	CoordinationEventKind,
 	FlowMode,
 	FlowTraceContext,
 	FlowTraceHealth,
@@ -61,6 +62,13 @@ export interface TraceSinkOptions {
 	context?: FlowTraceContext;
 	/** Read the export back once the root is written. Strict runs set it; ordinary flows do not, and pay nothing. */
 	verify?: boolean;
+	/**
+	 * The mode's declared owed event kinds (modes/contract.ts), stamped on the
+	 * root so the read-back can refuse a hand-recorded kind the mode never
+	 * declared. Empty is a declaration of none; absent means no declaration was
+	 * made and the trace stays exempt.
+	 */
+	owedEventKinds?: readonly CoordinationEventKind[];
 }
 
 /**
@@ -76,7 +84,12 @@ export interface TraceSinkOptions {
  * can refuse to treat an incomplete trace as proof.
  */
 export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, options: TraceSinkOptions = {}): TraceSink {
-	const { traceLabel, context, verify = false } = options;
+	const { traceLabel, context, verify = false, owedEventKinds } = options;
+	// The exact string the root will carry — serialized once so the stamp and
+	// what finalize hands the read-back to compare against cannot drift. An
+	// empty declaration serializes to the empty string: presence with no kinds
+	// is a declaration of none, where absence means a pre-declaration writer.
+	const owedDeclaration = owedEventKinds === undefined ? undefined : [...new Set(owedEventKinds)].sort().join(",");
 	const ids = context ? stableTraceIds(context, mode) : { traceId: randomUUID().replace(/-/g, ""), rootSpanId: spanId() };
 	const { traceId, rootSpanId } = ids;
 	// One random id per sink, stamped on every row this invocation writes. The
@@ -293,6 +306,10 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"openinference.span.kind": "CHAIN",
 					"flow.span_role": "event",
 					"flow.event_kind": coordination.kind,
+					// Omitted when falsy, never `false`: the flag exists only as the
+					// seam's positive statement, so the read-back exempts the row from
+					// the mode's owed-kind declaration.
+					...(coordination.minted ? { "flow.event_minted": true } : {}),
 					"flow.event_name": coordination.name,
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
@@ -379,6 +396,9 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.trace.redacted_spans": health.redactedSpans,
 					"flow.trace.failed_exports": health.failedExports,
 					"flow.trace.stage_count": stages.size,
+					// Stamped directly — not through any helper that drops empty
+					// strings, because the empty declaration is a statement, not noise.
+					...(owedDeclaration === undefined ? {} : { "flow.trace.owed_event_kinds": owedDeclaration }),
 					"flow.trace.health": traceHealthStatus({ ...health, expectedSpans, observedSpans }, true),
 					// A strict run cannot verify itself before this row exists, so the row
 					// says its own claims are contingent. A reader then requires positive
@@ -400,7 +420,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// record; it is not the verdict, because this finalize still has one write
 			// left. A row this run appends after its own reading is evidence its
 			// reading never saw.
-			const preCertification = verify ? await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: expectedSpans, declared: declaredExpectation }, policy, { start: extentStart }) : undefined;
+			const preCertification = verify ? await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: expectedSpans, declared: declaredExpectation, owedEventKinds: owedDeclaration }, policy, { start: extentStart }) : undefined;
 			const appendStructureEvent = (certified: boolean, issue: string | undefined) => append({
 				trace_id: traceId,
 				span_id: spanId(),
@@ -413,6 +433,9 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"openinference.span.kind": "CHAIN",
 					"flow.span_role": "event",
 					"flow.event_kind": "validation",
+					// The certification is the sink seam's own statement, so it carries
+					// the minted flag the same way every other seam event does.
+					"flow.event_minted": true,
 					"flow.event_name": `trace.${certified ? "structure_verified" : "structure_invalid"}`,
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
@@ -431,7 +454,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// file that no longer exists; every row is now expected, so attempted and
 			// declared are the same number.
 			const structure = preCertification
-				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: declaredExpectation, declared: declaredExpectation }, policy, { start: extentStart }))
+				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: declaredExpectation, declared: declaredExpectation, owedEventKinds: owedDeclaration }, policy, { start: extentStart }))
 				: undefined;
 			// A final failure after a positive certification would otherwise leave
 			// the file claiming verified while the live call refuses. Best-effort

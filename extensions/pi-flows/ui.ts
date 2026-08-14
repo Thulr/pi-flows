@@ -113,6 +113,7 @@ export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, 
 		kind: "approval",
 		name: `checkpoint.${when}`,
 		ok: decision === "approved",
+		minted: true,
 		scope: { key: `checkpoint.${when}` },
 		attributes: { "flow.approval.decision": decision, "flow.approval.when": when, "flow.approval.interactive": ctx.hasUI === true },
 	});

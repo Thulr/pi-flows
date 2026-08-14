@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { createHandoffConsumer, type HandoffConsumer } from "./handoff-consumption.ts";
 import { runFailed } from "./run.ts";
-import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type CriticalPathResolver, type TraceSink } from "./trace.ts";
+import { makeTraceSink, strictTraceConfigError, strictTraceError, traceHealthStatus, traceSummaryAttributes, type CriticalPathResolver, type OwedEventKindsResolver, type TraceSink } from "./trace.ts";
 import {
 	Budget,
 	DEFAULT_CONCURRENCY,
@@ -105,6 +105,8 @@ export interface FlowPorts {
 	decorateRootAttributes?: (attributes: Record<string, unknown>, details: FlowDetails, deliverable: boolean, preset?: FlowPreset) => Record<string, unknown>;
 	/** The mode table's critical-path resolver, supplied from the composition root where the table is reachable — the aggregate passes it through to trace summaries and never reads mode topology itself. Absent (barebones tests), the metric reports unavailable. */
 	criticalPath?: CriticalPathResolver;
+	/** The mode table's owed-event-kinds resolver, supplied like {@link FlowPorts.criticalPath}. The aggregate hands its answer to the sink, which stamps it on the root so the read-back can refuse a hand-recorded kind the mode never declared. Absent, the trace carries no declaration and stays exempt. */
+	owedEventKinds?: OwedEventKindsResolver;
 	/** Append the durable session entry. The aggregate calls it last, so history can never record an outcome the caller was not told. */
 	persist: (details: FlowDetails) => void;
 }
@@ -244,7 +246,7 @@ export class Flow {
 		// A strict run asks the sink to read its own export back at finalize: it is
 		// about to stake a verdict on this evidence, so it is the one caller that
 		// must not take write-time accounting as proof the file is a span tree.
-		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, call.policy, { traceLabel: call.params.traceLabel, context: call.params.traceContext, verify: traceStrict }) : undefined;
+		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, call.policy, { traceLabel: call.params.traceLabel, context: call.params.traceContext, verify: traceStrict, owedEventKinds: ports.owedEventKinds?.(mode) }) : undefined;
 		trust.record(sink?.event);
 		const handoffs = createHandoffConsumer({ params: call.params, mode, policy: call.policy, defaultCwd: prepared.runDefaultCwd, recordEvent: sink?.event });
 		// A refusal from here on has a trace of its own; without the link a caller
@@ -345,6 +347,9 @@ export class AdmittedFlow {
 						kind: "approval",
 						name: "mode.approval",
 						ok: decision === "approved",
+						// The aggregate performs the approval, so the event is its minted
+						// statement, not one of the mode's own owed kinds.
+						minted: true,
 						attributes: { "flow.approval.decision": decision, "flow.approval.actor": ports.approvalActor, "flow.approval.interactive": interactive },
 					});
 					return decision;

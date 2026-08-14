@@ -8,6 +8,26 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Added
+
+- Every mode now declares its **owed event kinds** — the coordination-event
+  kinds its own handler records by hand (state transitions, retries,
+  controller-parsed verdicts) — once beside its handler on the mode table,
+  like `plan`, `criticalPath`, and `preSpawnRefusal`; a mode without one is a
+  compile error, and `noOwedEvents` is the declared answer for a mode that
+  records none (#133). The sink stamps the declaration on the root span as
+  `flow.trace.owed_event_kinds`, and every seam-minted event now carries
+  `flow.event_minted`, so the strict read-back and
+  `npm run trace:report -- --strict` can hold the hand-placed events to the
+  mode's own statement: an unminted event of a kind the mode never declared is
+  refused the same way forged surplus already is, counted separately as
+  undeclared events. A declaration bounds kinds, not counts — whether a retry
+  fires is runtime-dependent — so a healthy run that records nothing still
+  passes, minted rows stay the seams' own statements, and traces written
+  before the declaration existed stay exempt. Four verdicts that were parsed
+  but never recorded now leave `validation` evidence: `loop.judge_verdict`,
+  `debate.judge_verdict`, `vote.tally`, and `search.scores`.
+
 ### Changed
 
 - The strict read-back no longer rereads the whole shared trace file on every
@@ -51,7 +71,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   evidence of consent no longer depends on that write landing. A mode's own
   state transitions, retries, and controller-parsed verdicts have no shared
   seam performing them and stay hand-placed — the deliberate boundary named in
-  `CONTEXT.md` (**Minted event**) and tracked in #133.
+  `CONTEXT.md` (**Minted event**) and tracked in #133, now bounded by the
+  owed-event-kinds declaration (see Added above).
 
 - Raw `parallel` fan-out with two or more tasks now refuses before child spend
   when any task omits `tier`/`model` and the flow names no uniform fallback.

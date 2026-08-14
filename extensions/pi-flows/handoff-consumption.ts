@@ -197,6 +197,7 @@ export class HandoffConsumer {
 			kind: "handoff",
 			name: rejection ? "handoff.rejected" : "handoff.accepted",
 			ok: !rejection,
+			minted: true,
 			scope,
 			attributes: handoffAttributes(
 				{
@@ -272,6 +273,7 @@ export class HandoffConsumer {
 			kind: "handoff",
 			name: rejection ? "handoff.rejected" : "handoff.accepted",
 			ok: !rejection,
+			minted: true,
 			scope: handoffScope,
 			attributes: handoffAttributes(handoff, {
 				accepted: !rejection,
@@ -325,6 +327,7 @@ export class HandoffConsumer {
 			kind: "validation",
 			name: "envelope.validated",
 			ok: true,
+			minted: true,
 			scope: eventScope,
 			attributes: {
 				"flow.handoff.from_agent": handoff.provenance.agent,
@@ -373,6 +376,7 @@ export class HandoffConsumer {
 			kind: "validation",
 			name: terminal ? "envelope.rejected" : "handoff.rejected",
 			ok: false,
+			minted: true,
 			scope,
 			attributes: {
 				"flow.handoff.from_agent": options.result.agent,
@@ -409,6 +413,7 @@ export class HandoffConsumer {
 				kind: "artifact",
 				name: verified ? "artifact.referenced" : "artifact.rejected",
 				ok: verified,
+				minted: true,
 				scope: scope && unit
 					? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${unit}.artifact-${index + 1}`, dependsOn: [slot ?? `${unit}.handoff`] }
 					: scope,

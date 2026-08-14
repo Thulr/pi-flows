@@ -34,7 +34,7 @@ import { FlowRegistry, showFlowInspector } from "./inspector.ts";
 import { flowCallLines, renderFlowResultRow } from "./ui-live-row.ts";
 import { renderFlowCard } from "./ui-flow-card.ts";
 import { RUN_MODE_HANDLERS, detectRunMode } from "./modes/registry.ts";
-import { activeRunModes, criticalPathForMode, renderRunModeLabel } from "./modes/contract.ts";
+import { activeRunModes, criticalPathForMode, owedEventKindsForMode, renderRunModeLabel } from "./modes/contract.ts";
 import { FlowParams } from "./schema.ts";
 import { discoverFlowPresets, formatPresetResult, preparePresetDispatch, presetCapturePolicy, previewFlowPreset, resolveFlowPreset, summarizePresets } from "./presets.ts";
 import { attachPresetDetails, attachPresetTraceAttributes, presetConfigSummary, presetResolutionErrorOutput } from "./preset-catalog.ts";
@@ -339,7 +339,7 @@ export default function (pi: ExtensionAPI) {
 					const projectAgents = catalog.projectAgentsFor(candidate);
 					if ((agentScope !== "project" && agentScope !== "all") || !(candidate.confirmProjectAgents ?? true) || projectAgents.length === 0) return null;
 					if (!ctx.hasUI) {
-						recordEvent?.({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "required", "flow.approval.interactive": false } });
+						recordEvent?.({ kind: "approval", name: "project_agents", ok: false, minted: true, attributes: { "flow.approval.decision": "required", "flow.approval.interactive": false } });
 						return flowError(
 							"PROJECT_AGENT_APPROVAL_REQUIRED",
 							"Project-local flow agents require explicit trust in non-UI/headless runs.",
@@ -352,7 +352,7 @@ export default function (pi: ExtensionAPI) {
 						`Agents: ${projectAgents.map((agent) => agent.name).join(", ")}\nSource: ${safePath(discovery.projectAgentsDir)}\n\nProject-local agents are repo-controlled prompts. Continue only for trusted repositories.`,
 					);
 					if (!ok) {
-						recordEvent?.({ kind: "approval", name: "project_agents", ok: false, attributes: { "flow.approval.decision": "denied", "flow.approval.interactive": true } });
+						recordEvent?.({ kind: "approval", name: "project_agents", ok: false, minted: true, attributes: { "flow.approval.decision": "denied", "flow.approval.interactive": true } });
 						return flowError(
 							"PROJECT_AGENT_APPROVAL_DENIED",
 							"Canceled: project-local flow agents were not approved.",
@@ -360,7 +360,7 @@ export default function (pi: ExtensionAPI) {
 							"Review the project-local agent files and retry if you trust them.",
 						);
 					}
-					recordEvent?.({ kind: "approval", name: "project_agents", attributes: { "flow.approval.decision": "approved", "flow.approval.interactive": true } });
+					recordEvent?.({ kind: "approval", name: "project_agents", minted: true, attributes: { "flow.approval.decision": "approved", "flow.approval.interactive": true } });
 					return null;
 				},
 				checkpoint: (candidate, mode, when, preview, recordEvent) => checkpointApproval(candidate, ctx, mode, when, preview, recordEvent),
@@ -386,6 +386,9 @@ export default function (pi: ExtensionAPI) {
 				// receive it as an argument, because mode topology is Supporting
 				// and Core may not import it.
 				criticalPath: criticalPathForMode,
+				// Same rule for the mode table's owed-event-kinds declaration: the
+				// Core sink stamps the resolved answer, never the table itself.
+				owedEventKinds: owedEventKindsForMode,
 				persist: (details) => appendFlowSessionEntry(pi, details),
 			});
 			if ("described" in admission) return admission.described;

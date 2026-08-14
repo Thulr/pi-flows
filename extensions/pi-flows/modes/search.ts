@@ -171,8 +171,26 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 		const scoreResults = scoreWave.results;
 		const scored = candidates.map((candidate, index) => {
 			const result = scoreResults[index];
-			const score = isFailed(result) ? 0 : parseScore(resultText(result)) ?? 0;
-			return { candidate, score, result, scoreKey: `${scoreStage.key}-${index + 1}` };
+			const parsed = isFailed(result) ? null : parseScore(resultText(result));
+			return { candidate, score: parsed ?? 0, parsed: parsed !== null, result, scoreKey: `${scoreStage.key}-${index + 1}` };
+		});
+		// The parsed scores decide this round's beam, so they are recorded here,
+		// where the selection happens — before the sort below reorders them, so
+		// the joined list stays aligned with the scorer keys it depends on. The
+		// event sits in the score stage with the scorers it aggregates, like
+		// evaluate's panel verdict beside its critics. A failed scorer or
+		// unparseable output scored its candidate 0.
+		deps.recordEvent?.({
+			kind: "validation",
+			name: "search.scores",
+			ok: scored.some((item) => item.parsed),
+			scope: { stage: scoreStage, key: `${roundStage.key}.scores`, dependsOn: scored.map((item) => item.scoreKey) },
+			attributes: {
+				"flow.verdict.round": round,
+				"flow.verdict.scores": scored.map((item) => item.score).join(","),
+				"flow.verdict.beam_width": beamWidth,
+				"flow.verdict.fallback_count": scored.filter((item) => !item.parsed).length,
+			},
 		});
 		beam = scored.sort((a, b) => b.score - a.score).slice(0, beamWidth).map((item) => ({ text: item.candidate, score: item.score, scoreKey: item.scoreKey }));
 	}
