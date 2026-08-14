@@ -6,11 +6,13 @@ import type {
 	CapturePolicy,
 	ChildSpanScope,
 	CoordinationEvent,
+	CoordinationEventKind,
 	FlowMode,
 	FlowTraceContext,
 	FlowTraceHealth,
 	FlowTraceLink,
 	RecordEvent,
+	RecordMintedEvent,
 	RecordSpan,
 	SpanStage,
 } from "./types.ts";
@@ -25,6 +27,8 @@ export { stableTraceIds } from "./trace-identity.mjs";
 export interface TraceSink {
 	record: RecordSpan;
 	event: RecordEvent;
+	/** The seam that performed the action, beside the mode's own `event` above: two doors onto one implementation, differing only in what a caller may claim. A mode-facing port cannot be wired here — {@link RecordMintedEvent} is not assignable to {@link RecordEvent}. */
+	mintedEvent: RecordMintedEvent;
 	/**
 	 * Root attributes may be given as a function of the span accounting observed
 	 * just before the root is written. A caller that must not claim more than the
@@ -61,6 +65,8 @@ export interface TraceSinkOptions {
 	context?: FlowTraceContext;
 	/** Read the export back once the root is written. Strict runs set it; ordinary flows do not, and pay nothing. */
 	verify?: boolean;
+	/** The mode's declared owed event kinds (modes/contract.ts), stamped on the root so the read-back can refuse a hand-recorded kind the mode never declared. Empty declares none; absent leaves the trace exempt. */
+	owedEventKinds?: readonly CoordinationEventKind[];
 }
 
 /**
@@ -76,7 +82,12 @@ export interface TraceSinkOptions {
  * can refuse to treat an incomplete trace as proof.
  */
 export function makeTraceSink(traceFile: string, mode: FlowMode, policy: CapturePolicy, options: TraceSinkOptions = {}): TraceSink {
-	const { traceLabel, context, verify = false } = options;
+	const { traceLabel, context, verify = false, owedEventKinds } = options;
+	// The exact string the root will carry — serialized once so the stamp and what
+	// finalize hands the read-back cannot drift. An empty declaration serializes
+	// to the empty string: presence with no kinds declares none, where absence
+	// means a pre-declaration writer.
+	const owedDeclaration = owedEventKinds === undefined ? undefined : [...new Set(owedEventKinds)].sort().join(",");
 	const ids = context ? stableTraceIds(context, mode) : { traceId: randomUUID().replace(/-/g, ""), rootSpanId: spanId() };
 	const { traceId, rootSpanId } = ids;
 	// One random id per sink, stamped on every row this invocation writes. The
@@ -219,6 +230,48 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		return { parentSpanId, attributes };
 	};
 
+	// The one implementation behind both doors: the optional minted claim lets it
+	// serve RecordEvent, whose callers cannot make the claim, and RecordMintedEvent, whose callers must.
+	const recordCoordinationEvent = (coordination: CoordinationEvent & { minted?: true }) => {
+		const now = Date.now();
+		const { parentSpanId, attributes: placementAttributes } = placement(coordination.scope, now, now);
+		const id = spanId();
+		// Events are linkable units too: an approval is the thing a gated phase
+		// actually depends on, and it spawns no child, so without registering its
+		// key that edge resolves to nothing. A child's key always wins, though —
+		// an event must never quietly rebind a name a run already answers to.
+		const key = coordination.scope?.key;
+		if (key && !spanIdByKey.has(key)) spanIdByKey.set(key, id);
+		void append({
+			trace_id: traceId,
+			span_id: id,
+			parent_span_id: parentSpanId,
+			name: `flow.${mode}.event.${coordination.name}`,
+			start_time_unix_ms: now,
+			end_time_unix_ms: now,
+			status: { code: coordination.ok === false ? "ERROR" : "OK" },
+			// Caller attributes first, the sink's own facts last — mintEvent's order
+			// for mintEvent's reason: the performer's facts win. Every gate the
+			// read-back applies is decided below rather than by the caller: the kind
+			// judged against the declaration, the stamp that exempts a row from it,
+			// the placement links resolve through.
+			attributes: {
+				...storedAttributes(coordination.attributes, policy),
+				...storedAttributes(placementAttributes, policy),
+				"openinference.span.kind": "CHAIN",
+				"flow.span_role": "event",
+				"flow.event_kind": coordination.kind,
+				"flow.event_name": coordination.name,
+				"flow.mode": mode,
+				"flow.trace_label": storedTraceLabel,
+				// Stated even when false, or the caller's own value above would stand;
+				// the undefined is dropped at serialization, leaving only the stamp.
+				"flow.event_minted": coordination.minted ? true : undefined,
+				...traceContextAttributes(storedContext),
+			},
+		});
+	};
+
 	return {
 		record(result, span) {
 			const end = Date.now();
@@ -226,7 +279,10 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			const { parentSpanId, attributes: placementAttributes } = placement(span?.scope, start, end);
 			const id = spanId();
 			if (span?.scope?.key) spanIdByKey.set(span.scope.key, id);
+			// The event path's merge order, for its reason: these placement attributes feed the same dependency check on read-back.
 			const attributes: Record<string, unknown> = {
+				...storedAttributes(span?.attributes, policy),
+				...storedAttributes(placementAttributes, policy),
 				"openinference.span.kind": "AGENT",
 				"flow.span_role": "child",
 				"flow.mode": mode,
@@ -239,8 +295,6 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				"flow.duration_ms": result.durationMs,
 				"flow.stop_reason": result.stopReason,
 				"flow.error_code": result.error?.code,
-				...storedAttributes(placementAttributes, policy),
-				...storedAttributes(span?.attributes, policy),
 				...traceContextAttributes(storedContext),
 				"llm.model_name": result.model,
 				"llm.token_count.prompt": result.usage.input,
@@ -271,37 +325,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 				attributes,
 			});
 		},
-		event(coordination) {
-			const now = Date.now();
-			const { parentSpanId, attributes: placementAttributes } = placement(coordination.scope, now, now);
-			const id = spanId();
-			// Events are linkable units too: an approval is the thing a gated phase
-			// actually depends on, and it spawns no child, so without registering its
-			// key that edge resolves to nothing. A child's key always wins, though —
-			// an event must never quietly rebind a name a run already answers to.
-			const key = coordination.scope?.key;
-			if (key && !spanIdByKey.has(key)) spanIdByKey.set(key, id);
-			void append({
-				trace_id: traceId,
-				span_id: id,
-				parent_span_id: parentSpanId,
-				name: `flow.${mode}.event.${coordination.name}`,
-				start_time_unix_ms: now,
-				end_time_unix_ms: now,
-				status: { code: coordination.ok === false ? "ERROR" : "OK" },
-				attributes: {
-					"openinference.span.kind": "CHAIN",
-					"flow.span_role": "event",
-					"flow.event_kind": coordination.kind,
-					"flow.event_name": coordination.name,
-					"flow.mode": mode,
-					"flow.trace_label": storedTraceLabel,
-					...storedAttributes(placementAttributes, policy),
-					...storedAttributes(coordination.attributes, policy),
-					...traceContextAttributes(storedContext),
-				},
-			});
-		},
+		event: recordCoordinationEvent,
+		mintedEvent: recordCoordinationEvent,
 		async finalize(status, attributes = {}) {
 			// Children and events are appended without awaiting so tracing never
 			// paces execution; the whole backlog is drained here so the counters
@@ -379,6 +404,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"flow.trace.redacted_spans": health.redactedSpans,
 					"flow.trace.failed_exports": health.failedExports,
 					"flow.trace.stage_count": stages.size,
+					// Stamped directly: a helper that dropped empty strings would erase the declaration of none.
+					...(owedDeclaration === undefined ? {} : { "flow.trace.owed_event_kinds": owedDeclaration }),
 					"flow.trace.health": traceHealthStatus({ ...health, expectedSpans, observedSpans }, true),
 					// A strict run cannot verify itself before this row exists, so the row
 					// says its own claims are contingent. A reader then requires positive
@@ -400,7 +427,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// record; it is not the verdict, because this finalize still has one write
 			// left. A row this run appends after its own reading is evidence its
 			// reading never saw.
-			const preCertification = verify ? await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: expectedSpans, declared: declaredExpectation }, policy, { start: extentStart }) : undefined;
+			const preCertification = verify ? await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: expectedSpans, declared: declaredExpectation, owedEventKinds: owedDeclaration }, policy, { start: extentStart }) : undefined;
 			const appendStructureEvent = (certified: boolean, issue: string | undefined) => append({
 				trace_id: traceId,
 				span_id: spanId(),
@@ -413,6 +440,8 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 					"openinference.span.kind": "CHAIN",
 					"flow.span_role": "event",
 					"flow.event_kind": "validation",
+					// The sink seam's own statement, stamped like every other minted event.
+					"flow.event_minted": true,
 					"flow.event_name": `trace.${certified ? "structure_verified" : "structure_invalid"}`,
 					"flow.mode": mode,
 					"flow.trace_label": storedTraceLabel,
@@ -431,7 +460,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 			// file that no longer exists; every row is now expected, so attempted and
 			// declared are the same number.
 			const structure = preCertification
-				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: declaredExpectation, declared: declaredExpectation }, policy, { start: extentStart }))
+				? reconcileVerdicts(preCertification, await verifyExportedTrace(traceFile, { traceId, invocationId }, { attempted: declaredExpectation, declared: declaredExpectation, owedEventKinds: owedDeclaration }, policy, { start: extentStart }))
 				: undefined;
 			// A final failure after a positive certification would otherwise leave
 			// the file claiming verified while the live call refuses. Best-effort

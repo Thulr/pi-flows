@@ -739,7 +739,12 @@ path or a full disk.
 The in-process gate sees both. It counts what the exporter failed to write, and
 before reporting a result it reads its own export back, so spans lost *after* a
 successful write (a truncating concurrent writer, a rotated file) fail the call
-too rather than passing on the writer's count. It reads only the rows carrying
+too rather than passing on the writer's count. The reading also holds
+hand-placed event rows to the mode's declared owed event kinds (the root's
+`flow.trace.owed_event_kinds`): an unminted event of a kind the mode never
+declared refuses the call the way surplus rows do, while rows stamped
+`flow.event_minted` are the framework seams' own statements and exempt.
+It reads only the rows carrying
 its own `trace_id` *and* its own `flow.invocation_id` (a random per-call stamp
 on every row), so flows sharing one file do not judge each other — including
 two calls that share a stable trace id outright, such as a traced pre-spawn

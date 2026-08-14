@@ -1,7 +1,8 @@
 import * as path from "node:path";
 import { safePath, sanitizeText } from "./sanitize.ts";
+import { owedEventKindsForMode } from "./modes/contract.ts";
 import { makeTraceSink } from "./trace.ts";
-import { flowError, type AgentScope, type CapturePolicy, type FlowError, type FlowMode, type FlowPreset, type FlowTraceContext, type FlowTraceLink, type RecordEvent } from "./types.ts";
+import { flowError, type AgentScope, type CapturePolicy, type FlowError, type FlowMode, type FlowPreset, type FlowTraceContext, type FlowTraceLink, type RecordMintedEvent } from "./types.ts";
 
 /** The trace settings a call owned before any preset expansion could add its own. */
 export interface CallerTraceSettings {
@@ -26,11 +27,14 @@ export async function traceProjectPresetRefusal(
 	interactive: boolean,
 ): Promise<FlowTraceLink | undefined> {
 	if (!settings.traceFile) return undefined;
-	const sink = makeTraceSink(path.resolve(cwd, settings.traceFile), mode, policy, { traceLabel: settings.traceLabel, context: settings.traceContext });
-	sink.event({
+	// This module is Supporting, so unlike the Core sink construction it may
+	// read the mode table's declaration directly instead of through a resolver.
+	const sink = makeTraceSink(path.resolve(cwd, settings.traceFile), mode, policy, { traceLabel: settings.traceLabel, context: settings.traceContext, owedEventKinds: owedEventKindsForMode(mode) });
+	sink.mintedEvent({
 		kind: "approval",
 		name: "project_preset",
 		ok: false,
+		minted: true,
 		attributes: { "flow.approval.decision": interactive ? "denied" : "required", "flow.approval.interactive": interactive, "flow.preset": preset?.name },
 	});
 	return sink.finalize({ ok: false }, { "flow.child_count": 0, "flow.refused_before_spawn": error.code });
@@ -39,7 +43,7 @@ export async function traceProjectPresetRefusal(
 export interface ProjectPresetApproval {
 	error: FlowError | null;
 	/** Record the completed approval only after preset-owned trace settings are trusted. */
-	record: (recordEvent?: RecordEvent) => void;
+	record: (recordEvent?: RecordMintedEvent) => void;
 }
 
 export async function approveProjectPreset(
@@ -50,12 +54,13 @@ export async function approveProjectPreset(
 	policy: CapturePolicy = { recordContent: true, redactSecrets: true },
 ): Promise<ProjectPresetApproval> {
 	let approved = false;
-	const record = (recordEvent?: RecordEvent) => {
+	const record = (recordEvent?: RecordMintedEvent) => {
 		if (!approved || !preset) return;
 		recordEvent?.({
 			kind: "approval",
 			name: "project_preset",
 			ok: true,
+			minted: true,
 			attributes: { "flow.approval.decision": "approved", "flow.approval.interactive": true, "flow.preset": preset.name },
 		});
 	};

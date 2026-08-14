@@ -98,6 +98,13 @@ export interface TraceStructure {
 	 * while the count keeps the bug visible.
 	 */
 	danglingLinks: number;
+	/**
+	 * Event spans the mode's own hand did not declare: an unminted event row
+	 * whose `flow.event_kind` is outside the root's declared owed set (or
+	 * unreadable). Rows carrying `flow.event_minted` are the seams' statements
+	 * and exempt; a root with no declaration exempts the whole trace.
+	 */
+	undeclaredEvents: number;
 	invalid: boolean;
 }
 
@@ -283,7 +290,7 @@ export function traceStructure(traceSpans: TraceSpanRecord[], expectation: { dec
 		|| traceSpans.some((span) => stringAttr(span, "flow.span_role") !== undefined)
 		|| expectation.present;
 	if (!modern) {
-		return { root, observedSpans, duplicateSpans, malformedSpans, unexpectedSpans: 0, danglingLinks: 0, invalid: false };
+		return { root, observedSpans, duplicateSpans, malformedSpans, unexpectedSpans: 0, danglingLinks: 0, undeclaredEvents: 0, invalid: false };
 	}
 
 	// A row with no role, or an unrecognized one, is excluded from every bucket
@@ -304,6 +311,28 @@ export function traceStructure(traceSpans: TraceSpanRecord[], expectation: { dec
 	// claims a count, and there is no way to check the count it claims.
 	const expectationUnusable = expectation.present && declaredExpectation === undefined;
 
+	// The root's owed-event-kinds declaration, presence-aware like the
+	// expectation above: absent exempts (a pre-declaration writer), present but
+	// unreadable invalidates — a stated declaration nothing can read is not an
+	// absent one. Read raw rather than through stringAttr, whose trim test would
+	// turn the empty string — the declaration of none — into absence.
+	const owedRaw = root?.attributes?.["flow.trace.owed_event_kinds"];
+	const owedPresent = root !== undefined && hasAttr(root, "flow.trace.owed_event_kinds");
+	const owedUnusable = owedPresent && typeof owedRaw !== "string";
+	let undeclaredEvents = 0;
+	if (owedPresent && typeof owedRaw === "string") {
+		const declaredKinds = new Set(owedRaw.split(",").filter(Boolean));
+		for (const span of traceSpans) {
+			// Minted rows are the seams' own statements and outside the mode's
+			// declaration. An unminted event whose kind is missing or unreadable
+			// counts too: a kind that was stripped cannot be checked, which is
+			// corruption, not absence.
+			if (spanRole(span, root) !== "event" || boolAttr(span, "flow.event_minted")) continue;
+			const kind = stringAttr(span, "flow.event_kind");
+			if (kind === undefined || !declaredKinds.has(kind)) undeclaredEvents += 1;
+		}
+	}
+
 	return {
 		root,
 		observedSpans,
@@ -311,6 +340,7 @@ export function traceStructure(traceSpans: TraceSpanRecord[], expectation: { dec
 		malformedSpans,
 		unexpectedSpans,
 		danglingLinks,
-		invalid: expectationUnusable || !rolesDeclared || !rootWellFormed || !connected || !attributionHolds || !timesContained,
+		undeclaredEvents,
+		invalid: expectationUnusable || owedUnusable || !rolesDeclared || !rootWellFormed || !connected || !attributionHolds || !timesContained,
 	};
 }

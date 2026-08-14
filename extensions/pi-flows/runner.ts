@@ -138,6 +138,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			kind: "validation",
 			name: "dispatch.unknown_agent",
 			ok: false,
+			minted: true,
 			scope: options.scope,
 			attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": error.code },
 		});
@@ -166,7 +167,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			"The session's model scope admits no model an automatic tier could name, and no session model or explicit pin was available to anchor to.",
 			"Widen the session's model scope (/scoped-models or --models), name a model explicitly on the call, agent, or pi-flows config, or run from a session with a current model.",
 		);
-		options.recordEvent?.({ kind: "validation", name: "dispatch.model_scope_unsatisfiable", ok: false, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": error.code } });
+		options.recordEvent?.({ kind: "validation", name: "dispatch.model_scope_unsatisfiable", ok: false, minted: true, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": error.code } });
 		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, error), { role: capturedRole });
 	}
 	const result: FlowRunResult = {
@@ -195,7 +196,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 
 	const { args, tools, enforcement, error: bashRoError } = buildChildArgs({ model: choice.model, thinking: choice.thinking, noExtensions: childExtensionsDisabled(), toolsOverride: options.tools, agentTools: agent.tools });
 	if (bashRoError) {
-		options.recordEvent?.({ kind: "validation", name: "dispatch.bash_readonly_unenforceable", ok: false, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": bashRoError.code } });
+		options.recordEvent?.({ kind: "validation", name: "dispatch.bash_readonly_unenforceable", ok: false, minted: true, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": bashRoError.code } });
 		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, bashRoError), { role: capturedRole });
 	}
 

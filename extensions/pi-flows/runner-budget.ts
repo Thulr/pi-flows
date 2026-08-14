@@ -7,7 +7,7 @@
  * decisions themselves belong to Budget (budget.ts) — this object only asks.
  */
 import { budgetAttributes } from "./trace-attributes.ts";
-import type { Budget, ChildSpanScope, FlowError, FlowRunResult, RecordEvent, UsageStats } from "./types.ts";
+import type { Budget, ChildSpanScope, FlowError, FlowRunResult, RecordMintedEvent, UsageStats } from "./types.ts";
 
 /**
  * The live children currently armed on each budget. A soft-threshold
@@ -50,7 +50,7 @@ export class ChildBudgets {
 
 	constructor(
 		private readonly budgets: Budget[],
-		private readonly recordEvent: RecordEvent | undefined,
+		private readonly recordEvent: RecordMintedEvent | undefined,
 		private readonly scope: ChildSpanScope | undefined,
 		/** Appended to any latched notice for a contracted child — see `contractWrapUpRequirement` (contract-resolution.ts), which owns the envelope-shape prose. */
 		private readonly contractRequirement?: string,
@@ -77,6 +77,7 @@ export class ChildBudgets {
 			kind: "budget",
 			name: "child.refused",
 			ok: false,
+			minted: true,
 			scope: this.scope,
 			attributes: {
 				"flow.budget.refused_agent": agentName,
@@ -229,6 +230,7 @@ export class ChildBudgets {
 			this.recordEvent?.({
 				kind: "budget",
 				name: "child.wrap_up",
+				minted: true,
 				scope: this.eventScope("wrapup"),
 				attributes: {
 					"flow.budget.wrapup_agent": agentName,
@@ -243,6 +245,7 @@ export class ChildBudgets {
 				kind: "budget",
 				name: this.budgetStop.reason === "unobservable" ? "child.unobservable" : "child.exhausted",
 				ok: false,
+				minted: true,
 				scope: this.eventScope("budget"),
 				attributes: {
 					"flow.budget.terminated_agent": agentName,

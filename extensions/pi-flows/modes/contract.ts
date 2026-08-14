@@ -1,4 +1,4 @@
-import { DEFAULT_CONCURRENCY, DEFAULT_SEARCH_CANDIDATES, RUN_MODE_NAMES, type FlowDiscovery, type FlowError, type FlowMode, type FlowRunResult, type ModeHandler, type RunMode } from "../types.ts";
+import { DEFAULT_CONCURRENCY, DEFAULT_SEARCH_CANDIDATES, RUN_MODE_NAMES, type CoordinationEventKind, type FlowDiscovery, type FlowError, type FlowMode, type FlowRunResult, type ModeHandler, type RunMode } from "../types.ts";
 import { validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
 import type { ModeCriticalPathFn, ModePlan, ModePlanFn, ModePreSpawnRefusalFn, PlannedRef, PreSpawnContext } from "./plan.ts";
 import { criticalPathSingle, handleSingle, planSingle } from "./single.ts";
@@ -26,6 +26,14 @@ import { criticalPathMonitor, handleMonitor, planMonitor, preSpawnRefusalMonitor
  */
 const noPreSpawnRefusal: ModePreSpawnRefusalFn = () => null;
 
+/**
+ * A mode whose handler records no coordination events of its own — a declared
+ * answer, never a fall-through. The single-shot topologies qualify: every
+ * event their flows carry is a seam's statement (approvals, budgets,
+ * handoffs), and the handler places none by hand.
+ */
+const noOwedEvents: readonly CoordinationEventKind[] = [];
+
 export interface RunModeContract {
 	mode: RunMode;
 	/** The params key(s) that activate this mode, as shown in the INVALID_MODE fix text. */
@@ -42,6 +50,17 @@ export interface RunModeContract {
 	 * that reaches none.
 	 */
 	preSpawnRefusal: ModePreSpawnRefusalFn;
+	/**
+	 * The coordination-event kinds this mode's handler itself records —
+	 * hand-placed, mode-owned: state transitions, retries, the verdicts its
+	 * controllers parse. Seam-minted events (approval, budget, handoff,
+	 * artifact, gate validation) are the seam's own statement and are NOT
+	 * declared here. The sink stamps the declaration on the root span, and a
+	 * recorded kind outside it is refused by the trace read-back the way
+	 * forged surplus already is; `noOwedEvents` is the declared answer for a
+	 * mode that records none.
+	 */
+	owedEventKinds: readonly CoordinationEventKind[];
 	renderLabel: (params: any) => string;
 	handler: ModeHandler;
 }
@@ -62,6 +81,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planSingle,
 		criticalPath: criticalPathSingle,
 		preSpawnRefusal: noPreSpawnRefusal,
+		owedEventKinds: noOwedEvents,
 		renderLabel: (params) => params.agent ?? "agent",
 		handler: handleSingle,
 	},
@@ -71,6 +91,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planParallel,
 		criticalPath: criticalPathParallel,
 		preSpawnRefusal: preSpawnRefusalParallel,
+		owedEventKinds: noOwedEvents,
 		renderLabel: (params) => `parallel ${params.tasks?.length ?? 0} task${(params.tasks?.length ?? 0) === 1 ? "" : "s"}`,
 		handler: handleParallel,
 	},
@@ -80,6 +101,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planChain,
 		criticalPath: criticalPathChain,
 		preSpawnRefusal: noPreSpawnRefusal,
+		owedEventKinds: noOwedEvents,
 		renderLabel: (params) => `chain ${params.chain?.length ?? 0} step${(params.chain?.length ?? 0) === 1 ? "" : "s"}`,
 		handler: handleChain,
 	},
@@ -89,6 +111,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planEvaluate,
 		criticalPath: criticalPathEvaluate,
 		preSpawnRefusal: preSpawnRefusalEvaluate,
+		owedEventKinds: ["retry", "validation"],
 		renderLabel: (params) => {
 			const generator = params.evaluate?.operator?.agent ?? "operator";
 			const redteam = params.evaluate?.redteam;
@@ -104,6 +127,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planVote,
 		criticalPath: criticalPathVote,
 		preSpawnRefusal: preSpawnRefusalVote,
+		owedEventKinds: ["validation"],
 		renderLabel: (params) => {
 			const count = params.vote?.voters?.length ?? params.vote?.count ?? 3;
 			const suffix = params.vote?.debrief?.agent ? `->${params.vote.debrief.agent}` : "";
@@ -117,6 +141,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planRoute,
 		criticalPath: criticalPathRoute,
 		preSpawnRefusal: preSpawnRefusalRoute,
+		owedEventKinds: ["state"],
 		renderLabel: (params) => `route via ${params.route?.controller?.agent ?? "controller"}`,
 		handler: handleRoute,
 	},
@@ -126,6 +151,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planOrchestrate,
 		criticalPath: criticalPathOrchestrate,
 		preSpawnRefusal: preSpawnRefusalOrchestrate,
+		owedEventKinds: ["retry", "validation"],
 		renderLabel: (params) => `orchestrate ->${params.orchestrate?.recon?.agent ?? "recon"}`,
 		handler: handleOrchestrate,
 	},
@@ -135,6 +161,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planGraph,
 		criticalPath: criticalPathGraph,
 		preSpawnRefusal: preSpawnRefusalGraph,
+		owedEventKinds: noOwedEvents,
 		renderLabel: (params) => {
 			const count = params.graph?.nodes?.length ?? 0;
 			const suffix = params.graph?.debrief?.agent ? `->${params.graph.debrief.agent}` : "";
@@ -148,6 +175,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planLoop,
 		criticalPath: criticalPathLoop,
 		preSpawnRefusal: preSpawnRefusalLoop,
+		owedEventKinds: ["retry", "validation"],
 		renderLabel: (params) => {
 			const body = params.loop?.body?.agent ?? "agent";
 			const judge = params.loop?.judge?.agent ? `->${params.loop.judge.agent}` : "";
@@ -161,6 +189,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planSearch,
 		criticalPath: criticalPathSearch,
 		preSpawnRefusal: preSpawnRefusalSearch,
+		owedEventKinds: ["validation"],
 		renderLabel: (params) => `search ${params.search?.candidates ?? DEFAULT_SEARCH_CANDIDATES}`,
 		handler: handleSearch,
 	},
@@ -170,6 +199,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planWorkflow,
 		criticalPath: criticalPathWorkflow,
 		preSpawnRefusal: preSpawnRefusalWorkflow,
+		owedEventKinds: ["state"],
 		renderLabel: (params) => `workflow ${params.workflow?.phases?.length ?? 0} phases`,
 		handler: handleWorkflow,
 	},
@@ -179,6 +209,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planWorktree,
 		criticalPath: criticalPathWorktree,
 		preSpawnRefusal: preSpawnRefusalWorktree,
+		owedEventKinds: ["state"],
 		renderLabel: (params) => `worktree ${params.worktree?.tasks?.length ?? 0} writers`,
 		handler: handleWorktree,
 	},
@@ -188,6 +219,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planDebate,
 		criticalPath: criticalPathDebate,
 		preSpawnRefusal: preSpawnRefusalDebate,
+		owedEventKinds: ["validation"],
 		renderLabel: (params) => `debate ${params.debate?.participants?.length ?? 0} advocates`,
 		handler: handleDebate,
 	},
@@ -197,6 +229,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planDossier,
 		criticalPath: criticalPathDossier,
 		preSpawnRefusal: preSpawnRefusalDossier,
+		owedEventKinds: noOwedEvents,
 		renderLabel: (params) => `dossier ${params.dossier?.sections?.length ?? 0} sources`,
 		handler: handleDossier,
 	},
@@ -206,6 +239,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		plan: planMonitor,
 		criticalPath: criticalPathMonitor,
 		preSpawnRefusal: preSpawnRefusalMonitor,
+		owedEventKinds: ["state"],
 		renderLabel: (params) => `monitor ${params.monitor?.maxChecks ?? 6} checks`,
 		handler: handleMonitor,
 	},
@@ -342,4 +376,16 @@ export function preSpawnSharedWriteRefusal(discovery: FlowDiscovery, defaultCwd:
 export function criticalPathForMode(mode: FlowMode, params: any, results: FlowRunResult[]): number | undefined {
 	if (results.length === 0) return undefined;
 	return RUN_MODE_CONTRACTS.find((contract) => contract.mode === mode)?.criticalPath(params, results);
+}
+
+/**
+ * The coordination-event kinds one mode's handler records by its own hand,
+ * from the mode's declaration. Undefined for a mode not in the table (the
+ * non-run surfaces); otherwise the entry's declared kinds — empty included,
+ * because a declaration of none is an answer, not an absence. Wired into the
+ * Core trace sink from the composition root, like criticalPathForMode above —
+ * Core receives the resolved answer as an argument and never imports the table.
+ */
+export function owedEventKindsForMode(mode: FlowMode): readonly CoordinationEventKind[] | undefined {
+	return RUN_MODE_CONTRACTS.find((contract) => contract.mode === mode)?.owedEventKinds;
 }

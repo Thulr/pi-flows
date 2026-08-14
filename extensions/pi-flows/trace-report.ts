@@ -51,6 +51,13 @@ export interface TraceReportBucket {
 	 * read-back agree the export is whole while the bug stays visible.
 	 */
 	danglingLinks: number;
+	/**
+	 * Unminted event spans whose kind sits outside the root's declared owed
+	 * set — a coordination event the mode's own hand never declared. Counted
+	 * only for traces whose root carries the declaration; pre-declaration
+	 * traces stay exempt.
+	 */
+	undeclaredEvents: number;
 	coordinationEvents: number;
 	stageSpans: number;
 }
@@ -91,6 +98,7 @@ export function emptyTraceBucket(): TraceReportBucket {
 		incompleteTraces: 0,
 		structurallyInvalidTraces: 0,
 		danglingLinks: 0,
+		undeclaredEvents: 0,
 		coordinationEvents: 0,
 		stageSpans: 0,
 	};
@@ -252,7 +260,7 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 		// read-back verdict and a live one cannot disagree. A duplicated or
 		// unidentifiable row is its own disqualification: nothing downstream can
 		// tell which copy is real, or what an id-less row was meant to be.
-		const incomplete = expectationLost || structure.invalid || duplicateSpans > 0 || malformedSpans > 0 || unexpectedSpans > 0 || traceHealthStatus(
+		const incomplete = expectationLost || structure.invalid || duplicateSpans > 0 || malformedSpans > 0 || unexpectedSpans > 0 || structure.undeclaredEvents > 0 || traceHealthStatus(
 			{ expectedSpans, observedSpans, droppedSpans, redactedSpans, failedExports },
 			Boolean(root),
 		) !== "recorded";
@@ -314,6 +322,7 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			incompleteTraces: incomplete ? 1 : 0,
 			structurallyInvalidTraces: structure.invalid ? 1 : 0,
 			danglingLinks: structure.danglingLinks,
+			undeclaredEvents: structure.undeclaredEvents,
 			coordinationEvents: eventSpans.length,
 			stageSpans: stageSpans.length,
 		};
@@ -375,7 +384,7 @@ export function formatTraceReport(report: TraceReport): string {
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
-		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} structurally invalid` : ""}${report.danglingLinks ? `; ${report.danglingLinks} dangling link${report.danglingLinks === 1 ? "" : "s"} (dependencies recorded as never resolved — a handler bug, not lost evidence)` : ""}`,
+		`Trace health: ${report.observedSpans}/${report.expectedSpans} spans observed (${report.droppedSpans} dropped, ${report.duplicateSpans} duplicated, ${report.malformedSpans} unidentifiable, ${report.redactedSpans} redacted, ${report.failedExports} failed export${report.failedExports === 1 ? "" : "s"}); ${report.incompleteTraces}/${report.traces} runs incomplete${report.structurallyInvalidTraces ? `, ${report.structurallyInvalidTraces} structurally invalid` : ""}${report.danglingLinks ? `; ${report.danglingLinks} dangling link${report.danglingLinks === 1 ? "" : "s"} (dependencies recorded as never resolved — a handler bug, not lost evidence)` : ""}${report.undeclaredEvents ? `; ${report.undeclaredEvents} event span${report.undeclaredEvents === 1 ? "" : "s"} of a kind the mode never declared` : ""}`,
 		`Topology: ${report.stageSpans} stage span${report.stageSpans === 1 ? "" : "s"}, ${report.coordinationEvents} coordination event${report.coordinationEvents === 1 ? "" : "s"}`,
 	];
 	if (report.parseErrors) lines.push(`Parse errors: ${report.parseErrors}`);

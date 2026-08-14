@@ -1,7 +1,7 @@
 import type { Budget, BudgetCeiling } from "./budget.ts";
 import type { Settle } from "./settle.ts";
 import type { ChildMessage } from "./sanitize.ts";
-import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent } from "./trace-scope.ts";
+import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent, RecordMintedEvent } from "./trace-scope.ts";
 import type { HandoffGuard } from "./handoff-types.ts";
 import type { HandoffConsumer } from "./handoff-consumption.ts";
 import type { ModelRoster, ThinkingLevel } from "./roster-types.ts";
@@ -10,7 +10,7 @@ import type { FlowPreset, FlowPresetSelection } from "./preset-types.ts";
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
 // it can be re-exported here without a cycle) and is part of this module's
 // public surface: downstream consumers import trace types from types.ts.
-export type { ChildSpanScope, CoordinationEvent, CoordinationEventKind, EventAttribution, FlowTraceContext, FlowTraceHealth, FlowTraceHealthStatus, FlowTraceLink, FlowTraceStructure, RecordEvent, SpanStage } from "./trace-scope.ts";
+export type { ChildSpanScope, CoordinationEvent, CoordinationEventKind, EventAttribution, FlowTraceContext, FlowTraceHealth, FlowTraceHealthStatus, FlowTraceLink, FlowTraceStructure, MintedCoordinationEvent, RecordEvent, RecordMintedEvent, SpanStage } from "./trace-scope.ts";
 export { encodeAuthorKey, mintEvent } from "./trace-scope.ts";
 export type { ChildMessage, ChildMessageBlock } from "./sanitize.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
@@ -459,7 +459,8 @@ export interface RunChildOptions {
 	onUpdate?: Update;
 	budget?: Budget;
 	recordSpan?: RecordSpan;
-	recordEvent?: RecordEvent;
+	/** The child-run seam mints its own events (dispatch refusals, budget outcomes), so it holds the minting recorder rather than the mode-facing one. */
+	recordEvent?: RecordMintedEvent;
 	makeDetails: (results: FlowRunResult[]) => FlowDetails;
 }
 

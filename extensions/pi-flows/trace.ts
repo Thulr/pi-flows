@@ -1,4 +1,4 @@
-import { emptyUsage, flowError, type FlowError, type FlowMode, type FlowRunResult, type FlowTraceLink, type ModeOutput, type UsageStats } from "./types.ts";
+import { emptyUsage, flowError, type CoordinationEventKind, type FlowError, type FlowMode, type FlowRunResult, type FlowTraceLink, type ModeOutput, type UsageStats } from "./types.ts";
 import { runSettled } from "./run.ts";
 import { isFailed } from "./sanitize.ts";
 import { parseVerdict } from "./parse.ts";
@@ -65,6 +65,17 @@ export function flowUsageTotals(results: FlowRunResult[]): UsageStats {
  * receive this resolver as an argument from the composition root instead.
  */
 export type CriticalPathResolver = (mode: FlowMode, params: any, results: FlowRunResult[]) => number | undefined;
+
+/**
+ * Resolves which coordination-event kinds a mode's handler records by its own
+ * hand. The per-mode declaration lives beside each handler and is wired
+ * through the mode table (modes/contract.ts: owedEventKindsForMode) — mode
+ * topology is Supporting, and Core may not import it, so the trace sink
+ * receives this resolver's answer from the composition root instead.
+ * Undefined means no declaration (a non-run surface, or a barebones caller),
+ * and the trace stays exempt from the owed-kinds read-back.
+ */
+export type OwedEventKindsResolver = (mode: FlowMode) => readonly CoordinationEventKind[] | undefined;
 
 function acceptedVerifierResult(params: any, output: ModeOutput): FlowRunResult | undefined {
 	if (!params.orchestrate?.verify?.agent) return undefined;

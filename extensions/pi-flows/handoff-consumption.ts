@@ -6,13 +6,13 @@ import { resultText } from "./sanitize.ts";
 import type {
 	CapturePolicy,
 	ChildSpanScope,
-	CoordinationEvent,
+	MintedCoordinationEvent,
 	FlowError,
 	FlowMode,
 	FlowRunResult,
 	IncompleteHandoffPolicy,
 	PreparedHandoff,
-	RecordEvent,
+	RecordMintedEvent,
 	ResolvedHandoffPolicy,
 } from "./types.ts";
 
@@ -21,7 +21,7 @@ export interface HandoffConsumerOptions {
 	mode: FlowMode;
 	policy: CapturePolicy;
 	defaultCwd: string;
-	recordEvent?: RecordEvent;
+	recordEvent?: RecordMintedEvent;
 }
 
 export interface ConsumeResultOptions {
@@ -197,6 +197,7 @@ export class HandoffConsumer {
 			kind: "handoff",
 			name: rejection ? "handoff.rejected" : "handoff.accepted",
 			ok: !rejection,
+			minted: true,
 			scope,
 			attributes: handoffAttributes(
 				{
@@ -268,10 +269,11 @@ export class HandoffConsumer {
 			? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${scope.key}.handoff`, dependsOn: [scope.key] }
 			: scope;
 		const rejection = prepared.error;
-		const event: CoordinationEvent = {
+		const event: MintedCoordinationEvent = {
 			kind: "handoff",
 			name: rejection ? "handoff.rejected" : "handoff.accepted",
 			ok: !rejection,
+			minted: true,
 			scope: handoffScope,
 			attributes: handoffAttributes(handoff, {
 				accepted: !rejection,
@@ -325,6 +327,7 @@ export class HandoffConsumer {
 			kind: "validation",
 			name: "envelope.validated",
 			ok: true,
+			minted: true,
 			scope: eventScope,
 			attributes: {
 				"flow.handoff.from_agent": handoff.provenance.agent,
@@ -373,6 +376,7 @@ export class HandoffConsumer {
 			kind: "validation",
 			name: terminal ? "envelope.rejected" : "handoff.rejected",
 			ok: false,
+			minted: true,
 			scope,
 			attributes: {
 				"flow.handoff.from_agent": options.result.agent,
@@ -409,6 +413,7 @@ export class HandoffConsumer {
 				kind: "artifact",
 				name: verified ? "artifact.referenced" : "artifact.rejected",
 				ok: verified,
+				minted: true,
 				scope: scope && unit
 					? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${unit}.artifact-${index + 1}`, dependsOn: [slot ?? `${unit}.handoff`] }
 					: scope,

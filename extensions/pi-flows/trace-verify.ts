@@ -108,9 +108,9 @@ async function readExtent(traceFile: string, start: number): Promise<string> {
  * the file is read whole, the same way rows appended after finalize already
  * are. The live verdict covers the region this invocation could have affected.
  */
-export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number }, policy: CapturePolicy, extent: RecordExtent = { start: 0 }): Promise<FlowTraceStructure> {
+export async function verifyExportedTrace(traceFile: string, identity: { traceId: string; invocationId: string }, expectation: { attempted: number; declared: number; owedEventKinds?: string }, policy: CapturePolicy, extent: RecordExtent = { start: 0 }): Promise<FlowTraceStructure> {
 	const { traceId, invocationId } = identity;
-	const { attempted, declared } = expectation;
+	const { attempted, declared, owedEventKinds } = expectation;
 	try {
 		// Only this invocation's rows are parsed, and only its own extent is read.
 		// A substring test is cheap and JSON.parse is not. The line filter is this
@@ -168,7 +168,7 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 		// strict report then rejects. Surplus is the live case: a concurrent
 		// writer forging this run's trace and invocation ids leaves the tree
 		// connected, so only the count sees it.
-		const broken = structure.invalid || structure.duplicateSpans > 0 || structure.malformedSpans > 0 || structure.unexpectedSpans > 0 || unclaimedRemainder;
+		const broken = structure.invalid || structure.duplicateSpans > 0 || structure.malformedSpans > 0 || structure.unexpectedSpans > 0 || structure.undeclaredEvents > 0 || unclaimedRemainder;
 		const missing = Math.max(0, attempted - own.length);
 		// The root records what the run attempted; if the persisted copy disagrees
 		// with what this run actually attempted, the row carrying every other
@@ -177,15 +177,23 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 		// `trace:report --strict` would validate against.
 		const persisted = structure.root ? optionalNumericAttr(structure.root, "flow.trace.expected_spans") : undefined;
 		const expectationRewritten = structure.root !== undefined && persisted !== declared;
-		if (!broken && missing === 0 && unreadable === 0 && !expectationRewritten) return { valid: true };
+		// The owed-event-kinds declaration is checked the same way: the structure
+		// above judged the events against whatever the persisted root now says, so
+		// a declaration rewritten to bless a forged kind would otherwise pass.
+		// Strict equality against the exact string the run stamped, empty included.
+		const persistedOwed = structure.root?.attributes?.["flow.trace.owed_event_kinds"];
+		const owedRewritten = owedEventKinds !== undefined && structure.root !== undefined && persistedOwed !== owedEventKinds;
+		if (!broken && missing === 0 && unreadable === 0 && !expectationRewritten && !owedRewritten) return { valid: true };
 		const faults = [
 			missing ? `${missing} of ${attempted} attempted row(s) missing` : "",
 			unreadable ? `${unreadable} of this trace's row(s) no longer parse` : "",
 			structure.root ? "" : "no root span",
 			expectationRewritten ? `the root now declares ${persisted ?? "no"} expected span(s) where the run declared ${declared}` : "",
+			owedRewritten ? `the root now declares owed event kinds ${persistedOwed === undefined ? "(none)" : JSON.stringify(persistedOwed)} where the run declared ${JSON.stringify(owedEventKinds)}` : "",
 			structure.duplicateSpans ? `${structure.duplicateSpans} duplicate span id(s)` : "",
 			structure.malformedSpans ? `${structure.malformedSpans} span(s) not reaching the root or outside its interval` : "",
 			structure.unexpectedSpans ? `${structure.unexpectedSpans} span(s) beyond the ${attempted} attempted` : "",
+			structure.undeclaredEvents ? `${structure.undeclaredEvents} event span(s) of a kind the mode never declared` : "",
 			unclaimedRemainder ? `${unclaimed.length} row(s) under this trace id that no invocation claims` : "",
 		].filter(Boolean);
 		return { valid: false, issue: faults.join(", ") || "the exported rows are not a span tree" };
