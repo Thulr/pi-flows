@@ -114,8 +114,9 @@ export function mintEvent(attribution: EventAttribution, minted: { kind: Coordin
 		kind: minted.kind,
 		name: attribution.name,
 		ok: minted.ok,
-		// The seam performed the action, so the event is its statement — marked
-		// here, in the one home, so every mint seam is covered by one line.
+		// The seam performed the action, so the event is its statement — stated
+		// once here for every event assembled through this home. A seam that
+		// records directly states the same flag at its own call site.
 		minted: true,
 		scope: attribution.scope,
 		attributes: { ...attribution.attributes, ...minted.attributes },
