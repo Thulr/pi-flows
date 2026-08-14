@@ -7,7 +7,7 @@
  * decisions themselves belong to Budget (budget.ts) — this object only asks.
  */
 import { budgetAttributes } from "./trace-attributes.ts";
-import type { Budget, ChildSpanScope, FlowError, FlowRunResult, RecordEvent, UsageStats } from "./types.ts";
+import type { Budget, ChildSpanScope, FlowError, FlowRunResult, RecordMintedEvent, UsageStats } from "./types.ts";
 
 /**
  * The live children currently armed on each budget. A soft-threshold
@@ -50,7 +50,7 @@ export class ChildBudgets {
 
 	constructor(
 		private readonly budgets: Budget[],
-		private readonly recordEvent: RecordEvent | undefined,
+		private readonly recordEvent: RecordMintedEvent | undefined,
 		private readonly scope: ChildSpanScope | undefined,
 		/** Appended to any latched notice for a contracted child — see `contractWrapUpRequirement` (contract-resolution.ts), which owns the envelope-shape prose. */
 		private readonly contractRequirement?: string,

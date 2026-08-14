@@ -20,6 +20,7 @@ import {
 	type ModeOutput,
 	type ModelRoster,
 	type RecordEvent,
+	type RecordMintedEvent,
 	type RunChild,
 	type RunMode,
 	type Update,
@@ -84,13 +85,13 @@ export interface FlowPorts {
 	/** Which single mode the params activate; the refusal carries the mode-hint content, built with the aggregate-constructed builder. */
 	detectMode: (params: Record<string, any>, makeDetails: DetailsBuilder) => { mode: RunMode } | { refusal: ModeOutput };
 	/** Project-preset trust over the resolved call. On approval, `record` defers the approval event until the flow's own sink exists. */
-	approvePresetTrust: (call: ResolvedCall, mode: RunMode, makeDetails: DetailsBuilder) => Promise<{ refusal: ModeOutput } | { record: (recordEvent?: RecordEvent) => void }>;
+	approvePresetTrust: (call: ResolvedCall, mode: RunMode, makeDetails: DetailsBuilder) => Promise<{ refusal: ModeOutput } | { record: (recordEvent?: RecordMintedEvent) => void }>;
 	/** Preset-owned run preparation. It shells out in preset-named directories, which is why the aggregate never calls it before the trust gate. `formatResult` is the preset-owned result formatter, constructed here from the same resolution so settle needs no preset state of its own. */
 	preparePresetRun: (call: ResolvedCall, mode: RunMode) => { params: Record<string, any>; runDefaultCwd: string; formatResult?: (output: ModeOutput) => void };
 	/** Project-agent trust, recording its decision on the trace. Null when approved or not applicable. */
-	approveProjectAgents: (params: Record<string, any>, recordEvent: RecordEvent | undefined) => Promise<FlowError | null>;
+	approveProjectAgents: (params: Record<string, any>, recordEvent: RecordMintedEvent | undefined) => Promise<FlowError | null>;
 	/** A human checkpoint (see CONTEXT.md), recorded on the trace like any other approval. Null when it does not gate this moment or was approved. */
-	checkpoint: (params: Record<string, any>, mode: RunMode, when: "spawn" | "finalize", preview: string | undefined, recordEvent: RecordEvent | undefined) => Promise<FlowError | null>;
+	checkpoint: (params: Record<string, any>, mode: RunMode, when: "spawn" | "finalize", preview: string | undefined, recordEvent: RecordMintedEvent | undefined) => Promise<FlowError | null>;
 	handlerFor: (mode: RunMode) => ModeHandler | undefined;
 	/** Interactive confirmation for mode-level approvals. Absent in headless contexts, where every approval resolves to "required". */
 	confirm?: (title: string, message: string) => Promise<boolean>;
@@ -247,8 +248,8 @@ export class Flow {
 		// about to stake a verdict on this evidence, so it is the one caller that
 		// must not take write-time accounting as proof the file is a span tree.
 		const sink = traceFileParam ? makeTraceSink(path.resolve(ports.cwd, traceFileParam), mode, call.policy, { traceLabel: call.params.traceLabel, context: call.params.traceContext, verify: traceStrict, owedEventKinds: ports.owedEventKinds?.(mode) }) : undefined;
-		trust.record(sink?.event);
-		const handoffs = createHandoffConsumer({ params: call.params, mode, policy: call.policy, defaultCwd: prepared.runDefaultCwd, recordEvent: sink?.event });
+		trust.record(sink?.mintedEvent);
+		const handoffs = createHandoffConsumer({ params: call.params, mode, policy: call.policy, defaultCwd: prepared.runDefaultCwd, recordEvent: sink?.mintedEvent });
 		// A refusal from here on has a trace of its own; without the link a caller
 		// carrying a traceContext cannot correlate the refusal to its spans.
 		const refuseTraced = async (error: FlowError): Promise<FlowAdmission> => {
@@ -258,10 +259,10 @@ export class Flow {
 			return { refused };
 		};
 
-		const projectAgentsError = await ports.approveProjectAgents(call.params, sink?.event);
+		const projectAgentsError = await ports.approveProjectAgents(call.params, sink?.mintedEvent);
 		if (projectAgentsError) return refuseTraced(projectAgentsError);
 
-		const spawnCheckpointError = await ports.checkpoint(call.params, mode, "spawn", undefined, sink?.event);
+		const spawnCheckpointError = await ports.checkpoint(call.params, mode, "spawn", undefined, sink?.mintedEvent);
 		if (spawnCheckpointError) return refuseTraced(spawnCheckpointError);
 
 		const handler = ports.handlerFor(mode);
@@ -343,7 +344,7 @@ export class AdmittedFlow {
 					const confirm = ports.hasUI ? ports.confirm : undefined;
 					const interactive = confirm !== undefined;
 					const decision = confirm === undefined ? "required" : (await confirm(title, message) ? "approved" : "denied");
-					state.sink?.event({
+					state.sink?.mintedEvent({
 						kind: "approval",
 						name: "mode.approval",
 						ok: decision === "approved",
@@ -432,7 +433,7 @@ export class DispatchedFlow {
 			if (output.details.results.length > 0) {
 				await ports.recordLesson?.(params, mode, output.content[0]?.text ?? "", policy);
 			}
-			const finalCheckpointError = await ports.checkpoint(params, mode, "finalize", output.content[0]?.text, state.sink?.event);
+			const finalCheckpointError = await ports.checkpoint(params, mode, "finalize", output.content[0]?.text, state.sink?.mintedEvent);
 			if (finalCheckpointError) {
 				output.details.error = finalCheckpointError;
 				output.content = [{ type: "text", text: formatFlowError(finalCheckpointError) }];

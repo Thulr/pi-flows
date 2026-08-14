@@ -22,7 +22,7 @@ import { verifyExportedTrace } from "../extensions/pi-flows/trace-verify.ts";
 import { traceStructure } from "../extensions/pi-flows/trace-structure.ts";
 import { formatTraceReport, parseTraceJsonl, strictTraceError, summarizeTraceSpans, traceReportIsComplete, type TraceSpanRecord } from "../extensions/pi-flows/trace.ts";
 import { RUN_MODE_CONTRACTS, owedEventKindsForMode } from "../extensions/pi-flows/modes/contract.ts";
-import { mintEvent, type CoordinationEventKind, type FlowRunResult } from "../extensions/pi-flows/types.ts";
+import { mintEvent, type CoordinationEventKind, type FlowRunResult, type RecordEvent } from "../extensions/pi-flows/types.ts";
 import { runFlow } from "./stub-harness.ts";
 
 const TRACE = "flow-trace.jsonl";
@@ -146,10 +146,9 @@ test("mintEvent and minted events carry flow.event_minted; hand-placed rows neve
 	const file = sinkFile();
 	const sink = makeTraceSink(file, "single", policy);
 	sink.record(settledRun("recon"), { scope: { key: "single" } });
-	mintEvent({ record: sink.event, name: "gate.check", scope: { key: "gate" } }, { kind: "validation", ok: true, attributes: { "flow.gate.command": "npm test" } });
+	mintEvent({ record: sink.mintedEvent, name: "gate.check", scope: { key: "gate" } }, { kind: "validation", ok: true, attributes: { "flow.gate.command": "npm test" } });
 	sink.event({ kind: "validation", name: "hand.placed" });
-	sink.event({ kind: "approval", name: "seam.stamp", minted: true });
-	sink.event({ kind: "state", name: "explicit.falsy", minted: false });
+	sink.mintedEvent({ kind: "approval", name: "seam.stamp", minted: true });
 	await sink.finalize({ ok: true });
 	const spans = readSinkSpans(file);
 
@@ -157,10 +156,72 @@ test("mintEvent and minted events carry flow.event_minted; hand-placed rows neve
 	assert.equal(attr(minted, "flow.event_minted"), true, "mintEvent's one home stamps the flag");
 	assert.equal(attr(minted, "flow.event_kind"), "validation");
 	assert.equal(attr(eventsNamed(spans, "seam.stamp")[0], "flow.event_minted"), true, "a seam saying minted:true is stamped");
-	assert.equal("flow.event_minted" in eventsNamed(spans, "hand.placed")[0].attributes!, false, "a hand-placed event carries no stamp");
 	// Omitted when falsy, never `false`: the flag exists only as the seam's
-	// positive statement.
-	assert.equal("flow.event_minted" in eventsNamed(spans, "explicit.falsy")[0].attributes!, false, "minted:false is omitted, not written as false");
+	// positive statement. `minted: false` is not a value the type admits at all —
+	// the mode's door carries no minted member, and the seam's requires `true`.
+	assert.equal("flow.event_minted" in eventsNamed(spans, "hand.placed")[0].attributes!, false, "a hand-placed event carries no stamp");
+});
+
+// ---------------------------------------------------------------------------
+// Minting is the seam's capability, not a field or an attribute (PR #136)
+// ---------------------------------------------------------------------------
+
+test("a mode cannot mint by hand: the reserved attribute never reaches the row", async () => {
+	// The forge direction, and the whole point of the declaration gate — a
+	// handler recording a kind it never declared must not be able to excuse the
+	// row with the seam's word for it. The minted claim itself is unreachable
+	// from this door (it is not a member of the type `sink.event` accepts), so
+	// the attribute below is the only forge a handler has left.
+	const file = sinkFile();
+	const sink = makeTraceSink(file, "loop", policy, { verify: true, owedEventKinds: ["retry"] });
+	sink.record(settledRun("recon"), { scope: { key: "single" } });
+	sink.event({ kind: "state", name: "loop.smuggled", scope: { key: "smuggled" }, attributes: { "flow.event_minted": true } });
+	const link = await sink.finalize({ ok: true });
+
+	const smuggled = eventsNamed(readSinkSpans(file), "loop.smuggled")[0];
+	assert.equal("flow.event_minted" in smuggled.attributes!, false, "the caller's attribute never reaches the row");
+	assert.equal(link.structure!.valid, false, "so the read-back still refuses the undeclared kind");
+	assert.match(link.structure!.issue!, /1 event span\(s\) of a kind the mode never declared/);
+});
+
+test("a seam's provenance survives a caller attribute that would erase it", async () => {
+	// The erase direction. A healthy run must not be refused because a seam's own
+	// attribution happened to carry the reserved key: the sink's fact wins in
+	// both directions, not only when it is stamping.
+	const file = sinkFile();
+	const sink = makeTraceSink(file, "loop", policy, { verify: true, owedEventKinds: [] });
+	sink.record(settledRun("recon"), { scope: { key: "single" } });
+	sink.mintedEvent({ kind: "approval", name: "seam.approval", minted: true, scope: { key: "approval" }, attributes: { "flow.event_minted": false } });
+	const link = await sink.finalize({ ok: true });
+
+	assert.equal(attr(eventsNamed(readSinkSpans(file), "seam.approval")[0], "flow.event_minted"), true, "the sink's stamp wins over the caller's value");
+	assert.equal(link.structure!.valid, true, `a declared-none mode's seam events still certify: ${link.structure!.issue}`);
+});
+
+test("a caller attribute cannot rewrite the kind the declaration is judged against", async () => {
+	// Recorded as `retry`, dressed as the declared `state`. Compliance is judged
+	// on the kind the sink wrote, which is the kind the caller actually asked for.
+	const file = sinkFile();
+	const sink = makeTraceSink(file, "route", policy, { verify: true, owedEventKinds: ["state"] });
+	sink.record(settledRun("recon"), { scope: { key: "single" } });
+	sink.event({ kind: "retry", name: "route.disguised", scope: { key: "disguised" }, attributes: { "flow.event_kind": "state" } });
+	const link = await sink.finalize({ ok: true });
+
+	assert.equal(attr(eventsNamed(readSinkSpans(file), "route.disguised")[0], "flow.event_kind"), "retry");
+	assert.equal(link.structure!.valid, false, "the disguise buys no compliance");
+	assert.match(link.structure!.issue!, /1 event span\(s\) of a kind the mode never declared/);
+});
+
+test("the minting door is not assignable to the mode-facing recorder", () => {
+	const sink = makeTraceSink(sinkFile(), "single", policy);
+	// The type-level half of the capability, enforced by `npm run typecheck`
+	// rather than asserted in prose: parameters are contravariant under `strict`,
+	// so a RecordMintedEvent cannot stand in for a RecordEvent — which is what
+	// stops a mode-facing port from being wired to the minting door. Remove the
+	// capability and this line compiles, failing the expectation instead.
+	// @ts-expect-error RecordMintedEvent requires `minted: true` on its parameter, which a CoordinationEvent does not carry.
+	const modeFacing: RecordEvent = sink.mintedEvent;
+	assert.equal(typeof modeFacing, "function", "the runtime value is one implementation behind both doors");
 });
 
 // ---------------------------------------------------------------------------

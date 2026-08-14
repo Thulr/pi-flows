@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { PI_FLOWS_VERSION, ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordEvent, type ThinkingLevel } from "./types.ts";
+import { PI_FLOWS_VERSION, ROSTER_CONFIG_FILE, THINKING_LEVELS, USE_DEFAULT_MODEL, flowError, type AgentScope, type FlowDetails, type FlowError, type FlowMode, type ModelRoster, type RecordMintedEvent, type ThinkingLevel } from "./types.ts";
 import { describeModelRoster, usableModels } from "./model-roster.ts";
 import { saveRosterOverride, type RosterOverride } from "./roster-config.ts";
 import { runFailed, runSettled, runState } from "./run.ts";
@@ -106,7 +106,7 @@ export function checkpointGates(checkpoint: any, when: "spawn" | "finalize"): bo
  * changes nothing else about the run, so without the event a successful human
  * gate leaves no evidence it was ever asked for.
  */
-export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, when: "spawn" | "finalize", preview?: string, recordEvent?: RecordEvent): Promise<FlowError | null> {
+export async function checkpointApproval(params: any, ctx: any, mode: FlowMode, when: "spawn" | "finalize", preview?: string, recordEvent?: RecordMintedEvent): Promise<FlowError | null> {
 	const checkpoint = params.checkpoint;
 	if (!checkpointGates(checkpoint, when)) return null;
 	const record = (decision: "approved" | "required" | "denied") => recordEvent?.({

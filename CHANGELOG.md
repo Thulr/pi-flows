@@ -17,7 +17,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   compile error, and `noOwedEvents` is the declared answer for a mode that
   records none (#133). The sink stamps the declaration on the root span as
   `flow.trace.owed_event_kinds`, and every seam-minted event now carries
-  `flow.event_minted`, so the strict read-back and
+  `flow.event_minted` — a capability the seams hold rather than a field any
+  caller may set, and one the sink states itself after the caller's own
+  attributes, so neither the mark nor the event kind nor the placement the
+  read-back gates on can be forged from a mode — so the strict read-back and
   `npm run trace:report -- --strict` can hold the hand-placed events to the
   mode's own statement: an unminted event of a kind the mode never declared is
   refused the same way forged surplus already is, counted separately as

@@ -64,18 +64,37 @@ export interface CoordinationEvent {
 	attributes?: Record<string, unknown>;
 	/** Defaults to true. False records the event span with ERROR status. */
 	ok?: boolean;
-	/**
-	 * Set only by the seams that perform an action (the glossary's Minted
-	 * event), never by a mode handler. The sink stores it as the row attribute
-	 * `flow.event_minted` (omitted when falsy, never `false`), and the trace
-	 * read-back exempts such rows from the mode's owed-event-kinds declaration:
-	 * the statement is the seam's own, not the mode's.
-	 */
-	minted?: boolean;
 }
 
-/** Records one coordination boundary crossing. See makeTraceSink. */
+/**
+ * The seam's form of a coordination event — the glossary's Minted event, whose
+ * `flow.event_minted` row attribute exempts it from the recording mode's
+ * owed-event-kinds declaration. Minting is a capability rather than a field
+ * because that exemption is exactly what the declaration gate exists to catch:
+ * a handler that records a kind it never declared must not be able to excuse
+ * the row by asserting the seam's word for it.
+ *
+ * `minted` is required, not optional, so a new seam site that forgets it does
+ * not compile. What this shape closes: a mode holds {@link RecordEvent}, whose
+ * parameter has no `minted` member, so a `{ minted: true }` object literal is
+ * rejected as an excess property, and {@link RecordMintedEvent} is not
+ * assignable to `RecordEvent` (parameters are contravariant under `strict`), so
+ * a mode-facing port cannot be wired to the minting door. What it does not
+ * close: a handler that deliberately declares a `MintedCoordinationEvent`
+ * variable can still pass it to its own recorder, since that assignment sees no
+ * fresh literal. The bar is the one `record: undefined` already holds —
+ * impossible by accident, visible in review when deliberate — not a
+ * cryptographic one.
+ */
+export interface MintedCoordinationEvent extends CoordinationEvent {
+	minted: true;
+}
+
+/** Records one coordination boundary crossing, as the mode's own hand. See makeTraceSink. */
 export type RecordEvent = (event: CoordinationEvent) => void;
+
+/** Records one coordination boundary crossing performed by a framework seam. See makeTraceSink. */
+export type RecordMintedEvent = (event: MintedCoordinationEvent) => void;
 
 /**
  * The caller's half of a minted event — a coordination event recorded by the
@@ -93,8 +112,8 @@ export type RecordEvent = (event: CoordinationEvent) => void;
  * review can see it, where a missing call was invisible.
  */
 export interface EventAttribution {
-	/** The flow's event recorder, or its stated absence when no trace sink exists. */
-	record: RecordEvent | undefined;
+	/** The flow's minting recorder, or its stated absence when no trace sink exists. */
+	record: RecordMintedEvent | undefined;
 	/** Dotted event name in the caller's vocabulary, e.g. `workflow.gate`. */
 	name: string;
 	/** Where the outcome sits in the span tree: its unit key, stage, and dependencies. */

@@ -6,13 +6,13 @@ import { resultText } from "./sanitize.ts";
 import type {
 	CapturePolicy,
 	ChildSpanScope,
-	CoordinationEvent,
+	MintedCoordinationEvent,
 	FlowError,
 	FlowMode,
 	FlowRunResult,
 	IncompleteHandoffPolicy,
 	PreparedHandoff,
-	RecordEvent,
+	RecordMintedEvent,
 	ResolvedHandoffPolicy,
 } from "./types.ts";
 
@@ -21,7 +21,7 @@ export interface HandoffConsumerOptions {
 	mode: FlowMode;
 	policy: CapturePolicy;
 	defaultCwd: string;
-	recordEvent?: RecordEvent;
+	recordEvent?: RecordMintedEvent;
 }
 
 export interface ConsumeResultOptions {
@@ -269,7 +269,7 @@ export class HandoffConsumer {
 			? { ...(scope.stage ? { stage: scope.stage } : {}), key: `${scope.key}.handoff`, dependsOn: [scope.key] }
 			: scope;
 		const rejection = prepared.error;
-		const event: CoordinationEvent = {
+		const event: MintedCoordinationEvent = {
 			kind: "handoff",
 			name: rejection ? "handoff.rejected" : "handoff.accepted",
 			ok: !rejection,

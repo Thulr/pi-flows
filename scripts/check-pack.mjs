@@ -246,8 +246,16 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Same verification: the file set is unchanged at 108 and none from tests/,
 // scripts/, or evals/ (the new coverage is tests/trace-owed-events.test.ts,
 // not packaged). The PR review round added the owedEventKinds member to
-// AGENTS.md's add-a-mode recipe and compile-error list, which is packaged.
-// Headroom is ~481 B over the measured 1_217_369, matching the previous
-// raises.
-assert.ok(pack.unpackedSize < 1_217_850, `package unpacked size too large: ${pack.unpackedSize}`);
+// AGENTS.md's add-a-mode recipe and compile-error list, which is packaged,
+// and then answered the review's P1 by making minting a capability rather
+// than a field: trace-scope.ts gains MintedCoordinationEvent and
+// RecordMintedEvent, so a mode's recorder cannot claim the seams' provenance
+// and a seam cannot forget it, and the sink exposes both doors over one
+// implementation while stating every structural fact after the caller's
+// attributes, so a caller cannot forge the kind, the stamp, or the placement
+// the read-back gates on. Types and merge order over the existing event
+// path, not new machinery, plus the CONTEXT.md and changelog sentences that
+// round required. Headroom is ~461 B over the measured 1_220_339, matching
+// the previous raises.
+assert.ok(pack.unpackedSize < 1_220_800, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
