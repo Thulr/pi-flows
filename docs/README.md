@@ -17,10 +17,12 @@ pi-flows adds a `flow` tool to [pi](https://github.com/earendil-works/pi) that d
 
 - [Flow reference](./reference/flow-reference.md) — the complete `flow` tool contract: presets, modes, parameters, budgets, tracing, and structured errors.
 - [Package reference](./reference/package.md) — what ships in the npm package, the pi manifest, and every install method.
+- [Architecture classification](./reference/architecture.md) — the ledger of which subdomain every module belongs to and the import direction between subdomains.
 
 ## Explanation — understand the design
 
 - [Patterns](./explanation/patterns.md) — when a flow helps, which agent-design pattern each mode encodes, and what the harness guarantees.
+- [Domain model](./explanation/domain-model.md) — why the codebase is split into Core / Supporting / Generic subdomains, and why the import direction and review policy are what they are.
 - [Privacy & telemetry](./explanation/privacy-telemetry.md) — what leaves your machine (nothing by default), what is redacted, and the controls.
 
 ## Not user docs
