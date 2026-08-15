@@ -8,6 +8,7 @@
 import { sanitizeText } from "../sanitize.ts";
 import { WORKFLOW_COMPLETE_STEP, type ApprovalAuthorization, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
 import { resolveAgentProfile, type AgentProfileEnvironment, type EffectiveAgentProfile } from "../agent-profile.ts";
+import { parseModelSpec } from "../model-roster.ts";
 import { THINKING_LEVELS, flowError, type CapturePolicy, type FlowError, type ModeDeps, type ThinkingLevel } from "../types.ts";
 
 /** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
@@ -163,6 +164,11 @@ function gatedPhaseTerms(phase: any, params: any): Record<string, unknown> {
 	};
 }
 
+/** Whether the requested level itself is held stable by the workflow digest. */
+function workflowBindsRequestedThinking(ref: any): boolean {
+	return ref.thinking !== undefined || (typeof ref.model === "string" && parseModelSpec(ref.model).thinking !== undefined);
+}
+
 /**
  * A gated phase's EFFECTIVE definition — what it resolves to once flow-level
  * fallbacks and the model roster are applied. The workflow digest sees
@@ -211,9 +217,11 @@ function normalizeGatedDebrief(params: any, deps: ModeDeps): Record<string, unkn
 
 /**
  * The under-bound v3 projections used only to verify spent compatibility
- * evidence. When an exact model disappeared, its old metadata can no longer
- * reproduce v3's Thinking clamp; bounded alternatives let the receipt digest
- * select that historical value without making the model currently bindable.
+ * evidence. Current metadata cannot prove how v3 clamped Thinking: the model
+ * may be absent or its capabilities may have changed. Bounded alternatives let
+ * the intact receipt digest select the historical value only when the requested
+ * level itself is fixed by the workflow digest, so flow/Agent fallback drift is
+ * not mistaken for old clamping.
  */
 export function* historicalApprovalBindingsForV3(phases: any[], index: number, deps: ModeDeps, digest: string): Generator<ApprovalBinding> {
 	const gatedIds = new Set(gatedPhaseIds(phases, index));
@@ -229,7 +237,7 @@ export function* historicalApprovalBindingsForV3(phases: any[], index: number, d
 			thinking: profile.modelChoice.thinking ?? null,
 			tools: phase.tools ?? null,
 		};
-		if (profile.modelChoice.model && profile.modelChoice.thinking && !profile.modelChoice.thinkingVerified) {
+		if (profile.modelChoice.model && profile.modelChoice.thinking && workflowBindsRequestedThinking(phase)) {
 			const key = `${profile.modelChoice.model}\0${profile.modelChoice.thinking}`;
 			const slot = uncertain.get(key) ?? { targets: [], preferred: profile.modelChoice.thinking };
 			slot.targets.push(historical);
@@ -250,7 +258,7 @@ export function* historicalApprovalBindingsForV3(phases: any[], index: number, d
 				thinking: debriefProfile?.modelChoice.thinking ?? null,
 			}
 		: null;
-	if (historicalDebrief && debriefProfile?.modelChoice.model && debriefProfile.modelChoice.thinking && !debriefProfile.modelChoice.thinkingVerified) {
+	if (historicalDebrief && debriefProfile?.modelChoice.model && debriefProfile.modelChoice.thinking && workflowBindsRequestedThinking(debrief)) {
 		const key = `${debriefProfile.modelChoice.model}\0${debriefProfile.modelChoice.thinking}`;
 		const slot = uncertain.get(key) ?? { targets: [], preferred: debriefProfile.modelChoice.thinking };
 		slot.targets.push(historicalDebrief);

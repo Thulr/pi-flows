@@ -9,7 +9,7 @@ import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approvalProfileRefusal, approverLabel, consumeAuthorization, gatedPhaseIds, REAPPROVABLE_RECEIPT_ERRORS, workflowApprovalProfileRefusal, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
 import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, migrateWorkflowStateV3, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
-import { isWorkflowWorkPhase, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../validate.ts";
+import { isWorkflowWorkPhase, resolvedCwd, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../validate.ts";
 import { plannedRefs, sumRunDurations, type ModePlan, type PreSpawnContext } from "./plan.ts";
 
 /**
@@ -335,7 +335,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			continue;
 		}
 
-		const phaseCwd = phase.cwd ? path.resolve(defaultCwd, phase.cwd) : defaultCwd;
+		const phaseCwd = resolvedCwd(defaultCwd, phase.cwd);
 		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tier: phase.tier, thinking: phase.thinking, tools: phase.tools, contract: phase.contract };
 		const planned = integrationRunPlan(deps, ref, renderPhaseTask(phase.task, params.task, previous, state.outputs), {
 			returnContract: phase.returnContract ?? params.returnContract,

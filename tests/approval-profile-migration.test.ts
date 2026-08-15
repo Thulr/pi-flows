@@ -164,7 +164,7 @@ test("a completed v3 receipt migrates after its exact model leaves the current r
 	assert.equal((await readState(cwd)).version, 4);
 });
 
-test("a completed v3 receipt reconstructs clamped Thinking after model metadata disappears", async () => {
+test("a completed v3 receipt reconstructs clamped Thinking after model metadata changes", async () => {
 	const cwd = await freshDir();
 	const model = "test-provider/plain-model";
 	const plainParams = {
@@ -187,8 +187,14 @@ test("a completed v3 receipt reconstructs clamped Thinking after model metadata 
 	state.version = 3;
 	state.receipts.approve = asHistoricalReceipt(state.receipts.approve, binding);
 	await writeState(cwd, state);
+	const changedRegistry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			{ id: "plain-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 2 } },
+		],
+	};
 
-	const resumed = await runFlow({ ...plainParams, workflow: { ...plainParams.workflow, resume: true } }, { strategist: "MUST NOT RUN" }, { cwd });
+	const resumed = await runFlow({ ...plainParams, workflow: { ...plainParams.workflow, resume: true } }, { strategist: "MUST NOT RUN" }, { cwd, registry: changedRegistry });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 1);
@@ -235,20 +241,26 @@ test("a completed state missing one of its phases is refused instead of treated 
 
 test("a consumed v3 receipt resumes its interrupted debrief", async () => {
 	const cwd = await freshDir();
+	const model = "test-provider/plain-model";
 	const debriefParams = {
 		task: "Analyze and summarize.",
 		agentScope: "user",
-		thinking: "low",
 		workflow: {
 			stateFile: "workflow.json",
 			phases: [
 				{ id: "analyze", agent: "recon", task: "Analyze" },
 				{ id: "signoff", approval: { message: "Approve synthesis" } },
 			],
-			debrief: { agent: "debrief" },
+			debrief: { agent: "debrief", model, thinking: "high" },
 		},
 	};
-	await runFlow(debriefParams, { recon: "ANALYSIS", debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true });
+	const oldRegistry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			{ id: "plain-model", provider: "test-provider", reasoning: false, contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 2 } },
+		],
+	};
+	await runFlow(debriefParams, { recon: "ANALYSIS", debrief: { reply: "boom", exitCode: 1 } }, { cwd, hasUI: true, registry: oldRegistry });
 	const state = await readState(cwd);
 	const original = { ...state.receipts.signoff };
 	const historical: ApprovalBinding = {
@@ -259,7 +271,7 @@ test("a consumed v3 receipt resumes its interrupted debrief", async () => {
 			incompleteHandoffPolicy: "fail",
 			handoffPolicy: { call: "warn", effective: "warn" },
 			gatedPhases: [],
-			debrief: { contract: null, returnContract: null, requireEvidence: false, tier: null, model: "test-provider/session-model", thinking: "low" },
+			debrief: { contract: null, returnContract: null, requireEvidence: false, tier: null, model, thinking: "off" },
 		},
 		requestedBy: "flow:workflow",
 		workflowDigest: state.digest,
@@ -269,7 +281,13 @@ test("a consumed v3 receipt resumes its interrupted debrief", async () => {
 	state.receipts.signoff = asHistoricalReceipt(state.receipts.signoff, historical);
 	await writeState(cwd, state);
 
-	const resumed = await runFlow({ ...debriefParams, workflow: { ...debriefParams.workflow, resume: true } }, { debrief: "SUMMARY" }, { cwd });
+	const changedRegistry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			{ id: "plain-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 2 } },
+		],
+	};
+	const resumed = await runFlow({ ...debriefParams, workflow: { ...debriefParams.workflow, resume: true } }, { debrief: "SUMMARY" }, { cwd, registry: changedRegistry });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.calls.filter((call) => call.agent === "debrief").length, 2);
 	const migrated = await readState(cwd);

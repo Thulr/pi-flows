@@ -796,15 +796,16 @@ completion, the binding identifies these effective execution conditions:
 - selected Agent source (`package`, `user`, or `project`);
 - a full SHA-256 identity of the selected Agent system prompt, never its text;
 - effective tools after the Role override or Agent inheritance is applied;
-- absolute resolved working directory;
+- canonical working-directory target (symlinks resolved);
 - concrete resolved model; and
 - Thinking level passed to Pi.
 
 The same binding also covers the approval action/message, task and gate terms,
 effective delegation contract and Return/evidence requirements, `agentScope`,
 the resolved handoff policies, and `incompleteHandoffPolicy`. Source shadowing,
-prompt edits, inherited-tool changes, model-roster changes, or moving the default
-working directory therefore produce `APPROVAL_RECEIPT_STALE` even when the
+prompt edits, inherited-tool changes, model-roster changes, repointing a cwd
+symlink, or moving the default working directory therefore produce
+`APPROVAL_RECEIPT_STALE` even when the
 authored phase is unchanged. A missing Agent, Pi-default toolset, model selector
 without an exact current registry match, or implicit Thinking level cannot be identified exactly; a gated workflow
 refuses with `WORKFLOW_INVALID` before asking for consent until those conditions

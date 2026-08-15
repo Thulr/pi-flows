@@ -72,7 +72,7 @@ A named profile — prompt, tools, model or tier — that a child runs as, disco
 _Avoid_: persona, specialist, subagent
 
 **Effective Agent profile**:
-The selected Agent source plus the execution conditions after Role overrides and flow fallbacks resolve: prompt identity, tools, cwd, model, and Thinking level. It is both what durable workflow approval authorizes and what the Child runs as. Raw prompt text is execution content; its SHA-256 identity is the approval-safe term.
+The selected Agent source plus the execution conditions after Role overrides and flow fallbacks resolve: prompt identity, tools, canonical cwd target, model, and Thinking level. It is both what durable workflow approval authorizes and what the Child runs as. Raw prompt text is execution content; its SHA-256 identity is the approval-safe term.
 _Avoid_: authored Agent (that is only the discovered definition), requested profile, executable profile
 
 **Role**:

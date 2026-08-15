@@ -291,5 +291,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // has left the roster. The scorer parity fix and all new coverage live under
 // evals/ and tests/, so the packaged file set remains 109. Headroom is ~500 B
 // over the measured size, matching previous raises.
-assert.ok(pack.unpackedSize < 1_253_600, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_254_650 after #138's fourth review: cwd resolution now retains
+// the canonical filesystem target across approval, dispatch, containment, and
+// shared-write checks, with the public consent docs naming that identity. The
+// metadata-change regressions remain unpackaged; the file set stays 109 and
+// headroom is 526 B over the measured 1_254_124.
+assert.ok(pack.unpackedSize < 1_254_650, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

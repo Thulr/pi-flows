@@ -417,12 +417,12 @@ actual approval.
 
 Cause: an approval was granted, then the action it authorizes changed. For every
 gated Role and gated debrief, a receipt binds the selected Agent source, SHA-256
-prompt identity, effective tools after overrides/inheritance, absolute resolved
-cwd, concrete model, and Thinking level. It also binds the task/gate terms,
+prompt identity, effective tools after overrides/inheritance, canonical cwd
+target (with symlinks resolved), concrete model, and Thinking level. It also binds the task/gate terms,
 effective delegation contract, `agentScope`, Return/evidence requirements, and
 handoff policies. Same-name source shadowing, an edited Agent body, expanded
-inherited tools, a changed model roster, or a different default cwd therefore
-invalidates consent even when the phase-authored fields are unchanged.
+inherited tools, a changed model roster, a repointed cwd symlink, or a different
+default cwd therefore invalidates consent even when the phase-authored fields are unchanged.
 
 Fix: resume in an interactive Pi UI — the approval phase reopens automatically
 and asks again, naming what changed. Restoring the approved parameters is not

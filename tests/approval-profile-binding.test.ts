@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -133,6 +133,32 @@ test("changing the default working directory reopens approval", async () => {
 	const drifted = await runFlow(resume(params), { strategist: "SHIPPED" }, { cwd: resumedCwd });
 	assert.equal(drifted.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
 	assert.equal(callsByAgent(drifted.calls, "strategist"), 0, "the Role must not run in a working directory that was not approved");
+});
+
+test("repointing an approved cwd symlink reopens approval before dispatch", { skip: process.platform === "win32" }, async () => {
+	const cwd = await freshDir();
+	const approvedTarget = path.join(cwd, "approved-target");
+	const changedTarget = path.join(cwd, "changed-target");
+	const alias = path.join(cwd, "workspace-link");
+	await mkdir(approvedTarget);
+	await mkdir(changedTarget);
+	await symlink(approvedTarget, alias, "dir");
+	const base = workflowParams();
+	const params = {
+		...base,
+		workflow: {
+			...base.workflow,
+			phases: [base.workflow.phases[0], { ...base.workflow.phases[1], cwd: alias }],
+		},
+	};
+	const failed = await issueUnspentReceipt(cwd, params, "strategist");
+	const callsBeforeDrift = callsByAgent(failed.calls, "strategist");
+
+	await rm(alias);
+	await symlink(changedTarget, alias, "dir");
+	const drifted = await runFlow(resume(params), { strategist: "MUST NOT RUN" }, { cwd });
+	assert.equal(drifted.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
+	assert.equal(callsByAgent(drifted.calls, "strategist"), callsBeforeDrift, "the repointed target must be re-approved before dispatch");
 });
 
 test("an approved exact model disappearing from the registry fails closed before fuzzy retargeting", async () => {

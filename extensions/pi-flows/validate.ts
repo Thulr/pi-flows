@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
 import { safePath } from "./sanitize.ts";
@@ -82,8 +83,17 @@ export function nonSpawningFlowCall(params: { list?: unknown; showConfig?: unkno
 	return Boolean(params?.list || params?.showConfig);
 }
 
+/** The stable filesystem target a child receives, not a symlink alias that can be repointed after a gate. */
 export function resolvedCwd(defaultCwd: string, cwd?: string): string {
-	return path.resolve(defaultCwd, cwd ?? defaultCwd);
+	const lexical = path.resolve(defaultCwd, cwd ?? defaultCwd);
+	try {
+		return realpathSync.native(lexical);
+	} catch {
+		// Preserve the existing spawn-time error for paths that do not yet exist.
+		// If one later becomes a symlink, its canonical target differs and stale
+		// approval or shared-write checks see that change before dispatch.
+		return lexical;
+	}
 }
 
 export function sharedWriteCwdError(discovery: FlowDiscovery, defaultCwd: string, refs: Array<{ agent: string; cwd?: string; tools?: string }>): FlowError | null {
