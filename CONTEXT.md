@@ -107,16 +107,20 @@ _Avoid_: control value, parsed output, ambiguous string
 Prompt-enforced instructions that constrain a child's returned shape or evidence without creating a machine-checked delegation contract.
 _Avoid_: return contract
 
-**Return envelope**:
-A structured child result bound to the delegation contract under which it was produced.
-_Avoid_: response object, result contract
+**Return candidate**:
+Untrusted child output that is structurally a return envelope, offered for contract validation. Its contract identity may be missing or stale, and the candidate keeps that identity as parsed so a rejection stays diagnosable. A candidate is never a return envelope: only validation makes one, and malformed output is not even a candidate.
+_Avoid_: unvalidated envelope, envelope candidate (that is the bounded final-message text a candidate is parsed from)
 
-**Rejected envelope**:
-A structurally valid envelope that failed contract validation — its identity did not bind, its artifacts were uncontained or did not match their digests, or its `data` did not satisfy the return schema. It is never a handoff and never reaches `result.envelope`, but it is retained as trace evidence of what the spend produced: a digest mismatch's artifact claim is the record of the corruption. Not a kind of return envelope — the term above asserts a binding a rejected envelope may not have.
-_Avoid_: invalid envelope, failed envelope (both read as "discard it")
+**Return envelope**:
+A child return that passed attribution, integrity, and conformance under a resolved delegation contract. Only the validation transition constructs or attaches one, so it always carries the exact resolved contract identity.
+_Avoid_: response object, result contract, candidate (that is the pre-validation form)
+
+**Rejected Return candidate**:
+A Return candidate that failed contract validation — its identity did not bind, its artifacts were uncontained or did not match their digests, or its `data` did not satisfy the return schema. It is never a handoff and never reaches `result.envelope`, but it is retained as trace evidence of what the spend produced: a digest mismatch's artifact claim is the record of the corruption. Not a kind of return envelope — that term asserts a binding a rejected candidate may not have.
+_Avoid_: rejected envelope (asserts the binding the rejection refused), invalid envelope, failed envelope (both read as "discard it")
 
 **Unvalidated claims**:
-The claims a rejected envelope still carries, surfaced to the parent labeled as unverified and never counted toward a verdict. Available from exactly one rejection: attribution and integrity held — the envelope binds to the dispatched contract, its artifact references stay inside the child cwd, and any digests it declared match — and only conformance failed. An envelope whose identity was stale, or whose artifacts escaped the cwd or failed a digest it declared, has no unvalidated claims — it is untrustworthy, not merely unchecked — which is why the three checks are ordered attribution, integrity, conformance, and why that order is an invariant rather than an implementation detail.
+The claims a rejected Return candidate still carries, surfaced to the parent labeled as unverified and never counted toward a verdict. Available from exactly one rejection: attribution and integrity held — the candidate binds to the dispatched contract, its artifact references stay inside the child cwd, and any digests it declared match — and only conformance failed. A candidate whose identity was stale, or whose artifacts escaped the cwd or failed a digest it declared, has no unvalidated claims — it is untrustworthy, not merely unchecked — which is why the three checks are ordered attribution, integrity, conformance, and why that order is an invariant rather than an implementation detail.
 _Avoid_: salvaged findings, partial results (that names an envelope status), unverified evidence
 
 **Handoff**:

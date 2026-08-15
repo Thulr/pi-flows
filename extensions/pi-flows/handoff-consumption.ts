@@ -46,8 +46,8 @@ export interface ConsumeResultOptions {
 	 * Completion is what decides whether a Handoff exists at all: a terminal
 	 * report keeps its validated Return envelope (`result.envelope`) but never
 	 * attaches a Handoff, whatever `payload` representation it was read as.
-	 * Recording is unconditional either way: a rejected envelope is trace
-	 * evidence of what the spend produced (CONTEXT.md).
+	 * Recording is unconditional either way: a rejected Return candidate is
+	 * trace evidence of what the spend produced (CONTEXT.md).
 	 */
 	completion?: "integrate" | "terminal";
 	/**
@@ -126,13 +126,13 @@ export class HandoffConsumer {
 			validation: this.validatedResults.get(options.result),
 		});
 		if (accepted.error) {
-			// The flow-level error names which child's envelope was rejected — in a
+			// The flow-level error names which child's Return was rejected — in a
 			// multi-axis preset the axis role is the only thing that makes the
 			// failure diagnosable — while the specific validation cause is kept.
 			const from = options.result.role ? `${options.result.role} (${options.result.agent})` : options.result.agent;
-			const named = { ...accepted.error, cause: `Return envelope from ${from} was rejected: ${accepted.error.cause}` };
+			const named = { ...accepted.error, cause: `Return from ${from} was rejected: ${accepted.error.cause}` };
 			// A budget wrap-up settled this run graceful on notice delivery alone;
-			// a rejected envelope proves the notice was not honored, and the run
+			// a rejected Return proves the notice was not honored, and the run
 			// must not render as a success beside the flow error it caused (#112).
 			// The revocation rides on the rejection event below: the child span was
 			// already exported with the provisional OK, so this linked event is the
@@ -361,10 +361,11 @@ export class HandoffConsumer {
 	}
 
 	/**
-	 * Recording is unconditional: a rejected envelope is retained as trace
-	 * evidence of what the spend produced whether or not any role would have
-	 * consumed it. Only the name follows the boundary — an integrating
-	 * consumption rejected a handoff; a terminal report rejected an envelope.
+	 * Recording is unconditional: a rejected Return candidate is retained as
+	 * trace evidence of what the spend produced whether or not any role would
+	 * have consumed it. Only the name follows the boundary — an integrating
+	 * consumption rejected a handoff; a terminal report rejected an envelope
+	 * (the wire event names predate the candidate vocabulary and are kept).
 	 */
 	private recordRejected(
 		options: ConsumeResultOptions,

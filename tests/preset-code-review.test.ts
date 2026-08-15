@@ -386,13 +386,13 @@ test("claims are surfaceable only when attribution and integrity both hold", asy
 	const schemaMiss = run(envelope(resolved.id, { axis: "spec", findings: [{ claim: "surfaceable" }] }));
 	const missed = prepareIntegrationHandoff(schemaMiss, { contract: resolved, cwd: process.cwd(), policy });
 	assert.equal(missed.error?.code, "RETURN_ENVELOPE_INVALID");
-	assert.ok(Run.of(schemaMiss).takeRejectedReturnEnvelope(), "a strict-schema miss under the right contract is retained, its claims surfaceable");
+	assert.ok(Run.of(schemaMiss).takeRejectedReturnCandidate(), "a strict-schema miss under the right contract is retained, its claims surfaceable");
 
 	const stale = run(envelope(`sha256:${"0".repeat(64)}`, { axis: "spec", findings: [{ claim: "stale" }] }));
 	const mismatched = prepareIntegrationHandoff(stale, { contract: resolved, cwd: process.cwd(), policy });
 	assert.equal(mismatched.error?.code, "RETURN_CONTRACT_MISMATCH");
 	assert.ok(mismatched.rejected, "the stale envelope's claims stay available as trace evidence");
-	assert.equal(Run.of(stale).takeRejectedReturnEnvelope(), undefined, "but a stale identity must never have its claims surfaced");
+	assert.equal(Run.of(stale).takeRejectedReturnCandidate(), undefined, "but a stale identity must never have its claims surfaced");
 
 	// Both of the following also miss the schema. Before integrity was checked
 	// first, the schema miss short-circuited and carried them out as surfaceable.
@@ -400,7 +400,7 @@ test("claims are surfaceable only when attribution and integrity both hold", asy
 	const uncontained = prepareIntegrationHandoff(escaped, { contract: resolved, cwd: process.cwd(), policy });
 	assert.equal(uncontained.error?.code, "RETURN_ENVELOPE_INVALID");
 	assert.match(uncontained.error?.cause ?? "", /(escapes|resolves outside) the child cwd/, "containment is the reported diagnosis, not the schema miss it arrived with");
-	assert.equal(Run.of(escaped).takeRejectedReturnEnvelope(), undefined, "an artifact escaping the cwd never leaves surfaceable claims");
+	assert.equal(Run.of(escaped).takeRejectedReturnCandidate(), undefined, "an artifact escaping the cwd never leaves surfaceable claims");
 
 	const dir = await mkdtemp(path.join(tmpdir(), "pi-flow-surfaceable-"));
 	await writeFile(path.join(dir, "report.txt"), "actual contents\n");
@@ -410,7 +410,7 @@ test("claims are surfaceable only when attribution and integrity both hold", asy
 	}));
 	const untrusted = prepareIntegrationHandoff(forged, { contract: resolved, cwd: dir, policy });
 	assert.equal(untrusted.error?.code, "RETURN_DIGEST_MISMATCH", "an integrity failure outranks the schema miss it arrived with");
-	assert.equal(Run.of(forged).takeRejectedReturnEnvelope(), undefined, "a digest mismatch never leaves surfaceable claims");
+	assert.equal(Run.of(forged).takeRejectedReturnCandidate(), undefined, "a digest mismatch never leaves surfaceable claims");
 
 	// A digest whose target was never declared: guarded in validateDigests, and
 	// reachable only now that integrity precedes conformance.
@@ -420,7 +420,7 @@ test("claims are surfaceable only when attribution and integrity both hold", asy
 	const unbacked = prepareIntegrationHandoff(undeclared, { contract: resolved, cwd: dir, policy });
 	assert.equal(unbacked.error?.code, "RETURN_ENVELOPE_INVALID");
 	assert.match(unbacked.error?.cause ?? "", /not declared in artifactReferences/, "the undeclared digest target is the reported diagnosis");
-	assert.equal(Run.of(undeclared).takeRejectedReturnEnvelope(), undefined, "a digest with no declared artifact never leaves surfaceable claims");
+	assert.equal(Run.of(undeclared).takeRejectedReturnCandidate(), undefined, "a digest with no declared artifact never leaves surfaceable claims");
 });
 
 test("a validated axis keeps its findings when the other axis fails validation", async () => {

@@ -335,5 +335,14 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // explanation ship as new public reference/explanation surfaces, so this is net
 // growth in already-packaged docs, not an inclusion. The file set grows to 111
 // for those two docs and none from tests/, scripts/, or evals/.
-assert.ok(pack.unpackedSize < 1_290_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_300_000 for #143 (distinguish Return candidates from validated
+// Return envelopes): the taxonomy adds the packaged Core concept module
+// return-types.ts (the candidate/envelope vocabulary types.ts re-exports), the
+// public FlowReturnCandidate schema beside FlowReturnEnvelope, the glossary's
+// Return candidate / Rejected Return candidate entries, the reference and
+// troubleshooting taxonomy wording, and the breaking-change migration entry in
+// CHANGELOG.md. The file set grows to 111 for return-types.ts (on the #155
+// docs reorg base) and none from tests/, scripts/, or evals/; measured
+// 1_295_899.
+assert.ok(pack.unpackedSize < 1_300_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

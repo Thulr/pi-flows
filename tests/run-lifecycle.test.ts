@@ -8,6 +8,13 @@ import test from "node:test";
 import { Run } from "../extensions/pi-flows/run.ts";
 import { MODEL_VISIBLE_OUTPUT_CAP, emptyUsage, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowRunResult } from "../extensions/pi-flows/types.ts";
 
+// This file deliberately does not import delegation.ts, so the seam is
+// unclaimed here and the test can hold it: in production delegation.ts claims
+// it at module load, and these transitions are reachable only through it.
+// This relies on node:test's per-file process isolation (the repo's test
+// runner); an in-process runner would make delegation.ts's claim win here.
+const attachValidatedReturn = Run.claimReturnValidationSeam();
+
 function childResult(): FlowRunResult {
 	return {
 		agent: "recon",
@@ -85,23 +92,30 @@ test("a failed run discards its envelope candidate", () => {
 	assert.equal(run.takeEnvelopeCandidate(), undefined);
 });
 
-test("accepting a return envelope attaches the stored form and retains the validated content privately", () => {
+test("the claimed validation seam attaches the stored form and retains the validated content privately", () => {
 	const result = childResult();
 	const run = Run.of(result);
 	const validated = { ...returnEnvelope(), usage: result.usage };
 	const stored = returnEnvelope();
-	run.acceptReturnEnvelope(validated, stored);
+	attachValidatedReturn(result, validated, stored);
 	// The stored (redacted) form is what the result carries outward.
 	assert.equal(result.envelope, stored);
 	// The validated content is retained beside it, not on it.
 	assert.deepEqual(run.takeValidatedReturnEnvelope(), validated);
 });
 
+test("the validation seam is claimable exactly once, and the run exposes no attach method", () => {
+	// A second claimant would be a second attach path — refused outright.
+	assert.throws(() => Run.claimReturnValidationSeam(), /already claimed/);
+	// Nothing on the run itself can attach: the transition exists only behind the seam.
+	assert.equal((Run.of(childResult()) as unknown as Record<string, unknown>).acceptReturnEnvelope, undefined);
+});
+
 test("the validated return envelope is consumed once, as an isolated clone", () => {
 	const result = childResult();
 	const run = Run.of(result);
 	const validated = returnEnvelope();
-	run.acceptReturnEnvelope(validated, returnEnvelope());
+	attachValidatedReturn(result, validated, returnEnvelope());
 	// Mutating the caller's copy after acceptance must not drift the retained one.
 	validated.summary = "tampered";
 	const taken = run.takeValidatedReturnEnvelope();
@@ -114,11 +128,23 @@ test("schema-checked Integration control stays private, clone-isolated, and avai
 	const result = childResult();
 	const run = Run.of(result);
 	const validated = returnEnvelope();
-	run.acceptReturnEnvelope(validated, { ...validated, data: { answer: "[content omitted]" } });
+	attachValidatedReturn(result, validated, { ...validated, data: { answer: "[content omitted]" } });
 	const control = run.validatedReturnData() as { answer: string };
 	control.answer = "tampered";
 	assert.deepEqual(run.validatedReturnData(), { answer: "report.txt" });
 	assert.deepEqual(run.takeValidatedReturnEnvelope()?.data, { answer: "report.txt" });
+});
+
+test("a rejected Return candidate is retained and consumed once, never reaching result.envelope", () => {
+	const result = childResult();
+	const run = Run.of(result);
+	const { contractId: _stale, ...unbound } = returnEnvelope();
+	run.retainRejectedCandidate(unbound);
+	assert.equal(result.envelope, undefined, "a rejected candidate is evidence, not a validated envelope");
+	const taken = run.takeRejectedReturnCandidate();
+	assert.equal(taken?.contractId, undefined, "the missing identity stays diagnosable as parsed");
+	assert.equal(taken?.summary, "Finding recorded.");
+	assert.equal(run.takeRejectedReturnCandidate(), undefined);
 });
 
 test("accepting a handoff is the transition that attaches it to the result", () => {

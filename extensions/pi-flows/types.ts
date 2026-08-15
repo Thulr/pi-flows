@@ -5,6 +5,7 @@ import type { ChildSpanScope, FlowTraceContext, FlowTraceLink, RecordEvent, Reco
 import type { HandoffGuard } from "./handoff-types.ts";
 import type { HandoffConsumer } from "./handoff-consumption.ts";
 import type { ModelRoster, ThinkingLevel } from "./roster-types.ts";
+import type { DelegationReturnEnvelope } from "./return-types.ts";
 import type { FlowPreset, FlowPresetSelection } from "./preset-types.ts";
 
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
@@ -333,20 +334,9 @@ export interface DelegationContract {
 	owner: string;
 }
 
-export interface DelegationReturnEnvelope {
-	schemaVersion: "pi-flows.return-envelope.v1";
-	contractId: string;
-	status: "completed" | "partial" | "blocked" | "failed";
-	summary: string;
-	evidence: Array<{ claim: string; source: string }>;
-	artifactReferences: Array<{ path: string }>;
-	digests: Array<{ artifact: string; algorithm: "sha256"; value: string }>;
-	changedState: string[];
-	unresolvedQuestions: string[];
-	retry: { retryable: boolean; reason?: string; afterMs?: number };
-	data: unknown;
-	usage?: UsageStats;
-}
+// The Return taxonomy (candidate vs validated envelope) lives with its own
+// concept module; re-exported here as kernel vocabulary like the trace types.
+export type { DelegationReturnCandidate, DelegationReturnEnvelope } from "./return-types.ts";
 
 export interface FlowAgentRefInput {
 	agent: string;

@@ -657,19 +657,20 @@ instructions or to `contract.returnSchema`. The child must meet this
 requirement: return one `pi-flows.return-envelope.v1` JSON object with every
 required field, keep artifact paths inside the child `cwd`, and make `data`
 satisfy the declared JSON Schema. The handoff is not passed downstream until it
-validates. Some rejected envelopes miss only the schema: the envelope was
-attributable to the dispatched contract, its artifact references stayed inside
-the child `cwd`, and its declared digests matched. Their unvalidated claims are
-still surfaced (for example, by the code-review formatter), so the spend is not
-lost with the validation. An envelope with a stale identity, escaped artifact
-references, or a failed digest verification is untrustworthy, not merely
-unchecked. Its claims are never surfaced, and an integrity failure is reported
-as such even when the schema also missed.
+validates. Some rejected Return candidates miss only the schema: the candidate
+was attributable to the dispatched contract, its artifact references stayed
+inside the child `cwd`, and its declared digests matched. Their unvalidated
+claims are still surfaced (for example, by the code-review formatter), so the
+spend is not lost with the validation. A candidate with a stale identity,
+escaped artifact references, or a failed digest verification is untrustworthy,
+not merely unchecked. Its claims are never surfaced, and an integrity failure is
+reported as such even when the schema also missed.
 
 ### `RETURN_CONTRACT_MISMATCH`
 
-Cause: a contracted child returned a return envelope with no `contractId`, or
-with an identity from an older/different delegation contract.
+Cause: a contracted child returned a Return candidate with no `contractId`, or
+with an identity from an older/different delegation contract. The rejection
+keeps the identity the candidate claimed, so the mismatch stays diagnosable.
 
 Fix: discard the stale handoff and rerun the child with the current delegation contract.
 Contracted modes compare the echoed `sha256:` identity before dependent
@@ -687,17 +688,17 @@ incomplete status. A `failed` handoff is always terminal and must be retried.
 
 ### `RETURN_DIGEST_MISMATCH`
 
-Cause: a return envelope declared a SHA-256 digest that did not match the
-referenced artifact's bytes. This is reported even when the envelope's `data`
+Cause: a Return candidate declared a SHA-256 digest that did not match the
+referenced artifact's bytes. This is reported even when the candidate's `data`
 also failed `contract.returnSchema`. Integrity is examined before conformance,
-so an envelope that fails both is reported as the integrity failure, not as
+so a candidate that fails both is reported as the integrity failure, not as
 `RETURN_ENVELOPE_INVALID`.
 
-Fix: treat the artifact and the envelope as untrusted. Regenerate them
+Fix: treat the artifact and the candidate as untrusted. Regenerate them
 together, then retry. Do not copy the failed handoff into a downstream child.
-Unlike a plain schema miss, this envelope's claims are never surfaced as
+Unlike a plain schema miss, this candidate's claims are never surfaced as
 unvalidated claims. A digest that does not match its artifact makes the whole
-envelope untrustworthy, not merely unchecked.
+candidate untrustworthy, not merely unchecked.
 
 ### `HANDOFF_POLICY_VIOLATION`
 

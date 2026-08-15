@@ -55,6 +55,29 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- **Breaking (public API):** the Return vocabulary now distinguishes a **Return
+  candidate** (untrusted child output, structurally an envelope, identity
+  optional and kept as parsed so a rejection stays diagnosable), a **rejected
+  Return candidate** (retained as rejection evidence, never attached), and a
+  validated **Return envelope** (#143). The public `FlowReturnEnvelope` schema
+  validates only the validated form: `contractId` is required, so an unbound
+  candidate no longer passes a validator named "Return envelope". Downstream
+  validators of raw child output must migrate to the new public
+  `FlowReturnCandidate` schema, which keeps `contractId` optional and matches
+  the runtime shape check. The types `DelegationReturnCandidate`,
+  `RejectedDelegationReturnCandidate`, and `DelegationReturnEnvelope` (identity
+  required) are exported beside the schemas. At runtime, the validated envelope
+  is stamped with the resolved contract identity itself, and attaching an
+  envelope through the Run lifecycle is possible only via the validation seam —
+  the attach transition is a single-claim capability held by validation, so
+  nothing else can attach output that never passed the contract checks.
+  (`FlowRunResult` itself stays the plain writable read projection it has
+  always been; the seam guards the Run transition, not the projection.)
+  Attribution,
+  integrity, and conformance keep their order: only a schema-nonconforming
+  candidate whose attribution and integrity held can surface Unvalidated
+  claims.
+
 - The domain documentation is split into three surfaces (#140): `CONTEXT.md` is
   now a pure glossary of canonical terms with concise, implementation-free
   definitions and Avoid lists, while module classification, import direction, and

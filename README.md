@@ -100,7 +100,7 @@ pi runs this as an [evaluate loop](./docs/reference/flow-reference.md#evaluate-m
 
 ## What it adds
 
-- The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`. Every task and agent-reference role carries a machine-checked [delegation contract](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation). Return envelopes are validated before coordination can act on them.
+- The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`. Every task and agent-reference role carries a machine-checked [delegation contract](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation). A child's Return candidate must validate into a Return envelope before coordination can act on it.
 - The `/flows` command and [live TUI monitoring](./docs/reference/flow-reference.md#live-tui-monitoring): a live tool row, `/flows inspect`, and a durable flow card. Every configured cost or token ceiling is disclosed, with its authority, before work starts.
 - Nine bundled agents in [`agents/`](./agents/) and three workflow presets in [`presets/`](./presets/).
 - Your own agents and presets, with no code required: one markdown file each, user-scoped or project-scoped. Project files are trust-gated, and shadowing shows visible diagnostics. See [Custom agents](./docs/how-to/custom-agents.md).

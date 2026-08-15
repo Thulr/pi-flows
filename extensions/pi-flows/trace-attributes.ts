@@ -228,7 +228,7 @@ export function handoffAttributes(handoff: DelegationHandoffEnvelope, accounting
 	return attributes;
 }
 
-/** Whatever declared the artifact: an accepted handoff, or the rejected envelope whose claims are the evidence of what went wrong. */
+/** Whatever declared the artifact: an accepted handoff, or the rejected Return candidate whose claims are the evidence of what went wrong. */
 export interface ArtifactSource {
 	agent: string;
 	contractId: string | null;

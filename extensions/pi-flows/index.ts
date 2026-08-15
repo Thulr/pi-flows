@@ -53,7 +53,12 @@ export {
 	PI_FLOWS_VERSION,
 } from "./types.ts";
 export { redactText, scanForInjection, stripControlChars } from "./sanitize.ts";
-export { FlowDelegationContract, FlowReturnEnvelope } from "./schema.ts";
+// The Return taxonomy (issue #143): FlowReturnCandidate validates untrusted
+// child output (identity optional, kept for rejection evidence); FlowReturnEnvelope
+// validates only the validated form, whose contract identity is required.
+export { FlowDelegationContract, FlowReturnCandidate, FlowReturnEnvelope } from "./schema.ts";
+export type { DelegationReturnCandidate, DelegationReturnEnvelope } from "./types.ts";
+export type { RejectedDelegationReturnCandidate } from "./run.ts";
 
 export const __test = {
 	redactText,
