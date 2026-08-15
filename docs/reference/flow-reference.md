@@ -797,20 +797,28 @@ completion, the binding identifies these effective execution conditions:
 - selected Agent source (`package`, `user`, or `project`);
 - a full SHA-256 identity of the selected Agent system prompt, never its text;
 - effective tools after the Role override or Agent inheritance is applied;
-- canonical working-directory target (symlinks resolved);
+- canonical working-directory target plus a non-disclosing filesystem identity
+  (symlinks resolved);
 - concrete resolved model; and
 - Thinking level passed to Pi.
+
+The canonical cwd binding retained by verification is passed through the opaque
+Integration plan and child-run seam. The handler rechecks it after awaited state
+writes, and the production adapter checks both path and filesystem identity again
+immediately before process spawn, after its own asynchronous setup.
 
 The same binding also covers the approval action/message, task and gate terms,
 effective delegation contract and Return/evidence requirements, `agentScope`,
 the resolved handoff policies, and `incompleteHandoffPolicy`. Source shadowing,
 prompt edits, inherited-tool changes, model-roster changes, repointing a cwd
-symlink, or moving the default working directory therefore produce
-`APPROVAL_RECEIPT_STALE` even when the
-authored phase is unchanged. A missing Agent, Pi-default toolset, model selector
-without an exact current registry match, or implicit Thinking level cannot be identified exactly; a gated workflow
-refuses with `WORKFLOW_INVALID` before asking for consent until those conditions
-are explicit or supplied by the selected Agent profile.
+symlink, replacing the canonical directory itself, or moving the default working
+directory therefore produce `APPROVAL_RECEIPT_STALE` even when the authored
+phase is unchanged. A missing Agent, nonexistent, non-directory, unreadable, or
+unsearchable cwd,
+Pi-default toolset, model selector without an exact current registry match, or
+implicit Thinking level cannot be identified exactly; a gated workflow
+refuses with `WORKFLOW_INVALID` before asking for consent, or before approved
+dispatch if a canonical target disappeared, until those conditions are concrete.
 
 A completed approval whose receipt has lapsed or been superseded is **reopened**
 rather than stranding the state file: the phase is un-completed, its receipt

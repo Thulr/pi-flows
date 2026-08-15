@@ -57,8 +57,8 @@ A file missing `name` or `description` is skipped with an `AGENT_FRONTMATTER_INV
 Everything below the frontmatter is the agent's system prompt. Write it for a child that starts with zero context: state the task, the output shape, and that the parent only sees the final summary. The bundled [`agents/*.md`](../../agents/) are working examples of the style.
 
 Durable workflow approval binds the selected source, a SHA-256 identity of this
-prompt body, effective tools, resolved cwd, concrete model, and Thinking level.
-Changing any effective value requires reapproval. Raw prompt text is not copied
+prompt body, effective tools, canonical cwd target and filesystem identity,
+concrete model, and Thinking level. Changing any effective value requires reapproval. Raw prompt text is not copied
 into the receipt or workflow state. Because Pi's default tools and implicit
 model/Thinking settings are not concrete before spawn, an approval-gated Role
 must resolve those values from its Agent, Role overrides, or flow fallbacks.

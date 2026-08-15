@@ -8,10 +8,10 @@ import { resolveChildModel, type ChildModelChoice } from "./child-model.ts";
 import { canonicalSha256 } from "./delegation.ts";
 import { knownModel } from "./model-roster.ts";
 import type { AgentSource, FlowAgent, ModelRoster, ThinkingLevel } from "./types.ts";
-import { parseToolsOverride, resolvedCwd } from "./validate.ts";
+import { parseToolsOverride, resolveCwdTarget } from "./validate.ts";
 
 /** A material profile condition that durable approval cannot identify. */
-export type UnboundAgentProfileCondition = "selected Agent" | "effective tools" | "model" | "Thinking level";
+export type UnboundAgentProfileCondition = "selected Agent" | "effective tools" | "working directory" | "model" | "Thinking level";
 
 /** Non-disclosing identity of the executable conditions an approval binds. */
 export interface EffectiveAgentProfileIdentity {
@@ -21,6 +21,8 @@ export interface EffectiveAgentProfileIdentity {
 	/** The post-override tool list. null means Pi defaults, whose concrete set is unavailable before spawn. */
 	readonly effectiveTools: readonly string[] | null;
 	readonly resolvedCwd: string;
+	/** Filesystem identity of the canonical cwd target; hashed into approval bindings, never persisted raw. */
+	readonly cwdIdentity: string | null;
 	readonly model: string | null;
 	readonly thinking: ThinkingLevel | null;
 }
@@ -70,9 +72,11 @@ export function resolveAgentProfile(options: AgentProfileRequest): EffectiveAgen
 	const parsedTools = parseToolsOverride(options.tools, agent?.tools);
 	const effectiveTools = parsedTools === undefined ? undefined : [...parsedTools];
 	const concreteModel = knownModel(options.roster, modelChoice.model);
+	const cwd = resolveCwdTarget(options.defaultCwd, options.cwd);
 	const unbound: UnboundAgentProfileCondition[] = [];
 	if (!agent) unbound.push("selected Agent");
 	if (effectiveTools === undefined) unbound.push("effective tools");
+	if (!cwd.bindable) unbound.push("working directory");
 	// Pi fuzzy-matches --model, including provider-qualified patterns. Only an
 	// exact current roster reference is a concrete identity that cannot retarget.
 	if (!concreteModel) unbound.push("model");
@@ -86,7 +90,8 @@ export function resolveAgentProfile(options: AgentProfileRequest): EffectiveAgen
 			source: agent?.source ?? null,
 			promptDigest: agent ? agentPromptDigest(agent.systemPrompt) : null,
 			effectiveTools: effectiveTools ?? null,
-			resolvedCwd: resolvedCwd(options.defaultCwd, options.cwd),
+			resolvedCwd: cwd.path,
+			cwdIdentity: cwd.identity,
 			model: concreteModel?.reference ?? null,
 			thinking: modelChoice.thinking ?? null,
 		},

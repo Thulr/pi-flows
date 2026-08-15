@@ -538,7 +538,7 @@ test("a capable-tier phase binds the session model, and moving it invalidates th
 		source: "derived" as const,
 		issues: [],
 	});
-	const deps = (sessionModel: string) => ({ discovery: { agents: [] }, defaultCwd: "/workspace", roster: roster(sessionModel) } as any);
+	const deps = (sessionModel: string) => ({ discovery: { agents: [] }, defaultCwd: process.cwd(), roster: roster(sessionModel) } as any);
 	const phase = { id: "ship", agent: "operator", task: "Ship it", tier: "capable" };
 
 	const before = normalizeGatedPhase(phase, {}, deps("p/original"));
@@ -551,7 +551,7 @@ test("a capable-tier phase binds the session model, and moving it invalidates th
 	// receipt records null rather than a model the child will not run.
 	const unpinned = { id: "ship", agent: "operator", task: "Ship it" };
 	assert.equal(normalizeGatedPhase(unpinned, {}, deps("p/original")).model, null);
-	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] }, defaultCwd: "/workspace" } as any).model, null, "an unresolvable roster binds null too");
+	assert.equal(normalizeGatedPhase(phase, {}, { discovery: { agents: [] }, defaultCwd: process.cwd() } as any).model, null, "an unresolvable roster binds null too");
 });
 
 test("a trailing approval binds the debrief's model and thinking, not just its contract", async () => {
@@ -725,7 +725,7 @@ test("an approval is refused when the work it gates names no model to bind", () 
 		{ id: "ship", agent: "operator", task: "Ship it" },
 	];
 	const agent = (overrides: Record<string, unknown> = {}) => ({ name: "operator", description: "Approval fixture.", tools: ["read"], thinking: "low", systemPrompt: "", source: "package", filePath: "/pkg/operator.md", ...overrides });
-	const refusal = (target: any[], agents: any[], params: any = {}, selectedRoster: any = roster) => approvalProfileRefusal(target, 0, params, { agents, defaultCwd: "/workspace", roster: selectedRoster });
+	const refusal = (target: any[], agents: any[], params: any = {}, selectedRoster: any = roster) => approvalProfileRefusal(target, 0, params, { agents, defaultCwd: process.cwd(), roster: selectedRoster });
 
 	// The agent declares no tier, and neither does the phase.
 	assert.equal(refusal(phases, [agent()])?.code, "WORKFLOW_INVALID");

@@ -10,6 +10,7 @@ import { WORKFLOW_COMPLETE_STEP, approvalBindingDigest, type ApprovalAuthorizati
 import { resolveAgentProfile, type AgentProfileEnvironment, type EffectiveAgentProfile } from "../agent-profile.ts";
 import { clampThinking, parseModelSpec } from "../model-roster.ts";
 import { THINKING_LEVELS, flowError, type CapturePolicy, type FlowError, type ModeDeps, type ThinkingLevel } from "../types.ts";
+import type { CwdTargetBinding } from "../validate.ts";
 
 /** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
 const APPROVER_LABEL_CAP = 256;
@@ -133,8 +134,8 @@ export function approvalProfileRefusal(phases: any[], index: number, params: any
 	return flowError(
 		"WORKFLOW_INVALID",
 		`Approval phase "${phaseId}" gates work whose effective Agent profile cannot be recorded.`,
-		`These gated steps do not resolve every condition a receipt must bind (selected Agent source and prompt identity, effective tools, resolved cwd, concrete model, and Thinking level): ${gatedIds}. Missing Agents, Pi-default tools, model selectors without an exact current registry match, or implicit Thinking settings can change before resume without an exact value to compare.${environment.roster?.source === "unavailable" ? " No model registry was readable, so no model or tier could be bound here." : ""}`,
-		"Select a discovered Agent and give each listed step explicit tools, model (or a resolvable tier), and Thinking level wherever its Agent profile does not supply them.",
+		`These gated steps do not resolve every condition a receipt must bind (selected Agent source and prompt identity, effective tools, canonical cwd target, concrete model, and Thinking level): ${gatedIds}. Missing Agents, nonexistent, non-directory, unreadable, or unsearchable working directories, Pi-default tools, model selectors without an exact current registry match, or implicit Thinking settings can change before resume without an exact value to compare.${environment.roster?.source === "unavailable" ? " No model registry was readable, so no model or tier could be bound here." : ""}`,
+		"Select a discovered Agent, create each working directory, and give every listed step explicit tools, model (or a resolvable tier), and Thinking level wherever its Agent profile does not supply them.",
 	);
 }
 
@@ -183,6 +184,7 @@ export function normalizeGatedPhase(phase: any, params: any, deps: ModeDeps): Re
 		source: profile.source,
 		promptDigest: profile.promptDigest,
 		cwd: profile.resolvedCwd,
+		cwdIdentity: profile.cwdIdentity,
 		model: profile.model,
 		thinking: profile.thinking,
 		tools: profile.effectiveTools,
@@ -206,6 +208,7 @@ function normalizeGatedDebrief(params: any, deps: ModeDeps): Record<string, unkn
 		promptDigest: profile.promptDigest,
 		tools: profile.effectiveTools,
 		cwd: profile.resolvedCwd,
+		cwdIdentity: profile.cwdIdentity,
 		contract: debrief.contract ?? params.contract ?? null,
 		returnContract: params.returnContract ?? null,
 		requireEvidence: params.requireEvidence ?? false,
@@ -375,23 +378,53 @@ export function historicalApprovalSearchForV3(phases: any[], index: number, deps
  * is checked against what would run now, not against whatever the state file
  * claims was approved.
  */
-export function approvalBindingFor(phases: any[], index: number, deps: ModeDeps, digest: string): ApprovalBinding {
+export interface ResolvedApprovalBinding {
+	readonly binding: ApprovalBinding;
+	/** Canonical cwd targets and filesystem identities hashed for each gated Role. */
+	readonly gatedCwds: ReadonlyMap<string, CwdTargetBinding>;
+	/** Canonical cwd target and identity hashed for the gated debrief. */
+	readonly debriefCwd?: CwdTargetBinding;
+}
+
+/** Resolve one binding and retain the exact cwd targets dispatch must reuse. */
+export function resolveApprovalBinding(phases: any[], index: number, deps: ModeDeps, digest: string): ResolvedApprovalBinding {
 	const gatedIds = new Set(gatedPhaseIds(phases, index));
 	const gated = phases.filter((phase: any) => gatedIds.has(phase.id));
+	const gatedCwds = new Map<string, CwdTargetBinding>();
+	const normalizedGated = gated.map((phase) => {
+		const normalized = normalizeGatedPhase(phase, deps.params, deps);
+		if (typeof normalized.cwd === "string" && typeof normalized.cwdIdentity === "string") {
+			gatedCwds.set(phase.id, { path: normalized.cwd, identity: normalized.cwdIdentity });
+		}
+		return normalized;
+	});
+	const normalizedDebrief = index + gatedIds.size + 1 >= phases.length ? normalizeGatedDebrief(deps.params, deps) : null;
+	const debriefCwd = typeof normalizedDebrief?.cwd === "string" && typeof normalizedDebrief.cwdIdentity === "string"
+		? { path: normalizedDebrief.cwd, identity: normalizedDebrief.cwdIdentity }
+		: undefined;
 	return {
-		action: approvalActionId(phases[index]),
-		parameters: {
-			approvalMessage: phases[index].approval.message,
-			agentScope: deps.agentScope,
-			incompleteHandoffPolicy: deps.params.incompleteHandoffPolicy ?? "fail",
-			handoffPolicy: deps.handoffs.resolution,
-			gatedPhases: gated.map((phase) => normalizeGatedPhase(phase, deps.params, deps)),
-			debrief: index + gatedIds.size + 1 >= phases.length ? normalizeGatedDebrief(deps.params, deps) : null,
+		gatedCwds,
+		...(debriefCwd ? { debriefCwd } : {}),
+		binding: {
+			action: approvalActionId(phases[index]),
+			parameters: {
+				approvalMessage: phases[index].approval.message,
+				agentScope: deps.agentScope,
+				incompleteHandoffPolicy: deps.params.incompleteHandoffPolicy ?? "fail",
+				handoffPolicy: deps.handoffs.resolution,
+				gatedPhases: normalizedGated,
+				debrief: normalizedDebrief,
+			},
+			requestedBy: "flow:workflow",
+			workflowDigest: digest,
+			stateVersion: WORKFLOW_STATE_VERSION,
 		},
-		requestedBy: "flow:workflow",
-		workflowDigest: digest,
-		stateVersion: WORKFLOW_STATE_VERSION,
 	};
+}
+
+/** Resolve only the receipt binding for callers that do not dispatch its work. */
+export function approvalBindingFor(phases: any[], index: number, deps: ModeDeps, digest: string): ApprovalBinding {
+	return resolveApprovalBinding(phases, index, deps, digest).binding;
 }
 
 /**

@@ -12,8 +12,8 @@
 // parameters the gated phases resolve to — each effective Agent profile,
 // agentScope, returnContract, requireEvidence, incompleteHandoffPolicy, the
 // enforced injection-handoff policy, and the resolved delegation contract.
-// Source shadowing, a prompt/tool edit, or a changed default cwd therefore needs
-// fresh approval instead of riding the old one.
+// Source shadowing, a prompt/tool edit, or a changed cwd path/identity therefore
+// needs fresh approval instead of riding the old one.
 //
 // Threat model: this is replay and drift protection for a local 0o600 state
 // file, not authentication. Anyone who can write that file can write any receipt
@@ -318,7 +318,7 @@ function receiptIssue(
 		return flowError(
 			"APPROVAL_RECEIPT_STALE",
 			`The approval for "${binding.action}" no longer matches the action it would authorize.`,
-			"The approved action or its effective conditions (selected Agent source, prompt identity, effective tools, resolved cwd, model, Thinking level, agent scope, return/evidence requirements, handoff policy, or delegation contract) changed after approval was granted.",
+			"The approved action or its effective conditions (selected Agent source, prompt identity, effective tools, canonical cwd path or filesystem identity, model, Thinking level, agent scope, return/evidence requirements, handoff policy, or delegation contract) changed after approval was granted.",
 			"Re-run in an interactive Pi UI to approve the current action, or restore the parameters that were approved and resume again.",
 		);
 	}

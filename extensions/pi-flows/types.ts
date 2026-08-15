@@ -19,7 +19,6 @@ export { ROSTER_CONFIG_FILE, THINKING_LEVELS, UNREADABLE_SCOPED_MODEL, USE_DEFAU
 export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterLayer, RosterOverride, ThinkingLevel } from "./roster-types.ts";
 
 export const PI_FLOWS_VERSION = "0.8.0";
-
 export const MAX_PARALLEL_TASKS = 8;
 export const DEFAULT_CONCURRENCY = 4;
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 60 * 1000;
@@ -360,7 +359,6 @@ export interface FlowAgentRefInput {
 	/** Resolved before this Role spawns; its Return validates before use. */
 	contract?: DelegationContract;
 }
-
 export type IncompleteHandoffPolicy = "fail" | "include";
 
 export interface DelegationHandoffEnvelope {
@@ -436,6 +434,8 @@ export interface RunChildOptions {
 	role?: string;
 	task: string;
 	cwd?: string;
+	/** The approved canonical path and filesystem identity; the production adapter rechecks both before spawn. */
+	cwdBinding?: Readonly<{ path: string; identity: string }>;
 	model?: string;
 	tier?: string;
 	thinking?: ThinkingLevel;

@@ -12,8 +12,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 - Workflow approval receipts now bind every gated Role and gated debrief to the
   effective Agent profile (#138): selected package/user/project source, a
-  non-disclosing prompt digest, post-override tools, canonical cwd target, concrete
-  model, and Thinking level. Profile drift reopens unspent consent; unbindable
+  non-disclosing prompt digest, post-override tools, canonical cwd target and
+  filesystem identity, concrete model, and Thinking level. Verification carries
+  that exact cwd binding into gated Role and debrief dispatch, where the production
+  runner rechecks it immediately before spawn. Profile drift reopens unspent consent; unbindable
   defaults refuse before prompting; malformed/replayed receipts remain hard
   failures; and version-3 states reopen unspent consent, preserve same-action
   retries across model-metadata drift, or retain completed approvals as

@@ -361,14 +361,15 @@ suited to the work, or inspect scorer output for overly strict scoring.
 Cause: `workflow.phases` is empty, exceeds the phase cap, repeats an id, a phase
 does not select exactly one of `agent`+`task` and `approval`, or an approval gates
 an Agent profile whose source/prompt, effective tools, cwd, model, or Thinking
-level cannot all be identified before consent.
+level cannot all be identified before consent or approved dispatch.
 
 Fix: provide 1-12 uniquely named phases. Work phases need both `agent` and
 `task`; approval phases need only `approval.message`. For gated work, select a
-discovered Agent and make tools, model/tier, and Thinking explicit wherever the
-Agent profile does not supply a concrete value; `tools:"default"` is not a
-concrete approval toolset, and a direct model must exactly match a model in the
-current registry rather than relying on Pi's alias or pattern matching.
+discovered Agent, create its cwd as a readable/searchable directory, and make
+tools, model/tier, and Thinking explicit wherever the Agent profile does not
+supply a concrete value; `tools:"default"` is not a concrete approval toolset,
+and a direct model must exactly match a model in the current registry rather than
+relying on Pi's alias or pattern matching.
 
 ### `WORKFLOW_STATE_INVALID`
 
@@ -424,11 +425,14 @@ actual approval.
 Cause: an approval was granted, then the action it authorizes changed. For every
 gated Role and gated debrief, a receipt binds the selected Agent source, SHA-256
 prompt identity, effective tools after overrides/inheritance, canonical cwd
-target (with symlinks resolved), concrete model, and Thinking level. It also binds the task/gate terms,
-effective delegation contract, `agentScope`, Return/evidence requirements, and
-handoff policies. Same-name source shadowing, an edited Agent body, expanded
-inherited tools, a changed model roster, a repointed cwd symlink, or a different
-default cwd therefore invalidates consent even when the phase-authored fields are unchanged.
+target and filesystem identity (with symlinks resolved), concrete model, and
+Thinking level. The runner checks that identity again immediately before spawn.
+It also binds the task/gate terms, effective delegation contract, `agentScope`,
+Return/evidence requirements, and handoff policies. Same-name source shadowing,
+an edited Agent body, expanded inherited tools, a changed model roster, a
+repointed cwd symlink, replacement of the canonical directory itself, or a
+different default cwd therefore invalidates consent even when the phase-authored
+fields are unchanged.
 
 Fix: resume in an interactive Pi UI — the approval phase reopens automatically
 and asks again, naming what changed. Restoring the approved parameters is not

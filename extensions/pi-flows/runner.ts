@@ -14,7 +14,7 @@ import { WRAPUP_FILE_ENV, requestWrapUp } from "./wrapup.ts";
 import { contractWrapUpRequirement } from "./contract-resolution.ts";
 import { ChildBudgets } from "./runner-budget.ts";
 import { applyReadonlySandbox } from "./bash-readonly-sandbox.ts";
-import { currentFlowDepth, normalizeTimeout } from "./validate.ts";
+import { currentFlowDepth, cwdTargetDriftError, normalizeTimeout, resolveCwdTarget } from "./validate.ts";
 import { buildChildArgs, getPiInvocation } from "./commands.ts";
 import { describeProviderFailure, modelContextWindow, providerFailureGuidance, providerFailureRetryable } from "./provider-failure.ts";
 import { resolveAgentProfile } from "./agent-profile.ts";
@@ -160,6 +160,11 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		result.role = capturedRole;
 		return result;
 	}
+	const cwdError = options.cwdBinding ? cwdTargetDriftError(options.cwdBinding, { path: profile.identity.resolvedCwd, identity: profile.identity.cwdIdentity }) : null;
+	if (cwdError) {
+		options.recordEvent?.({ kind: "validation", name: "dispatch.approved_cwd_stale", ok: false, minted: true, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": cwdError.code } });
+		return Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, cwdError), { role: capturedRole });
+	}
 
 	const started = Date.now();
 	// Stamped again immediately before the process run: per-child setup (the
@@ -217,8 +222,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 	const tempFiles: Array<{ dir: string; filePath: string }> = [];
 	let wasAborted = false;
 	let timedOut = false;
-	/** Set when the budget refused this child after async setup: the child never ran, so no span or budget outcome is recorded for it. */
-	let refusedLate: FlowRunResult | undefined;
+	/** Set when async setup ends in refusal: no process ran, so no child span or budget outcome is recorded. */
+	let unspawnedResult: FlowRunResult | undefined;
 	try {
 		if (agent.systemPrompt.trim()) {
 			const systemPrompt = await writePromptToTempFile(agent.name, agent.systemPrompt, "system");
@@ -233,7 +238,7 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		// lifetime; it is offered only to a child that runs under some budget.
 		const wrapUpFile = path.join(taskPrompt.dir, "wrap-up.md");
 
-		const childCwd = profile.identity.resolvedCwd;
+		let childCwd = profile.identity.resolvedCwd;
 		let invocation = getPiInvocation(args);
 		// null wrap only if the host lost the sandbox since the check; the -e allowlist enforcer already rode along, so the child stays enforced.
 		const sandboxed = enforcement === "sandbox" ? await applyReadonlySandbox(invocation, childCwd) : null;
@@ -248,8 +253,8 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		// already refuses.
 		const lateRefusal = childBudgets.refuseSpawn(options.agentName);
 		if (lateRefusal) {
-			refusedLate = Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, lateRefusal), { role: capturedRole });
-			return refusedLate;
+			unspawnedResult = Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, lateRefusal), { role: capturedRole });
+			return unspawnedResult;
 		}
 		// Join the wrap-up channel: a shared ceiling already inside the window
 		// steers this child now, and a threshold any sibling's turn crosses later
@@ -260,6 +265,14 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 			requestWrapUp(wrapUpFile, notice);
 		});
 		emitUpdate("starting child pi process...");
+		const spawnCwd = resolveCwdTarget(options.defaultCwd, options.cwd);
+		const spawnCwdError = options.cwdBinding ? cwdTargetDriftError(options.cwdBinding, spawnCwd) : null;
+		if (spawnCwdError) {
+			options.recordEvent?.({ kind: "validation", name: "dispatch.approved_cwd_stale", ok: false, minted: true, scope: options.scope, attributes: { "flow.dispatch.requested_agent": options.agentName, "flow.error_code": spawnCwdError.code } });
+			unspawnedResult = Object.assign(makeEmptyRunResult(options.agentName, options.task, policy, spawnCwdError), { role: capturedRole });
+			return unspawnedResult;
+		}
+		childCwd = spawnCwd.path;
 		const rawGrace = Number(process.env.PI_FLOWS_ERROR_GRACE_MS);
 		const errorGraceMs = Number.isFinite(rawGrace) && rawGrace >= 0 ? rawGrace : DEFAULT_CHILD_ERROR_GRACE_MS;
 		let terminalErrorTimer: NodeJS.Timeout | null = null;
@@ -440,10 +453,9 @@ export async function runFlowAgent(options: RunChildOptions): Promise<FlowRunRes
 		if (isFailed(result)) Run.of(result).discardEnvelopeCandidate();
 		return result;
 	} finally {
-		// A late refusal spawned nothing: like the pre-setup refusal it records
-		// only its budget event (already emitted by refuseSpawn), never a child
-		// span for a child that did not run.
-		if (!refusedLate) {
+		// A late refusal spawned nothing: its budget or validation event is enough,
+		// never a child span for a child that did not run.
+		if (!unspawnedResult) {
 			// From the actual spawn when one happened, so [startedAtMs, +durationMs]
 			// is the child process interval; a failure before spawn falls back to
 			// the run's own start.

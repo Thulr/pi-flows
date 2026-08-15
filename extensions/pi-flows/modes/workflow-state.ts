@@ -43,6 +43,13 @@ export async function persistState(file: string, state: WorkflowState): Promise<
 	await rename(temporary, file);
 }
 
+/** Mark a workflow failed and durably record the transition before returning its refusal. */
+export async function persistFailedState(file: string, state: WorkflowState): Promise<void> {
+	state.status = "failed";
+	state.updatedAt = new Date().toISOString();
+	await persistState(file, state);
+}
+
 export function freshState(digest: string): WorkflowState {
 	return { version: WORKFLOW_STATE_VERSION, digest, status: "running", completedPhaseIds: [], outputs: {}, handoffs: {}, attestations: {}, receipts: {}, updatedAt: new Date().toISOString() };
 }

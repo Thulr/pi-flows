@@ -15,7 +15,7 @@ import type {
 	ModeDeps,
 	ModeOutput,
 } from "./types.ts";
-import { appendReturnRequirements, resolvedCwd } from "./validate.ts";
+import { appendReturnRequirements, cwdTargetDriftError, resolveCwdTarget, type CwdTargetBinding } from "./validate.ts";
 
 const INTEGRATION_RUN_PLAN = Symbol("pi-flows.integration-run-plan");
 const CONTRACT_BUDGETS = new WeakMap<ModeDeps, Map<string, Budget | undefined>>();
@@ -72,6 +72,8 @@ export interface IntegrationRunPlanOptions {
 	shareContractBudget?: boolean;
 	returnContract?: string;
 	requireEvidence?: boolean;
+	/** Approval-bound cwd identity carried through the opaque plan to the production spawn seam. */
+	cwdBinding?: CwdTargetBinding;
 	placeholderTask?: string;
 	scope?: ChildSpanScope;
 }
@@ -110,17 +112,22 @@ export function integrationRunPlan(
 	const renderedTask = contract
 		? contract.renderTask(task, options.returnContract, options.requireEvidence)
 		: appendReturnRequirements(task, options.returnContract, options.requireEvidence);
+	const cwd = resolveCwdTarget(deps.defaultCwd, ref.cwd);
+	const cwdError = options.cwdBinding ? cwdTargetDriftError(options.cwdBinding, cwd) : null;
+	if (cwdError) return { error: cwdError };
 	const dispatchRef = Object.freeze(withoutContract(ref));
 	const limits = runLimits(deps, contract, options.shareContractBudget !== false);
 	if (limits) Object.freeze(limits);
 	const scope = options.scope ? Object.freeze({ ...options.scope }) : undefined;
+	const cwdBinding = options.cwdBinding ? Object.freeze({ ...options.cwdBinding }) : undefined;
 	const state = Object.freeze({
 		ref: dispatchRef,
 		task: renderedTask,
 		placeholderTask: options.placeholderTask ?? task,
 		limits,
 		contract,
-		cwd: resolvedCwd(deps.defaultCwd, ref.cwd),
+		cwd: cwd.path,
+		...(cwdBinding ? { cwdBinding } : {}),
 		...(scope ? { scope } : {}),
 	});
 	const plan = Object.freeze({ [INTEGRATION_RUN_PLAN]: true as const });
@@ -252,7 +259,7 @@ export async function dispatchIntegrationPlan<C extends IntegrationCompletion = 
 		throw new Error("dispatchIntegrationPlan: integrating consumption requires a keyed span scope.");
 	}
 	spendPlan(state);
-	const result = await runAgentRef(deps, admitted.ref, admitted.task, settle.mode, settle.nextStep, [...settle.results], { limits: admitted.limits, scope: admitted.scope });
+	const result = await runAgentRef(deps, admitted.ref, admitted.task, settle.mode, settle.nextStep, [...settle.results], { limits: admitted.limits, scope: admitted.scope, cwdBinding: admitted.cwdBinding });
 	bindResult(result, admitted, admitted.scope);
 	settle.track(result);
 	if (isFailed(result)) return { status: "failed", result };

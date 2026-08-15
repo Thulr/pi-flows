@@ -7,9 +7,9 @@ import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
 import { ResolvedDelegationContract, canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
-import { approvalAuthorizations, approvalBindingFor, approvalProfileRefusal, approverLabel, consumeAuthorization, gatedPhaseIds, REAPPROVABLE_RECEIPT_ERRORS, workflowApprovalProfileRefusal, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
-import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, migrateWorkflowStateV3, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
-import { isWorkflowWorkPhase, resolvedCwd, workflowHeadlessApprovalRefusal, workflowPhasesRefusal } from "../validate.ts";
+import { approvalAuthorizations, approvalBindingFor, approvalProfileRefusal, approverLabel, consumeAuthorization, gatedPhaseIds, resolveApprovalBinding, REAPPROVABLE_RECEIPT_ERRORS, workflowApprovalProfileRefusal, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
+import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, migrateWorkflowStateV3, persistFailedState, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
+import { isWorkflowWorkPhase, resolvedCwd, workflowHeadlessApprovalRefusal, workflowPhasesRefusal, type CwdTargetBinding } from "../validate.ts";
 import { plannedRefs, sumRunDurations, type ModePlan, type PreSpawnContext } from "./plan.ts";
 
 /**
@@ -231,9 +231,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 					state.completedPhaseIds = state.completedPhaseIds.filter((id) => id !== phase.id);
 					delete state.receipts[phase.id];
 				} else if (stale && REAPPROVABLE_RECEIPT_ERRORS.has(stale.code)) {
-					state.status = "failed";
-					state.updatedAt = new Date().toISOString();
-					await persistState(stateFile, state);
+					await persistFailedState(stateFile, state);
 					return settle.refuse(flowError(
 						stale.code,
 						`The approval for "${binding.action}" no longer matches, and part of what it authorized has already run.`,
@@ -241,9 +239,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 						"Restore the parameters that were approved and resume, or start a fresh run so the whole gated sequence executes under one approval.",
 					));
 				} else if (stale) {
-					state.status = "failed";
-					state.updatedAt = new Date().toISOString();
-					await persistState(stateFile, state);
+					await persistFailedState(stateFile, state);
 					return settle.refuse(stale);
 				} else {
 					previous = state.outputs[phase.id] ?? previous;
@@ -270,16 +266,18 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		// minted in an earlier process against an earlier spec.
 		const authorizedBy = authorizations.get(phase.id);
 		let authorization: ApprovalAuthorization | undefined;
+		let approvedPhaseCwd: CwdTargetBinding | undefined;
 		if (authorizedBy !== undefined) {
-			const binding = approvalBindingFor(phases, authorizedBy, deps, digest);
-			const verified = ApprovalAuthorization.verify(state.receipts[phases[authorizedBy].id], binding, { consumer: binding.action });
+			const profileError = isWorkflowWorkPhase(phase) ? approvalProfileRefusal(phases, authorizedBy, params, profiles) : null;
+			if (profileError) return settle.refuse(profileError);
+			const resolvedApproval = resolveApprovalBinding(phases, authorizedBy, deps, digest);
+			const verified = ApprovalAuthorization.verify(state.receipts[phases[authorizedBy].id], resolvedApproval.binding, { consumer: resolvedApproval.binding.action });
 			if (verified.error) {
-				state.status = "failed";
-				state.updatedAt = new Date().toISOString();
-				await persistState(stateFile, state);
+				await persistFailedState(stateFile, state);
 				return settle.refuse(verified.error);
 			}
 			authorization = verified.authorization;
+			approvedPhaseCwd = resolvedApproval.gatedCwds.get(phase.id);
 		}
 
 		state.nextPhaseId = phase.id;
@@ -297,6 +295,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				recordPhaseState(deps, phase.id, "approval.blocked", state, { "flow.error_code": profileError.code });
 				return settle.refuse(profileError);
 			}
+			const resolvedApproval = resolveApprovalBinding(phases, phaseIndex, deps, digest);
 			const prompt = reapprovalCause ? `${phase.approval.message}\n\nRe-approval needed: ${reapprovalCause}` : phase.approval.message;
 			const decision = await deps.requestApproval?.("Approve workflow phase?", prompt) ?? "required";
 			if (decision !== "approved") {
@@ -318,7 +317,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			// Consent becomes a receipt bound to exactly what it authorizes. It is
 			// minted unconsumed: it says the action may run, not that it has. The
 			// receipt attests its own issuance — the seam records the approval event.
-			const receipt = issueApprovalReceipt(approvalBindingFor(phases, phaseIndex, deps, digest), {
+			const receipt = issueApprovalReceipt(resolvedApproval.binding, {
 				approvedBy: approverLabel(deps, policy, DEFAULT_APPROVAL_ACTOR),
 				ttlMs: approvalTtl.ttlMs,
 			}, {
@@ -339,11 +338,24 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			continue;
 		}
 
-		const phaseCwd = resolvedCwd(defaultCwd, phase.cwd);
+		if (authorizedBy !== undefined) {
+			const profileError = approvalProfileRefusal(phases, authorizedBy, params, profiles);
+			if (profileError) return settle.refuse(profileError);
+			const finalApproval = resolveApprovalBinding(phases, authorizedBy, deps, digest);
+			const finalVerification = ApprovalAuthorization.verify(state.receipts[phases[authorizedBy].id], finalApproval.binding, { consumer: finalApproval.binding.action });
+			if (finalVerification.error) {
+				await persistFailedState(stateFile, state);
+				return settle.refuse(finalVerification.error);
+			}
+			authorization = finalVerification.authorization;
+			approvedPhaseCwd = finalApproval.gatedCwds.get(phase.id);
+		}
+		const phaseCwd = approvedPhaseCwd?.path ?? resolvedCwd(defaultCwd, phase.cwd);
 		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tier: phase.tier, thinking: phase.thinking, tools: phase.tools, contract: phase.contract };
 		const planned = integrationRunPlan(deps, ref, renderPhaseTask(phase.task, params.task, previous, state.outputs), {
 			returnContract: phase.returnContract ?? params.returnContract,
 			requireEvidence: phase.requireEvidence ?? params.requireEvidence,
+			cwdBinding: approvedPhaseCwd,
 			// The child's key must differ from its stage's: a workflow phase is both,
 			// and one shared name would leave dependency links pointing at whichever
 			// was registered last.
@@ -354,16 +366,12 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			|| phases.slice(phaseIndex + 1).some((candidate: any) => candidate?.agent && candidate?.task);
 		const dispatched = await dispatchIntegrationPlan(deps, planned.plan!, settle, { completion: consumed ? "integrate" : "terminal", enforceCompletion: true });
 		if (dispatched.status === "failed") {
-			state.status = "failed";
-			state.updatedAt = new Date().toISOString();
-			await persistState(stateFile, state);
+			await persistFailedState(stateFile, state);
 			recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": dispatched.result.error?.code ?? "(none)" });
 			return settle.complete(sanitizeText(`Flow workflow stopped in phase "${phase.id}" (${phase.agent}).\n\n${resultText(dispatched.result)}`, policy));
 		}
 		if (dispatched.status === "refused") {
-			state.status = "failed";
-			state.updatedAt = new Date().toISOString();
-			await persistState(stateFile, state);
+			await persistFailedState(stateFile, state);
 			recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": dispatched.error.code });
 			return dispatched.output;
 		}
@@ -381,9 +389,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				attributes: { "flow.workflow.phase_id": phase.id },
 			}, deps.signal);
 			if (!gate.ok) {
-				state.status = "failed";
-				state.updatedAt = new Date().toISOString();
-				await persistState(stateFile, state);
+				await persistFailedState(stateFile, state);
 				recordPhaseState(deps, phase.id, "phase.failed", state, { "flow.error_code": "WORKFLOW_GATE_FAILED" });
 				const error = flowError("WORKFLOW_GATE_FAILED", `Workflow gate failed after phase "${phase.id}".`, gate.output || "The phase checkCommand exited non-zero.", "Fix the phase artifact or check command, then resume with an updated workflow or start a fresh run.");
 				return settle.refuse(error);
@@ -407,16 +413,18 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	// A trailing approval gates the workflow's own completion (and its debrief),
 	// so it is verified and spent here rather than by a following phase.
 	const tailApproval = authorizations.get(WORKFLOW_COMPLETE_STEP);
+	let approvedDebriefCwd: CwdTargetBinding | undefined;
 	if (tailApproval !== undefined) {
-		const tailBinding = approvalBindingFor(phases, tailApproval, deps, digest);
-		const tailVerified = ApprovalAuthorization.verify(state.receipts[phases[tailApproval].id], tailBinding, { consumer: tailBinding.action });
+		const profileError = spec.debrief?.agent ? approvalProfileRefusal(phases, tailApproval, params, profiles) : null;
+		if (profileError) return settle.refuse(profileError);
+		const resolvedApproval = resolveApprovalBinding(phases, tailApproval, deps, digest);
+		const tailVerified = ApprovalAuthorization.verify(state.receipts[phases[tailApproval].id], resolvedApproval.binding, { consumer: resolvedApproval.binding.action });
 		if (tailVerified.error) {
-			state.status = "failed";
-			state.updatedAt = new Date().toISOString();
-			await persistState(stateFile, state);
+			await persistFailedState(stateFile, state);
 			return settle.refuse(tailVerified.error);
 		}
 		consumeAuthorization(state.receipts, phases, tailApproval, tailVerified.authorization);
+		approvedDebriefCwd = resolvedApproval.debriefCwd;
 		if (spec.debrief?.agent) {
 			// The debrief is the authorized action: make consumption durable before
 			// its Child can start, so a process crash cannot reopen spent consent.
@@ -426,7 +434,20 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	}
 
 	let finalText = previous;
-	const debriefRef: FlowAgentRefInput | undefined = spec.debrief?.agent ? spec.debrief : undefined;
+	if (tailApproval !== undefined && spec.debrief?.agent) {
+		const profileError = approvalProfileRefusal(phases, tailApproval, params, profiles);
+		if (profileError) return settle.refuse(profileError);
+		const finalApproval = resolveApprovalBinding(phases, tailApproval, deps, digest);
+		const finalVerification = ApprovalAuthorization.verify(state.receipts[phases[tailApproval].id], finalApproval.binding, { consumer: finalApproval.binding.action });
+		if (finalVerification.error) {
+			await persistFailedState(stateFile, state);
+			return settle.refuse(finalVerification.error);
+		}
+		approvedDebriefCwd = finalApproval.debriefCwd;
+	}
+	const debriefRef: FlowAgentRefInput | undefined = spec.debrief?.agent
+		? { ...spec.debrief, ...(approvedDebriefCwd ? { cwd: approvedDebriefCwd.path } : {}) }
+		: undefined;
 	if (debriefRef) {
 		const artifacts = phases.map((phase: any) => `### ${phase.id}\n\n${state.outputs[phase.id] ?? "[no output]"}`).join("\n\n---\n\n");
 		const debriefTask = [
@@ -443,22 +464,19 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 			fallbackContract: params.contract as DelegationContract | undefined,
 			returnContract: params.returnContract,
 			requireEvidence: params.requireEvidence,
+			cwdBinding: approvedDebriefCwd,
 			scope: { key: "debrief", dependsOn: phaseUnitKeys },
 		});
 		if (planned.error) return settle.refuse(planned.error);
 		const dispatched = await dispatchIntegrationPlan(deps, planned.plan!, settle, { completion: "terminal", enforceCompletion: true });
 		if (dispatched.status === "failed") {
-			state.status = "failed";
 			delete state.nextPhaseId;
-			state.updatedAt = new Date().toISOString();
-			await persistState(stateFile, state);
+			await persistFailedState(stateFile, state);
 			return settle.complete(sanitizeText(`Flow workflow debrief failed.\n\n${resultText(dispatched.result)}`, policy));
 		}
 		if (dispatched.status === "refused") {
-			state.status = "failed";
 			delete state.nextPhaseId;
-			state.updatedAt = new Date().toISOString();
-			await persistState(stateFile, state);
+			await persistFailedState(stateFile, state);
 			return dispatched.output;
 		}
 		finalText = resultText(dispatched.result);
