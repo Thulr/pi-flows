@@ -8,7 +8,7 @@ import { ResolvedDelegationContract, canonicalHandoff, createPersistedHandoffAtt
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
 import { approvalAuthorizations, approvalBindingFor, approvalProfileRefusal, approverLabel, consumeAuthorization, gatedPhaseIds, resolveApprovalBinding, REAPPROVABLE_RECEIPT_ERRORS, workflowApprovalProfileRefusal, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
-import { freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, migrateWorkflowStateV3, persistFailedState, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
+import { durablePhaseHandoff, freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, migrateWorkflowStateV3, persistFailedState, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
 import { isWorkflowWorkPhase, resolvedCwd, workflowHeadlessApprovalRefusal, workflowPhasesRefusal, type CwdTargetBinding } from "../validate.ts";
 import { plannedRefs, sumRunDurations, type ModePlan, type PreSpawnContext } from "./plan.ts";
 
@@ -398,13 +398,15 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 
 		state.completedPhaseIds.push(phase.id);
 		consumeAuthorization(state.receipts, phases, authorizedBy, authorization);
-		state.handoffs[phase.id] = run.handoff!;
-		state.attestations[phase.id] = createPersistedHandoffAttestation(run.handoff!);
+		const phaseContract = phase.contract ? ResolvedDelegationContract.resolve(phase.contract, policy).resolved : undefined;
+		const persistedHandoff = durablePhaseHandoff(run, phaseContract, policy);
+		state.handoffs[phase.id] = persistedHandoff;
+		state.attestations[phase.id] = createPersistedHandoffAttestation(persistedHandoff);
 		state.outputs[phase.id] = params.recordContent === false ? "[content not recorded]" : output;
 		previous = state.outputs[phase.id];
 		state.updatedAt = new Date().toISOString();
 		await persistState(stateFile, state);
-		recordPhaseState(deps, phase.id, "phase.completed", state, { "flow.handoff.status": run.handoff!.status, "flow.handoff.compatibility": run.handoff!.compatibility });
+		recordPhaseState(deps, phase.id, "phase.completed", state, { "flow.handoff.status": persistedHandoff.status, "flow.handoff.compatibility": persistedHandoff.compatibility });
 		// A later child reads the prepared output through its task, so it depends on
 		// the handoff boundary. A terminal phase has no such boundary and remains a
 		// child dependency instead of inventing a handoff to the caller.

@@ -162,7 +162,17 @@ test("every integration mode covers successful, partial, stale, and invalid type
 				const { result } = await runFlow(built.params, built.plan, { cwd: built.cwd });
 				assert.equal(result.details.error?.code, expectedError[scenario]);
 				if (scenario === "success") {
-					assert.ok(result.details.results.some((run: any) => run.handoff?.contractId === delegationContractId(contract)));
+					const contractId = delegationContractId(contract);
+					// A terminal (parent-facing) result keeps its validated Return
+					// envelope and no Handoff; an integrating result keeps exactly the
+					// Handoff that crossed the role boundary (issue #142).
+					const terminal = ["parallel", "graph", "workflow", "vote"].includes(mode);
+					if (terminal) {
+						assert.ok(result.details.results.some((run: any) => run.envelope?.contractId === contractId));
+						assert.equal(result.details.results.some((run: any) => run.handoff), false);
+					} else {
+						assert.ok(result.details.results.some((run: any) => run.handoff?.contractId === contractId));
+					}
 				}
 			});
 		}

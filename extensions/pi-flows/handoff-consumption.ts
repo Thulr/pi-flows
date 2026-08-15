@@ -6,6 +6,7 @@ import { resultText } from "./sanitize.ts";
 import type {
 	CapturePolicy,
 	ChildSpanScope,
+	DelegationHandoffEnvelope,
 	MintedCoordinationEvent,
 	FlowError,
 	FlowMode,
@@ -37,12 +38,16 @@ export interface ConsumeResultOptions {
 	/**
 	 * Whether another role consumes this result. `"integrate"` (the default) is
 	 * the role boundary: the injection guard is enforced, warnings aggregate,
-	 * a dependency key is minted, and the evidence is a handoff event. A
-	 * `"terminal"` report crosses to the parent, not to a role — none of that
-	 * applies — but its contract validation still happened, so it is recorded
-	 * under the validation vocabulary (`envelope.validated` / `envelope.rejected`)
-	 * instead of `handoff.*`. Recording is unconditional either way: a rejected
-	 * envelope is trace evidence of what the spend produced (CONTEXT.md).
+	 * a dependency key is minted, a Handoff is attached to the run, and the
+	 * evidence is a handoff event. A `"terminal"` report crosses to the parent,
+	 * not to a role — none of that applies — but its contract validation still
+	 * happened, so it is recorded under the validation vocabulary
+	 * (`envelope.validated` / `envelope.rejected`) instead of `handoff.*`.
+	 * Completion is what decides whether a Handoff exists at all: a terminal
+	 * report keeps its validated Return envelope (`result.envelope`) but never
+	 * attaches a Handoff, whatever `payload` representation it was read as.
+	 * Recording is unconditional either way: a rejected envelope is trace
+	 * evidence of what the spend produced (CONTEXT.md).
 	 */
 	completion?: "integrate" | "terminal";
 	/**
@@ -57,9 +62,10 @@ export interface ConsumeResultOptions {
 	scope?: ChildSpanScope;
 	noticeLabel?: string;
 	/**
-	 * Preserve the producer's original representation for consumers whose
-	 * protocol is defined over that representation. Other consumers receive the
-	 * normalized Handoff envelope.
+	 * The downstream representation only: `"source"` preserves the producer's
+	 * original text (or its canonical Return envelope), `"handoff"` (the
+	 * default) the normalized Handoff envelope. It does not decide whether a
+	 * Handoff is attached to the run — `completion` does.
 	 */
 	payload?: "handoff" | "source";
 }
@@ -116,7 +122,6 @@ export class HandoffConsumer {
 			cwd,
 			policy: this.options.policy,
 			incompletePolicy: options.incompletePolicy ?? this.options.params.incompleteHandoffPolicy ?? "fail",
-			attach: payload === "handoff",
 			enforceCompletion: options.enforceCompletion ?? !terminal,
 			validation: this.validatedResults.get(options.result),
 		});
@@ -143,18 +148,22 @@ export class HandoffConsumer {
 			// that just succeeded is still attested — only contract-bearing
 			// reports carry one; plain prose has nothing to attest.
 			if (contract) this.recordValidated(accepted.handoff!, scope);
-			const prepared = this.prepareResult(options.result, contract, payload);
+			const prepared = this.prepareResult(options.result, contract, payload, undefined);
 			const text = options.noticeLabel ? withInjectionNotice(prepared, options.noticeLabel) : prepared.text;
 			return { text, warnings: prepared.warnings, action: prepared.action };
 		}
 
 		const prepared = this.warnings.addFrom(
-			this.prepareResult(options.result, contract, payload, true),
+			this.prepareResult(options.result, contract, payload, accepted.handoff, true),
 		);
 		const carried: PreparedHandoff = options.noticeLabel
 			? { ...prepared, text: withInjectionNotice(prepared, options.noticeLabel) }
 			: prepared;
 		this.recordResult(options.result, accepted.handoff!, carried, scope, contract);
+		// A Handoff exists only when a downstream role actually consumes the
+		// result: attach it here, after the injection guard accepted it, so a
+		// policy refusal is recorded as evidence but never banked as a Handoff.
+		if (!carried.error) Run.of(options.result).acceptHandoff(accepted.handoff!);
 		const dependencyKey = scope?.key ? `${scope.key}.handoff` : undefined;
 		return {
 			text: carried.text,
@@ -248,13 +257,14 @@ export class HandoffConsumer {
 		result: FlowRunResult,
 		contract: ConsumeResultOptions["contract"],
 		payload: NonNullable<ConsumeResultOptions["payload"]>,
+		handoff: DelegationHandoffEnvelope | undefined,
 		enforce = false,
 	): PreparedHandoff {
 		if (payload === "source") {
 			const text = contract && result.envelope ? canonicalEnvelope(result.envelope) : resultText(result);
 			return prepareTextHandoff(text, this.options.policy, undefined, enforce ? this.guard : undefined);
 		}
-		return prepareResultHandoff(result, this.options.policy, undefined, enforce ? this.guard : undefined);
+		return prepareResultHandoff(result, handoff, this.options.policy, undefined, enforce ? this.guard : undefined);
 	}
 
 	private recordResult(

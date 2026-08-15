@@ -309,5 +309,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Missing, non-directory, unreadable, or unsearchable targets are unbound before
 // consent. The regressions are unpackaged; the file set stays 109 and headroom
 // is 522 B over measured 1_273_378.
-assert.ok(pack.unpackedSize < 1_273_900, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_277_550 for #142 (Handoffs exist only at a crossed role boundary):
+// the handoff consumer now attaches a Handoff after the injection guard accepts
+// it (never off the payload representation), the workflow rebuilds a terminal
+// phase's durable handoff from its validated Return envelope, and the incomplete
+// summary reads terminal envelopes. Tests and fault scenarios remain unpackaged;
+// the file set stays 109 and headroom is ~500 B over measured 1_277_048.
+assert.ok(pack.unpackedSize < 1_277_550, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

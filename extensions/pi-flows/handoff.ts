@@ -2,6 +2,7 @@ import {
 	MODEL_VISIBLE_OUTPUT_CAP,
 	flowError,
 	type CapturePolicy,
+	type DelegationHandoffEnvelope,
 	type FlowMode,
 	type FlowRunResult,
 	type HandoffGuard,
@@ -107,12 +108,12 @@ export function prepareTextHandoff(text: string, policy: CapturePolicy, cap = MO
 	return prepareHandoff(sanitizeText(capBytes(text, cap), policy, cap), guard);
 }
 
-export function prepareResultHandoff(result: FlowRunResult, policy: CapturePolicy, cap = MODEL_VISIBLE_OUTPUT_CAP, guard?: HandoffGuard): PreparedHandoff {
+export function prepareResultHandoff(result: FlowRunResult, handoff: DelegationHandoffEnvelope | undefined, policy: CapturePolicy, cap = MODEL_VISIBLE_OUTPUT_CAP, guard?: HandoffGuard): PreparedHandoff {
 	if (guard) {
 		const cached = preparedResults.get(result)?.get(guard as object);
 		if (cached) return cached;
 	}
-	const prepared = prepareTextHandoff(result.handoff ? canonicalHandoff(result.handoff) : resultText(result), policy, cap, guard);
+	const prepared = prepareTextHandoff(handoff ? canonicalHandoff(handoff) : resultText(result), policy, cap, guard);
 	if (guard) {
 		const byGuard = preparedResults.get(result) ?? new WeakMap<object, PreparedHandoff>();
 		byGuard.set(guard as object, prepared);

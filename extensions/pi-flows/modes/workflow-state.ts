@@ -9,9 +9,9 @@
 import { createHash } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import { flowError, type DelegationHandoffEnvelope, type FlowError, type ModeDeps } from "../types.ts";
+import { flowError, type DelegationHandoffEnvelope, type FlowError, type FlowRunResult, type ModeDeps } from "../types.ts";
 import { sanitizeText } from "../sanitize.ts";
-import { canonicalHandoff, createPersistedHandoffAttestation, type PersistedHandoffAttestation } from "../delegation.ts";
+import { ResolvedDelegationContract, canonicalHandoff, compatibilityHandoff, createPersistedHandoffAttestation, typedHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { legacyApprovalReceipt, migrateSpentApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
 import { approvalBindingFor, approvalProfileRefusal, gatedPhaseIds, historicalApprovalSearchForV3, workflowProfileEnvironment, WORKFLOW_STATE_VERSION, type HistoricalApprovalSearch } from "./workflow-approval.ts";
 
@@ -91,6 +91,19 @@ function unusedHistoricalThinkingError(unused: readonly string[], policy: ModeDe
 		`These entries were not consumed by any historical binding search: ${safeUnused}.`,
 		"Remove entries for ungated, unspent, implicit-Thinking, or model-less Roles and resume again.",
 	);
+}
+
+/**
+ * The handoff envelope a completed phase persists durably. An integrating phase's
+ * Handoff is already attached to its run; a terminal phase has no downstream role,
+ * so its run carries only the validated Return envelope (or nothing, for legacy
+ * prose) and the envelope form is rebuilt here for durable resume — without ever
+ * attaching it to the run (issue #142).
+ */
+export function durablePhaseHandoff(run: FlowRunResult, contract: ResolvedDelegationContract | undefined, policy: ModeDeps["policy"]): DelegationHandoffEnvelope {
+	if (run.handoff) return run.handoff;
+	if (run.envelope && contract) return typedHandoff(run, run.envelope, contract);
+	return compatibilityHandoff(run, policy);
 }
 
 function legacyCompatibilityHandoff(phase: any, output: string, step: number, policy: ModeDeps["policy"]): DelegationHandoffEnvelope {

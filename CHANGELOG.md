@@ -153,6 +153,17 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- A Handoff now exists only when a downstream role actually consumes a result.
+  Completion semantics are authoritative: a terminal (parent-facing) result keeps
+  its validated return envelope and validation evidence but never attaches a
+  Handoff, mints a handoff dependency key, aggregates handoff warnings, or records
+  handoff evidence — whatever payload representation it was read as. Integration
+  consumption still applies injection policy, aggregates warnings, mints a
+  dependency key, records the boundary, and attaches exactly one Handoff, and a
+  policy-refused handoff is recorded as evidence but never banked. Parallel and
+  workflow terminal results no longer expose phantom Handoffs, workflow state
+  rebuilds a terminal phase's durable handoff from its validated return envelope
+  for resume, and the incomplete-handoff summary reads terminal envelopes. (#142)
 - The strict read-back no longer falsely refuses a healthy run whose stable
   trace id is shared with an earlier call. `stableTraceIds` derives the id
   from the trace context and the mode so an eval row and its runtime trace

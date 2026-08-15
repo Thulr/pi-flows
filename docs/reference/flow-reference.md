@@ -378,8 +378,11 @@ omitted while schema-checked Integration control stays usable ephemerally. Concu
 validate every successful Return before exposing any result, retaining all spent
 Runs and rejection evidence if one or more Returns fail.
 
-Every consumed result becomes a **handoff envelope** (`pi-flows.handoff-envelope.v1`)
-with source agent and step provenance. Return envelopes retain delegation-contract identity, status, evidence,
+Every result a downstream role consumes becomes a **handoff envelope**
+(`pi-flows.handoff-envelope.v1`) with source agent and step provenance. A terminal
+(parent-facing) result is not a handoff: it keeps its validated return envelope on
+`details.results[].envelope` and attaches no `handoff` field, because no role
+consumed it. Return envelopes retain delegation-contract identity, status, evidence,
 artifact references/digests, and schema-checked data. Existing prose-only results
 remain supported as `compatibility:"legacy-prose"` handoff envelopes with
 `contractId:null`; downstream prompts receive that explicit compatibility shape
@@ -1067,7 +1070,7 @@ lesson-augmented.
 - `presets`: discovered preset summaries and their declared override keys.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
-- `results`: redacted child summaries with usage, duration, stderr, optional validated `envelope`, and structured error. Provider errors add sanitized classification/diagnostic, termination path, known context window, and thinking-level verification; prior runs retain usage/cost.
+- `results`: redacted child summaries with usage, duration, stderr, optional validated `envelope`, and structured error. A result another role consumed also carries its provenance-bearing `handoff`; a terminal result does not. Provider errors add sanitized classification/diagnostic, termination path, known context window, and thinking-level verification; prior runs retain usage/cost.
 
 ## Structured errors
 

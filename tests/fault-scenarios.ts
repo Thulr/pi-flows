@@ -25,7 +25,7 @@ import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
 import { makeTraceSink, strictTraceError, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
 import { Budget, type DelegationContract, type FlowErrorCode, type FlowTraceLink, type ModeOutput } from "../extensions/pi-flows/types.ts";
-import { faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule, type ReplyScript } from "./fault-adapter.ts";
+import { bankedDeliveries, faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule, type ReplyScript } from "./fault-adapter.ts";
 import { flowLifecycleScenarios } from "./fault-flow-scenarios.ts";
 import { wrapUpScenarios } from "./fault-wrapup-scenarios.ts";
 import { handoffPolicyScenarios } from "./fault-handoff-scenarios.ts";
@@ -41,8 +41,8 @@ export interface FaultChecks {
 	policy: { contained: boolean; falselyBlocked: boolean };
 	/**
 	 * What the fault left behind for a retry: whether the refusal offers one, and
-	 * how many child handoffs the parent actually banked. A refusal that had
-	 * already merged the bad work is not containment.
+	 * how many deliveries the parent banked — an attached Handoff or an admitted
+	 * terminal Return envelope (issue #142). A refusal that already merged the bad work is not containment.
 	 */
 	residualState: { retryable: boolean; acceptedHandoffs: number };
 	/** Ground-truth handoff outcomes, present only in policy scenarios that can observe them directly. */
@@ -149,7 +149,7 @@ export function observe(output: ModeOutput, ledger: FaultLedger, watched: string
 		},
 		residualState: {
 			retryable: output.details.error?.retryable ?? false,
-			acceptedHandoffs: output.details.results.filter((result) => result.handoff).length,
+			acceptedHandoffs: bankedDeliveries(output),
 		},
 	};
 }
@@ -369,9 +369,8 @@ function duplicateBallotScenario(): FaultScenario {
 			// replayed one is indistinguishable from independent agreement. The
 			// denominator keeps that gap visible instead of dropping the case.
 			policy: { contained: false, falselyBlocked: false },
-			// All three handoffs are banked, replay included: nothing in the untyped
-			// ballot path can tell the duplicate from an independent second vote.
-			residualState: { retryable: false, acceptedHandoffs: 3 },
+			// Both ballots are banked (replay included); the terminal aggregator banks none (issue #142).
+			residualState: { retryable: false, acceptedHandoffs: 2 },
 		},
 		run: scenarioRun(() => {
 			const adapter = makeFaultAdapter({
@@ -486,7 +485,8 @@ function bashReadonlySharedCwdScenario(): FaultScenario {
 			outcome: { errorCode: null },
 			process: { dispatched: 2, refused: 0, unreached: [] },
 			policy: { contained: false, falselyBlocked: false },
-			residualState: { retryable: false, acceptedHandoffs: 2 },
+			// Terminal prose exposes no Handoff; admission is pinned by the dispatched count and false-block rate (issue #142).
+			residualState: { retryable: false, acceptedHandoffs: 0 },
 		},
 		run: scenarioRun(() => {
 			const adapter = makeFaultAdapter({ replies: { recon: "reviewed" } });
@@ -638,8 +638,8 @@ function failedVerifierScenario(): FaultScenario {
 			// paper over it, and the run does not proceed to a second iteration.
 			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
 			policy: { contained: true, falselyBlocked: false },
-			residualState: { retryable: false, acceptedHandoffs: 0 },
-		},
+			// The generator's artifact crossed to the critic, so its Handoff is banked; the dead critic banks none (issue #142).
+			residualState: { retryable: false, acceptedHandoffs: 1 },		},
 		run: async () => {
 			const adapter = makeFaultAdapter({
 				replies: { operator: "draft", redteam: "VERDICT: PASS" },
@@ -672,8 +672,8 @@ function evaluateRetryControlScenario(): FaultScenario {
 			outcome: { errorCode: null },
 			process: { dispatched: 4, refused: 0, unreached: [] },
 			policy: { contained: false, falselyBlocked: false },
-			// evaluate validates verdicts rather than banking typed handoffs.
-			residualState: { retryable: false, acceptedHandoffs: 0 },
+			// Both generators' artifacts crossed to critics, so both Handoffs are banked; verdicts stay terminal (issue #142).
+			residualState: { retryable: false, acceptedHandoffs: 2 },
 		},
 		run: scenarioRun(() => {
 			const adapter = makeFaultAdapter({

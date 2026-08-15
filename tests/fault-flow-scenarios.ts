@@ -15,7 +15,7 @@ import { handleWorkflow } from "../extensions/pi-flows/modes/workflow.ts";
 import { parseTraceJsonl } from "../extensions/pi-flows/trace.ts";
 import { formatFlowError, type FlowErrorCode, type ModeOutput } from "../extensions/pi-flows/types.ts";
 import { checkpointApproval } from "../extensions/pi-flows/ui.ts";
-import { FaultLedger, faultDeps, faultDiscovery, makeFaultAdapter, type FaultAdapter } from "./fault-adapter.ts";
+import { bankedDeliveries, FaultLedger, faultDeps, faultDiscovery, makeFaultAdapter, type FaultAdapter } from "./fault-adapter.ts";
 import { FAULT_SUITE, type FaultChecks, type FaultScenario } from "./fault-scenarios.ts";
 
 function workspace(): string {
@@ -70,7 +70,7 @@ function observeFlow(output: ModeOutput, ledger: FaultLedger, watched: string[],
 		policy: { contained: options.contained, falselyBlocked: false },
 		residualState: {
 			retryable: output.details.error?.retryable ?? false,
-			acceptedHandoffs: output.details.results.filter((result) => result.handoff).length,
+			acceptedHandoffs: bankedDeliveries(output),
 		},
 	};
 }
@@ -137,8 +137,9 @@ function settleWithoutDispatchScenario(): FaultScenario {
 			outcome: { errorCode: null },
 			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
 			policy: { contained: true, falselyBlocked: false },
-			// The clean fan-out survives untouched: two handoffs, banked exactly once.
-			residualState: { retryable: false, acceptedHandoffs: 2 },
+			// The clean fan-out survives untouched: two terminal reports, banked
+			// exactly once and exposing no phantom Handoffs (issue #142).
+			residualState: { retryable: false, acceptedHandoffs: 0 },
 		},
 		run: async () => {
 			const adapter = makeFaultAdapter({ replies: { recon: ["finding A", "finding B"] } });
@@ -178,7 +179,8 @@ function approvalProfileScenario(drift: boolean): FaultScenario {
 			outcome: { errorCode: drift ? "WORKFLOW_APPROVAL_REQUIRED" : null },
 			process: { dispatched: drift ? 0 : 1, refused: 0, unreached: drift ? ["operator"] : [] },
 			policy: { contained: drift, falselyBlocked: false },
-			residualState: { retryable: false, acceptedHandoffs: drift ? 0 : 1 },
+			// The terminal work phase exposes no phantom Handoff (issue #142).
+			residualState: { retryable: false, acceptedHandoffs: 0 },
 		},
 		run: async () => {
 			const roster = {

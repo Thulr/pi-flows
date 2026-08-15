@@ -263,7 +263,7 @@ test("public integration-mode schemas accept role-specific contracts and an expl
 	assert.ok(FlowParams.properties.dossier.properties.sections.items.properties.contract);
 });
 
-test("parallel validates typed returns and exposes compatibility provenance for legacy returns", async () => {
+test("parallel validates typed returns without attaching phantom handoffs", async () => {
 	const { result: output, calls } = await runFlow(
 		{
 			tier: "capable",
@@ -279,8 +279,12 @@ test("parallel validates typed returns and exposes compatibility provenance for 
 	);
 	assert.equal(output.details.error, undefined);
 	assert.equal(calls.length, 2);
-	assert.equal(output.details.results[0].handoff?.contractId, delegationContractId(contract));
-	assert.equal(output.details.results[1].handoff?.compatibility, "legacy-prose");
+	// Terminal parallel results keep the validated Return envelope (typed) and
+	// attach no Handoff, regardless of payload representation (issue #142).
+	assert.equal(output.details.results[0].envelope?.contractId, delegationContractId(contract));
+	assert.equal(output.details.results[0].handoff, undefined);
+	assert.equal(output.details.results[1].handoff, undefined);
+	assert.equal(output.details.results[1].envelope, undefined);
 	assert.match(output.content[0].text, /"data":\{"answer":42\}/, "terminal parallel output preserves the contracted data, not only its summary");
 	assert.match(output.content[0].text, /legacy finding/);
 });
@@ -396,7 +400,7 @@ test("dossier rejects invalid typed evidence before debrief", async () => {
 	assert.equal(calls.some((call) => call.agent === "debrief"), false);
 });
 
-test("workflow persists a validated typed phase handoff", async () => {
+test("workflow persists a validated typed phase handoff while the terminal run keeps no phantom handoff", async () => {
 	const cwd = await freshDir();
 	const { result: output } = await runFlow(
 		{
@@ -410,8 +414,15 @@ test("workflow persists a validated typed phase handoff", async () => {
 		{ cwd },
 	);
 	assert.equal(output.details.error, undefined);
-	assert.equal(output.details.results[0].handoff?.compatibility, "typed");
-	assert.equal(output.details.results[0].handoff?.contractId, delegationContractId(contract));
+	// The final phase is terminal: it keeps the validated Return envelope and no
+	// Handoff (issue #142) — but the durable state still persists a handoff so a
+	// resume can re-validate without rerunning the phase.
+	assert.equal(output.details.results[0].handoff, undefined);
+	assert.equal(output.details.results[0].envelope?.contractId, delegationContractId(contract));
+	const state = JSON.parse(await readFile(`${cwd}/workflow.json`, "utf8"));
+	assert.equal(state.handoffs.inspect.compatibility, "typed");
+	assert.equal(state.handoffs.inspect.contractId, delegationContractId(contract));
+	assert.equal(state.attestations.inspect.validation, "typed");
 });
 
 test("workflow resume revalidates stale and schema-invalid persisted handoffs", async (t) => {
@@ -591,8 +602,16 @@ test("debate preserves typed advocate and adjudicator provenance", async () => {
 	);
 	assert.equal(output.details.error, undefined);
 	assert.equal(output.details.results.length, 3);
-	assert.ok(output.details.results.every((run) => run.handoff?.compatibility === "typed"));
-	assert.deepEqual(output.details.results.map((run) => run.handoff?.provenance.agent), ["recon", "analyst", "debrief"]);
+	// Advocates crossed a role boundary into the adjudicator, so they carry a
+	// typed Handoff; the adjudicator's decision is terminal and keeps the
+	// validated Return envelope instead (issue #142).
+	const advocates = output.details.results.slice(0, 2);
+	const adjudicator = output.details.results[2];
+	assert.ok(advocates.every((run) => run.handoff?.compatibility === "typed"));
+	assert.deepEqual(advocates.map((run) => run.handoff?.provenance.agent), ["recon", "analyst"]);
+	assert.equal(adjudicator.handoff, undefined);
+	assert.equal(adjudicator.envelope?.contractId, delegationContractId(contract));
+	assert.equal(adjudicator.agent, "debrief");
 });
 
 test("worktree validates typed worker envelopes before integration", async () => {
