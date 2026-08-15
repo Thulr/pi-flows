@@ -321,5 +321,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // public reference/patterns/changelog name the authoritative position, exact
 // values, and fallback behavior. The file set stays 109 and none from tests/,
 // scripts/, or evals/; headroom is ~500 B over measured 1_282_485.
-assert.ok(pack.unpackedSize < 1_283_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_284_300 for #141 (mutually exclusive admission outcomes): the
+// CONTEXT.md Flow and Admission entries and the Flow aggregate docblock now
+// state the canonical admission graph (Described | Refused | Admitted, then
+// Admitted -> Dispatched -> Settled) instead of implying refusal precedes
+// admission. The file set stays 109 and none from tests/, scripts/, or evals/;
+// headroom is ~515 B over measured 1_283_785.
+assert.ok(pack.unpackedSize < 1_284_300, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
