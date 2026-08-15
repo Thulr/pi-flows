@@ -142,7 +142,11 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 				|| !loaded.outputs || typeof loaded.outputs !== "object" || Array.isArray(loaded.outputs)) throw new Error("state does not match this workflow");
 			let restored = loaded.version === 1 ? migrateWorkflowStateV1(loaded, phases, policy) : loaded;
 			if (!isRecord(restored.handoffs) || !isRecord(restored.attestations)) throw new Error("state does not match this workflow");
-			if (restored.version === 2) restored = migrateWorkflowStateV2(restored, phases, deps, digest);
+			if (restored.version === 2) {
+				const migrated = migrateWorkflowStateV2(restored, phases, deps, digest);
+				if (migrated.error) return settle.refuse(migrated.error);
+				restored = migrated.state;
+			}
 			if (restored.version === 3) {
 				if (!isRecord(restored.receipts)) throw new Error("state does not match this workflow");
 				const migrated = migrateWorkflowStateV3(restored, phases, deps, digest);

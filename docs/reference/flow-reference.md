@@ -758,6 +758,7 @@ profiles as described below.
 | `workflow.phases` | required | Ordered `1..12` phases with unique `id` values. Each phase is exactly one kind: `agent` + `task`, or `approval.message`. |
 | `workflow.stateFile` | `.pi/flow-workflows/<digest>.json` | Audit/resume state. The digest covers the top-level task, phases, and debrief configuration. The file is written atomically with owner-only permissions. |
 | `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match, and every outstanding approval is rechecked against the profiles that would execute now. Resuming an already completed workflow is an audit-only no-op and spawns no Child. |
+| `workflow.historicalThinking` | (none) | Optional v3 migration witness with `phases: { "<phase-id>": "<effective-level>" }` and/or `debrief`. Use only when bounded reconstruction requests it. A value never controls dispatch and is accepted only when it reproduces the spent receipt's binding digest. |
 | `workflow.debrief` | (none) | Optional final synthesizer over all persisted phase artifacts. A trailing approval binds its effective Agent profile too. |
 | `workflow.approvalTtlMs` | `86400000` (24h) | How long an approval receipt authorizes its gated action. Integer `60000..2592000000`. A resume after the window needs a fresh approval. |
 | `phase.task` | required for work | Supports `{task}`, `{previous}`, and `{phase.<id>}` output placeholders. |
@@ -853,15 +854,22 @@ attribution, not an authenticated identity.
 
 Version-2 state files migrate on resume: a completed approval recorded as
 `APPROVED` becomes a `legacy-compatibility` receipt with no approver and no
-expiry, which still binds the gated action. Version-3 receipts predate effective
-Agent-profile binding. Unconsumed outstanding v3 consent reopens. A valid receipt
+expiry, which still binds the gated action. An unstarted v2 action reopens; a
+partially completed one fails closed because no receipt can prove one set of
+conditions for both halves. Version-3 receipts predate effective Agent-profile
+binding. Unconsumed outstanding v3 consent reopens. A valid receipt
 consumed by its own action keeps its identity as `legacy-compatibility`: audit-only
 after completion, or able to resume the same interrupted gated run or debrief.
 An in-progress migration binds new profile fields to the current bindable
 profile; later drift is caught. Completed audit reconstruction does not require
 the old model or its Thinking metadata to remain in today's roster; distinct
 workflow-bound Role requests reconstruct independently when current metadata
-clamps them alike. Malformed and replayed v3 receipts remain hard failures.
+clamps them alike. Reconstruction models one coherent capability profile per
+model. If the bounded product is too large, resume leaves the v3 state intact
+and requests a `workflow.historicalThinking` witness for one or more phases;
+the witness is accepted only when the old binding digest verifies, and every
+supplied entry must belong to a spent binding search. Irrelevant, contradictory,
+malformed, and replayed v3 evidence remains a hard failure.
 
 This protects against replay and drift in a local state file, not against an
 attacker who can write that file — there is no key to sign a receipt with that

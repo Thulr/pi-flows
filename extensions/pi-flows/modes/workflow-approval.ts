@@ -6,15 +6,15 @@
 // the persisted state type; the helpers take the two fields they need, so the
 // state shape stays workflow.ts's business.
 import { sanitizeText } from "../sanitize.ts";
-import { WORKFLOW_COMPLETE_STEP, type ApprovalAuthorization, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
+import { WORKFLOW_COMPLETE_STEP, approvalBindingDigest, type ApprovalAuthorization, type ApprovalBinding, type ApprovalReceipt } from "../approval.ts";
 import { resolveAgentProfile, type AgentProfileEnvironment, type EffectiveAgentProfile } from "../agent-profile.ts";
-import { parseModelSpec } from "../model-roster.ts";
+import { clampThinking, parseModelSpec } from "../model-roster.ts";
 import { THINKING_LEVELS, flowError, type CapturePolicy, type FlowError, type ModeDeps, type ThinkingLevel } from "../types.ts";
 
 /** An approver label is an audit string, not free-form output: cap it so a hostile env var cannot pad the receipt. */
 const APPROVER_LABEL_CAP = 256;
 const PROFILE_REFUSAL_POLICY: CapturePolicy = { recordContent: true, redactSecrets: true };
-const V3_THINKING_CANDIDATE_LIMIT = 20_000;
+const V3_THINKING_CANDIDATE_LIMIT = 150_000;
 
 /** The state schema version an approval is granted against. */
 export const WORKFLOW_STATE_VERSION = 4;
@@ -215,19 +215,68 @@ function normalizeGatedDebrief(params: any, deps: ModeDeps): Record<string, unkn
 	};
 }
 
+interface HistoricalThinkingTarget {
+	readonly record: Record<string, unknown>;
+	readonly requested: ThinkingLevel;
+	readonly preferred: ThinkingLevel;
+	readonly witness?: ThinkingLevel;
+	readonly label: string;
+}
+
+/** Bounded, digest-checkable reconstruction of one spent v3 approval binding. */
+export interface HistoricalApprovalSearch {
+	readonly firstCandidate: ApprovalBinding;
+	readonly candidateCount: number;
+	readonly candidateLimit: number;
+	readonly exhaustive: boolean;
+	readonly invalidWitnesses: readonly string[];
+	readonly unwitnessed: readonly string[];
+	readonly witnessed: readonly string[];
+	find(bindingDigest: string): ApprovalBinding | undefined;
+}
+
+/** Every coherent clamp vector one historical capability profile could produce for a model. */
+function historicalModelOptions(model: string, targets: readonly HistoricalThinkingTarget[]): ThinkingLevel[][] {
+	const options: ThinkingLevel[][] = [];
+	const seen = new Set<string>();
+	const add = (values: ThinkingLevel[]) => {
+		if (targets.some((target, index) => target.witness !== undefined && target.witness !== values[index])) return;
+		const key = values.join("\0");
+		if (!seen.has(key)) {
+			seen.add(key);
+			options.push(values);
+		}
+	};
+	// Common cases first: unchanged metadata, full support, then non-reasoning.
+	add(targets.map((target) => target.preferred));
+	add(targets.map((target) => target.requested));
+	add(targets.map(() => "off"));
+	for (let mask = 1; mask < (1 << THINKING_LEVELS.length); mask += 1) {
+		const supported = THINKING_LEVELS.filter((_, level) => (mask & (1 << level)) !== 0);
+		const hypothetical = { reference: model, provider: "historical", id: model, reasoning: true, thinkingLevels: supported, contextWindow: 0 };
+		add(targets.map((target) => clampThinking(target.requested, hypothetical)!));
+	}
+	return options;
+}
+
 /**
- * The under-bound v3 projections used only to verify spent compatibility
- * evidence. Current metadata cannot prove how v3 clamped Thinking: the model
- * may be absent or its capabilities may have changed. Bounded alternatives let
- * the intact receipt digest select the historical value only when the requested
- * level itself is fixed by the workflow digest, so flow/Agent fallback drift is
- * not mistaken for old clamping.
+ * Search the under-bound v3 projection used only to verify spent compatibility
+ * evidence. Candidate vectors model one coherent old capability profile per
+ * concrete model. Digest-checked witnesses can reduce a larger product without
+ * becoming authority themselves: a wrong witness cannot reproduce the receipt.
  */
-export function* historicalApprovalBindingsForV3(phases: any[], index: number, deps: ModeDeps, digest: string): Generator<ApprovalBinding> {
+export function historicalApprovalSearchForV3(phases: any[], index: number, deps: ModeDeps, digest: string): HistoricalApprovalSearch {
 	const gatedIds = new Set(gatedPhaseIds(phases, index));
 	const gated = phases.filter((phase: any) => gatedIds.has(phase.id));
 	const environment = workflowProfileEnvironment(deps);
-	const uncertain = new Map<string, { targets: Record<string, unknown>[]; preferred: ThinkingLevel }>();
+	const witness = deps.params.workflow?.historicalThinking;
+	const debrief = deps.params.workflow?.debrief;
+	const groups = new Map<string, HistoricalThinkingTarget[]>();
+	const track = (model: string, record: Record<string, unknown>, requested: ThinkingLevel, preferred: ThinkingLevel, historicalWitness: ThinkingLevel | undefined, label: string) => {
+		const targets = groups.get(model) ?? [];
+		targets.push({ record, requested, preferred, witness: historicalWitness, label });
+		groups.set(model, targets);
+	};
 	const historicalPhase = (phase: any) => {
 		const profile = effectiveProfile(phase, deps.params, environment);
 		const historical = {
@@ -239,14 +288,12 @@ export function* historicalApprovalBindingsForV3(phases: any[], index: number, d
 		};
 		const requestedThinking = workflowBoundRequestedThinking(phase);
 		if (profile.modelChoice.model && profile.modelChoice.thinking && requestedThinking) {
-			const key = `${profile.modelChoice.model}\0${requestedThinking}`;
-			const slot = uncertain.get(key) ?? { targets: [], preferred: profile.modelChoice.thinking };
-			slot.targets.push(historical);
-			uncertain.set(key, slot);
+			const historicalWitness = witness?.phases && Object.hasOwn(witness.phases, phase.id) ? witness.phases[phase.id] : undefined;
+			track(profile.modelChoice.model, historical, requestedThinking, profile.modelChoice.thinking, historicalWitness, `phase ${phase.id}`);
 		}
 		return historical;
 	};
-	const debrief = deps.params.workflow?.debrief;
+	const historicalPhases = gated.map(historicalPhase);
 	const gatesDebrief = Boolean(debrief?.agent && index + gatedIds.size + 1 >= phases.length);
 	const debriefProfile = gatesDebrief ? effectiveProfile(debrief, deps.params, environment) : null;
 	const historicalDebrief = gatesDebrief
@@ -261,10 +308,8 @@ export function* historicalApprovalBindingsForV3(phases: any[], index: number, d
 		: null;
 	const requestedDebriefThinking = workflowBoundRequestedThinking(debrief);
 	if (historicalDebrief && debriefProfile?.modelChoice.model && debriefProfile.modelChoice.thinking && requestedDebriefThinking) {
-		const key = `${debriefProfile.modelChoice.model}\0${requestedDebriefThinking}`;
-		const slot = uncertain.get(key) ?? { targets: [], preferred: debriefProfile.modelChoice.thinking };
-		slot.targets.push(historicalDebrief);
-		uncertain.set(key, slot);
+		const historicalWitness = witness && Object.hasOwn(witness, "debrief") ? witness.debrief : undefined;
+		track(debriefProfile.modelChoice.model, historicalDebrief, requestedDebriefThinking, debriefProfile.modelChoice.thinking, historicalWitness, "debrief");
 	}
 	const binding: ApprovalBinding = {
 		action: approvalActionId(phases[index]),
@@ -273,31 +318,53 @@ export function* historicalApprovalBindingsForV3(phases: any[], index: number, d
 			agentScope: deps.agentScope,
 			incompleteHandoffPolicy: deps.params.incompleteHandoffPolicy ?? "fail",
 			handoffPolicy: deps.handoffs.resolution,
-			gatedPhases: gated.map(historicalPhase),
+			gatedPhases: historicalPhases,
 			debrief: historicalDebrief,
 		},
 		requestedBy: "flow:workflow",
 		workflowDigest: digest,
 		stateVersion: 3,
 	};
-	const slots = [...uncertain.values()];
-	let yielded = 0;
-	function* candidates(position: number): Generator<ApprovalBinding> {
-		if (yielded >= V3_THINKING_CANDIDATE_LIMIT) return;
-		if (position === slots.length) {
-			yielded += 1;
-			yield structuredClone(binding);
-			return;
-		}
-		const slot = slots[position];
-		const levels = [slot.preferred, ...THINKING_LEVELS.filter((level) => level !== slot.preferred)];
-		for (const level of levels) {
-			for (const target of slot.targets) target.thinking = level;
-			yield* candidates(position + 1);
-			if (yielded >= V3_THINKING_CANDIDATE_LIMIT) return;
-		}
+	const plans = [...groups.entries()].map(([model, targets]) => ({ targets, options: historicalModelOptions(model, targets) }));
+	const invalidWitnesses = plans.filter((plan) => plan.options.length === 0).flatMap((plan) => plan.targets.filter((target) => target.witness !== undefined).map((target) => target.label));
+	let candidateCount = invalidWitnesses.length > 0 ? 0 : 1;
+	for (const plan of plans) {
+		if (candidateCount === 0) break;
+		candidateCount = candidateCount > Math.floor(Number.MAX_SAFE_INTEGER / plan.options.length)
+			? Number.MAX_SAFE_INTEGER
+			: candidateCount * plan.options.length;
 	}
-	yield* candidates(0);
+	if (invalidWitnesses.length === 0) {
+		for (const plan of plans) plan.targets.forEach((target, targetIndex) => { target.record.thinking = plan.options[0][targetIndex]; });
+	}
+	return {
+		firstCandidate: structuredClone(binding),
+		candidateCount,
+		candidateLimit: V3_THINKING_CANDIDATE_LIMIT,
+		exhaustive: candidateCount <= V3_THINKING_CANDIDATE_LIMIT,
+		invalidWitnesses,
+		unwitnessed: plans.flatMap((plan) => plan.targets.filter((target) => target.witness === undefined).map((target) => target.label)),
+		witnessed: plans.flatMap((plan) => plan.targets.filter((target) => target.witness !== undefined).map((target) => target.label)),
+		find(expected: string): ApprovalBinding | undefined {
+			if (invalidWitnesses.length > 0) return undefined;
+			let checked = 0;
+			const search = (position: number): ApprovalBinding | undefined => {
+				if (checked >= V3_THINKING_CANDIDATE_LIMIT) return undefined;
+				if (position === plans.length) {
+					checked += 1;
+					return approvalBindingDigest(binding) === expected ? structuredClone(binding) : undefined;
+				}
+				const plan = plans[position];
+				for (const option of plan.options) {
+					plan.targets.forEach((target, targetIndex) => { target.record.thinking = option[targetIndex]; });
+					const found = search(position + 1);
+					if (found) return found;
+				}
+				return undefined;
+			};
+			return search(0);
+		},
+	};
 }
 
 /**

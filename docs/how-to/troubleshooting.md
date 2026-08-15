@@ -372,11 +372,17 @@ current registry rather than relying on Pi's alias or pattern matching.
 
 ### `WORKFLOW_STATE_INVALID`
 
-Cause: a resumed workflow state file is unreadable, malformed, or belongs to a
-different workflow definition.
+Cause: a resumed workflow state file is unreadable, malformed, belongs to a
+different workflow definition, or a v3 receipt has more coherent historical
+Thinking combinations than the bounded migration verifier can check at once. A
+v2 state that completed only part of an approved action also fails here rather
+than minting one new receipt over work run under different conditions.
 
-Fix: resume with the same task and phase definition, or remove the stale state
-file and restart without `resume:true`.
+Fix: resume with the same task and phase definition. If the error requests a
+historical Thinking witness, set the named effective v3 levels under
+`workflow.historicalThinking.phases` (or `.debrief`) and retry; those values are
+accepted only if the spent receipt's binding digest verifies. Otherwise remove
+the stale state file and restart without `resume:true`.
 
 ### `WORKFLOW_GATE_FAILED`
 

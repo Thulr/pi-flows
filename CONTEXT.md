@@ -254,6 +254,9 @@ _Avoid_: safe bash (the sandbox is real, but the allowlist fallback is best-effo
 
 **Approval receipt**:
 A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes, including every gated Role's **Effective Agent profile** and a gated debrief's profile. A receipt persists only binding identity and status, never raw prompt or parameter content.
+
+**Historical Thinking witness**:
+A one-time effective Thinking value supplied only to bound v3 receipt migration when automatic model-clamp reconstruction would exceed its work limit. It is evidence, not a dispatch setting: only a value that reproduces the intact spent receipt's binding digest is accepted.
 _Avoid_: approval marker, checkpoint receipt
 
 **Approval authorization**:

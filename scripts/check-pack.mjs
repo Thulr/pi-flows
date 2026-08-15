@@ -296,5 +296,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // shared-write checks, with the public consent docs naming that identity. The
 // metadata-change regressions remain unpackaged; the file set stays 109 and
 // headroom is 281 B over the measured 1_254_369.
-assert.ok(pack.unpackedSize < 1_254_650, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_265_050 after #138's sixth review: v3 migration now searches
+// coherent per-model clamp histories, recognizes the next approval as part of
+// the authorized action, and accepts only digest-proven historical Thinking
+// witnesses beyond its work bound. Partial v2 actions and unused witnesses fail
+// closed, with migration diagnostics following the capture policy. The file set
+// stays 109 and headroom is 491 B over the measured 1_264_559.
+assert.ok(pack.unpackedSize < 1_265_050, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

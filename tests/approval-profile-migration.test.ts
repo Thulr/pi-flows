@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { ApprovalAuthorization, approvalBindingDigest, approvalReceiptDigest, type ApprovalBinding, type ApprovalReceipt } from "../extensions/pi-flows/approval.ts";
@@ -98,6 +99,33 @@ test("a fully spent v2 approval migrates to audit-only evidence", async () => {
 	assert.equal(widened.result.details.approvals?.[0].validation, "legacy-compatibility");
 });
 
+test("a partially spent v2 approval cannot be reopened over completed work", async () => {
+	const cwd = await freshDir();
+	const partialParams = {
+		...params,
+		workflow: {
+			...params.workflow,
+			phases: [
+				params.workflow.phases[0],
+				{ id: "first", agent: "strategist", task: "Ship first" },
+				{ id: "second", agent: "strategist", task: "Ship second" },
+			],
+		},
+	};
+	await runFlow(partialParams, {}, { cwd });
+	await runFlow({ ...partialParams, workflow: { ...partialParams.workflow, resume: true } }, { strategist: ["FIRST", { reply: "boom", exitCode: 1 }] }, { cwd, hasUI: true });
+	const state = await readState(cwd);
+	state.version = 2;
+	state.outputs.approve = "APPROVED";
+	delete state.receipts;
+	await writeState(cwd, state);
+
+	const resumed = await runFlow({ ...partialParams, workflow: { ...partialParams.workflow, resume: true } }, { strategist: "MUST NOT RUN" }, { cwd, hasUI: true });
+	assert.equal(resumed.result.details.error?.code, "WORKFLOW_STATE_INVALID");
+	assert.match(resumed.result.details.error?.cause ?? "", /completed part of the gated action \(first\)/);
+	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 2, "migration must refuse before remaining work runs");
+});
+
 test("an unspent historical receipt reopens before more work runs", async () => {
 	const cwd = await freshDir();
 	const { state } = await historicalState(cwd, { reply: "boom", exitCode: 1 });
@@ -120,6 +148,48 @@ test("an unspent historical receipt consumed by another action remains a hard fa
 
 	const resumed = await runFlow(resumeParams, { strategist: "SHIPPED" }, { cwd, hasUI: true });
 	assert.equal(resumed.result.details.error?.code, "APPROVAL_RECEIPT_CONSUMED");
+});
+
+test("an unspent v3 approval reopens when the next consecutive approval is incomplete", async () => {
+	const cwd = await freshDir();
+	const consecutiveParams = {
+		task: "Approve both checkpoints.",
+		agentScope: "user",
+		workflow: {
+			stateFile: "workflow.json",
+			phases: [
+				{ id: "first", approval: { message: "Approve first" } },
+				{ id: "second", approval: { message: "Approve second" } },
+			],
+		},
+	};
+	let initialPrompts = 0;
+	const denied = await runFlow(consecutiveParams, {}, { cwd, hasUI: true, ui: { confirm: async () => ++initialPrompts === 1 } });
+	assert.equal(denied.result.details.error?.code, "WORKFLOW_APPROVAL_DENIED");
+	const state = await readState(cwd);
+	const historical: ApprovalBinding = {
+		action: "workflow.phase:first",
+		parameters: {
+			approvalMessage: "Approve first",
+			agentScope: "user",
+			incompleteHandoffPolicy: "fail",
+			handoffPolicy: { call: "warn", effective: "warn" },
+			gatedPhases: [],
+			debrief: null,
+		},
+		requestedBy: "flow:workflow",
+		workflowDigest: state.digest,
+		stateVersion: 3,
+	};
+	state.version = 3;
+	state.receipts.first = asHistoricalReceipt(state.receipts.first, historical);
+	await writeState(cwd, state);
+	let resumedPrompts = 0;
+
+	const resumed = await runFlow({ ...consecutiveParams, workflow: { ...consecutiveParams.workflow, resume: true } }, {}, { cwd, hasUI: true, ui: { confirm: async () => { resumedPrompts += 1; return true; } } });
+	assert.equal(resumed.result.details.error, undefined);
+	assert.equal(resumedPrompts, 2, "both the under-bound first consent and the incomplete second consent are asked again");
+	assert.equal((await readState(cwd)).version, 4);
 });
 
 test("a malformed historical receipt remains a hard failure", async () => {
@@ -250,11 +320,113 @@ test("a completed v3 receipt reconstructs distinct Role clamps after model metad
 			},
 		],
 	};
+	const incoherent = await runFlow({
+		...dualParams,
+		workflow: {
+			...dualParams.workflow,
+			resume: true,
+			historicalThinking: { phases: { "ship-high": "high", "ship-max": "off" } },
+		},
+	}, {}, { cwd, registry: changedRegistry });
+	assert.equal(incoherent.result.details.error?.code, "WORKFLOW_STATE_INVALID");
+	assert.match(incoherent.result.details.error?.cause ?? "", /cannot come from one capability profile/);
 
 	const resumed = await runFlow({ ...dualParams, workflow: { ...dualParams.workflow, resume: true } }, {}, { cwd, registry: changedRegistry });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 2, "completed work is not dispatched again");
+	assert.equal((await readState(cwd)).version, 4);
+});
+
+test("a v3 Thinking witness soundly reduces a search beyond the candidate bound", async () => {
+	const cwd = await freshDir();
+	const work = Array.from({ length: 7 }, (_, index) => ({
+		id: `ship-${index + 1}`,
+		agent: "strategist",
+		task: `Ship part ${index + 1}`,
+		model: `test-provider/historical-${index + 1}`,
+		thinking: "max",
+	}));
+	const manyParams = {
+		...params,
+		workflow: { ...params.workflow, phases: [params.workflow.phases[0], ...work] },
+	};
+	const oldRegistry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			...work.map((_, index) => ({
+				id: `historical-${index + 1}`,
+				provider: "test-provider",
+				reasoning: true,
+				thinkingLevelMap: { max: null },
+				contextWindow: 200_000,
+				maxTokens: 8192,
+				cost: { input: 1, output: 2 },
+			})),
+		],
+	};
+	await runFlow(manyParams, {}, { cwd, registry: oldRegistry });
+	await runFlow({ ...manyParams, workflow: { ...manyParams.workflow, resume: true } }, { strategist: "SHIPPED" }, { cwd, hasUI: true, registry: oldRegistry });
+	const state = await readState(cwd);
+	const historical: ApprovalBinding = {
+		action: "workflow.phase:approve",
+		parameters: {
+			approvalMessage: "Approve the rollout",
+			agentScope: "user",
+			incompleteHandoffPolicy: "fail",
+			handoffPolicy: { call: "warn", effective: "warn" },
+			gatedPhases: work.map((phase) => ({
+				...phase,
+				cwd: null,
+				tier: null,
+				thinking: "xhigh",
+				tools: null,
+				checkCommand: null,
+				contract: null,
+				returnContract: null,
+				requireEvidence: false,
+			})),
+			debrief: null,
+		},
+		requestedBy: "flow:workflow",
+		workflowDigest: state.digest,
+		stateVersion: 3,
+	};
+	state.version = 3;
+	state.receipts.approve = asHistoricalReceipt(state.receipts.approve, historical);
+	await writeState(cwd, state);
+	const changedRegistry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			...work.map((_, index) => ({ id: `historical-${index + 1}`, provider: "test-provider", reasoning: false, contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 2 } })),
+		],
+	};
+	const bounded = await runFlow({ ...manyParams, workflow: { ...manyParams.workflow, resume: true } }, {}, { cwd, registry: changedRegistry });
+	assert.equal(bounded.result.details.error?.code, "WORKFLOW_STATE_INVALID");
+	assert.match(bounded.result.details.error?.cause ?? "", /823,543 coherent model-clamp candidates.*150,000 without declaring the receipt stale/);
+	assert.equal((await readState(cwd)).version, 3, "a bounded search must leave the historical receipt retryable");
+	const wrongWitness = await runFlow({
+		...manyParams,
+		workflow: {
+			...manyParams.workflow,
+			resume: true,
+			historicalThinking: { phases: Object.fromEntries(work.map((phase) => [phase.id, "off"])) },
+		},
+	}, {}, { cwd, registry: changedRegistry });
+	assert.equal(wrongWitness.result.details.error?.code, "APPROVAL_RECEIPT_STALE", "a witness that cannot reproduce the digest grants no compatibility");
+	const hinted = {
+		...manyParams,
+		workflow: {
+			...manyParams.workflow,
+			resume: true,
+			historicalThinking: { phases: { "ship-1": "xhigh" } },
+		},
+	};
+
+	const resumed = await runFlow(hinted, {}, { cwd, registry: changedRegistry });
+	assert.equal(resumed.result.details.error, undefined);
+	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
+	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 7, "completed work is not dispatched again");
 	assert.equal((await readState(cwd)).version, 4);
 });
 
@@ -270,6 +442,28 @@ test("a stale fully spent v3 receipt keeps its version so restoring conditions c
 	const restored = await runFlow(resumeParams, {}, { cwd });
 	assert.equal(restored.result.details.error, undefined);
 	assert.equal((await readState(cwd)).version, 4);
+});
+
+test("a historical Thinking witness must identify a bound Role and reproduce the receipt", async () => {
+	const cwd = await freshDir();
+	const explicitParams = {
+		...params,
+		workflow: {
+			...params.workflow,
+			phases: [params.workflow.phases[0], { ...params.workflow.phases[1], model: "test-provider/strong-model", thinking: "high" }],
+		},
+	};
+	const { state } = await historicalState(cwd, "SHIPPED", explicitParams);
+	await writeState(cwd, state);
+	const resume = { ...explicitParams, workflow: { ...explicitParams.workflow, resume: true } };
+	const privateWitnessKey = path.join(homedir(), "historical-witness");
+	const unknown = await runFlow({ ...resume, workflow: { ...resume.workflow, historicalThinking: { phases: { [privateWitnessKey]: "high" } } } }, {}, { cwd });
+	assert.equal(unknown.result.details.error?.code, "WORKFLOW_STATE_INVALID");
+	assert.equal(JSON.stringify(unknown.result.details.error).includes(homedir()), false, "witness keys are sanitized before they reach structured errors");
+
+	const contradicted = await runFlow({ ...resume, workflow: { ...resume.workflow, historicalThinking: { phases: { ship: "off" } } } }, {}, { cwd });
+	assert.equal(contradicted.result.details.error?.code, "APPROVAL_RECEIPT_STALE");
+	assert.equal((await readState(cwd)).version, 3, "an incorrect witness must not migrate the receipt");
 });
 
 test("an unspent v3 receipt cannot be rebound as completed audit evidence", async () => {
