@@ -130,7 +130,13 @@ interface AdmittedState {
 	budget?: Budget;
 }
 
-/** Admission's three exits: answered without spawning (described), stopped by a gate (refused), or handed the dispatch capability (admitted). */
+/**
+ * Admission's three mutually exclusive outcomes: answered without spawning
+ * (described), stopped by a gate (refused), or handed the dispatch capability
+ * (admitted). Described and refused are terminal alternatives — only the
+ * admitted variant carries an {@link AdmittedFlow}, and therefore a mode and a
+ * lifecycle to progress.
+ */
 export type FlowAdmission = { described: ModeOutput } | { refused: ModeOutput } | { admitted: AdmittedFlow };
 
 /**
@@ -144,16 +150,20 @@ export type FlowAdmission = { described: ModeOutput } | { refused: ModeOutput } 
 const LIFECYCLE: unique symbol = Symbol("pi-flows.flow.lifecycle");
 
 /**
- * The aggregate root for one bounded delegation (see CONTEXT.md: Flow). Its
- * lifecycle is an explicit progression — **refused → admitted → dispatched →
- * settled** — and the type system enforces the sequence: {@link Flow.admit} is
- * the only source of an {@link AdmittedFlow}, whose `dispatch` is the only
- * source of a {@link DispatchedFlow}, whose `settle` produces the final
- * output. Out-of-order transitions are uncompilable, and each transition
- * spends itself, so a replay is refused at runtime too. A describing call
- * (`list`, `showConfig`) exits at the walk's first gate with an answer
- * instead of entering the progression: a described flow is neither refused
- * nor admitted.
+ * The aggregate root for one bounded delegation (see CONTEXT.md: Flow). A flow
+ * call's admission yields exactly one of three outcomes — **described**,
+ * **refused**, or **admitted** — and described and refused are terminal
+ * alternatives: neither precedes admission, and neither carries a dispatch
+ * capability. Only an admitted flow owns a mode and a lifecycle of its own, an
+ * explicit progression through **dispatched → settled**. The type system
+ * enforces the sequence: {@link Flow.admit} is the only source of an
+ * {@link AdmittedFlow}, whose `dispatch` is the only source of a
+ * {@link DispatchedFlow}, whose `settle` produces the final output.
+ * Out-of-order transitions are uncompilable, and each transition spends
+ * itself, so a replay is refused at runtime too. A describing call (`list`,
+ * `showConfig`) exits at the walk's first gate with an answer instead of
+ * entering the progression: it never reaches mode detection, so it is neither
+ * refused nor admitted and claims no mode.
  */
 export class Flow {
 	/**
