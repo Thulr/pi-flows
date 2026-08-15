@@ -502,6 +502,34 @@ kernel and git inspection still succeeds. Set
 `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse rather than run best-effort where
 the sandbox is unavailable.
 
+## Coordination-control protocol
+
+Verdict, loop, route, and score decisions are read from a child's output under
+one fail-closed grammar. A control token is authoritative only when it occupies
+the **authoritative position**: the child's **first non-empty line**, and that
+line is exactly the marker and one documented value with nothing after it. The
+instructions a mode sends its child and the grammar the parser accepts are both
+derived from one vocabulary, so they cannot drift.
+
+| Protocol | Marker | Documented values | Authoritative position | Unparseable fallback |
+|---|---|---|---|---|
+| Verdict | `VERDICT` | `PASS`, `REVISE` | first non-empty line, e.g. `VERDICT: PASS` | `REVISE` |
+| Loop | `LOOP` | `DONE`, `CONTINUE` | first non-empty line, e.g. `LOOP: DONE` | `CONTINUE` |
+| Route | `ROUTE` | one candidate name exactly, or `none` | first non-empty line, e.g. `ROUTE: recon` | unresolved route (fallback agent, else `ROUTE_UNRESOLVED`) |
+| Score | `SCORE` | an integer or decimal in `0..100` | first non-empty line, e.g. `SCORE: 88` | unscored candidate (`0`) |
+
+A mention, quotation, negation, example, or a longer word that merely begins
+with an allowed token is ordinary prose and fails closed: `PASSPORT`,
+`APPROVED`, `LOOP: COMPLETE`, `SCORE: 150`, or a negated line such as `I cannot
+issue VERDICT: PASS` do not terminate or redirect coordination. Marker and
+value match case-insensitively; structured `data` values match their documented
+value and type exactly — the lowercase `"pass"`/`"revise"` and `"done"`/`"continue"`
+strings, a candidate-name route string, or a score number in `0..100`.
+
+Each protocol also accepts a JSON fallback — `{"verdict":"pass"}`,
+`{"loop":"done"}`, `{"route":"recon"}`, `{"score":88}` — accepting only the
+documented field and value type; anything else is unparseable.
+
 ## Evaluate mode (generator-evaluator loop)
 
 The `operator` builds an artifact against the top-level `task`; a separate `redteam` judges that artifact against the goal and returns a verdict. Top-level `task` is preferred, but `evaluate.operator.task` is accepted as the goal when the top-level field is omitted. On `REVISE` the operator is re-shown **its previous artifact plus the critique** and revises it in place (rather than rebuilding from scratch); the loop stops on `PASS` or when `maxIterations` is reached, returning the last attempt either way.
@@ -537,7 +565,7 @@ Two reliability levers beyond the single LLM critic:
 | `evaluate.maxIterations` | `3` | Integer `1..8`. Hard cap on generate→evaluate rounds. |
 | `evaluate.passContract` | (none) | Explicit acceptance criteria appended to the critic's rubric. Concrete criteria make the verdict reliable. |
 
-Without a role contract, `redteam` signals `VERDICT: PASS|REVISE` (or JSON `{ "verdict": "pass" }`). With a contract, validated `data.verdict` is authoritative and marker-like text in other fields is ignored. When both roles are contracted, the critic sees the operator's admitted terms as review context, but only the critic's own contract supplies its required Return protocol and identity. An unparseable verdict means `REVISE`. `details.results` interleaves each operator run with that round's critic panel.
+Without a role contract, `redteam` signals `VERDICT: PASS|REVISE` as its first non-empty line (or JSON `{ "verdict": "pass" }`). With a contract, validated `data.verdict` is authoritative and marker-like text in other fields is ignored. When both roles are contracted, the critic sees the operator's admitted terms as review context, but only the critic's own contract supplies its required Return protocol and identity. An unparseable verdict means `REVISE`. `details.results` interleaves each operator run with that round's critic panel.
 
 ## Vote mode (parallelization / voting)
 
@@ -578,7 +606,7 @@ The `controller` reads the `task` plus the candidate descriptions and picks one 
 | `route.candidates` | (required) | Agent names the `controller` may choose from. |
 | `route.fallback` | (none) | Agent to run if the `controller` names no valid candidate. Without it, an unresolved route returns `ROUTE_UNRESOLVED`. |
 
-Without a contract, the controller may return `ROUTE: <agent>`, JSON `{ "route": "<agent>" }`, or one unambiguous candidate mention. A contracted controller uses only validated `data.route`; embedded marker text cannot override it. A quarantined controller payload cannot select a candidate and falls back like `none`; without `route.fallback`, either case returns `ROUTE_UNRESOLVED`.
+Without a contract, the controller may return `ROUTE: <agent>` as its first non-empty line, or JSON `{ "route": "<agent>" }`; a candidate named anywhere else is prose and never selects. A contracted controller uses only validated `data.route`; embedded marker text cannot override it. A quarantined controller payload cannot select a candidate and falls back like `none`; without `route.fallback`, either case returns `ROUTE_UNRESOLVED`.
 
 ## Orchestrate mode (decompose → fan out → synthesize)
 
@@ -655,9 +683,11 @@ output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
 
 ## Loop mode (generic bounded loop)
 
-`loop` repeats a body agent until an uncontracted body emits `LOOP: DONE`, or an
-uncontracted judge emits `VERDICT: PASS`; contracted roles use validated
-`data.loop` / `data.verdict` instead.
+`loop` repeats a body agent until an uncontracted body emits `LOOP: DONE` as its
+first non-empty line, or an uncontracted judge emits `VERDICT: PASS` the same
+way; contracted roles use validated `data.loop` / `data.verdict` instead.
+Anything but the exact `LOOP: DONE` marker — `LOOP: COMPLETE`, a negated
+`LOOP: DONE`, or no marker at all — means `CONTINUE`.
 
 ```json
 {
@@ -681,9 +711,10 @@ If the loop reaches `maxIterations` without a stop signal, pi-flows returns
 
 ## Search mode (bounded beam search)
 
-`search` generates candidate paths, scores them with legacy `SCORE: 0..100` or
-contracted `data.score`, keeps the best beam, optionally refines, then debriefs
-the winner.
+`search` generates candidate paths, scores them with a legacy `SCORE: 0..100`
+marker on its first non-empty line or contracted `data.score`, keeps the best
+beam, optionally refines, then debriefs the winner. An out-of-range or
+unparseable score leaves the candidate unscored (`0`).
 
 ```json
 {

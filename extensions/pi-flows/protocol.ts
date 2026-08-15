@@ -1,6 +1,23 @@
 import { escapeRegExp } from "./sanitize.ts";
 import type { IntegrationControl } from "./delegation.ts";
 
+/**
+ * The coordination-control protocol vocabulary: one home for the marker keyword
+ * and authority tokens each mode tells its Child to write, and that the parser
+ * accepts back. Instruction text and accepted grammar both render from these
+ * values, so the "tell it to write" and "read what it wrote" halves cannot
+ * drift. The authoritative marker position is the Child's first non-empty line;
+ * a token is authoritative only when that line is exactly `MARKER: TOKEN` — a
+ * mention, quotation, negation, example, or a longer word that merely begins
+ * with an allowed token stays ordinary prose and fails closed.
+ */
+const PROTOCOL = {
+	verdict: { marker: "VERDICT", pass: "PASS", revise: "REVISE" },
+	loop: { marker: "LOOP", done: "DONE", continue: "CONTINUE" },
+	route: { marker: "ROUTE", none: "none", token: "[A-Za-z0-9_.-]+" },
+	score: { marker: "SCORE", min: 0, max: 100, token: "-?\\d+(?:\\.\\d+)?" },
+} as const;
+
 function readIntegrationControl(value: unknown): { data: unknown; legacy: boolean } {
 	if (value && typeof value === "object") {
 		const control = value as Partial<IntegrationControl>;
@@ -36,27 +53,59 @@ export function extractLastJsonBlock(text: string): any | null {
 	}
 }
 
-export function isPassWord(word: string): boolean {
-	const value = word.trim().toLowerCase();
-	return value.startsWith("pass") || value.startsWith("approve") || value.startsWith("accept");
+/** The Child's first non-empty line, trimmed; null when the output has none. */
+function firstNonEmptyLine(text: string): string | null {
+	for (const raw of text.split(/\r?\n/)) {
+		const line = raw.trim();
+		if (line) return line;
+	}
+	return null;
+}
+
+/** Regex-source alternation for exactly one of the given literal tokens (escaped). */
+const oneOf = (...tokens: readonly string[]) => tokens.map((token) => escapeRegExp(token)).join("|");
+
+/**
+ * Match the authoritative marker line: the first non-empty line must be exactly
+ * `MARKER : TOKEN` (the keyword is case-insensitive, whitespace around the
+ * separator is tolerated, nothing may follow the token). `tokenPattern` is a
+ * regex-source fragment for the token — a {@link oneOf} literal alternation, or
+ * a character/quantifier class. Returns the token text exactly as written, or
+ * null when the first line is not this protocol's marker.
+ */
+function markerToken(text: string, marker: string, tokenPattern: string): string | null {
+	const line = firstNonEmptyLine(text);
+	if (line === null) return null;
+	const match = line.match(new RegExp(`^${escapeRegExp(marker)}\\s*[:=]\\s*(${tokenPattern})\\s*$`, "i"));
+	return match ? match[1] : null;
 }
 
 export function verdictProtocolInstruction(reviseGuidance = "specific, actionable critique the next agent can act on", contracted = false): string {
+	const { marker, pass, revise } = PROTOCOL.verdict;
 	return contracted
-		? `Set the return envelope's data.verdict to "pass" or "revise". If revise, include ${reviseGuidance} in a schema-permitted data field.`
-		: `Begin your reply with a line \"VERDICT: PASS\" or \"VERDICT: REVISE\". If REVISE, follow with ${reviseGuidance}.`;
+		? `Set the return envelope's data.verdict to "${pass.toLowerCase()}" or "${revise.toLowerCase()}". If revise, include ${reviseGuidance} in a schema-permitted data field.`
+		: `Begin your reply with a line "${marker}: ${pass}" or "${marker}: ${revise}" and nothing else on that line. If ${revise}, follow with ${reviseGuidance}.`;
 }
 
 export function loopProtocolInstruction(contracted = false): string {
-	return contracted ? 'Set the return envelope\'s data.loop to "done" or "continue".' : 'Start with "LOOP: DONE" if the goal is complete, or "LOOP: CONTINUE" if another iteration is needed.';
+	const { marker, done, continue: cont } = PROTOCOL.loop;
+	return contracted
+		? `Set the return envelope's data.loop to "${done.toLowerCase()}" or "${cont.toLowerCase()}".`
+		: `Start with a line "${marker}: ${done}" if the goal is complete, or "${marker}: ${cont}" if another iteration is needed — nothing else on that line.`;
 }
 
 export function routeProtocolInstruction(contracted = false): string {
-	return contracted ? 'Set the return envelope\'s data.route to one candidate name exactly, or "none".' : 'Reply with a line "ROUTE: <agent>" using one of the candidate names exactly. Use "ROUTE: none" when no candidate fits.';
+	const { marker, none } = PROTOCOL.route;
+	return contracted
+		? `Set the return envelope's data.route to one candidate name exactly, or "${none}".`
+		: `Reply with a line "${marker}: <agent>" using one of the candidate names exactly and nothing else on that line. Use "${marker}: ${none}" when no candidate fits.`;
 }
 
 export function scoreProtocolInstruction(contracted = false): string {
-	return contracted ? "Set the return envelope's data.score to a number from 0 through 100; include terse justification and risks in schema-permitted data fields." : 'Start with "SCORE: <number>" where the number is 0..100, then give terse justification and risks.';
+	const { marker, min, max } = PROTOCOL.score;
+	return contracted
+		? `Set the return envelope's data.score to a number from ${min} through ${max}; include terse justification and risks in schema-permitted data fields.`
+		: `Start with a line "${marker}: <number>" where the number is ${min}..${max}, then give terse justification and risks.`;
 }
 
 export function subtasksJsonProtocolInstruction(maxSubtasks: number, contracted = false): string {
@@ -82,70 +131,76 @@ export function parseVerdict(value: unknown): "pass" | "revise" {
  * a recorder saying "the parse fell back" cannot drift from the parse itself.
  */
 export function parsedVerdict(value: unknown): "pass" | "revise" | null {
+	const { marker, pass, revise } = PROTOCOL.verdict;
 	const control = readIntegrationControl(value);
 	if (!control.legacy) {
 		const verdict = (control.data as any)?.verdict;
-		if (verdict === "pass" || verdict === "revise") return verdict;
+		if (verdict === pass.toLowerCase() || verdict === revise.toLowerCase()) return verdict;
 		return null;
 	}
 	const text = control.data as string;
-	const markerMatch = text.match(/VERDICT\s*[:=]\s*([A-Za-z]+)/i);
-	if (markerMatch) return isPassWord(markerMatch[1]) ? "pass" : "revise";
+	const token = markerToken(text, marker, oneOf(pass, revise));
+	if (token !== null) return token.toLowerCase() === pass.toLowerCase() ? "pass" : "revise";
 	const json = extractLastJsonBlock(text);
-	if (json && typeof json.verdict === "string") return isPassWord(json.verdict) ? "pass" : "revise";
+	if (json && (json.verdict === pass.toLowerCase() || json.verdict === revise.toLowerCase())) return json.verdict;
 	return null;
 }
 
 export function parseLoopStatus(value: unknown): "done" | "continue" {
+	const { marker, done, continue: cont } = PROTOCOL.loop;
 	const control = readIntegrationControl(value);
 	if (!control.legacy) {
 		const loop = (control.data as any)?.loop;
-		if (loop === "done" || loop === "continue") return loop;
+		if (loop === done.toLowerCase() || loop === cont.toLowerCase()) return loop;
 		return "continue";
 	}
 	const text = control.data as string;
-	const markerMatch = text.match(/LOOP\s*[:=]\s*([A-Za-z]+)/i);
-	if (markerMatch) return /^(done|pass|stop|complete|completed)$/i.test(markerMatch[1]) ? "done" : "continue";
+	const token = markerToken(text, marker, oneOf(done, cont));
+	if (token !== null) return token.toLowerCase() === done.toLowerCase() ? "done" : "continue";
 	const json = extractLastJsonBlock(text);
-	if (json && typeof json.loop === "string") return /^(done|pass|stop|complete|completed)$/i.test(json.loop) ? "done" : "continue";
-	if (json && typeof json.done === "boolean") return json.done ? "done" : "continue";
+	if (json && (json.loop === done.toLowerCase() || json.loop === cont.toLowerCase())) return json.loop;
 	return "continue";
 }
 
 export function parseScore(value: unknown): number | null {
+	const { marker, min, max, token: tokenPattern } = PROTOCOL.score;
 	const control = readIntegrationControl(value);
 	if (!control.legacy) {
 		const score = (control.data as any)?.score;
-		return typeof score === "number" && Number.isFinite(score) && score >= 0 && score <= 100 ? score : null;
+		return typeof score === "number" && Number.isFinite(score) && score >= min && score <= max ? score : null;
 	}
 	const text = control.data as string;
-	const markerMatch = text.match(/SCORE\s*[:=]\s*(-?\d+(?:\.\d+)?)/i);
-	const raw = markerMatch ? Number(markerMatch[1]) : Number(extractLastJsonBlock(text)?.score);
-	if (!Number.isFinite(raw)) return null;
-	return Math.max(0, Math.min(100, raw));
+	const token = markerToken(text, marker, tokenPattern);
+	const json = extractLastJsonBlock(text);
+	const raw = token !== null ? Number(token) : typeof json?.score === "number" && Number.isFinite(json.score) ? json.score : Number.NaN;
+	return Number.isFinite(raw) && raw >= min && raw <= max ? raw : null;
 }
 
 /**
  * Read a routing decision constrained to `candidates`: structured data first,
- * then legacy marker/JSON/whole-word prose. Returns null if none match.
+ * then the legacy marker/JSON protocol. A candidate named anywhere except the
+ * authoritative marker position is ordinary prose and returns null.
  */
 export function parseRoute(value: unknown, candidates: string[]): string | null {
+	const { marker, none, token: tokenPattern } = PROTOCOL.route;
 	const allowed = new Set(candidates);
 	const control = readIntegrationControl(value);
 	if (!control.legacy) {
 		const route = (control.data as any)?.route;
-		return typeof route === "string" ? (route === "none" ? null : allowed.has(route) ? route : null) : null;
+		return typeof route === "string" ? (route === none ? null : allowed.has(route) ? route : null) : null;
 	}
 	const text = control.data as string;
-	const marker = text.match(/ROUTE\s*[:=]\s*([A-Za-z0-9_.-]+)/i);
-	if (marker) {
-		if (marker[1].toLowerCase() === "none") return null;
-		if (allowed.has(marker[1])) return marker[1];
+	const token = markerToken(text, marker, tokenPattern);
+	if (token !== null) {
+		if (token.toLowerCase() === none.toLowerCase()) return null;
+		return allowed.has(token) ? token : null;
 	}
 	const json = extractLastJsonBlock(text);
-	if (json && typeof json.route === "string" && allowed.has(json.route)) return json.route;
-	const mentioned = candidates.filter((candidate) => new RegExp(`\\b${escapeRegExp(candidate)}\\b`).test(text));
-	return mentioned.length === 1 ? mentioned[0] : null;
+	if (json && typeof json.route === "string") {
+		if (json.route === none) return null;
+		return allowed.has(json.route) ? json.route : null;
+	}
+	return null;
 }
 
 /** Parse structured or JSON-text subtasks into strings, capped to `max`. */
