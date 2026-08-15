@@ -29,7 +29,6 @@
     "extensions/pi-flows/**/*.ts",
     "extensions/pi-flows/**/*.mjs",
     "docs/README.md",
-    "docs/tutorials/*.md",
     "docs/how-to/*.md",
     "docs/reference/*.md",
     "docs/explanation/*.md",

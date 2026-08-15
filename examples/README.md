@@ -1,12 +1,12 @@
 # pi-flows examples
 
-These examples are designed to be copy/pasteable in pi after loading the extension:
+You can copy and paste these examples into pi after you load the extension:
 
 ```bash
 pi -e ./extensions/pi-flows/index.ts
 ```
 
-> **You don't type these JSON objects.** You talk to pi in plain English and it builds the `flow` call for you — choosing the agent and mode from what you ask. The objects below use the exact tool interface, copy/pasteable when you want to verify behavior or take manual control. Most have a natural-language equivalent; the single-agent example below, for instance, is just *"scout the repo for the extension entrypoint and summarize what it registers."*
+> **You do not type these JSON objects.** You talk to pi in plain English, and pi builds the `flow` call for you. pi selects the agent and the mode from what you ask. The objects below use the exact tool interface. Copy and paste them when you want to see the exact behavior or take manual control. Most have a natural-language equivalent. For example, the single-agent example below is *"scout the repo for the extension entrypoint and summarize what it registers."*
 
 ## No-model smoke checks
 
@@ -63,9 +63,9 @@ Expected: `details.results[0].envelope` has
 `schemaVersion:"pi-flows.return-envelope.v1"`, the dispatched delegation contract's
 `sha256:` `contractId`, validated evidence and `data`, plus runtime usage. A
 response whose `data` violates `returnSchema` returns
-`RETURN_ENVELOPE_INVALID`; a declared SHA-256 digest that does not match its
-artifact returns `RETURN_DIGEST_MISMATCH`. Integration modes additionally reject
-missing/stale identities with `RETURN_CONTRACT_MISMATCH`.
+`RETURN_ENVELOPE_INVALID`. A declared SHA-256 digest that does not match its
+artifact returns `RETURN_DIGEST_MISMATCH`. Integration modes also reject
+missing or stale identities with `RETURN_CONTRACT_MISMATCH`.
 
 ## Parallel example
 
@@ -80,14 +80,14 @@ missing/stale identities with `RETURN_CONTRACT_MISMATCH`.
 }
 ```
 
-Expected: both tasks complete; details include one result per agent and durations.
-Raw parallel calls must set `tier` or `model` per task; alternatively, set one
+Expected: both tasks complete, and details include one result per agent and durations.
+Raw parallel calls must set `tier` or `model` per task. Alternatively, set one
 flow-wide `tier` or `model` when uniform sizing is intentional.
-Each task may also set a delegation `contract`. Valid return envelopes and legacy prose results are
-normalized into `details.results[*].handoff`; prose uses
-`compatibility:"legacy-prose"`, while contracted handoffs preserve delegation-contract identity,
+Each task can also set a delegation `contract`. Valid return envelopes and legacy prose results are
+normalized into `details.results[*].handoff`. Prose uses
+`compatibility:"legacy-prose"`. Contracted handoffs preserve delegation-contract identity,
 status, evidence, artifacts, and source provenance. `partial`/`blocked` contracted
-returns stop by default; set `incompleteHandoffPolicy:"include"` only when
+returns stop by default. Set `incompleteHandoffPolicy:"include"` only when
 incomplete synthesis is an intentional policy choice.
 
 ## Chain example
@@ -107,7 +107,7 @@ incomplete synthesis is an intentional policy choice.
 `quarantine` lets the planning step run but replaces any injection-shaped recon
 payload with a fixed marker. For a high-consequence resumable workflow, combine
 `"handoffPolicy":"warn"` with
-`"modeHandoffPolicy":{"workflow":"fail"}`; the mode requirement wins and is
+`"modeHandoffPolicy":{"workflow":"fail"}`. The mode requirement wins and is
 bound into workflow approval receipts.
 
 Expected: recon output is capped/redacted before it becomes strategist context.
@@ -127,7 +127,7 @@ Expected: recon output is capped/redacted before it becomes strategist context.
 }
 ```
 
-Expected: `details.results` interleaves `operator` and `redteam` runs (one pair per iteration); the loop stops early on `VERDICT: PASS`, otherwise returns the last attempt plus the final critique after 3 iterations.
+Expected: `details.results` interleaves `operator` and `redteam` runs (one pair per iteration). The loop stops early on `VERDICT: PASS`. Otherwise it returns the last attempt plus the final critique after 3 iterations.
 
 ### With a deterministic gate and a critic panel
 
@@ -144,7 +144,7 @@ Expected: `details.results` interleaves `operator` and `redteam` runs (one pair 
 }
 ```
 
-Expected: each round, `npm test` must exit `0` (a failing run is an automatic `REVISE` whose output becomes the critique, and the LLM critics are skipped that round); when the gate passes, **both** `redteam` and `overwatch` must return `VERDICT: PASS` for the loop to pass. A `checkCommand` that cannot start returns `CHECK_COMMAND_FAILED`.
+Expected: each round, `npm test` must exit `0`. A failing run is an automatic `REVISE` whose output becomes the critique, and the LLM critics are skipped that round. When the gate passes, **both** `redteam` and `overwatch` must return `VERDICT: PASS` for the loop to pass. A `checkCommand` that cannot start returns `CHECK_COMMAND_FAILED`.
 
 ## Vote example (parallelization / voting)
 
@@ -159,7 +159,7 @@ Expected: each round, `npm test` must exit `0` (a failing run is an automatic `R
 }
 ```
 
-Expected: three independent answers; the `debrief` agent returns one consensus answer. Drop `debrief` to get all three answers back instead.
+Expected: three independent answers, which the `debrief` agent merges into one consensus answer. Remove `debrief` to get all three answers back instead.
 
 ## Route example (classify → dispatch)
 
@@ -185,7 +185,7 @@ Expected: the `controller` emits `ROUTE: strategist`, then strategist runs the t
 
 Expected: the `commander` returns ~3 subtasks, three `recon` workers run in parallel, and the `debrief` agent merges them. `details.results` is `[commander, ...workers, debrief]`.
 
-Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: PASS/REVISE` check on the merged answer; `details.results` then ends `[..., debrief, verify]`.
+Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: PASS/REVISE` gate on the merged answer. `details.results` then ends `[..., debrief, verify]`.
 
 ## Workflow example
 
@@ -280,8 +280,8 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
 Expected: when cumulative cost reaches `$0.25` or generated output reaches 4,000
 tokens at a completed model-response boundary, the active child stops and no
 further child is spawned (`BUDGET_EXCEEDED`). `flow-trace.jsonl` gains one
-OpenInference-shaped span per child plus a root `flow.orchestrate` span. Inspect
-it with `jq` — e.g. total cost:
+OpenInference-shaped span per child plus a root `flow.orchestrate` span. Examine
+it with `jq` — for example, the total cost:
 `jq -s 'map(.attributes["flow.cost_usd"] // 0) | add' flow-trace.jsonl`.
 
 ## User custom-agent example
@@ -318,7 +318,7 @@ tools: read,grep,find,ls
 Follow AGENTS.md and report the most relevant check command.
 ```
 
-Interactive sessions prompt before running this agent. Headless runs refuse unless you pass:
+Interactive sessions prompt before they run this agent. Headless runs refuse unless you pass:
 
 ```json
 {
@@ -330,7 +330,7 @@ Interactive sessions prompt before running this agent. Headless runs refuse unle
 }
 ```
 
-Only set `confirmProjectAgents:false` after reviewing the project-local prompt.
+Set `confirmProjectAgents:false` only after you review the project-local prompt.
 
 ## Error-case examples
 
@@ -340,7 +340,7 @@ Missing delegation justification:
 { "agent": "recon", "task": "Find the API routes" }
 ```
 
-Expected error code: `WHY_REQUIRED` (every spawning call needs a one-sentence `why`; `list`/`showConfig` are exempt).
+Expected error code: `WHY_REQUIRED` (every spawning call needs a one-sentence `why`, and `list`/`showConfig` are exempt).
 
 Unknown agent:
 

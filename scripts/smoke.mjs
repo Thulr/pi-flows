@@ -10,7 +10,6 @@ const requiredFiles = [
   "CONTRIBUTING.md",
   "AGENTS.md",
   "docs/README.md",
-  "docs/tutorials/quickstart.md",
   "docs/reference/flow-reference.md",
   "docs/reference/package.md",
   "docs/how-to/custom-agents.md",
