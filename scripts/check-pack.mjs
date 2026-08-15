@@ -327,5 +327,13 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Admitted -> Dispatched -> Settled) instead of implying refusal precedes
 // admission. The file set stays 109 and none from tests/, scripts/, or evals/;
 // headroom is ~515 B over measured 1_283_785.
-assert.ok(pack.unpackedSize < 1_284_300, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_290_000 for #140 (separate the domain glossary from architecture
+// classification): CONTEXT.md shrinks into a pure glossary, and its subdomain
+// split, import direction, and review policy move into a new packaged
+// docs/reference/architecture.md ledger, with the rationale in a new packaged
+// docs/explanation/domain-model.md. The glossary shrinks but the ledger and
+// explanation ship as new public reference/explanation surfaces, so this is net
+// growth in already-packaged docs, not an inclusion. The file set grows to 111
+// for those two docs and none from tests/, scripts/, or evals/.
+assert.ok(pack.unpackedSize < 1_290_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

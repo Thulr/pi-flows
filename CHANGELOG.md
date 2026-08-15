@@ -55,6 +55,15 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- The domain documentation is split into three surfaces (#140): `CONTEXT.md` is
+  now a pure glossary of canonical terms with concise, implementation-free
+  definitions and Avoid lists, while module classification, import direction, and
+  review policy move to a new `docs/reference/architecture.md` ledger and the
+  rationale moves to `docs/explanation/domain-model.md`. `npm run score:domain`
+  now reads classification and import direction from the architecture ledger
+  rather than parsing the glossary, and contributor guidance points at the right
+  surface for each purpose.
+
 - Coordination-control markers are now authoritative only in their documented
   form (#139). A verdict, loop, route, or score token is accepted only when it
   occupies the child's first non-empty line and matches the exact grammar — a

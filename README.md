@@ -149,7 +149,7 @@ The docs follow the [Diátaxis](https://diataxis.fr/) framework:
 - **Reference** — [Flow reference](./docs/reference/flow-reference.md): every mode, parameter, and structured error. [Package reference](./docs/reference/package.md): what ships and how to install it.
 - **Explanation** — [Patterns](./docs/explanation/patterns.md) · [Privacy & telemetry](./docs/explanation/privacy-telemetry.md)
 
-Contributor surfaces: [Contributing](./CONTRIBUTING.md) · [Agent instructions](./AGENTS.md) · [Domain glossary](./CONTEXT.md) · [Changelog](./CHANGELOG.md)
+Contributor surfaces: [Contributing](./CONTRIBUTING.md) · [Agent instructions](./AGENTS.md) · [Domain glossary](./CONTEXT.md) · [Architecture classification](./docs/reference/architecture.md) · [Changelog](./CHANGELOG.md)
 
 ## Development
 

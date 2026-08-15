@@ -35,28 +35,13 @@ import { SPELLED_ONCE } from "./domain-spelled-once.mjs";
 const root = process.cwd();
 const MODULE_ROOT = "extensions/pi-flows";
 const REVIEW_FILE = "docs/domain-review.json";
-const CONTEXT_FILE = "CONTEXT.md";
-// The subdomain classes CONTEXT.md places every module into. The last two are
-// structural roles rather than subdomains proper, but they are placements a
-// module can hold, so they live in the same table.
+const ARCHITECTURE_FILE = "docs/reference/architecture.md";
+// The subdomain classes the architecture ledger places every module into. The
+// last two are structural roles rather than subdomains proper, but they are
+// placements a module can hold, so they live in the same table.
 const SUBDOMAINS = ["Core", "Supporting", "Generic", "Shared kernel", "Composition root"];
 /** Evans' naming smells: a name that describes a technical role instead of a domain concept. */
 const JARGON = /(Manager|Helper|Processor|Utils?|Impl|Coordinator|Wrapper)$/;
-/**
- * Only the direction that actually carries meaning is constrained; anything not
- * listed here may import freely.
- *
- * Core reaching down into Generic plumbing is fine — commodity exists to be used,
- * and an adapter implementing a Core-defined seam (runner.ts over `runChild`)
- * depends on the domain rather than the reverse. Core reaching *sideways* into
- * Supporting is the real inversion: it makes the differentiator depend on the
- * recombinations of itself, and it is how a core model starts absorbing mode
- * special-cases and view concerns. The kernel is held to vocabulary only.
- */
-const IMPORT_RULES = {
-  Core: ["Core", "Generic", "Shared kernel"],
-  "Shared kernel": ["Core", "Shared kernel"],
-};
 const FLAGS = new Set(["--summary", "--json"]);
 const args = new Set(process.argv.slice(2));
 for (const arg of args) {
@@ -84,20 +69,40 @@ function moduleSources() {
 }
 
 /**
- * The classification comes from CONTEXT.md, not from a copy kept here: the
- * document a human reads and the rule the build enforces have to be the same
- * statement, or the classification drifts into decoration.
+ * The classification comes from the architecture ledger, not from a copy kept
+ * here: the document a human reads and the rule the build enforces have to be
+ * the same statement, or the classification drifts into decoration. The import
+ * direction is read from the same ledger for the same reason — a second copy in
+ * this script would be a mirror that has to be kept in agreement by hand.
  */
 function declaredSubdomains() {
-  const context = readFileSync(path.join(root, CONTEXT_FILE), "utf8");
+  const ledger = readFileSync(path.join(root, ARCHITECTURE_FILE), "utf8");
   const declared = new Map();
   for (const subdomain of SUBDOMAINS) {
     const heading = new RegExp(`\\*\\*${subdomain}[^*]*\\*\\*([\\s\\S]*?)(?=\\n\\*\\*|\\n## )`, "i");
-    const section = context.match(heading)?.[1] ?? "";
+    const section = ledger.match(heading)?.[1] ?? "";
     const modules = section.match(/_Modules_: (.+)/)?.[1] ?? "";
     declared.set(subdomain, [...modules.matchAll(/`([^`]+)`/g)].map((match) => match[1]));
   }
   return declared;
+}
+
+/**
+ * The import direction, parsed from the ledger's `## Import direction` section.
+ * Each row is `- **From** → A, B, C`; a subdomain not listed may import freely.
+ * A row naming a subdomain outside the classification is a gate failure rather
+ * than a silently unconstrained import — fail closed on a typo.
+ */
+function declaredImportRules() {
+  const ledger = readFileSync(path.join(root, ARCHITECTURE_FILE), "utf8");
+  const section = ledger.match(/## Import direction([\s\S]*?)(?=\n## |$)/)?.[1] ?? "";
+  const rules = new Map();
+  for (const [, from, allowed] of section.matchAll(/^\s*-\s*\*\*([^*]+)\*\*\s*→\s*(.+)$/gm)) {
+    const fromName = from.trim();
+    if (!SUBDOMAINS.includes(fromName)) flag("boundaries", `${ARCHITECTURE_FILE} import-direction row names \`${fromName}\`, which is not one of: ${SUBDOMAINS.join(", ")}`);
+    rules.set(fromName, allowed.split(/\s*,\s*/).map((name) => name.trim()));
+  }
+  return rules;
 }
 
 const globToRe = (pattern) => new RegExp(`^${pattern.replace(/[.]/g, "\\.").replace(/\*/g, "[^/]*")}$`);
@@ -152,6 +157,7 @@ const clean = (row) => !findings.some((finding) => finding.row === row);
 // ---------------------------------------------------------------- structural rows
 const sources = moduleSources();
 const subdomains = declaredSubdomains();
+const importRules = declaredImportRules();
 const placement = new Map(
   [...sources.keys()].map((file) => [file, SUBDOMAINS.filter((subdomain) => subdomains.get(subdomain).some((pattern) => globToRe(pattern).test(file)))]),
 );
@@ -169,7 +175,7 @@ for (const [file, source] of sources) {
 for (const [subdomain, patterns] of subdomains) {
   for (const pattern of patterns) {
     if (![...sources.keys()].some((file) => globToRe(pattern).test(file))) {
-      flag("core-domain", `${CONTEXT_FILE} classifies \`${pattern}\` under ${subdomain}, but no such module exists — a deleted or renamed module has to leave the table too`);
+      flag("core-domain", `${ARCHITECTURE_FILE} classifies \`${pattern}\` under ${subdomain}, but no such module exists — a deleted or renamed module has to leave the table too`);
     }
   }
 }
@@ -178,14 +184,14 @@ for (const [subdomain, patterns] of subdomains) {
 // classification going stale — the failure mode that turns a subdomain split into
 // decoration a year after it was written.
 for (const [file, hits] of placement) {
-  if (hits.length === 0) flag("core-domain", `${MODULE_ROOT}/${file} is in no ${CONTEXT_FILE} subdomain — classify it under one of: ${SUBDOMAINS.join(", ")}`);
+  if (hits.length === 0) flag("core-domain", `${MODULE_ROOT}/${file} is in no ${ARCHITECTURE_FILE} subdomain — classify it under one of: ${SUBDOMAINS.join(", ")}`);
   if (hits.length > 1) flag("core-domain", `${MODULE_ROOT}/${file} is classified under ${hits.length} subdomains (${hits.join(", ")}) — a module belongs to one`);
 }
 
 // Row: import direction between subdomains.
 for (const [file, hits] of placement) {
   const from = hits.length === 1 ? hits[0] : undefined;
-  const allowed = from ? IMPORT_RULES[from] : undefined;
+  const allowed = from ? importRules.get(from) : undefined;
   if (!allowed) continue;
   for (const [, specifier] of sources.get(file).matchAll(RELATIVE_IMPORT)) {
     const target = path.normalize(path.join(path.dirname(file), specifier));
@@ -421,7 +427,7 @@ if (args.has("--json")) {
   if (!baseline.known && debt.size) console.log(`  ◌ shrink-only ledger unverified: ${baseline.why}`);
   for (const finding of findings) console.error(`✗ ${finding.message}`);
   if (findings.length) {
-    console.error(`\n✗ domain model: ${findings.length} structural finding(s). These are mechanical rules — fix the code, or change the classification in ${CONTEXT_FILE} deliberately.`);
+    console.error(`\n✗ domain model: ${findings.length} structural finding(s). These are mechanical rules — fix the code, or change the classification in ${ARCHITECTURE_FILE} deliberately.`);
     process.exit(1);
   }
   console.log(`domain ok: ${structuralHeld} of ${structural.length} structural rows hold, none regressed`);
