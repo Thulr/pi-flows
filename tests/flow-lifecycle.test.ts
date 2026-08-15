@@ -1,13 +1,14 @@
-// The Flow aggregate root (flow.ts): one bounded delegation whose lifecycle is
-// an explicit progression — refused → admitted → dispatched → settled. These
-// tests name the ordering invariants that used to be the positional body of
-// index.ts execute(): the describe surfaces answer at the walk's first gate
-// (list wins over config, before any preset resolves or mode detects), the
-// aggregate walks the remaining pre-spawn gates in its own declared order, a
-// refusal finalizes the trace with zero children, a thrown handler still
-// finalizes a closed trace, admission is the only path to dispatch, dispatch
-// is the only path to settle, and the settle sequence ends with durable
-// persistence after the strict-trace gate.
+// The Flow aggregate root (flow.ts): one bounded delegation whose admission
+// yields exactly one of described, refused, or admitted — described and refused
+// are terminal alternatives, and only an admitted flow owns a mode and the
+// progression dispatched → settled. These tests name the ordering invariants
+// that used to be the positional body of index.ts execute(): the describe
+// surfaces answer at the walk's first gate (list wins over config, before any
+// preset resolves or mode detects), the aggregate walks the remaining pre-spawn
+// gates in its own declared order, a refusal finalizes the trace with zero
+// children, a thrown handler still finalizes a closed trace, admission is the
+// only path to dispatch, dispatch is the only path to settle, and the settle
+// sequence ends with durable persistence after the strict-trace gate.
 import { strict as assert } from "node:assert";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
