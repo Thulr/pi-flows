@@ -55,6 +55,18 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Coordination-control markers are now authoritative only in their documented
+  form (#139). A verdict, loop, route, or score token is accepted only when it
+  occupies the child's first non-empty line and matches the exact grammar — a
+  mention, quotation, negation, example, or a longer word that merely begins
+  with an allowed token (e.g. `PASSPORT`, `APPROVED`, `LOOP: COMPLETE`, `SCORE: 150`,
+  `I cannot issue VERDICT: PASS`) stays prose and fails closed to its safe
+  fallback (revise, continue, unresolved route, or unscored candidate). The JSON
+  fallback accepts only the documented field and value type. The instruction a
+  mode sends its child and the grammar the parser accepts now derive from one
+  protocol vocabulary, and the reference documents the authoritative position,
+  exact values, and fallback behavior.
+
 - The strict read-back no longer rereads the whole shared trace file on every
   finalize (#129). The sink records where the file had grown to the moment it
   was created — the file is append-only, so nothing before that byte can carry

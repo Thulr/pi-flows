@@ -1,6 +1,5 @@
 export {
 	extractLastJsonBlock,
-	isPassWord,
 	parseLoopStatus,
 	parseRoute,
 	parseScore,

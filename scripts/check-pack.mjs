@@ -315,5 +315,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // phase's durable handoff from its validated Return envelope, and the incomplete
 // summary reads terminal envelopes. Tests and fault scenarios remain unpackaged;
 // the file set stays 109 and headroom is ~500 B over measured 1_277_048.
-assert.ok(pack.unpackedSize < 1_277_550, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_283_000 for #139 (parse coordination-control markers fail-closed):
+// protocol.ts gains the shared protocol vocabulary and the anchored first-line
+// marker reader that both the instructions and the parsers render from, and the
+// public reference/patterns/changelog name the authoritative position, exact
+// values, and fallback behavior. The file set stays 109 and none from tests/,
+// scripts/, or evals/; headroom is ~500 B over measured 1_282_485.
+assert.ok(pack.unpackedSize < 1_283_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

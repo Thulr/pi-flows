@@ -112,7 +112,7 @@ export const NO_FLOW_SELECTION_CASES = [
 		mock: { flowCalls: 0, answer: "protocol.ts defines the instructions that ask children for typed lines like VERDICT: PASS, and parse.ts extracts and validates those lines from child output." },
 		sourceExpectations: [
 			{ format: "text", path: "extensions/pi-flows/parse.ts", patterns: ["extractLastJsonBlock", "protocol\\.ts"] },
-			{ format: "text", path: "extensions/pi-flows/protocol.ts", patterns: ["function extractLastJsonBlock", "VERDICT: PASS"] },
+			{ format: "text", path: "extensions/pi-flows/protocol.ts", patterns: ["function extractLastJsonBlock", "marker: \"VERDICT\"", "pass: \"PASS\""] },
 		],
 	},
 	{

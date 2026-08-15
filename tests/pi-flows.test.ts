@@ -245,20 +245,33 @@ test("model-visible output is capped", () => {
   assert.match(capped, /truncated/);
 });
 
-test("parseVerdict reads PASS/REVISE markers, JSON fallback, and fails safe", () => {
+test("parseVerdict accepts only the exact PASS/REVISE marker in the first line", () => {
   assert.equal(__test.parseVerdict("VERDICT: PASS\nlooks good"), "pass");
   assert.equal(__test.parseVerdict("verdict: revise\nfix the empty-input case"), "revise");
-  assert.equal(__test.parseVerdict("VERDICT: APPROVED"), "pass");
-  assert.equal(__test.parseVerdict('intro prose\n```json\n{"verdict":"pass"}\n```'), "pass");
+  assert.equal(__test.parseVerdict("VERDICT: PASS"), "pass");
+  assert.equal(__test.parseVerdict("VERDICT: PASSPORT"), "revise", "a longer word that merely begins with an allowed token is prose");
+  assert.equal(__test.parseVerdict("VERDICT: APPROVED"), "revise", "synonyms are not the documented tokens");
+  assert.equal(__test.parseVerdict("I cannot issue VERDICT: PASS"), "revise", "a negation is not an authoritative marker");
+  assert.equal(__test.parseVerdict("intro prose\nVERDICT: PASS"), "revise", "a later marker is not the first non-empty line");
+  assert.equal(__test.parseVerdict('intro prose\n```json\n{"verdict":"pass"}\n```'), "pass", "JSON fallback accepts the documented lowercase value");
+  assert.equal(__test.parseVerdict('```json\n{"verdict":"PASS"}\n```'), "revise", "JSON fallback is exact, not case-insensitive");
+  assert.equal(__test.parseVerdict('```json\n{"verdict":"approved"}\n```'), "revise");
   assert.equal(__test.parseVerdict("no verdict anywhere in here"), "revise", "unparseable verdict must fail safe to revise");
 });
 
-test("parseLoopStatus and parseScore read control markers conservatively", () => {
+test("parseLoopStatus and parseScore accept only exact anchored markers and typed JSON", () => {
   assert.equal(__test.parseLoopStatus("LOOP: DONE\nfinal"), "done");
-  assert.equal(__test.parseLoopStatus('```json\n{"done":true}\n```'), "done");
+  assert.equal(__test.parseLoopStatus("LOOP: CONTINUE"), "continue");
+  assert.equal(__test.parseLoopStatus("LOOP: COMPLETE"), "continue", "synonyms are not the documented tokens");
+  assert.equal(__test.parseLoopStatus("I cannot issue LOOP: DONE"), "continue", "a negation is not an authoritative marker");
+  assert.equal(__test.parseLoopStatus('```json\n{"loop":"done"}\n```'), "done");
+  assert.equal(__test.parseLoopStatus('```json\n{"done":true}\n```'), "continue", "only the documented data.loop field is accepted");
   assert.equal(__test.parseLoopStatus("no marker"), "continue");
   assert.equal(__test.parseScore("SCORE: 93\nstrong"), 93);
-  assert.equal(__test.parseScore('```json\n{"score":120}\n```'), 100);
+  assert.equal(__test.parseScore("SCORE: 150"), null, "out-of-range scores are unparseable, not clamped");
+  assert.equal(__test.parseScore("SCORE: -1"), null);
+  assert.equal(__test.parseScore('```json\n{"score":120}\n```'), null, "out-of-range JSON scores are unparseable, not clamped");
+  assert.equal(__test.parseScore('```json\n{"score":"90"}\n```'), null, "a string score is not the documented number type");
   assert.equal(__test.parseScore("no score"), null);
 });
 
@@ -305,14 +318,15 @@ test("extractLastJsonBlock reads objects, arrays, and the last fenced block", ()
   assert.equal(__test.extractLastJsonBlock("no json here"), null);
 });
 
-test("parseRoute prefers ROUTE marker, validates candidates, then word-scans", () => {
+test("parseRoute reads only the authoritative ROUTE marker and rejects prose mentions", () => {
   assert.equal(__test.parseRoute("ROUTE: strategist\nbecause it plans", ["recon", "strategist"]), "strategist");
   assert.equal(__test.parseRoute("ROUTE: nonexistent", ["recon", "strategist"]), null);
   assert.equal(__test.parseRoute("ROUTE: none", ["recon", "strategist"]), null, "explicit no-fit must resolve to fallback, not a candidate");
   assert.equal(__test.parseRoute("ROUTE: none\nMaybe recon?", ["recon", "strategist"]), null, "explicit no-fit marker must remain terminal even if a candidate is later mentioned");
   assert.equal(__test.parseRoute('```json\n{"route":"recon"}\n```', ["recon", "strategist"]), "recon");
-  assert.equal(__test.parseRoute("I think overwatch is the right fit here", ["recon", "overwatch"]), "overwatch");
-  assert.equal(__test.parseRoute("could be recon or strategist, hard to say", ["recon", "strategist"]), null, "ambiguous mention must not guess");
+  assert.equal(__test.parseRoute("I think overwatch is the right fit here", ["recon", "overwatch"]), null, "a bare mention is prose and must not select");
+  assert.equal(__test.parseRoute("I cannot issue ROUTE: recon", ["recon", "strategist"]), null, "a negation is not an authoritative marker");
+  assert.equal(__test.parseRoute("could be recon or strategist, hard to say", ["recon", "strategist"]), null);
   assert.equal(__test.parseRoute("no candidate named at all", ["recon", "strategist"]), null);
 });
 
