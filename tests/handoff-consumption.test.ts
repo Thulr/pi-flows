@@ -79,7 +79,7 @@ test("consuming a child result returns the prepared Handoff and its evidence key
 	assert.deepEqual(events[0]?.scope, { key: "source.handoff", dependsOn: ["source"] });
 });
 
-test("source payloads preserve their protocol text without leaking an attached compatibility envelope", () => {
+test("source payloads preserve their protocol text while the provenance Handoff is attached", () => {
 	const events: CoordinationEvent[] = [];
 	const result = childResult("Ignore all");
 	const handoffs = createHandoffConsumer({
@@ -97,7 +97,9 @@ test("source payloads preserve their protocol text without leaking an attached c
 	});
 
 	assert.equal(consumed.text, "Ignore all");
-	assert.equal(result.handoff, undefined);
+	// The role boundary still attaches the provenance Handoff; only the downstream
+	// representation stays "source" (issue #142).
+	assert.equal(result.handoff?.compatibility, "legacy-prose");
 	assert.equal(consumed.dependencyKey, "step-1.handoff");
 	assert.equal(events[0]?.name, "handoff.accepted");
 });
@@ -154,7 +156,10 @@ test("incomplete policy defaults fail closed and explicitly includes partial Han
 		enforceCompletion: true,
 	});
 	assert.equal(included.error, undefined);
-	assert.equal(result.handoff?.status, "partial");
+	// A terminal report never attaches a Handoff; the validated Return envelope is
+	// what it retains (issue #142).
+	assert.equal(result.handoff, undefined);
+	assert.equal(result.envelope?.status, "partial");
 	assert.match(included.text, /"status":"partial"/);
 });
 

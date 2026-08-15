@@ -397,7 +397,6 @@ export function prepareIntegrationHandoff(
 		cwd: string;
 		policy: CapturePolicy;
 		incompletePolicy?: IncompleteHandoffPolicy;
-		attach?: boolean;
 		enforceCompletion?: boolean;
 		/** Opaque receipt returned by a prior successful call for deferred consumption. */
 		validation?: object;
@@ -429,7 +428,10 @@ export function prepareIntegrationHandoff(
 		// exactly as a digest mismatch does.
 		return { error: storedError(incompleteEnvelopeError(handoff), options.policy), ...(returned ? { rejected: returned } : {}) };
 	}
-	if (options.attach !== false) Run.of(result).acceptHandoff(handoff);
+	// This transition validates and shapes the envelope but never attaches it:
+	// a Handoff exists only once a role actually consumes the result, and that
+	// decision belongs to the completion-aware consumer (handoff-consumption.ts),
+	// not to this seam (issue #142).
 	return { handoff, ...(validation ? { validation } : {}) };
 }
 
@@ -447,14 +449,20 @@ export function integrationControl(result: FlowRunResult): IntegrationControl {
 }
 
 export function incompleteHandoffSummary(results: FlowRunResult[], persistedHandoffs: DelegationHandoffEnvelope[] = []): string {
-	const handoffs = [
-		...results.flatMap((result) => result.handoff ? [result.handoff] : []),
-		...persistedHandoffs,
+	// A result that crossed a role boundary reports its incomplete status through
+	// its attached Handoff; a terminal result was never a handoff, so its
+	// incomplete status is the validated Return envelope it retained (issue #142).
+	const incomplete = [
+		...results.flatMap((result) => {
+			if (result.handoff && result.handoff.status !== "completed") return [`${result.handoff.provenance.agent}:${result.handoff.status}`];
+			if (!result.handoff && result.envelope && result.envelope.status !== "completed") return [`${result.agent}:${result.envelope.status}`];
+			return [];
+		}),
+		...persistedHandoffs.flatMap((handoff) =>
+			handoff.status !== "completed"
+				? [`${handoff.provenance.agent}:${handoff.status}`]
+				: [],
+		),
 	];
-	const incomplete = handoffs.flatMap((handoff) =>
-		handoff.status !== "completed"
-			? [`${handoff.provenance.agent}:${handoff.status}`]
-			: [],
-	);
 	return incomplete.length ? ` Included incomplete handoffs by explicit policy: ${incomplete.join(", ")}.` : "";
 }

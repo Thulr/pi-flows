@@ -6,7 +6,7 @@ import { handleLoop } from "../extensions/pi-flows/modes/loop.ts";
 import { handleOrchestrate } from "../extensions/pi-flows/modes/orchestrate.ts";
 import { handleRoute } from "../extensions/pi-flows/modes/route.ts";
 import type { DelegationContract } from "../extensions/pi-flows/types.ts";
-import { faultDeps, makeFaultAdapter, type FaultRule } from "./fault-adapter.ts";
+import { bankedDeliveries, faultDeps, makeFaultAdapter, type FaultRule } from "./fault-adapter.ts";
 import type { FaultScenario } from "./fault-scenarios.ts";
 
 const routeContract: DelegationContract = {
@@ -101,7 +101,7 @@ export function contractRoleScenarios(): FaultScenario[] {
 				policy: { contained: Boolean(output.details.error), falselyBlocked: false },
 				residualState: {
 					retryable: output.details.error?.retryable ?? false,
-					acceptedHandoffs: output.details.results.filter((result) => result.handoff).length,
+					acceptedHandoffs: bankedDeliveries(output),
 				},
 			};
 		},
@@ -118,7 +118,9 @@ export function contractRoleScenarios(): FaultScenario[] {
 			outcome: { errorCode: "RETURN_ENVELOPE_INVALID" },
 			process: { dispatched: 2, refused: 0, unreached: [] },
 			policy: { contained: true, falselyBlocked: false },
-			residualState: { retryable: false, acceptedHandoffs: 0 },
+			// The judge's escaped-artifact verdict is refused; only the loop body's
+			// Handoff — consumed by the judge — is banked (issue #142).
+			residualState: { retryable: false, acceptedHandoffs: 1 },
 		},
 		run: async () => {
 			const cwd = mkdtempSync(path.join(tmpdir(), "pi-flow-role-contract-fault-"));
@@ -143,7 +145,7 @@ export function contractRoleScenarios(): FaultScenario[] {
 				policy: { contained: Boolean(output.details.error), falselyBlocked: false },
 				residualState: {
 					retryable: output.details.error?.retryable ?? false,
-					acceptedHandoffs: output.details.results.filter((result) => result.handoff).length,
+					acceptedHandoffs: bankedDeliveries(output),
 				},
 			};
 		},
@@ -191,7 +193,7 @@ export function contractRoleScenarios(): FaultScenario[] {
 				policy: { contained: Boolean(output.details.error), falselyBlocked: false },
 				residualState: {
 					retryable: output.details.error?.retryable ?? false,
-					acceptedHandoffs: output.details.results.filter((result) => result.handoff).length,
+					acceptedHandoffs: bankedDeliveries(output),
 				},
 			};
 		},

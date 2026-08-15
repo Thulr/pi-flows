@@ -25,7 +25,7 @@ import { createAgentCatalog } from "../extensions/pi-flows/agent-catalog.ts";
 import { createHandoffConsumer } from "../extensions/pi-flows/handoff-consumption.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
 import { ChildBudgets } from "../extensions/pi-flows/runner-budget.ts";
-import { emptyUsage, flowError, makeSettle, type Budget, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type RecordEvent, type RunChildOptions, type UsageStats } from "../extensions/pi-flows/types.ts";
+import { emptyUsage, flowError, makeSettle, type Budget, type FlowAgent, type FlowDiscovery, type FlowErrorCode, type FlowRunResult, type ModeDeps, type ModeOutput, type RecordEvent, type RunChildOptions, type UsageStats } from "../extensions/pi-flows/types.ts";
 
 export type FaultKind = "delay" | "loss" | "duplicate" | "reorder" | "failure" | "stale";
 
@@ -402,4 +402,19 @@ export function faultDeps(params: Record<string, unknown>, adapter: FaultAdapter
 		concurrency: 4,
 		...overrides,
 	};
+}
+
+/**
+ * How many deliveries the parent banked under the post-#142 model: an attached
+ * Handoff (a downstream role consumed the result) or a validated Return envelope
+ * that the completeness policy admitted. A partial envelope is refused rather
+ * than banked only when the flow surfaced RETURN_ENVELOPE_INCOMPLETE; the same
+ * envelope is banked under explicit `incompleteHandoffPolicy:"include"`.
+ */
+export function bankedDeliveries(output: ModeOutput): number {
+	const incompleteRefused = output.details.error?.code === "RETURN_ENVELOPE_INCOMPLETE";
+	return output.details.results.filter((result) =>
+		result.handoff !== undefined
+		|| (result.envelope !== undefined && !(incompleteRefused && result.envelope.status !== "completed")),
+	).length;
 }
