@@ -164,9 +164,9 @@ function gatedPhaseTerms(phase: any, params: any): Record<string, unknown> {
 	};
 }
 
-/** Whether the requested level itself is held stable by the workflow digest. */
-function workflowBindsRequestedThinking(ref: any): boolean {
-	return ref.thinking !== undefined || (typeof ref.model === "string" && parseModelSpec(ref.model).thinking !== undefined);
+/** The requested level held stable by the workflow digest, excluding mutable flow/Agent fallbacks. */
+function workflowBoundRequestedThinking(ref: any): ThinkingLevel | undefined {
+	return ref?.thinking ?? (typeof ref?.model === "string" ? parseModelSpec(ref.model).thinking : undefined);
 }
 
 /**
@@ -237,8 +237,9 @@ export function* historicalApprovalBindingsForV3(phases: any[], index: number, d
 			thinking: profile.modelChoice.thinking ?? null,
 			tools: phase.tools ?? null,
 		};
-		if (profile.modelChoice.model && profile.modelChoice.thinking && workflowBindsRequestedThinking(phase)) {
-			const key = `${profile.modelChoice.model}\0${profile.modelChoice.thinking}`;
+		const requestedThinking = workflowBoundRequestedThinking(phase);
+		if (profile.modelChoice.model && profile.modelChoice.thinking && requestedThinking) {
+			const key = `${profile.modelChoice.model}\0${requestedThinking}`;
 			const slot = uncertain.get(key) ?? { targets: [], preferred: profile.modelChoice.thinking };
 			slot.targets.push(historical);
 			uncertain.set(key, slot);
@@ -258,8 +259,9 @@ export function* historicalApprovalBindingsForV3(phases: any[], index: number, d
 				thinking: debriefProfile?.modelChoice.thinking ?? null,
 			}
 		: null;
-	if (historicalDebrief && debriefProfile?.modelChoice.model && debriefProfile.modelChoice.thinking && workflowBindsRequestedThinking(debrief)) {
-		const key = `${debriefProfile.modelChoice.model}\0${debriefProfile.modelChoice.thinking}`;
+	const requestedDebriefThinking = workflowBoundRequestedThinking(debrief);
+	if (historicalDebrief && debriefProfile?.modelChoice.model && debriefProfile.modelChoice.thinking && requestedDebriefThinking) {
+		const key = `${debriefProfile.modelChoice.model}\0${requestedDebriefThinking}`;
 		const slot = uncertain.get(key) ?? { targets: [], preferred: debriefProfile.modelChoice.thinking };
 		slot.targets.push(historicalDebrief);
 		uncertain.set(key, slot);

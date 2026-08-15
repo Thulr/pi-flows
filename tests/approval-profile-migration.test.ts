@@ -201,6 +201,63 @@ test("a completed v3 receipt reconstructs clamped Thinking after model metadata 
 	assert.equal((await readState(cwd)).version, 4);
 });
 
+test("a completed v3 receipt reconstructs distinct Role clamps after model metadata changes", async () => {
+	const cwd = await freshDir();
+	const model = "test-provider/shared-model";
+	const dualParams = {
+		...params,
+		workflow: {
+			...params.workflow,
+			phases: [
+				params.workflow.phases[0],
+				{ id: "ship-high", agent: "strategist", task: "Ship high", model, thinking: "high" },
+				{ id: "ship-max", agent: "strategist", task: "Ship max", model, thinking: "max" },
+			],
+		},
+	};
+	const oldRegistry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			{ id: "shared-model", provider: "test-provider", reasoning: true, contextWindow: 200_000, maxTokens: 8192, cost: { input: 1, output: 2 } },
+		],
+	};
+	await runFlow(dualParams, {}, { cwd, registry: oldRegistry });
+	await runFlow({ ...dualParams, workflow: { ...dualParams.workflow, resume: true } }, { strategist: "SHIPPED" }, { cwd, hasUI: true, registry: oldRegistry });
+	const state = await readState(cwd);
+	const historical = historicalV3Binding(state.digest, { model, thinking: "high" });
+	const phase = (historical.parameters as any).gatedPhases[0];
+	historical.parameters = {
+		...(historical.parameters as any),
+		gatedPhases: [
+			{ ...phase, id: "ship-high", task: "Ship high", thinking: "high" },
+			{ ...phase, id: "ship-max", task: "Ship max", thinking: "max" },
+		],
+	};
+	state.version = 3;
+	state.receipts.approve = asHistoricalReceipt(state.receipts.approve, historical);
+	await writeState(cwd, state);
+	const changedRegistry = {
+		getAvailable: () => [
+			...STUB_REGISTRY.getAvailable(),
+			{
+				id: "shared-model",
+				provider: "test-provider",
+				reasoning: true,
+				thinkingLevelMap: { high: null, xhigh: null, max: null },
+				contextWindow: 200_000,
+				maxTokens: 8192,
+				cost: { input: 1, output: 2 },
+			},
+		],
+	};
+
+	const resumed = await runFlow({ ...dualParams, workflow: { ...dualParams.workflow, resume: true } }, {}, { cwd, registry: changedRegistry });
+	assert.equal(resumed.result.details.error, undefined);
+	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
+	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 2, "completed work is not dispatched again");
+	assert.equal((await readState(cwd)).version, 4);
+});
+
 test("a stale fully spent v3 receipt keeps its version so restoring conditions can retry migration", async () => {
 	const cwd = await freshDir();
 	const { state } = await historicalState(cwd, "SHIPPED");

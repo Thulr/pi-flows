@@ -16,7 +16,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   model, and Thinking level. Profile drift reopens unspent consent; unbindable
   defaults refuse before prompting; malformed/replayed receipts remain hard
   failures; and version-3 states reopen unspent consent, preserve same-action
-  retries, or retain completed approvals as audit-only compatibility evidence.
+  retries across model-metadata drift, or retain completed approvals as
+  audit-only compatibility evidence.
 
 - Every agent-reference `contract` now resolves before its Child can spawn
   (#137), binding Task, budget/timeout, Return validation, and trace authority

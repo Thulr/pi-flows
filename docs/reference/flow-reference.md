@@ -859,8 +859,9 @@ consumed by its own action keeps its identity as `legacy-compatibility`: audit-o
 after completion, or able to resume the same interrupted gated run or debrief.
 An in-progress migration binds new profile fields to the current bindable
 profile; later drift is caught. Completed audit reconstruction does not require
-the old model or its Thinking metadata to remain in today's roster. Malformed
-and replayed v3 receipts remain hard failures.
+the old model or its Thinking metadata to remain in today's roster; distinct
+workflow-bound Role requests reconstruct independently when current metadata
+clamps them alike. Malformed and replayed v3 receipts remain hard failures.
 
 This protects against replay and drift in a local state file, not against an
 attacker who can write that file — there is no key to sign a receipt with that
