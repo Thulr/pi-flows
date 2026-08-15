@@ -34,6 +34,16 @@ const useDefaultModel = ["agent", "default", ""].includes(model);
 const timeoutMs = Number(flag("timeout", process.env.PI_FLOWS_TIMEOUT_MS ?? "90000"));
 const filter = flag("filter", "");
 const dryRun = bool("dry-run");
+let admissibility = { knownSubjectModels: [] };
+
+/** Exact references from pi's human-readable available-model table. */
+export function modelReferencesFromList(output) {
+	return [...new Set(String(output).split(/\r?\n/).flatMap((line) => {
+		const fields = line.trim().split(/\s+/);
+		const [provider, modelId] = fields;
+		return fields.length >= 6 && provider !== "provider" && /^[a-z0-9._-]+$/i.test(provider ?? "") && modelId ? [`${provider}/${modelId}`] : [];
+	}))];
+}
 
 export function flowCallIdsFromMessage(message) {
 	return flowCallsFromMessage(message).map((call) => call.id);
@@ -173,9 +183,9 @@ function actsBeforeRunner(args) {
 		|| Boolean(typeof args?.preset === "string" && args.preset);
 }
 
-export function letRefusalPlayOut(args, observedCount, testCase) {
+export function letRefusalPlayOut(args, observedCount, testCase, context = {}) {
 	if (!hasUsefulArguments(args)) return false;
-	const refusal = callAdmissibilityFailure(args);
+	const refusal = callAdmissibilityFailure(args, context);
 	if (!refusal) return false;
 	if (!PLAYOUT_SAFE_CODES.has(refusal.code)) {
 		if (!RUNNER_LEVEL_CODES.has(refusal.code)) return false;
@@ -219,7 +229,7 @@ async function runSelectionCase(testCase, signal) {
 		onLine: (line, controls) => {
 			collectSelectionEvent(line, state);
 			if (!testCase.expectFlow || state.stoppedAfterFlowCall || !state.flowExecutionStarted) return;
-			if (letRefusalPlayOut(state.flowExecutions.at(-1), state.flowExecutions.length, testCase)) return;
+			if (letRefusalPlayOut(state.flowExecutions.at(-1), state.flowExecutions.length, testCase, admissibility)) return;
 			state.stoppedAfterFlowCall = true;
 			controls.terminate();
 		},
@@ -248,12 +258,14 @@ async function runSelectionCase(testCase, signal) {
 }
 
 async function preflight() {
-	if (!runPreflight([corpusPreflightStep(EVAL_CORPUS)])) return false;
-	if (dryRun) return true;
+	if (!runPreflight([corpusPreflightStep(EVAL_CORPUS)])) return null;
+	if (dryRun) return [];
 	return new Promise((resolve) => {
-		const proc = spawn("pi", ["--version"], { stdio: "ignore" });
-		proc.on("error", () => resolve(false));
-		proc.on("close", (code) => resolve(code === 0));
+		let stdout = "";
+		const proc = spawn("pi", ["--no-extensions", "--list-models"], { stdio: ["ignore", "pipe", "ignore"] });
+		proc.stdout.on("data", (chunk) => { stdout += chunk; });
+		proc.on("error", () => resolve(null));
+		proc.on("close", (code) => resolve(code === 0 ? modelReferencesFromList(stdout) : null));
 	});
 }
 
@@ -267,10 +279,12 @@ async function main() {
 	// not at module top: importing this module for its helpers must not
 	// mutate process.env.
 	process.env.PI_FLOWS_PACKAGE_AGENTS_ONLY = "1";
-	if (!(await preflight())) {
-		console.error("FAIL `pi` was not found on PATH. Smoke-test with: npm run eval:select -- --dry-run");
+	const knownSubjectModels = await preflight();
+	if (knownSubjectModels === null) {
+		console.error("FAIL `pi --list-models` could not provide the subject roster. Check pi/provider setup, or smoke-test with: npm run eval:select -- --dry-run");
 		process.exit(2);
 	}
+	admissibility = { knownSubjectModels };
 
 	const selected = SELECTION_CASES.filter((testCase) => !filter || testCase.name.includes(filter));
 	if (selected.length === 0) {
@@ -288,7 +302,7 @@ async function main() {
 	for (const testCase of selected) {
 		const startedAt = Date.now();
 		const result = await runSelectionCase(testCase, signal);
-		const scored = scoreSelection(testCase, result);
+		const scored = scoreSelection(testCase, result, admissibility);
 		totalCost += result.usage?.cost ?? 0;
 		if (scored.inconclusive) {
 			inconclusive += 1;

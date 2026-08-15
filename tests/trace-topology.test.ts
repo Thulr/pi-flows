@@ -119,7 +119,7 @@ test("workflow phase state transitions and approval receipts reach the trace", a
 				phases: [
 					{ id: "build", agent: "operator", task: "build {task}" },
 					{ id: "gate", approval: { message: "Ship?" } },
-					{ id: "release", agent: "operator", task: "release {previous}" },
+					{ id: "release", agent: "operator", task: "release {previous}", tools: "none", thinking: "medium" },
 				],
 			},
 		},
@@ -218,7 +218,7 @@ test("an approval-gated phase links to the approval that let it run", async () =
 				stateFile: ".pi/flow-workflows/approval-edge.json",
 				phases: [
 					{ id: "gate", approval: { message: "Ship?" } },
-					{ id: "release", agent: "operator", task: "release {task}" },
+					{ id: "release", agent: "operator", task: "release {task}", tools: "none", thinking: "medium" },
 				],
 			},
 		},
@@ -301,13 +301,14 @@ test("the workflow debrief links every phase, including those that ran no child"
 	const { stubDir } = await runFlow(
 		{
 			task: "ship it",
+			thinking: "medium",
 			traceFile: TRACE,
 			workflow: {
 				stateFile: ".pi/flow-workflows/debrief-links.json",
 				phases: [
 					{ id: "build", agent: "operator", task: "build {task}" },
 					{ id: "gate", approval: { message: "Ship?" } },
-					{ id: "release", agent: "operator", task: "release" },
+					{ id: "release", agent: "operator", task: "release", tools: "none" },
 				],
 				debrief: { agent: "debrief" },
 			},

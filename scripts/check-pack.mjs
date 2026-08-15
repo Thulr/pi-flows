@@ -276,5 +276,38 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // context without a competing Return protocol and documented empty contracted
 // subtask refusal. The file set remains 108; headroom is ~432 B over measured
 // 1_231_468.
-assert.ok(pack.unpackedSize < 1_231_900, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_251_150 for effective Agent-profile approval binding (#138): one
+// new Core module resolves source, prompt identity, tools, cwd, model, and
+// Thinking once for approval and dispatch; workflow state gains the v3 -> v4
+// migration; and the public reference, troubleshooting, privacy, glossary, and
+// schema help state the exact consent contract. Review rounds added canonical
+// receipt validation, non-stranding migration, durable debrief consumption, and
+// completed-state audit validation, then required an exact current roster model
+// so Pi cannot fuzzy-retarget a vanished pin. The file set grows to 109 only for
+// agent-profile.ts; tests and fault scenarios remain unpackaged. Headroom is
+// ~497 B over the measured 1_250_653.
+// Raised to 1_253_600 after #138's third review: historical v3 verification
+// now tries a bounded set of Thinking clamps when a pinned model's old metadata
+// has left the roster. The scorer parity fix and all new coverage live under
+// evals/ and tests/, so the packaged file set remains 109. Headroom is ~500 B
+// over the measured size, matching previous raises.
+// Raised to 1_254_650 after #138's fourth review: cwd resolution now retains
+// the canonical filesystem target across approval, dispatch, containment, and
+// shared-write checks, with the public consent docs naming that identity. The
+// metadata-change regressions remain unpackaged; the file set stays 109 and
+// headroom is 281 B over the measured 1_254_369.
+// Raised to 1_265_050 after #138's sixth review: v3 migration now searches
+// coherent per-model clamp histories, recognizes the next approval as part of
+// the authorized action, and accepts only digest-proven historical Thinking
+// witnesses beyond its work bound. Partial v2 actions and unused witnesses fail
+// closed, with migration diagnostics following the capture policy. The file set
+// stays 109 and headroom is 491 B over the measured 1_264_559.
+// Raised to 1_273_900 after #138's seventh review: binding resolution retains
+// the canonical cwd path and filesystem identity it hashed, carries that binding
+// through the opaque Integration plan and child-run seam, and the production
+// adapter rechecks both immediately before spawn after its asynchronous setup.
+// Missing, non-directory, unreadable, or unsearchable targets are unbound before
+// consent. The regressions are unpackaged; the file set stays 109 and headroom
+// is 522 B over measured 1_273_378.
+assert.ok(pack.unpackedSize < 1_273_900, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

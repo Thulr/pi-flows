@@ -1,4 +1,5 @@
 import { MAX_PARALLEL_TASKS, type FlowError, type FlowRunResult } from "../types.ts";
+import type { AgentProfileEnvironment } from "../agent-profile.ts";
 
 // The plan vocabulary (CONTEXT.md: Wave). A mode's topology used to be written
 // five times — the handler, the requested-agents lambda, the shared-write
@@ -91,13 +92,16 @@ export function plannedContract<T>(ref: { contract?: T }, fallback: T | undefine
 }
 
 /**
- * What a mode pre-spawn refusal may know beyond its params. Only UI
- * availability, because exactly one rule turns on it: a phase that needs a
- * human decision refuses before spawning when nothing can collect one.
+ * What a mode pre-spawn refusal may know beyond its params. UI availability
+ * answers whether a human decision can be collected. The optional effective
+ * Agent-profile environment is supplied by workflow's live handler; static eval
+ * readers omit it because they have no invocation roster or discovery snapshot.
  */
 export interface PreSpawnContext {
 	/** No UI is available to collect an approval, so an approval gate refuses rather than prompting. */
 	headless: boolean;
+	/** Invocation facts needed to declare an unbindable approval profile. */
+	agentProfiles?: AgentProfileEnvironment;
 }
 
 /**

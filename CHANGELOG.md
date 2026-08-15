@@ -10,6 +10,19 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Workflow approval receipts now bind every gated Role and gated debrief to the
+  effective Agent profile (#138): selected package/user/project source, a
+  non-disclosing prompt digest, post-override tools, canonical cwd target and
+  filesystem identity, concrete model, and Thinking level. Verification carries
+  that exact cwd binding into gated Role and debrief dispatch, where the production
+  runner rechecks it immediately before spawn. Profile drift reopens unspent consent; unbindable
+  defaults refuse before prompting; malformed/replayed receipts remain hard
+  failures; and version-3 states reopen unspent consent, preserve same-action
+  retries across model-metadata drift, or retain completed approvals as
+  audit-only compatibility evidence. Historical clamps are reconstructed per
+  model, with digest-checked Thinking witnesses for searches beyond the bound;
+  unused or incoherent witnesses and partially spent v2 actions fail closed.
+
 - Every agent-reference `contract` now resolves before its Child can spawn
   (#137), binding Task, budget/timeout, Return validation, and trace authority
   for evaluator, controller, loop, search, and monitor roles. Unforgeable,

@@ -715,15 +715,18 @@ parallel scoring cannot mutate the workspace.
 `workflow` runs an ordered state machine of work phases and approval nodes. It
 persists redacted outputs and structured handoff envelopes after every work
 phase, so a headless approval pause or later retry does not discard completed
-work. Version-2 state also stores a content-free attestation created only after
+work. Version-2 and later state also stores a content-free attestation created only after
 the original contract, schema, artifact, and digest validation succeeds. Resume
 binds the sanitized envelope to that attestation and the current contract
 identity instead of revalidating policy-transformed content. Existing version-1
-states migrate to legacy compatibility envelopes before downstream reuse.
+states migrate to legacy compatibility envelopes before downstream reuse. The
+current state schema is version 4, which binds approvals to effective Agent
+profiles as described below.
 
 ```json
 {
   "task": "Ship the cache migration",
+  "thinking": "medium",
   "workflow": {
     "stateFile": ".pi/flow-workflows/cache-migration.json",
     "phases": [
@@ -741,6 +744,7 @@ states migrate to legacy compatibility envelopes before downstream reuse.
         "id": "apply",
         "agent": "operator",
         "task": "Implement the approved plan:\n{phase.plan}",
+        "tools": "read,bash,edit,write",
         "checkCommand": "npm test"
       }
     ],
@@ -753,12 +757,13 @@ states migrate to legacy compatibility envelopes before downstream reuse.
 |---|---|---|
 | `workflow.phases` | required | Ordered `1..12` phases with unique `id` values. Each phase is exactly one kind: `agent` + `task`, or `approval.message`. |
 | `workflow.stateFile` | `.pi/flow-workflows/<digest>.json` | Audit/resume state. The digest covers the top-level task, phases, and debrief configuration. The file is written atomically with owner-only permissions. |
-| `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match. |
-| `workflow.debrief` | (none) | Optional final synthesizer over all persisted phase artifacts. |
+| `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match, and every outstanding approval is rechecked against the profiles that would execute now. Resuming an already completed workflow is an audit-only no-op and spawns no Child. |
+| `workflow.historicalThinking` | (none) | Optional v3 migration witness with `phases: { "<phase-id>": "<effective-level>" }` and/or `debrief`. Use only when bounded reconstruction requests it. A value never controls dispatch and is accepted only when it reproduces the spent receipt's binding digest. |
+| `workflow.debrief` | (none) | Optional final synthesizer over all persisted phase artifacts. A trailing approval binds its effective Agent profile too. |
 | `workflow.approvalTtlMs` | `86400000` (24h) | How long an approval receipt authorizes its gated action. Integer `60000..2592000000`. A resume after the window needs a fresh approval. |
 | `phase.task` | required for work | Supports `{task}`, `{previous}`, and `{phase.<id>}` output placeholders. |
 | `phase.checkCommand` | (none) | Deterministic gate run in the phase `cwd`; non-zero stops with `WORKFLOW_GATE_FAILED`. |
-| `phase.cwd` / `model` / `tools` | inherited | Per-phase process and gate overrides. |
+| `phase.cwd` / `model` / `tier` / `thinking` / `tools` | inherited | Per-phase process and gate overrides. Approval binds their effective values after Agent and flow fallbacks. |
 | `phase.returnContract` / `requireEvidence` | top-level values | Per-phase handoff requirements. |
 
 Interactive approval nodes call the Pi confirmation UI. In headless contexts they
@@ -786,14 +791,34 @@ action, at the first gated step that completes — so retrying a failed phase
 inside its own gated run is a resume, while presenting the receipt for a
 different action is a replay and returns `APPROVAL_RECEIPT_CONSUMED`.
 
-The binding covers what the workflow digest cannot see: the gated phases'
-effective definitions after flow-level fallbacks (`returnContract`,
-`requireEvidence`, the resolved contract) plus `agentScope` and
-`incompleteHandoffPolicy`. When the gated run reaches the end of the workflow the
-binding also covers the debrief's resolved `contract`, `returnContract`, and
-`requireEvidence`, since a trailing approval gates the debrief too. Changing `agentScope` between approval and resume
-swaps which repo-controlled prompt runs, so it invalidates the approval with
-`APPROVAL_RECEIPT_STALE`.
+For every gated Role, and for the debrief when the approval reaches workflow
+completion, the binding identifies these effective execution conditions:
+
+- selected Agent source (`package`, `user`, or `project`);
+- a full SHA-256 identity of the selected Agent system prompt, never its text;
+- effective tools after the Role override or Agent inheritance is applied;
+- canonical working-directory target plus a non-disclosing filesystem identity
+  (symlinks resolved);
+- concrete resolved model; and
+- Thinking level passed to Pi.
+
+The canonical cwd binding retained by verification is passed through the opaque
+Integration plan and child-run seam. The handler rechecks it after awaited state
+writes, and the production adapter checks both path and filesystem identity again
+immediately before process spawn, after its own asynchronous setup.
+
+The same binding also covers the approval action/message, task and gate terms,
+effective delegation contract and Return/evidence requirements, `agentScope`,
+the resolved handoff policies, and `incompleteHandoffPolicy`. Source shadowing,
+prompt edits, inherited-tool changes, model-roster changes, repointing a cwd
+symlink, replacing the canonical directory itself, or moving the default working
+directory therefore produce `APPROVAL_RECEIPT_STALE` even when the authored
+phase is unchanged. A missing Agent, nonexistent, non-directory, unreadable, or
+unsearchable cwd,
+Pi-default toolset, model selector without an exact current registry match, or
+implicit Thinking level cannot be identified exactly; a gated workflow
+refuses with `WORKFLOW_INVALID` before asking for consent, or before approved
+dispatch if a canonical target disappeared, until those conditions are concrete.
 
 A completed approval whose receipt has lapsed or been superseded is **reopened**
 rather than stranding the state file: the phase is un-completed, its receipt
@@ -803,12 +828,17 @@ into the prompt. Headless runs still fail closed with
 `APPROVAL_RECEIPT_EXPIRED` reopen; a consumed or malformed receipt is evidence of
 tampering and stays a hard refusal.
 
-Reopening applies only while **none** of the gated run has executed. Once part of
-it has, a fresh receipt would claim to authorize work that already ran under the
-old parameters — one receipt describing two different actions — and would erase
-the receipt that authorized the completed half. That case is refused outright,
-naming which phases already ran, so restoring the approved parameters or starting
-a fresh run stays the operator's call.
+Reopening applies only while the receipt is unconsumed and **none** of the gated
+run has executed. Once a phase completed or a gated debrief began, a fresh
+receipt would claim to authorize work that already ran under the old conditions
+and would erase the receipt that authorized it. That case is refused outright,
+naming the completed phases or begun debrief, so restoring the approved profile
+and resuming, or starting a fresh run, stays the operator's call.
+
+Once the workflow itself is already `completed`, resume is an audit-only no-op:
+it rechecks persisted handoff and receipt integrity but neither reopens stale or
+expired consent nor reruns a Child, because no action remains to authorize.
+Malformed receipts and receipts consumed by another action still fail closed.
 
 The expiry gates *starting* the authorized action. Once the receipt has been
 spent on it, a gated run finishes rather than aborting halfway because the clock
@@ -824,13 +854,30 @@ than having its claims repeated as fact.
 Receipts surface in `details.approvals`, in the final answer, and on the trace
 root span (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
 `flow.approval_consumed_count`, `flow.approval_blocked`) as identifiers and
-status only — the approved parameters never leave the binding digest. Set
+status only. The effective conditions, including the prompt digest, participate
+in the binding digest but are not persisted as receipt fields; raw prompt text is
+never placed in workflow state. Set
 `PI_FLOWS_APPROVAL_ACTOR` to label the approving actor; it is an audit
 attribution, not an authenticated identity.
 
 Version-2 state files migrate on resume: a completed approval recorded as
 `APPROVED` becomes a `legacy-compatibility` receipt with no approver and no
-expiry, which still binds the gated action.
+expiry, which still binds the gated action. An unstarted v2 action reopens; a
+partially completed one fails closed because no receipt can prove one set of
+conditions for both halves. Version-3 receipts predate effective Agent-profile
+binding. Unconsumed outstanding v3 consent reopens. A valid receipt
+consumed by its own action keeps its identity as `legacy-compatibility`: audit-only
+after completion, or able to resume the same interrupted gated run or debrief.
+An in-progress migration binds new profile fields to the current bindable
+profile; later drift is caught. Completed audit reconstruction does not require
+the old model or its Thinking metadata to remain in today's roster; distinct
+workflow-bound Role requests reconstruct independently when current metadata
+clamps them alike. Reconstruction models one coherent capability profile per
+model. If the bounded product is too large, resume leaves the v3 state intact
+and requests a `workflow.historicalThinking` witness for one or more phases;
+the witness is accepted only when the old binding digest verifies, and every
+supplied entry must belong to a spent binding search. Irrelevant, contradictory,
+malformed, and replayed v3 evidence remains a hard failure.
 
 This protects against replay and drift in a local state file, not against an
 attacker who can write that file — there is no key to sign a receipt with that

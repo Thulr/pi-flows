@@ -9,7 +9,7 @@
 import type { Budget, ChildSpanScope, DelegationContract, FlowAgentRefInput, FlowError, FlowMode, FlowRunResult, ModeDeps, ModeOutput, RunChildOptions, SpanStage } from "./types.ts";
 import { makeEmptyRunResult, sanitizeText } from "./sanitize.ts";
 import type { Settle } from "./settle.ts";
-import { validateSharedWriteCwd } from "./validate.ts";
+import { validateSharedWriteCwd, type CwdTargetBinding } from "./validate.ts";
 
 export async function mapWithConcurrency<TIn, TOut>(
 	items: TIn[],
@@ -37,6 +37,7 @@ export interface AgentFanoutItem {
 	readonly ref: Omit<FlowAgentRefInput, "contract">;
 	readonly task: string;
 	readonly placeholderTask?: string;
+	readonly cwdBinding?: CwdTargetBinding;
 	readonly limits?: AgentRunLimits;
 	/** Per-item span placement: its own key and the units it consumed. The stage comes from the fan-out call. */
 	readonly scope?: ChildSpanScope;
@@ -57,7 +58,7 @@ function tighterTimeout(flowTimeoutMs: number | undefined, contractTimeoutMs: nu
 }
 
 /** The standard per-run plumbing (everything except onUpdate), built in exactly one place. */
-function childRunOptions(deps: ModeDeps, ref: Omit<FlowAgentRefInput, "contract">, task: string, mode: FlowMode, step: number | undefined, limits: AgentRunLimits = {}, scope?: ChildSpanScope): Omit<RunChildOptions, "onUpdate"> {
+function childRunOptions(deps: ModeDeps, ref: Omit<FlowAgentRefInput, "contract">, task: string, mode: FlowMode, step: number | undefined, limits: AgentRunLimits = {}, scope?: ChildSpanScope, cwdBinding?: CwdTargetBinding): Omit<RunChildOptions, "onUpdate"> {
 	return {
 		defaultCwd: deps.defaultCwd,
 		agents: deps.discovery.agents,
@@ -65,6 +66,7 @@ function childRunOptions(deps: ModeDeps, ref: Omit<FlowAgentRefInput, "contract"
 		role: ref.role,
 		task,
 		cwd: ref.cwd,
+		cwdBinding,
 		model: ref.model ?? deps.params.model,
 		tier: ref.tier ?? deps.params.tier,
 		// The role's own level and the flow-wide fallback travel separately rather
@@ -134,7 +136,7 @@ async function runAgentFanout(
 	const baseStep = priorResults.length;
 	return mapWithConcurrency(items, concurrency, async (item, index) => {
 		const result = await deps.runChild({
-			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1, item.limits, item.scope),
+			...childRunOptions(deps, item.ref, item.task, mode, baseStep + index + 1, item.limits, item.scope, item.cwdBinding),
 			onUpdate: (partial) => {
 				const current = partial.details.results[0];
 				if (current) liveResults[index] = current;
@@ -188,13 +190,14 @@ export async function runWave(deps: ModeDeps, settle: Settle, items: AgentFanout
 export interface AgentRunPlacement {
 	readonly limits?: AgentRunLimits;
 	readonly scope?: ChildSpanScope;
+	readonly cwdBinding?: CwdTargetBinding;
 }
 
 /** Run one agent role with the standard param plumbing, emitting live updates appended to `priorResults`. */
 export function runAgentRef(deps: ModeDeps, ref: Omit<FlowAgentRefInput, "contract">, task: string, mode: FlowMode, step: number | undefined, priorResults: FlowRunResult[], placement: AgentRunPlacement = {}): Promise<FlowRunResult> {
 	if (deps.handoffs.blockingError) return Promise.resolve(emptyRun(ref, task, deps, deps.handoffs.blockingError));
 	return deps.runChild({
-		...childRunOptions(deps, ref, task, mode, step, placement.limits ?? {}, placement.scope),
+		...childRunOptions(deps, ref, task, mode, step, placement.limits ?? {}, placement.scope, placement.cwdBinding),
 		onUpdate: (partial) => {
 			const current = partial.details.results[0];
 			deps.onUpdate?.({ content: partial.content, details: deps.makeDetails(mode)([...priorResults, ...(current ? [current] : [])]) });

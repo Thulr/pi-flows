@@ -12,6 +12,7 @@ pi-flows starts child `pi` processes. It does not add a separate analytics SDK, 
 | Usage/cost/tokens | Stored structurally | Kept even when content capture is disabled. |
 | stderr/stdout samples | Captured with caps and redaction | Used for recovery diagnostics. |
 | Agent paths | Home path redacted to `~` | Project-relative context may still appear in task/output content. |
+| Workflow state and approval receipts | Owner-only (`0600`) state file | Persists redacted phase artifacts plus receipt identity/status. Approval conditions are represented by a binding digest; the selected Agent prompt contributes a SHA-256 identity, never raw prompt text. |
 | Inter-agent handoffs | Stripped of invisible/bidi chars + scanned | A bounded flow-scoped history also detects injection assembled across several boundaries. `warn` preserves flagged text with a notice, `quarantine` withholds it, and `fail` refuses the recipient before spawn. |
 | Trace spans (`traceFile`) | **Off by default**; written only when set | OpenInference-shaped JSON spans appended to the file: one per child run, one per stage (wave/round/phase), one per coordination event (approval, state, retry, budget, validation, handoff, artifact), plus a root span. Subject to the same redaction/cap policy; `input.value`/`output.value` are omitted when `recordContent:false`. Coordination-event spans carry shapes, sizes, digests, and identifiers — never handoff summaries, envelope `data`, approved parameters, or constraint text. Constraint identifiers are content digests, so preservation is checkable without recording the constraint. `traceLabel` is copied into span attributes. The file is **not** auto-redacted at rest — treat it as you would any trace export. |
 | Eval reliability report (`--reliability-out`) | Written by `npm run eval`; defaults under ignored `.thulr/runs/` | Retains each subject trial's answer, objective/judge outcome, costs, tokens, duration, exclusion, and infrastructure failure so reliability statistics remain auditable. This is a local raw eval artifact; do not commit or share it without reviewing its contents. |
@@ -63,7 +64,7 @@ Consult pi documentation for provider/session behavior. Useful environment contr
 
 ## Retention
 
-Child sessions run with `--no-session`. Parent sessions may still store the flow tool result, including redacted content/details. Do not paste secrets into tasks; use references or local files where possible.
+Child sessions run with `--no-session`. Parent sessions may still store the flow tool result, including redacted content/details. Resumable workflow state remains on disk until you remove it; its receipt omits raw Agent prompt text, but the source Agent file still contains that prompt. Do not paste secrets into tasks; use references or local files where possible.
 
 ## Regression policy
 

@@ -196,7 +196,7 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
     "phases": [
       { "id": "plan", "agent": "strategist", "task": "Plan {task}" },
       { "id": "approve", "approval": { "message": "Approve the migration plan?" } },
-      { "id": "apply", "agent": "operator", "task": "Apply {phase.plan}", "checkCommand": "npm test" }
+      { "id": "apply", "agent": "operator", "task": "Apply {phase.plan}", "tools": "read,bash,edit,write", "thinking": "medium", "checkCommand": "npm test" }
     ]
   },
   "why": "the migration needs gated phases with a resumable human approval"

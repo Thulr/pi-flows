@@ -9,11 +9,11 @@
 import { createHash } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
-import type { DelegationHandoffEnvelope, ModeDeps } from "../types.ts";
+import { flowError, type DelegationHandoffEnvelope, type FlowError, type ModeDeps } from "../types.ts";
 import { sanitizeText } from "../sanitize.ts";
 import { canonicalHandoff, createPersistedHandoffAttestation, type PersistedHandoffAttestation } from "../delegation.ts";
-import { legacyApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
-import { approvalBindingFor, gatedPhaseIds, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
+import { legacyApprovalReceipt, migrateSpentApprovalReceipt, type ApprovalReceipt } from "../approval.ts";
+import { approvalBindingFor, approvalProfileRefusal, gatedPhaseIds, historicalApprovalSearchForV3, workflowProfileEnvironment, WORKFLOW_STATE_VERSION, type HistoricalApprovalSearch } from "./workflow-approval.ts";
 
 export interface WorkflowState {
 	version: typeof WORKFLOW_STATE_VERSION;
@@ -43,8 +43,54 @@ export async function persistState(file: string, state: WorkflowState): Promise<
 	await rename(temporary, file);
 }
 
+/** Mark a workflow failed and durably record the transition before returning its refusal. */
+export async function persistFailedState(file: string, state: WorkflowState): Promise<void> {
+	state.status = "failed";
+	state.updatedAt = new Date().toISOString();
+	await persistState(file, state);
+}
+
 export function freshState(digest: string): WorkflowState {
 	return { version: WORKFLOW_STATE_VERSION, digest, status: "running", completedPhaseIds: [], outputs: {}, handoffs: {}, attestations: {}, receipts: {}, updatedAt: new Date().toISOString() };
+}
+
+/** Whether work, a consecutive next consent point, or terminal completion has not happened yet. */
+function approvalActionOutstanding(state: { completedPhaseIds: string[]; status: string }, phases: any[], index: number): boolean {
+	const gated = gatedPhaseIds(phases, index);
+	const next = index + gated.length + 1;
+	return gated.some((id) => !state.completedPhaseIds.includes(id))
+		|| (gated.length === 0 && next < phases.length && !state.completedPhaseIds.includes(phases[next].id))
+		|| (next >= phases.length && state.status !== "completed");
+}
+
+function historicalThinkingSearchError(phaseId: string, search: HistoricalApprovalSearch, policy: ModeDeps["policy"]): FlowError {
+	const safePhase = sanitizeText(phaseId, policy, 256);
+	if (search.invalidWitnesses.length > 0) {
+		const safeWitnesses = sanitizeText(search.invalidWitnesses.join(", "), policy, 512);
+		return flowError(
+			"WORKFLOW_STATE_INVALID",
+			`The historical Thinking witness for approval phase "${safePhase}" is inconsistent.`,
+			`The supplied entries (${safeWitnesses}) cannot come from one capability profile for their shared model.`,
+			"Correct or remove the conflicting workflow.historicalThinking values, then resume again.",
+		);
+	}
+	const safeUnwitnessed = sanitizeText(search.unwitnessed.join(", "), policy, 512);
+	return flowError(
+		"WORKFLOW_STATE_INVALID",
+		`Approval phase "${safePhase}" needs historical Thinking evidence to finish migration.`,
+		`Its v3 receipt has ${search.candidateCount.toLocaleString("en-US")} coherent model-clamp candidates; the bounded verifier checked ${search.candidateLimit.toLocaleString("en-US")} without declaring the receipt stale.`,
+		`Set effective v3 levels under workflow.historicalThinking.phases for one or more of: ${safeUnwitnessed}; use workflow.historicalThinking.debrief for the debrief. The supplied values are accepted only if the stored receipt digest verifies.`,
+	);
+}
+
+function unusedHistoricalThinkingError(unused: readonly string[], policy: ModeDeps["policy"]): FlowError {
+	const safeUnused = sanitizeText(unused.join(", "), policy, 512);
+	return flowError(
+		"WORKFLOW_STATE_INVALID",
+		"The historical Thinking witness does not identify spent v3 approval work.",
+		`These entries were not consumed by any historical binding search: ${safeUnused}.`,
+		"Remove entries for ungated, unspent, implicit-Thinking, or model-less Roles and resume again.",
+	);
 }
 
 function legacyCompatibilityHandoff(phase: any, output: string, step: number, policy: ModeDeps["policy"]): DelegationHandoffEnvelope {
@@ -66,7 +112,7 @@ function legacyCompatibilityHandoff(phase: any, output: string, step: number, po
 	};
 }
 
-/** v1 -> v2: reconstruct the typed handoff layer. Chained into the v3 receipt migration by the resume path. */
+/** v1 -> v2: reconstruct the typed handoff layer. Chained through later migrations by the resume path. */
 export function migrateWorkflowStateV1(legacy: any, phases: any[], policy: ModeDeps["policy"]): any {
 	const state = {
 		...legacy,
@@ -92,15 +138,12 @@ export function migrateWorkflowStateV1(legacy: any, phases: any[], policy: ModeD
  * marked spent by the action it already let through, which keeps resume working
  * while still binding: editing a gated phase after migration is still caught.
  *
- * An approval whose gated work has NOT all run is a different case, and the
- * difference matters. Its binding would be computed from the roster that happens
- * to exist at resume time, so a tier now resolving to another provider — or a
- * phase that cannot be bound at all — would be retroactively blessed as the
- * thing the operator consented to. Nobody approved that. Those approvals are
- * left unmigrated, which drops them back through the normal approval path and
- * asks a human again.
+ * An approval whose gated work has NOT all run is different. If none ran, it
+ * reopens through the normal approval path. If some ran, no receipt can prove
+ * one set of conditions for both halves, so migration fails closed rather than
+ * retroactively blessing current roster resolution as the old consent.
  */
-export function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDeps, digest: string): WorkflowState {
+export function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDeps, digest: string): { state: WorkflowState; error?: FlowError } {
 	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, receipts: {} };
 	for (const [index, phase] of phases.entries()) {
 		if (!phase?.approval?.message || !state.completedPhaseIds.includes(phase.id)) continue;
@@ -114,10 +157,22 @@ export function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDep
 		// to run, and that debrief would then execute on whatever the roster now
 		// resolves, never re-approved.
 		const gated = gatedPhaseIds(phases, index);
-		const authorizesCompletion = index + gated.length + 1 >= phases.length;
-		const outstanding = gated.some((id) => !state.completedPhaseIds.includes(id))
-			|| (authorizesCompletion && legacy.status !== "completed");
+		const outstanding = approvalActionOutstanding(state, phases, index);
 		if (outstanding) {
+			const completed = gated.filter((id) => state.completedPhaseIds.includes(id));
+			if (completed.length > 0) {
+				const safePhase = sanitizeText(String(phase.id), deps.policy, 256);
+				const safeCompleted = sanitizeText(completed.join(", "), deps.policy, 512);
+				return {
+					state,
+					error: flowError(
+						"WORKFLOW_STATE_INVALID",
+						`The legacy approval phase "${safePhase}" cannot be safely reopened.`,
+						`Its v2 state completed part of the gated action (${safeCompleted}) but left later work outstanding, and recorded no receipt that can prove one set of approved conditions for both halves.`,
+						"Restore and finish the workflow with the older pi-flows version, or start a fresh workflow so one current receipt covers the whole gated action.",
+					),
+				};
+			}
 			state.completedPhaseIds = state.completedPhaseIds.filter((id: string) => id !== phase.id);
 			continue;
 		}
@@ -127,5 +182,50 @@ export function migrateWorkflowStateV2(legacy: any, phases: any[], deps: ModeDep
 			consumedBy: binding.action,
 		});
 	}
-	return state;
+	return { state };
+}
+
+/**
+ * v3 -> v4: unspent outstanding consent reopens. Spent same-action receipts
+ * become compatibility evidence: audit-only if complete, or retaining their
+ * retry while the action remains in progress.
+ */
+export function migrateWorkflowStateV3(legacy: any, phases: any[], deps: ModeDeps, digest: string): { state: WorkflowState; error?: FlowError } {
+	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, receipts: { ...legacy.receipts } };
+	const historicalWitness = deps.params.workflow?.historicalThinking;
+	const unusedWitnesses = new Set(Object.keys(historicalWitness?.phases ?? {}).map((phaseId) => `phase ${phaseId}`));
+	if (historicalWitness && Object.hasOwn(historicalWitness, "debrief")) unusedWitnesses.add("debrief");
+	for (const [index, phase] of phases.entries()) {
+		if (!phase?.approval?.message || !state.completedPhaseIds.includes(phase.id)) continue;
+		const outstanding = approvalActionOutstanding(state, phases, index);
+		const stored = state.receipts[phase.id];
+		if (outstanding && typeof stored?.consumedAt !== "string") continue;
+
+		const current = approvalBindingFor(phases, index, deps, digest);
+		const search = historicalApprovalSearchForV3(phases, index, deps, digest);
+		for (const witnessed of search.witnessed) unusedWitnesses.delete(witnessed);
+		if (search.invalidWitnesses.length > 0) return { state, error: historicalThinkingSearchError(phase.id, search, deps.policy) };
+		const first = migrateSpentApprovalReceipt(stored, search.firstCandidate, current);
+		let receipt = first.receipt;
+		let stale = first.error;
+		if (first.error && first.error.code !== "APPROVAL_RECEIPT_STALE") return { state, error: first.error };
+		if (!receipt) {
+			const historical = search.find(typeof stored?.bindingDigest === "string" ? stored.bindingDigest : "");
+			if (historical) {
+				const migrated = migrateSpentApprovalReceipt(stored, historical, current);
+				if (migrated.error && migrated.error.code !== "APPROVAL_RECEIPT_STALE") return { state, error: migrated.error };
+				receipt = migrated.receipt;
+				stale = migrated.error;
+			}
+		}
+		if (!receipt && !search.exhaustive) return { state, error: historicalThinkingSearchError(phase.id, search, deps.policy) };
+		if (!receipt) return { state, error: stale! };
+		if (outstanding) {
+			const profileError = approvalProfileRefusal(phases, index, deps.params, workflowProfileEnvironment(deps));
+			if (profileError) return { state, error: profileError };
+		}
+		state.receipts[phase.id] = receipt;
+	}
+	if (unusedWitnesses.size > 0) return { state, error: unusedHistoricalThinkingError([...unusedWitnesses], deps.policy) };
+	return { state };
 }

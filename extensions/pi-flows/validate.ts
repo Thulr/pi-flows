@@ -1,3 +1,4 @@
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
 import { safePath } from "./sanitize.ts";
@@ -82,8 +83,53 @@ export function nonSpawningFlowCall(params: { list?: unknown; showConfig?: unkno
 	return Boolean(params?.list || params?.showConfig);
 }
 
+/** Canonical path and non-content filesystem identity bound by durable approval. */
+export interface CwdTargetBinding {
+	readonly path: string;
+	readonly identity: string;
+}
+
+/** One cwd path plus whether it is a usable canonical directory target. */
+export interface CwdTargetResolution {
+	readonly path: string;
+	readonly bindable: boolean;
+	/** Device/inode identity hashed into approval bindings; null when no usable directory exists. */
+	readonly identity: string | null;
+}
+
+/** Resolve the stable filesystem target, retaining lexical spawn behavior when no target exists. */
+export function resolveCwdTarget(defaultCwd: string, cwd?: string): CwdTargetResolution {
+	const lexical = path.resolve(defaultCwd, cwd ?? defaultCwd);
+	let target = lexical;
+	try {
+		target = realpathSync.native(lexical);
+		const stats = statSync(target, { bigint: true });
+		const mode = Number(stats.mode);
+		if (!stats.isDirectory() || (mode & 0o444) === 0 || (mode & 0o111) === 0) return { path: target, bindable: false, identity: null };
+		accessSync(target, constants.R_OK | constants.X_OK);
+		return { path: target, bindable: true, identity: `${stats.dev}:${stats.ino}` };
+	} catch {
+		// Preserve the existing spawn-time error for paths that do not yet exist.
+		// Approval treats this fallback as unbound rather than authorizing a path
+		// that could become a symlink before dispatch.
+		return { path: target, bindable: false, identity: null };
+	}
+}
+
+/** Refuse when a live cwd no longer identifies the target a receipt approved. */
+export function cwdTargetDriftError(expected: CwdTargetBinding, actual: Pick<CwdTargetResolution, "path" | "identity">): FlowError | null {
+	if (actual.path === expected.path && actual.identity === expected.identity) return null;
+	return flowError(
+		"APPROVAL_RECEIPT_STALE",
+		"The approved working directory no longer identifies the same filesystem target.",
+		"Its canonical path or filesystem identity changed after approval verification.",
+		"Restore the approved directory target and resume, or start a fresh interactive approval.",
+	);
+}
+
+/** The cwd path ordinary dispatch and containment use. */
 export function resolvedCwd(defaultCwd: string, cwd?: string): string {
-	return path.resolve(defaultCwd, cwd ?? defaultCwd);
+	return resolveCwdTarget(defaultCwd, cwd).path;
 }
 
 export function sharedWriteCwdError(discovery: FlowDiscovery, defaultCwd: string, refs: Array<{ agent: string; cwd?: string; tools?: string }>): FlowError | null {

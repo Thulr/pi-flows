@@ -7,10 +7,12 @@ import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, DEFAULT_EVALUATE_ITERATIONS
 const TierDescription = 'Capability tier for this child, portable across providers: "fast" for mechanical scouting/extraction/classification, "capable" (default) for ordinary work, "deep" for the hardest reasoning or final adjudication. Each tier resolves to a concrete model and thinking level derived from the models this install can actually run, so tiers work with no configuration; `flow showConfig:true` or `/flows models` shows what each currently resolves to. Prefer tier over model unless the user named a concrete model.';
 
 const ThinkingDescription = 'Reasoning effort for this child, overriding the level its tier would use: "off"/"minimal"/"low" for mechanical work, "medium"/"high" for ordinary reasoning, "xhigh"/"max" for the hardest adjudication. Automatically lowered to what the resolved model supports. Set this to right-size effort without changing which model runs; omit it to take the tier default (a plain child inherits the parent session\'s level).';
+const ThinkingValues = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export const FlowTier = StringEnum(["fast", "capable", "deep"] as const, { description: TierDescription });
 
-export const FlowThinking = StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const, { description: ThinkingDescription });
+export const FlowThinking = StringEnum(ThinkingValues, { description: ThinkingDescription });
+const FlowHistoricalThinkingLevel = StringEnum(ThinkingValues, { description: "Effective Thinking level recorded by a spent v3 receipt. Migration evidence only: this value never selects or configures a Child." });
 
 const StringList = Type.Array(Type.String({ minLength: 1 }));
 const HandoffPolicy = StringEnum(["warn", "quarantine", "fail"] as const);
@@ -225,7 +227,7 @@ export const FlowWorkflowPhase = Type.Object({
 	agent: Type.Optional(Type.String({ minLength: 1, description: "Agent for a work phase. Omit only for an approval phase." })),
 	task: Type.Optional(Type.String({ minLength: 1, description: "Work phase task. Supports {task}, {previous}, and {phase.<id>} output placeholders." })),
 	approval: Type.Optional(Type.Object({
-		message: Type.String({ minLength: 1, description: "Approval question shown in an interactive UI. Headless runs pause and persist resumable state." }),
+		message: Type.String({ minLength: 1, description: "Approval question shown in an interactive UI. Consent binds every gated Role's selected Agent source, prompt digest, effective tools, resolved cwd, model, and Thinking level; headless runs pause and persist resumable state." }),
 	})),
 	checkCommand: Type.Optional(Type.String({ minLength: 1, description: "Deterministic gate run after this work phase. The workflow stops if it exits non-zero." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for this phase and its checkCommand." })),
@@ -238,14 +240,22 @@ export const FlowWorkflowPhase = Type.Object({
 	contract: Type.Optional(FlowDelegationContract),
 });
 
+const FlowHistoricalThinking = Type.Object({
+	phases: Type.Optional(Type.Record(Type.String({ minLength: 1 }), FlowHistoricalThinkingLevel, { maxProperties: MAX_WORKFLOW_PHASES })),
+	debrief: Type.Optional(FlowHistoricalThinkingLevel),
+}, {
+	description: "Optional v3 migration witness: effective historical Thinking levels by gated phase id and debrief. Values never control dispatch and are accepted only when they reproduce the spent receipt's binding digest.",
+});
+
 export const FlowWorkflow = Type.Object({
 	phases: Type.Array(FlowWorkflowPhase, { minItems: 1, maxItems: MAX_WORKFLOW_PHASES, description: "Ordered work and approval phases. Exactly one of agent+task or approval is required per phase." }),
 	stateFile: Type.Optional(Type.String({ description: "Persist redacted phase state for audit/resume. Defaults to .pi/flow-workflows/<workflow-digest>.json." })),
-	resume: Type.Optional(Type.Boolean({ description: "Resume completed phases from stateFile. The workflow digest must match.", default: false })),
+	resume: Type.Optional(Type.Boolean({ description: "Resume completed phases from stateFile. The workflow digest must match and outstanding receipts are rechecked against the effective Agent profiles that would run now. An already completed workflow is an audit-only no-op.", default: false })),
+	historicalThinking: Type.Optional(FlowHistoricalThinking),
 	approvalTtlMs: Type.Optional(Type.Number({ description: `How long an approval receipt authorizes its gated action, in milliseconds. A resume after this window needs a fresh approval. Default ${DEFAULT_APPROVAL_TTL_MS} (24h).`, minimum: MIN_APPROVAL_TTL_MS, maximum: MAX_APPROVAL_TTL_MS, default: DEFAULT_APPROVAL_TTL_MS })),
 	debrief: Type.Optional(FlowAgentRef),
 }, {
-	description: "Phase-gated state-machine mode: execute ordered work phases, enforce deterministic gates, pause at resumable human approval nodes, persist artifacts, then optionally debrief the completed phase outputs.",
+	description: "Phase-gated state-machine mode: execute ordered work phases, enforce deterministic gates, bind durable approval to effective Agent profiles, persist artifacts, then optionally debrief the completed phase outputs.",
 });
 
 export const FlowWorktreeTask = Type.Object({

@@ -3,7 +3,6 @@ import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, mintEvent, type CapturePolicy, type EventAttribution, type FlowError } from "./types.ts";
 import { capBytes, sanitizeText } from "./sanitize.ts";
-import { parseToolsOverride } from "./validate.ts";
 import { splitBashReadonly, type BashReadonlyEnforcement } from "./bash-readonly.ts";
 import { bashReadonlyEnforcerArgs, bashReadonlyEnforcerAvailable } from "./bash-readonly-extension.ts";
 import { resolveBashReadonlyEnforcement } from "./bash-readonly-sandbox.ts";
@@ -16,13 +15,13 @@ import { resolveBashReadonlyEnforcement } from "./bash-readonly-sandbox.ts";
  * attribution), the enforcement layer, and a fail-closed error when a bash-ro
  * child can be enforced by no layer; on error the args are not usable.
  */
-export function buildChildArgs(params: { model?: string; thinking?: string; noExtensions: boolean; toolsOverride?: string; agentTools?: string[] }): { args: string[]; tools: string[] | undefined; enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
+export function buildChildArgs(params: { model?: string; thinking?: string; noExtensions: boolean; effectiveTools?: string[] }): { args: string[]; tools: string[] | undefined; enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
 	const args = ["--mode", "json", "-p", "--no-session"];
 	if (params.noExtensions) args.push("--no-extensions");
 	if (params.model) args.push("--model", params.model);
 	// Its own flag rather than a `model:level` suffix, so a level still reaches a child running the user's default model.
 	if (params.thinking) args.push("--thinking", params.thinking);
-	const tools = parseToolsOverride(params.toolsOverride, params.agentTools);
+	const tools = params.effectiveTools;
 	const bashRo = splitBashReadonly(tools ?? []);
 	const { enforcement, error } = resolveBashReadonlyEnforcement(bashRo.readonly, bashRo.sandboxable);
 	if (error) return { args, tools, enforcement, error };

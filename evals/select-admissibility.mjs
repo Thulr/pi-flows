@@ -12,11 +12,12 @@ import { fileURLToPath } from "node:url";
 import { currentFlowDepth, nonSpawningFlowCall, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { firstSpawnPlan, modePreSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
 import { plannedContract } from "../extensions/pi-flows/modes/plan.ts";
-import { MAX_FLOW_DEPTH } from "../extensions/pi-flows/types.ts";
+import { MAX_FLOW_DEPTH, THINKING_LEVELS } from "../extensions/pi-flows/types.ts";
 import { validateDelegationContract } from "../extensions/pi-flows/delegation.ts";
 import { Budget } from "../extensions/pi-flows/budget.ts";
 import { discoverFlowAgents } from "../extensions/pi-flows/agents.ts";
 import { discoverFlowPresets, resolveFlowPreset } from "../extensions/pi-flows/presets.ts";
+import { parseModelSpec } from "../extensions/pi-flows/model-roster.ts";
 import { flowParamsSchemaError } from "../extensions/pi-flows/schema.ts";
 import { detectRunMode } from "../extensions/pi-flows/modes/registry.ts";
 import { strictTraceConfigError } from "../extensions/pi-flows/trace.ts";
@@ -44,6 +45,52 @@ try {
 }
 export const scoringDiscovery = discoveredAgents;
 const scoringPresetDiscovery = discoveredPresets;
+// Profile bindability needs concrete tier answers, but not a live provider: the
+// selection seam asks whether a value exists, while model-quality scoring lives
+// elsewhere. Stable synthetic identities keep this predicate deterministic and
+// let the mode declaration catch missing Agents/default tools exactly as the
+// headless subject does with its real roster.
+const scoringAgentProfiles = {
+  agents: scoringDiscovery.agents,
+  defaultCwd: repoRoot,
+  roster: {
+    fast: { model: "eval/fast", thinking: "low", why: "selection bindability" },
+    capable: { model: "eval/capable", thinking: "medium", why: "selection bindability" },
+    deep: { model: "eval/deep", thinking: "max", why: "selection bindability" },
+    available: [
+      { reference: "eval/fast", provider: "eval", id: "fast", reasoning: true, thinkingLevels: ["low"], contextWindow: 100_000 },
+      { reference: "eval/capable", provider: "eval", id: "capable", reasoning: true, thinkingLevels: ["medium"], contextWindow: 100_000 },
+      { reference: "eval/deep", provider: "eval", id: "deep", reasoning: true, thinkingLevels: ["max"], contextWindow: 100_000 },
+    ],
+    sessionModel: "eval/capable",
+    source: "derived",
+    issues: [],
+  },
+};
+
+function scoringAgentProfilesFor(knownSubjectModels) {
+	// The scorer has no live Pi registry. Add only identities the harness knows
+	// the subject loaded; accepting arbitrary authored provider/id strings would
+	// credit typos and fuzzy selectors that the real profile resolver refuses.
+	const references = [...new Set(knownSubjectModels
+		.filter((value) => typeof value === "string" && value.trim())
+		.map((value) => parseModelSpec(value).model)
+		.filter((value) => value.includes("/") && !value.endsWith("/")))];
+	const known = new Set(scoringAgentProfiles.roster.available.map((model) => model.reference));
+	const added = references.filter((reference) => !known.has(reference)).map((reference) => {
+		const slash = reference.indexOf("/");
+		return {
+			reference,
+			provider: reference.slice(0, slash),
+			id: reference.slice(slash + 1),
+			reasoning: true,
+			thinkingLevels: [...THINKING_LEVELS],
+			contextWindow: 100_000,
+		};
+	});
+	if (added.length === 0) return scoringAgentProfiles;
+	return { ...scoringAgentProfiles, roster: { ...scoringAgentProfiles.roster, available: [...scoringAgentProfiles.roster.available, ...added] } };
+}
 
 // The tool resolves a preset before any gate runs, so admissibility must be
 // asked of the expanded call, not the raw preset reference: a permitted
@@ -103,7 +150,7 @@ function effectiveCallParams(args) {
 // modePreSpawnRefusalForParams resolves the active one, so a new mode joins this
 // gate by existing. What stays this seam's own decision is which of those
 // codes to score — SCORED_PRE_SPAWN_CODES above.
-export function callAdmissibilityFailure(args) {
+export function callAdmissibilityFailure(args, { knownSubjectModels = [] } = {}) {
 	// pi validates the raw call against the public flow schema before execute
 	// ever runs, so a schema-invalid call is refused ahead of every gate below
 	// — including list/showConfig and preset resolution. No FlowError code
@@ -156,7 +203,7 @@ export function callAdmissibilityFailure(args) {
 	// headless, so an approval gate that needs a UI refuses here. A mode added
 	// to the table is covered without touching this file; only the scored
 	// vocabulary above is this seam's own decision.
-	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true });
+	const modeRefusal = modePreSpawnRefusalForParams(effective ?? {}, { headless: true, agentProfiles: scoringAgentProfilesFor(knownSubjectModels) });
 	if (modeRefusal && SCORED_PRE_SPAWN_CODES.has(modeRefusal.code)) {
 		return { code: modeRefusal.code, reason: modeRefusal.message.replace(/\.$/, "") };
 	}
