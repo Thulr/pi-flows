@@ -1,15 +1,11 @@
 # pi-flows documentation
 
-pi-flows adds a `flow` tool to [pi](https://github.com/earendil-works/pi) that delegates bounded work to isolated child processes. Start at the [project README](../README.md) for the pitch and install; this index organizes the docs by the [Diátaxis](https://diataxis.fr/) framework.
-
-## Tutorials — learn by doing
-
-- [Quickstart](./tutorials/quickstart.md) — install, load the extension, and run your first delegated task, with no-model smoke checks along the way.
+pi-flows adds a `flow` tool to [pi](https://github.com/earendil-works/pi). The tool delegates bounded work to isolated child processes. Start at the [project README](../README.md) for the pitch, the install steps, and the [quick start](../README.md#quick-start). This index groups the other pages by purpose.
 
 ## How-to guides — get something done
 
-- [Custom agents](./how-to/custom-agents.md) — write your own flow agents as markdown files, and understand shadowing and project trust.
-- [Troubleshooting](./how-to/troubleshooting.md) — setup fixes plus the canonical catalog of every structured error code, each with cause and fix.
+- [Custom agents](./how-to/custom-agents.md) — write your own flow agents as markdown files, with shadowing and project trust explained.
+- [Troubleshooting](./how-to/troubleshooting.md) — setup fixes, plus the catalog of every structured error code with its cause and fix.
 - [Release runbook](./how-to/release.md) — how maintainers cut, evidence, and roll back a release.
 - [Examples cookbook](../examples/README.md) — copy-paste invocations for every mode, including error cases.
 
@@ -17,12 +13,12 @@ pi-flows adds a `flow` tool to [pi](https://github.com/earendil-works/pi) that d
 
 - [Flow reference](./reference/flow-reference.md) — the complete `flow` tool contract: presets, modes, parameters, budgets, tracing, and structured errors.
 - [Package reference](./reference/package.md) — what ships in the npm package, the pi manifest, and every install method.
-- [Architecture classification](./reference/architecture.md) — the ledger of which subdomain every module belongs to and the import direction between subdomains.
+- [Architecture classification](./reference/architecture.md) — the ledger that maps each module to a subdomain, and the import direction between subdomains.
 
 ## Explanation — understand the design
 
 - [Patterns](./explanation/patterns.md) — when a flow helps, which agent-design pattern each mode encodes, and what the harness guarantees.
-- [Domain model](./explanation/domain-model.md) — why the codebase is split into Core / Supporting / Generic subdomains, and why the import direction and review policy are what they are.
+- [Domain model](./explanation/domain-model.md) — why the codebase is split into Core, Supporting, and Generic subdomains, and why the import direction and review policy are what they are.
 - [Privacy & telemetry](./explanation/privacy-telemetry.md) — what leaves your machine (nothing by default), what is redacted, and the controls.
 
 ## Not user docs

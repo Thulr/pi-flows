@@ -1,10 +1,10 @@
 # Package reference
 
-What ships in the `pi-flows` npm package, how pi discovers it, and every way to install it.
+This page lists what ships in the `pi-flows` npm package, how pi discovers it, and every install method.
 
 ## The pi manifest
 
-pi-flows is a [pi package](https://pi.dev/docs/latest/packages): an ordinary npm package whose `package.json` carries a `pi` key declaring its resources, plus the `pi-package` keyword that lists it in the [pi.dev gallery](https://pi.dev/packages).
+pi-flows is a [pi package](https://pi.dev/docs/latest/packages): an ordinary npm package whose `package.json` carries a `pi` key that declares its resources. The `pi-package` keyword lists it in the [pi.dev gallery](https://pi.dev/packages).
 
 ```json
 {
@@ -15,7 +15,7 @@ pi-flows is a [pi package](https://pi.dev/docs/latest/packages): an ordinary npm
 }
 ```
 
-`pi.extensions` names the entrypoint pi loads — it registers the `flow` tool and the `/flows` command. Version floors are declared in `engines`: Node.js `>=24`, npm `>=11`, and pi `>=0.82.0`.
+`pi.extensions` names the entrypoint that pi loads. The entrypoint registers the `flow` tool and the `/flows` command. The `engines` field declares the version floors: Node.js `>=24`, npm `>=11`, and pi `>=0.82.0`.
 
 ## Tarball contents
 
@@ -24,12 +24,12 @@ pi-flows is a [pi package](https://pi.dev/docs/latest/packages): an ordinary npm
 | `extensions/pi-flows/` | The extension runtime (TypeScript, loaded directly by pi). |
 | `agents/*.md` | The nine bundled agents: `recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, `debrief`. |
 | `presets/*.md` | The three bundled workflow presets: `scout`, `map-codebase`, `code-review`. |
-| `docs/` | This documentation tree (tutorials, how-to, reference, explanation). |
+| `docs/` | This documentation tree (how-to, reference, explanation). |
 | `examples/` | The copy-paste examples cookbook. |
 | `README.md`, `LICENSE`, `CHANGELOG.md`, `CONTRIBUTING.md` | Standard package surfaces. |
-| `AGENTS.md`, `CONTEXT.md` | Agent instructions and the domain glossary. They ship because coding agents read them at runtime — docs link into the glossary's term definitions. |
+| `AGENTS.md`, `CONTEXT.md` | Agent instructions and the domain glossary. They ship because coding agents read them at runtime, and the docs link into the glossary's term definitions. |
 
-Agents and presets are runtime inputs, not documentation: discovery reads `agents/*.md` and `presets/*.md` from the installed package, so moving or renaming them changes behavior.
+Agents and presets are runtime inputs, not documentation. Discovery reads `agents/*.md` and `presets/*.md` from the installed package. If you move or rename them, behavior changes.
 
 ## Install methods
 
@@ -58,7 +58,7 @@ npm run preflight   # verify the pi CLI is on PATH and meets the version floor
 pi -e ./extensions/pi-flows/index.ts   # load the local extension in pi
 ```
 
-Or install your working copy as a package with `pi install -l ..` — project-local package paths are resolved from `.pi/`, so `..` names the checkout root.
+Or install your working copy as a package with `pi install -l ..`. Project-local package paths resolve from `.pi/`, so `..` names the checkout root.
 
 ### Verify an install
 
@@ -70,7 +70,7 @@ Inside pi, these extension commands need no model call and no provider credentia
 /flows status
 ```
 
-Success looks like all nine bundled agents in the `/flows` listing. With a provider configured, you can also exercise the `flow` tool surface itself — pi turns these prompts into calls that answer without spawning a child:
+Success shows all nine bundled agents in the `/flows` listing. With a provider configured, you can also try the `flow` tool surface itself. pi turns these prompts into calls that answer without a child:
 
 ```text
 Use flow with {"list":true}

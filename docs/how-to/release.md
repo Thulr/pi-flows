@@ -1,13 +1,13 @@
 # Release checklist
 
-Releases publish to npm from CI: pushing a `vX.Y.Z` tag runs
+Releases publish to npm from CI. A pushed `vX.Y.Z` tag runs
 [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml), which runs
-`npm run check` and then `npm publish` (with provenance). Publishing to npm is
+`npm run check` and then `npm publish` (with provenance). The npm publish is
 what lists pi-flows in the [pi.dev gallery](https://pi.dev/packages).
 
 **One-time setup:** configure npm [trusted publishing](https://docs.npmjs.com/trusted-publishers)
-for the package — no token or secret required. On npmjs.com, open the **pi-flows**
-package → **Settings → Trusted Publisher → GitHub Actions** and enter:
+for the package. No token or secret is required. On npmjs.com, open the **pi-flows**
+package → **Settings → Trusted Publisher → GitHub Actions**. Then enter:
 
 | Field | Value |
 | --- | --- |
@@ -23,9 +23,9 @@ permission, and provenance is generated automatically.
 
 1. Move `CHANGELOG.md` notes from `Unreleased` into a dated, versioned section.
 2. Bump the version in **both** `package.json` and `PI_FLOWS_VERSION` in
-   `extensions/pi-flows/types.ts`. The publish workflow fails if the tag does
-   not match `package.json`.
-3. Verify locally:
+   `extensions/pi-flows/types.ts`. If the tag does not match `package.json`,
+   the publish workflow fails.
+3. Make sure that the checks pass locally:
 
    ```bash
    npm ci
@@ -33,7 +33,7 @@ permission, and provenance is generated automatically.
    ```
 
 4. Run the pre-production release evaluation with complete runtime evidence.
-   Include the controlled production-failure ledger when one exists:
+   If a controlled production-failure ledger exists, include it:
 
    ```bash
    export PI_FLOWS_EVAL_ATTESTATION_KEY="$(openssl rand -hex 32)"
@@ -48,9 +48,9 @@ permission, and provenance is generated automatically.
      --calibration-out=.thulr/runs/release.calibration.json
    ```
 
-   The release suite pass-gates behaviour cases and every imported production
+   The release suite pass-gates behavior cases and every imported production
    regression. Hard headroom cases remain score-tracked by the regular internal
-   eval suite; expected partial scores are not represented as failed verified
+   eval suite. Expected partial scores are not shown as failed verified
    outcomes in the release manifest.
 
 5. Smoke the local package in pi:
@@ -68,23 +68,23 @@ permission, and provenance is generated automatically.
 
 6. Commit with a [Conventional Commit](../../CONTRIBUTING.md#commit-messages), open
    a PR, and merge to `main`.
-7. Check out the clean merge commit and run the release evaluation and decision
-   against that exact commit in one command. An `approved` decision is required
-   before tagging:
+7. Check out the clean merge commit. Run the release evaluation and decision
+   against that exact commit in one command. An `approved` decision is
+   required before you tag:
 
    ```bash
    npm run eval:release -- --run --run-id="release-<version>" --attest-hard-blockers
    ```
 
    `--run` generates a single-use attestation token, hands it to the evaluation
-   it starts, and throws it away — so the artifacts it decides from can only
-   have come from that run. It writes them under `.thulr/runs/<run-id>.*` and
-   derives the evidence object from the reliability artifact's own provenance.
-   Pass `--attest-hard-blockers` only once the six hard blockers below have
-   actually been attested; without it the decision blocks as `not-attested`.
+   it starts, and throws it away. As a result, the artifacts it decides from
+   can come only from that run. It writes them under `.thulr/runs/<run-id>.*`
+   and derives the evidence object from the provenance of the reliability
+   artifact. Pass `--attest-hard-blockers` only after the six hard blockers
+   below are attested. Without the flag, the decision blocks as `not-attested`.
    See [Release evidence and manifest](#release-evidence-and-manifest) for the
    artifact-based mode and the full list of what the gate checks.
-8. Tag the merge commit and push the tag — this triggers the **Publish**
+8. Tag the merge commit and push the tag. This push triggers the **Publish**
    workflow:
 
    ```bash
@@ -93,31 +93,38 @@ permission, and provenance is generated automatically.
    git push origin "$tag"
    ```
 
-9. Confirm: the **Publish** workflow is green, `npm view pi-flows version` shows
-   the new version, and `pi install npm:pi-flows` resolves it.
+9. Make sure that the **Publish** workflow is green, that `npm view pi-flows version`
+   shows the new version, and that `pi install npm:pi-flows` resolves it.
 
 ## Release evidence and manifest
 
 `eval:release` has two modes. `--run` (step 7 above) runs the evaluation and
-decides from it in one command, deriving the evidence object from the
-reliability artifact's own provenance record. The default mode decides from
-artifacts already on disk and requires an operator-written evidence file; it
-reads its attestation key from `PI_FLOWS_EVAL_ATTESTATION_KEY`, which exists for
-tests and for re-deciding a run whose token you still hold.
+decides from it in one command. It derives the evidence object from the
+provenance record of the reliability artifact. The default mode decides from
+artifacts already on disk and requires an operator-written evidence file. That
+mode reads its attestation key from `PI_FLOWS_EVAL_ATTESTATION_KEY`, which
+exists for tests and for a new decision on a run whose token you still hold.
 
-Deriving evidence is not a weaker check. Every provenance field the gate
-verifies — `models`, `topology`, `budgets`, `suite`, `grader` — is cross-checked
-against that same reliability record, so transcribing them by hand can only
-introduce a mismatch, never add assurance. The hard blockers are the one part no
-artifact can supply, and they stay an explicit operator assertion: `--run`
-records `not-attested` unless `--attest-hard-blockers` is passed.
+Derived evidence is not a weaker check. The gate cross-checks every provenance
+field — `models`, `topology`, `budgets`, `suite`, `grader` — against that same
+reliability record. Hand-transcribed fields can only introduce a mismatch,
+never add assurance. The hard blockers are the one part that no artifact can
+supply, and they stay an explicit operator assertion. `--run` records
+`not-attested` unless you pass `--attest-hard-blockers`.
 
 The release owner prepares a minimized `pi-flows.release-evidence.v1` JSON
-attestation. It names the eval run, evaluated time, every subject and judge model,
-the exact evaluated Git commit, the topology and budgets used, the suite and case
-ids, the grader and version, and all six hard-blocker results. Each hard blocker
-must be `status:"passed"` and carry at least one non-empty attributable string
-reference:
+attestation. It names:
+
+- the eval run and the evaluated time
+- every subject and judge model
+- the exact evaluated Git commit
+- the topology and budgets used
+- the suite and case ids
+- the grader and its version
+- all six hard-blocker results
+
+Each hard blocker must be `status:"passed"` and must carry at least one
+non-empty attributable string reference:
 
 - `unauthorizedIrreversibleActions`
 - `approvalBypass`
@@ -126,31 +133,40 @@ reference:
 - `rollbackFailure`
 - `requiredTraceLoss`
 
-Missing evidence is a failure, not a warning. The command also blocks a dirty
-tree, version disagreement, any failed/excluded/unverified trial, incomplete
-runtime traces, incomplete or blocking calibration, a critical dimension without
-authority, a declared suite that differs from the measured reliability cases, or
-a promoted regression absent from the reliability artifact. The supplied runtime
-trace path must equal `reliability.runtimeTraceFile`; every trial's exact
-trace/root-span link and run/case/trial attributes must resolve in that file.
-The read-back also applies the strict trace-tree gate to declared/observed span
-counts, failed exports, malformed or duplicate rows, parentage, timing, and
-dependency links.
-The reliability artifact records the actual subject models, per-case topology
-and budget configuration, environment, repository hashes, and clean-tree state
-at evaluation time. Release evals isolate discovery to the package-owned prompts
-whose hashes enter the manifest. The release command requires the current
-checkout and every operator-declared model/topology/budget/suite/grader field to
-match that recorded provenance exactly; these fields are not trusted as
-standalone assertions. Calibration artifacts retain their blocking decision and
-issues, require a complete self-verifying calibration key, all versioned splits,
-coverage/statistics/review evidence, and the release-critical `criterion`
+Missing evidence is a failure, not a warning. The command also blocks on:
+
+- a dirty tree
+- version disagreement
+- any failed, excluded, or unverified trial
+- incomplete runtime traces
+- incomplete or blocking calibration
+- a critical dimension without authority
+- a declared suite that differs from the measured reliability cases
+- a promoted regression that is absent from the reliability artifact
+
+The supplied runtime trace path must equal `reliability.runtimeTraceFile`. The
+exact trace and root-span link of every trial, and its run/case/trial
+attributes, must resolve in that file. The read-back also applies the strict
+trace-tree gate to declared and observed span counts, failed exports,
+malformed or duplicate rows, parentage, timing, and dependency links.
+
+The reliability artifact records the actual subject models, the per-case
+topology and budget configuration, the environment, the repository hashes, and
+the clean-tree state at evaluation time. Release evals isolate discovery to
+the package-owned prompts whose hashes enter the manifest. The release command
+requires the current checkout, and every operator-declared model, topology,
+budget, suite, and grader field, to match that recorded provenance exactly.
+These fields are not trusted as standalone assertions.
+
+Calibration artifacts keep their blocking decision and issues. They require a
+complete self-verifying calibration key, all versioned splits, coverage,
+statistics, and review evidence, and the release-critical `criterion`
 dimension. The release command recomputes the calibration gate from that
-evidence and requires its key, gate, and artifact hash to match the reliability
-run; a copied or skeletal nonblocking assertion cannot approve. A current,
-complete recalibration may record that the prior key was unknown or stale; the
-gate reads the newly computed evidence rather than treating old drift as current
-failure.
+evidence. It requires the key, the gate, and the artifact hash to match the
+reliability run — a copied or skeletal nonblocking assertion cannot approve. A
+current, complete recalibration can record that the prior key was unknown or
+stale. The gate then reads the newly computed evidence, and does not treat old
+drift as a current failure.
 
 ```json
 {
@@ -197,10 +213,10 @@ failure.
 ```
 
 Copy `models`, `topology`, `budgets`, `suite`, and `grader` from the reliability
-artifact's `evaluation` object, then add the independently owned hard-blocker
-references. Any edit or substitution blocks release.
+artifact's `evaluation` object. Then add the independently owned hard-blocker
+references. Any edit or substitution blocks the release.
 
-In the artifact-based mode the release record requires the same
+In the artifact-based mode, the release record requires the same
 operator-controlled `PI_FLOWS_EVAL_ATTESTATION_KEY` that authenticated the
 reliability run. Keep it in the release secret store, never in an artifact or
 the repository. `--run` needs no such secret: its token is generated per
@@ -218,19 +234,19 @@ npm run eval:release -- \
 
 The resulting `pi-flows.release-manifest.v1` pins:
 
-- the evaluation-time Git commit and clean-tree status; package, extension,
-  lockfile, and package manager versions, cross-checked against the release
-  checkout;
+- the evaluation-time Git commit and the clean-tree status
+- the package, extension, lockfile, and package manager versions, cross-checked
+  against the release checkout
 - per-agent and aggregate prompt hashes, the TypeBox tool-schema hash, and
-  topology, harness, and suite hashes;
+  topology, harness, and suite hashes
 - subject/judge model ids, topology, budgets, safe environment identity, suite,
-  harness, grader, and calibration versions;
+  harness, grader, and calibration versions
 - hashes of the reliability, calibration, runtime-trace, and required canonical
-  production-failure ledger artifacts (use an empty file when no failures have
-  been imported). Its hash, head, imported-case bindings, and promoted ids must
-  match the ledger used during evaluation. Runtime-trace and ledger hashes must
-  also equal the exact bytes their validators read; and
-- the complete hard-blocker decision plus a digest of the manifest itself.
+  production-failure ledger artifacts (if no failures were imported, use an
+  empty file). The ledger's hash, head, imported-case bindings, and promoted
+  ids must match the ledger used during evaluation. Runtime-trace and ledger
+  hashes must also equal the exact bytes that their validators read
+- the complete hard-blocker decision plus a digest of the manifest itself
 
 Store the record and its referenced artifacts together in access-controlled,
 append-only release evidence storage. They are generated evaluation artifacts
@@ -238,21 +254,22 @@ and must not be committed or packaged.
 
 ## Evidence ownership and lifecycle
 
-Evidence has three layers; none substitutes for another:
+Evidence has three layers. No layer substitutes for another:
 
-1. **Runtime evidence** is emitted by each flow and attributes dispatch,
+1. **Runtime evidence** comes from each flow. It attributes dispatch,
    handoffs, approvals, state, policy, and outcomes for that exact run.
-2. **Pre-production evidence** repeats the release suite on the candidate commit,
-   judges outcomes, verifies trace completeness, checks calibration authority,
-   and exercises every promoted production regression.
-3. **Production evidence** is monitoring and incident evidence from the deployed
-   version. It can trigger rollback and seed a minimized capability case, but it
-   cannot retroactively make a missing pre-production check pass.
+2. **Pre-production evidence** repeats the release suite on the candidate
+   commit. It judges outcomes, makes sure that traces are complete and that
+   calibration has authority, and exercises every promoted production
+   regression.
+3. **Production evidence** is monitoring and incident evidence from the
+   deployed version. It can trigger rollback and seed a minimized capability
+   case, but it cannot retroactively make a missing pre-production check pass.
 
 Ownership is explicit:
 
-- The **release owner** assembles the manifest, verifies the candidate commit,
-  and owns the tag/no-tag decision.
+- The **release owner** assembles the manifest, makes sure that the candidate
+  commit is the evaluated one, and owns the tag/no-tag decision.
 - The **security owner** attests the irreversible-action, approval, privacy, and
   shared-state hard blockers.
 - The **eval owner** owns suite coverage, grader/calibration validity, held-out
@@ -262,18 +279,31 @@ Ownership is explicit:
 - The **service owner** owns rollback readiness, production monitoring, and any
   residual-risk acceptance.
 
-A residual risk may be accepted only when it is outside the six hard blockers,
-names an accountable service owner, states scope and rationale, has an expiry,
-defines a measurable rollback trigger, and links compensating evidence. Record
-that acceptance beside the release manifest. It cannot override a blocked
-manifest, incomplete trace, failed regression, or missing calibration authority.
+A residual risk can be accepted only when it:
 
-Rollback is triggered by any post-release observation of a hard-blocker condition,
-a promoted regression recurring, required trace health becoming incomplete,
-the deployed package/manifest digest differing from the approved record,
-rollback verification failing, or a residual-risk threshold/expiry being crossed.
-The service owner starts rollback immediately; the release owner deprecates the
-bad version and stops further promotion until a new clean manifest is approved.
+- is outside the six hard blockers
+- names an accountable service owner
+- states its scope and rationale
+- has an expiry
+- defines a measurable rollback trigger
+- links compensating evidence
+
+Record that acceptance beside the release manifest. The acceptance cannot
+override a blocked manifest, an incomplete trace, a failed regression, or
+missing calibration authority.
+
+Any of these post-release observations triggers rollback:
+
+- a hard-blocker condition
+- a promoted regression that recurs
+- required trace health that becomes incomplete
+- a deployed package or manifest digest that differs from the approved record
+- a rollback check that fails
+- a residual-risk threshold or expiry that is crossed
+
+The service owner starts the rollback immediately. The release owner
+deprecates the bad version and stops further promotion until a new clean
+manifest is approved.
 
 ## Manual publish (fallback)
 

@@ -12,9 +12,9 @@ Presets are the intent-level entrypoint over the raw mode table. A call such as:
 }
 ```
 
-loads one Markdown definition, substitutes `{task}`, applies its declared
-workflow-shape overrides plus safe caller controls such as capture, tracing,
-trust, and `maxCostUsd`, then validates and runs the expanded call as an
+loads one Markdown definition and substitutes `{task}`. It applies the declared
+workflow-shape overrides, plus safe caller controls such as capture, tracing,
+trust, and `maxCostUsd`. Then it validates and runs the expanded call as an
 ordinary mode. Presets do not bypass mode bounds, budgets, delegation contracts,
 project trust, capture policy, or traces.
 
@@ -32,7 +32,7 @@ Bundled presets:
 |---|---|---|
 | `scout` | One `recon` run | One read-only evidence pass |
 | `map-codebase` | `orchestrate` with at most four recon subtasks | One decomposed map and synthesis |
-| `code-review` | Two concurrent read-only (`bash-ro`) `overwatch` runs, roles `standards` and `spec` | Exactly one pass; typed coverage/findings; `CLEAN`, `FINDINGS`, or `PARTIAL` |
+| `code-review` | Two concurrent read-only (`bash-ro`) `overwatch` runs, roles `standards` and `spec` | Exactly one pass, typed coverage/findings, and `CLEAN`, `FINDINGS`, or `PARTIAL` |
 
 `code-review` is deliberately one-shot: it never fixes findings, posts review
 comments, or repeats until clean.
@@ -52,20 +52,20 @@ overrides: cwd,timeoutMs,maxGeneratedTokens
 {"agent":"recon","task":"{task}","timeoutMs":900000,"maxGeneratedTokens":4000}
 ```
 
-A preset declares which top-level parameters callers may override (`overrides` in
-its frontmatter); undeclared or workflow-shape overrides fail with
+A preset declares which top-level parameters callers can override (`overrides` in
+its frontmatter). Undeclared or workflow-shape overrides fail with
 `PRESET_OVERRIDE_INVALID`.
 
-A template may set `recordContent`/`redactSecrets` to tighten capture, but never
-to loosen it. The effective policy is the stricter of the caller's and the
-template's in both directions: a template cannot turn the caller's redaction
-off, and a caller cannot re-enable content a template deliberately withholds.
-`traceStrict` follows the same rule — a template can turn the evidence gate on,
-but a template-authored `traceStrict:false` is dropped so the caller and
+A template can set `recordContent`/`redactSecrets` to tighten capture, but never
+to loosen it. The effective policy is the stricter of the caller's policy and
+the template's policy, in both directions. A template cannot turn the caller's
+redaction off, and a caller cannot re-enable content a template withholds.
+`traceStrict` follows the same rule: a template can turn the evidence gate on,
+but a template-authored `traceStrict:false` is dropped, so the caller and
 `PI_FLOWS_TRACE_STRICT` still decide. `why`, `agentScope`,
-`confirmProjectAgents`, and `allowSharedWriteCwd` are caller-only: a template
+`confirmProjectAgents`, and `allowSharedWriteCwd` are caller-only. A template
 cannot justify its own delegation, opt its source into trust, or take the
-shared-write exception on the caller's behalf.
+shared-write exception for the caller.
 
 ## Modes
 
@@ -94,8 +94,8 @@ Exactly one mode is valid per call.
 A raw parallel call with two or more tasks must make sizing intentional before
 child spend begins. Set `tier` or `model` on every task. If every task truly
 needs the same capability, a flow-wide `tier` or `model` is the explicit
-uniform-sizing acknowledgement. Omitting both paths is refused with
-`PARALLEL_SIZING_REQUIRED`; `thinking` alone does not satisfy the gate because
+uniform-sizing acknowledgement. If you set neither, the call is refused with
+`PARALLEL_SIZING_REQUIRED`. `thinking` alone does not satisfy the gate, because
 it changes reasoning effort without selecting model capability.
 
 ## Live TUI monitoring
@@ -105,7 +105,7 @@ in-memory flow updates:
 
 - **The tool row is live.** While children run, the `flow` tool row shows a
   progress bar, per-run state with a spinner, each running child's current
-  tool call or latest message, and a token/cost rollup — updating in place.
+  tool call or latest message, and a token/cost rollup. It updates in place.
   Before the first child starts, the tool call and row also disclose every
   configured cost/token ceiling as a `flow ceiling` or `contract ceiling`.
   `ctrl+o` expands the settled row into full per-run output.
@@ -118,56 +118,58 @@ in-memory flow updates:
 
 ### What the fan-out counter counts
 
-The tool row heads a fan-out with `1/3 settled`: the numerator
+The tool row heads a fan-out with `1/3 settled`. The numerator
 counts [**settled**](../../CONTEXT.md#delegation-model) runs, not successful ones.
-Once the flow itself has settled the ratio is replaced by the outcome —
-`2 failed` or `3 ok` — because `3/3` reads as a success total. A single-run flow
-shows neither, since the header would only restate the one run below it.
+After the flow itself settles, the outcome (`2 failed` or `3 ok`) replaces the
+ratio, because `3/3` reads as a success total. A single-run flow
+shows neither, because the header only restates the one run below it.
 
-A multi-stage mode settles one stage's runs before spawning the next: `evaluate`
-returns its generator before the check command and the critic panel run. Between
-stages the header keeps the labeled ratio and the spinner rather than announcing
-an outcome the flow has not reached, so `2/2 settled` with a spinner means "both
-runs so far are done, the flow is still working".
+A multi-stage mode settles one stage's runs before it spawns the next. For
+example, `evaluate` returns its generator before the check command and the
+critic panel run. Between stages, the header keeps the labeled ratio and the
+spinner. It does not announce an outcome the flow has not reached. `2/2 settled`
+with a spinner means that both runs so far are done and the flow is still
+working.
 
 The inline tool row is the single primary live progress view. The extension
-clears its footer status and above-editor widget instead of repeating that row's
-summary elsewhere. On the two board surfaces a flow-level error is reported
-alongside the run counts, as a status icon on the tool row and an `error:` line
-on both.
+clears its footer status and above-editor widget, and does not repeat that
+row's summary elsewhere. Both board surfaces report a flow-level error beside
+the run counts: a status icon on the tool row, and an `error:` line on both.
 
 After a flow settles, a durable flow card entry stays in the session transcript
-(and re-renders after `pi` restarts): status, per-run duration bars, cost
-rollup, failure codes, and the trace file pointer when tracing was on.
+and re-renders after `pi` restarts. It keeps the status, per-run duration bars,
+cost rollup, failure codes, and the trace file pointer when tracing was on.
 
 ## Activation thresholds
 
-Use the least coordination that materially improves correctness. Do not auto-use
-any flow for a simple task or a **saturated** task, where direct parent execution
-already meets the acceptance criteria reliably and leaves no useful quality
-headroom. In that case, extra subprocesses are only cost and latency.
+Use the least coordination that improves correctness. Do not auto-use
+any flow for a simple task or a **saturated** task. A task is saturated when
+direct parent execution already meets the acceptance criteria reliably and
+leaves no useful quality headroom. In that case, extra subprocesses are only
+cost and latency.
 
-Every spawning call must pass `why` — one sentence naming the reason delegation
-beats direct execution (an explicit user request, fan-out one context cannot
-hold, or author-independent verification). Calls without it are refused with
-`WHY_REQUIRED` before any child spawns. This is deliberate structural friction:
-if no justification can be stated, the task belongs in the parent context.
+Every spawning call must pass `why`: one sentence that names the reason
+delegation beats direct execution. Valid reasons include an explicit user
+request, fan-out one context cannot hold, or author-independent verification. A
+call without it is refused with `WHY_REQUIRED` before any child spawns. This
+friction is deliberate: if no justification can be stated, the task belongs in
+the parent context.
 
 | Mode | Activate when | Stay direct or use a simpler mode when |
 |---|---|---|
-| `workflow` | Named phases, persisted artifacts, deterministic gates, or a resumable human approval are part of correctness. | The work is one small edit or an ordinary linear handoff; use the parent, `single`, `chain`, or `evaluate`. |
-| `worktree` | Isolation, ownership boundaries, or shared integration conflicts are part of correctness for multiple write-capable tasks, and a verified integration branch is required. | The parent can safely make the edits in one checkout, even when two files are involved; use direct execution, `single`/`evaluate`, or read-only `parallel`. |
+| `workflow` | Named phases, persisted artifacts, deterministic gates, or a resumable human approval are part of correctness. | The work is one small edit or an ordinary linear handoff. Use the parent, `single`, `chain`, or `evaluate`. |
+| `worktree` | Isolation, ownership boundaries, or shared integration conflicts are part of correctness for multiple write-capable tasks, and a verified integration branch is required. | The parent can safely make the edits in one checkout, even when two files are involved. Use direct execution, `single`/`evaluate`, or read-only `parallel`. |
 | `debate` | The user explicitly requests independent advocates/rebuttal/adjudication for a consequential decision. | Debate is not an automatic route today: direct Codex matched its decision quality with lower latency/tokens in the paired baseline. Answer directly unless independent opposition is itself requested. |
-| `dossier` | At least two sources or claim families must be cited and reconciled, including contradictions and gaps. | One source or lookup is enough; use `single` with `recon`/`analyst`. |
-| `monitor` | A deterministic probe must be repeated under a hard bound, and a typed event should trigger one diagnosis/response. | One status check is enough, or the need is durable/background scheduling; run the command directly or use an external automation system. |
+| `dossier` | At least two sources or claim families must be cited and reconciled, including contradictions and gaps. | One source or lookup is enough. Use `single` with `recon`/`analyst`. |
+| `monitor` | A deterministic probe must be repeated under a hard bound, and a typed event must trigger one diagnosis/response. | One status check is enough, or the need is durable/background scheduling. Run the command directly or use an external automation system. |
 
 ## Parameters
 
 | Parameter | Default | Notes |
 |---|---|---|
 | `preset` | (none) | Named workflow preset expanded before mode validation. Prefer it when its intent matches. |
-| `why` | (required to spawn) | One sentence justifying delegation over direct parent execution. Required for every spawning mode; `list`/`showConfig` never need it. Missing/empty ⇒ `WHY_REQUIRED`. |
-| `agentScope` | `user` | Applies to both presets and agents: `user` = package + user; `project` = package + project; `all` = all three sources. |
+| `why` | (required to spawn) | One sentence that justifies delegation over direct parent execution. Required for every spawning mode. `list`/`showConfig` never need it. Missing/empty ⇒ `WHY_REQUIRED`. |
+| `agentScope` | `user` | Applies to both presets and agents: `user` = package + user, `project` = package + project, `all` = all three sources. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project presets/agents unless this is explicitly `false` after review. |
 | `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
 | `timeoutMs` | `36000000` | Per child process timeout (10 hours). Independently of it, a child that reports a terminal provider error and then stalls is terminated after a short grace (`PI_FLOWS_ERROR_GRACE_MS`, default 30000ms) with `CHILD_PROVIDER_ERROR`. |
@@ -179,29 +181,29 @@ if no justification can be stated, the task belongs in the parent context.
 | `traceFile` | (none) | Append OpenInference-shaped JSON spans to this JSONL file — one per child run, one per stage (wave/round/phase), one per coordination event, plus a root span. Trace data any OpenTelemetry pipeline (or a coding agent via `jq`/SQL) can read. Also settable via `PI_FLOWS_TRACE_FILE`. Relative paths resolve against `cwd`. Values are redacted/capped first. |
 | `traceLabel` | (none) | Use-case label attached to trace spans so reports can group execution success, verified outcome success, TPSO, cost, and warning counts by journey/release gate. |
 | `traceContext` | (none) | Stable `{runId,caseId,trialId,trialIndex?,arm?,attempt?}` linkage for eval/runtime correlation. Redacted, bounded identifiers are copied to every runtime span and `details.trace` returns the exact trace/root-span reference plus trace health. |
-| `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, failed writes, or an export that is complete but does not read back as a span tree fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates; ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
+| `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, failed writes, or an export that is complete but does not read back as a span tree fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates. Ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
 | `handoffPolicy` | `warn` | Call-level injection handling at inter-agent boundaries: `warn` preserves the flagged payload with a warning, `quarantine` substitutes a payload-free marker, and `fail` returns `HANDOFF_POLICY_VIOLATION` before the recipient spawns. |
-| `modeHandoffPolicy` | (none) | Per-mode minimums, e.g. `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`; a call cannot downgrade a high-consequence mode. |
+| `modeHandoffPolicy` | (none) | Per-mode minimums, for example `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`. A call cannot downgrade a high-consequence mode. |
 | `returnContract` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
-| `contract` | (none) | Machine-checked delegation contract. It may replace `task` in single/evaluate or be a documented `resolved`-role fallback. Every task/role contract resolves before that Child spawns and requires a validated `pi-flows.return-envelope.v1`; role contracts override fallbacks. |
+| `contract` | (none) | Machine-checked delegation contract. It can replace `task` in single/evaluate or be a documented `resolved`-role fallback. Every task/role contract resolves before that Child spawns and requires a validated `pi-flows.return-envelope.v1`. Role contracts override fallbacks. |
 | `incompleteHandoffPolicy` | `fail` | Integration modes reject `partial`/`blocked` return envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
-| `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents may not share one `cwd`. Set `true` only when shared writes are intentional. |
-| `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs; `"finalize"` asks after child work before returning the final answer. Headless contexts fail closed. |
+| `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents must not share one `cwd`. Set `true` only when shared writes are intentional. |
+| `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs. `"finalize"` asks after child work, before the final answer returns. Headless contexts fail closed. |
 | `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
 | `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Prefer `tier` unless the user named a concrete model. |
-| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves, forcing the default model even on a `fast`/`deep` agent; a `fast`/`deep` tier the roster could not resolve falls through to the agent's own pin. |
+| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves and forces the default model, even on a `fast`/`deep` agent. A `fast`/`deep` tier the roster cannot resolve falls through to the agent's own pin. |
 | `thinking` | agent/tier | Flow-wide thinking-level fallback (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), overridable per task/phase/role. Independent of `tier`: sets effort without changing which model runs. Lowered automatically to what the resolved model supports, and a child with no level named anywhere leaves pi's own default alone. |
-| `tools` | agent/default | Comma-separated tools, `none`, or `default`. `bash-ro` grants bash under a child-enforced read-only allowlist (see [write isolation](#return-requirements-delegation-contracts-and-write-isolation)); a toolset carrying both `bash` and `bash-ro` resolves to plain `bash`. |
+| `tools` | agent/default | Comma-separated tools, `none`, or `default`. `bash-ro` grants bash under a child-enforced read-only allowlist (see [write isolation](#return-requirements-delegation-contracts-and-write-isolation)). A toolset carrying both `bash` and `bash-ro` resolves to plain `bash`. |
 | `cwd` | parent cwd | Child process working directory. |
 
 ### The model roster
 
-`tier` and `thinking` resolve against a roster derived from pi's model registry — the models this install has configured auth for — rather than from a list pi-flows maintains. `fast` takes the cheapest usable model (preferring the parent's own provider) at `low`; `capable` names the model this session is running (not pi's configured default, which a fresh child would otherwise load) at the session's current thinking level; `deep` takes the most capable model, preferring one that supports extended thinking, at `max`. When the default model is already the best available, `deep` differs by thinking level instead of pinning a redundant `--model`.
+`tier` and `thinking` resolve against a roster derived from pi's model registry: the models this install has configured auth for. pi-flows does not maintain its own list. `fast` takes the cheapest usable model at `low`, and prefers the parent's own provider. `capable` names the model this session is running, at the session's current thinking level — not pi's configured default, which a fresh child otherwise loads. `deep` takes the most capable model at `max`, and prefers one that supports extended thinking. When the default model is already the best available, `deep` differs by thinking level instead of pinning a redundant `--model`.
 
-When the session has a model scope (`/scoped-models`, `--models`), automatic derivation ranks `fast` and `deep` within that scope only — a model you disabled is never auto-assigned a tier. `capable` still mirrors the session's active model even if it sits outside the cycling scope, and explicit `model` pins (call, agent, or config) remain deliberate overrides that the scope does not rewrite. A non-empty scope that leaves the automatic tiers nothing rankable fails closed down a ladder, never through: the tiers anchor to the session's own model; without one they bind to a decoded scoped reference directly (even below the ranking floor — the user enabled exactly those models); and a scope with no readable reference and no session model refuses the automatic tier outright (`MODEL_SCOPE_UNSATISFIABLE`) rather than spawning an unpinned child, which would load pi's configured default — a model the scope may exclude. A scope you configured is never silently widened back to the full registry; only an absent or empty scope means unscoped, and an explicit model (call, agent, or config) always clears the refusal.
+When the session has a model scope (`/scoped-models`, `--models`), automatic derivation ranks `fast` and `deep` within that scope only. A model you disabled is never auto-assigned a tier. `capable` still mirrors the session's active model, even when that model sits outside the cycling scope. Explicit `model` pins (call, agent, or config) remain deliberate overrides that the scope does not rewrite. A non-empty scope that leaves the automatic tiers nothing rankable fails closed down a ladder, never through. First, the tiers anchor to the session's own model. Without one, they bind to a decoded scoped reference directly, even below the ranking floor, because the user enabled exactly those models. A scope with no readable reference and no session model refuses the automatic tier outright (`MODEL_SCOPE_UNSATISFIABLE`). It does not spawn an unpinned child, because that child loads pi's configured default — a model the scope can exclude. A scope you configured is never silently widened back to the full registry. Only an absent or empty scope means unscoped, and an explicit model (call, agent, or config) always clears the refusal.
 
-Inspect it with `/flows models` or `flow showConfig:true` — every rung states the model, the level, and the reason it was chosen:
+Inspect the roster with `/flows models` or `flow showConfig:true`. Every rung states the model, the level, and the reason for the choice:
 
 ```text
 modelTier.fast: anthropic/claude-haiku-4-5, thinking low — cheapest model this install can run on anthropic
@@ -221,26 +223,28 @@ Override a tier from `/flows models`, or in `~/.pi/agent/pi-flows.json`:
 }
 ```
 
-`"model": null` (shorthand `"default"`) runs that tier with no `--model`, so the child loads pi's configured default — distinct from omitting `model`, which keeps the derived one, and from `capable`, which names this session's model. A level set alongside it cannot be pre-checked against that model, since pi does not expose its configured default to an extension. Config that fails to parse is reported as a `modelRoster.issue` line beside the roster, so an override that never took effect is visible rather than silent.
+`"model": null` (shorthand `"default"`) runs that tier with no `--model`, so the child loads pi's configured default. This is distinct from omitting `model`, which keeps the derived one, and from `capable`, which names this session's model. A level set beside it cannot be pre-checked against that model, because pi does not expose its configured default to an extension. Configuration that fails to parse is reported as a `modelRoster.issue` line beside the roster. An override that never took effect is visible, not silent.
 
-A trusted project may override in `.pi/pi-flows.json` — found by walking up from the working directory (searching for the file itself, so an unrelated nested `.pi` does not shadow it), like project agents, so it applies when you start pi in a subdirectory. An untrusted project's file is ignored, since choosing the model also chooses which vendor sees the task. A project override narrows a tier field by field — a project that sets only `thinking` keeps your model pin — and `/flows models` warns before saving a tier the project already claims, since project config outranks your user file. `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` still work but are outranked by the config file. Full order, narrowest first: call `model` > call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project config (trusted) > user config > env > derived roster > pi default.
+A trusted project can override tiers in `.pi/pi-flows.json`. Like project agents, the file is found by walking up from the working directory, so it applies when you start pi in a subdirectory. The walk searches for the file itself, so an unrelated nested `.pi` does not shadow it. An untrusted project's file is ignored, because choosing the model also chooses which vendor sees the task. A project override narrows a tier field by field: a project that sets only `thinking` keeps your model pin. `/flows models` warns before it saves a tier the project already claims, because project configuration outranks your user file. `PI_FLOWS_FAST_MODEL` / `PI_FLOWS_DEEP_MODEL` still work but are outranked by the configuration file. Full order, narrowest first: call `model` > call `tier`/`thinking` > agent `model` pin > agent `tier`/`thinking` > project config (trusted) > user config > env > derived roster > pi default.
 
-A flow budget bounds one flow call. It does not cross the process boundary: the outer
-ceiling never sees a nested flow's spend, and that nested flow is bounded only by the
-ceilings its own call sets — uncapped if it sets none, which is the default.
+A flow budget bounds one flow call. It does not cross the process boundary. The
+outer ceiling never sees a nested flow's spend. That nested flow is bounded only
+by the ceilings its own call sets — with none set, it runs uncapped, which is
+the default.
 
 The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
-voters, subtasks, worktree writers, debate participants, and dossier sections --
-not a per-call input. It is enforced by the runtime and surfaced read-only in
+voters, subtasks, worktree writers, debate participants, and dossier sections.
+It is not a per-call input. The runtime enforces it and surfaces it read-only in
 `details.config`.
 
 ### Handoff injection policy
 
 Every value that crosses from one coordination role into another is treated as
-untrusted data. The flow-scoped guard strips invisible/bidi controls, scans
-high-signal instruction-override and exfiltration markers, and retains a bounded
-history so fragments that are benign alone but malicious when joined across
-several boundaries are detected as a compositional attack. This includes child
+untrusted data. The flow-scoped guard strips invisible/bidi controls and scans
+for high-signal instruction-override and exfiltration markers. It also retains
+a bounded history. Some fragments are benign alone but malicious when joined
+across several boundaries — the history lets the guard detect them as a
+compositional attack. This includes child
 output, retrieved content repeated by a child, routing metadata, ballots,
 critic/check-command feedback, graph dependencies, workflow phases, and
 synthesis inputs.
@@ -250,7 +254,7 @@ synthesis inputs.
 - `warn` (default) preserves current compatibility: the cleaned payload crosses
   with a visible untrusted-data notice.
 - `quarantine` withholds the flagged payload and carries only a fixed
-  quarantine marker. Downstream coordination may continue, but it cannot read
+  quarantine marker. Downstream coordination can continue, but it cannot read
   the flagged content.
 - `fail` returns `HANDOFF_POLICY_VIOLATION` and the child-dispatch seam refuses
   the recipient before a process is spawned.
@@ -258,33 +262,32 @@ synthesis inputs.
 `modeHandoffPolicy` declares a non-downgradable minimum for a mode. Resolution
 uses `warn < quarantine < fail`, so
 `handoffPolicy:"warn", modeHandoffPolicy:{"workflow":"fail"}` resolves to
-`fail`. Workflow approval receipts bind that resolution; resuming with a changed
+`fail`. Workflow approval receipts bind that resolution. A resume with a changed
 call or mode policy requires fresh approval.
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution: the iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children; the legacy total-token ceiling preserves the completed response and refuses subsequent children. A cost-bounded child also stops with `BUDGET_UNOBSERVABLE` if its provider omits cost telemetry, rather than treating unknown spend as zero. A delegation contract may independently impose a **contract budget**, including a tighter timeout.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution. The iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children. The legacy total-token ceiling preserves the completed response and refuses subsequent children. If a provider omits cost telemetry, a cost-bounded child stops with `BUDGET_UNOBSERVABLE` — unknown spend is never treated as zero. A delegation contract can independently impose a **contract budget**, including a tighter timeout.
 
 The dimensions are independent: `maxCostUsd` is cost, `maxTokens` cumulative
 input+output, and `maxGeneratedTokens` output only — not total/input, context,
 or cost. Compact disclosure says so.
 
-At 80% of any ceiling that would stop the live run (cost, generated output, or a contract's total tokens), the child receives a **wrap-up notice**: a steered message asking it to stop working and emit its return envelope now, recording unfinished work as skipped coverage and `unresolvedQuestions` with status `partial`. The transition belongs to the ceiling, not to one child: when any child's settled turn crosses the threshold of a shared budget, every live child governed by that budget is steered at the same moment, and a child spawned while a shared ceiling is already inside the window is steered at spawn, before its first turn. A child that crosses the ceiling after the notice demonstrably reached it (the steered message is seen echoed into its session) is still terminated — the spend stays bounded — but the run settles gracefully (`stopReason: "budget_wrap_up"`, exit 0) and its final output proceeds to envelope validation instead of being forfeited as `BUDGET_EXCEEDED`. That graceful settlement is provisional for a contracted child: delivery of the notice is not compliance, and a wrap-up response that then fails envelope validation revokes the success — the run reports the validation error (for example `RETURN_ENVELOPE_INVALID`, naming the failing role) rather than rendering as ✓ beside a flow error. To make honoring the notice achievable, a contracted child's notice also states the exact envelope requirement: the `contractId` it must carry and the return-envelope format its final message must be. A ceiling crossed before any wrap-up could be requested (one turn jumping from below 80% past 100%), or whose notice never reached the child (for example with child extensions disabled), keeps the hard-stop semantics. The wrap-up request (`child.wrap_up`, with `flow.budget.wrapup_delivered`) and a graceful exhaustion (`child.exhausted` with `flow.budget.graceful`) are recorded as budget events on the trace. Size ceilings as runaway backstops (~3x the expected normal spend), not as governors inside the normal cost range — a ceiling that sits inside the normal range converts routine runs into losses.
+At 80% of any ceiling that stops the live run (cost, generated output, or a contract's total tokens), the child receives a **wrap-up notice**. This steered message asks the child to stop working and emit its return envelope now. Unfinished work is recorded as skipped coverage and `unresolvedQuestions`, with status `partial`. The transition belongs to the ceiling, not to one child. When any child's settled turn crosses the threshold of a shared budget, every live child governed by that budget is steered at the same moment. A child spawned while a shared ceiling is already inside the window is steered at spawn, before its first turn. A child can cross the ceiling after the notice demonstrably reached it (the steered message is seen echoed into its session). That child is still terminated, so the spend stays bounded. But the run settles gracefully (`stopReason: "budget_wrap_up"`, exit 0), and its final output proceeds to envelope validation instead of being forfeited as `BUDGET_EXCEEDED`. For a contracted child, that graceful settlement is provisional. Delivery of the notice is not compliance. A wrap-up response that then fails envelope validation revokes the success. The run reports the validation error (for example `RETURN_ENVELOPE_INVALID`, naming the failing role) instead of rendering as ✓ beside a flow error. A contracted child's notice also states the exact envelope requirement — the `contractId` it must carry, and the return-envelope format its final message must be — so the notice is possible to honor. Two cases keep the hard-stop semantics: a ceiling crossed before any wrap-up request was possible (one turn jumping from below 80% past 100%), and a notice that never reached the child (for example with child extensions disabled). The wrap-up request (`child.wrap_up`, with `flow.budget.wrapup_delivered`) and a graceful exhaustion (`child.exhausted` with `flow.budget.graceful`) are recorded as budget events on the trace. Size ceilings as runaway backstops (~3x the expected normal spend), not as governors inside the normal cost range. A ceiling that sits inside the normal range converts routine runs into losses.
 
 The generated tool call, collapsed live row, and durable Flow card
 all disclose configured cost/token ceilings with their authority. Identical
-contract ceilings are collapsed into one compact line; distinct ceilings remain
+contract ceilings are collapsed into one compact line. Distinct ceilings remain
 separate. The durable entry persists these static ceiling definitions, so a
 `BUDGET_EXCEEDED` result still names the binding configuration after a session
-reload. Timeout-only contracts are not presented as cost/token ceilings, and
-omitting all ceiling fields means uncapped execution rather than a hidden
-default.
+reload. Timeout-only contracts are not presented as cost/token ceilings. A call
+that omits all ceiling fields runs uncapped — there is no hidden default.
 
 For `CHILD_PROVIDER_ERROR`, collapsed views show category, diagnostic,
-runtime/context facts (`?` when telemetry is absent), and safe recovery;
-expansion keeps redacted/capped detail or withholds prose under `recordContent:false`.
+runtime/context facts (`?` when telemetry is absent), and safe recovery.
+Expansion keeps redacted/capped detail, or withholds prose under `recordContent:false`.
 
 ### Trace export (observability)
 
-Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`; root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `flow.thinking_level` (the level passed to the child, after clamping to its model) paired with `flow.thinking_level_verified` (whether that clamp could be applied — `false` for a child naming no model, whose configured default pi-flows cannot read and whose level pi may lower internally, so treat the value as requested rather than effective), `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. When `traceContext` is supplied, redacted `flow.run_id`, `flow.case_id`, `flow.trial_id`, `flow.trial_index`, and `flow.arm` values are copied to every span; `details.trace` reports health and the exact trace/root identifiers while redacting and bounding the displayed trace path, context, and write error. Because the trace and root-span ids are derived stably from `traceContext` and the mode (that derivation is the eval linkage), two calls sharing both — a traced pre-spawn refusal and the retry after it — share the same ids; every row therefore also carries `flow.invocation_id`, a random per-call discriminator returned as `details.trace.invocationId`, and both the strict read-back and the trace report judge each invocation only on its own rows. Export is best-effort and never fails a flow.
+Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`. Root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. `flow.thinking_level` is the level passed to the child, after clamping to its model. Its pair `flow.thinking_level_verified` states whether the clamp was applied. It is `false` for a child that names no model: pi-flows cannot read that child's configured default, and pi can lower the level internally, so treat the value as requested rather than effective. When `traceContext` is supplied, redacted `flow.run_id`, `flow.case_id`, `flow.trial_id`, `flow.trial_index`, and `flow.arm` values are copied to every span. `details.trace` reports health and the exact trace/root identifiers, and redacts and bounds the displayed trace path, context, and write error. The trace and root-span ids are derived stably from `traceContext` and the mode — that derivation is the eval linkage. Two calls that share both, such as a traced pre-spawn refusal and the retry after it, share the same ids. Every row therefore also carries `flow.invocation_id`, a random per-call discriminator returned as `details.trace.invocationId`. Both the strict read-back and the trace report judge each invocation only on its own rows. Export is best-effort and never fails a flow.
 
 #### Span topology
 
@@ -297,31 +300,31 @@ Every span declares its role in `flow.span_role`:
 | `child` | One delegated child run. |
 | `event` | A zero-duration coordination boundary (see below). |
 
-Children nest under the stage that scheduled them rather than hanging flat off the root, so a critic belongs to a visible revision round and a graph node to a visible wave. `flow.unit_key` names the unit (`alpha`, `worker-2`, `phase-deploy`), and `flow.stage_key` / `flow.stage_span_count` describe the stage.
+Children nest under the stage that scheduled them, not flat off the root. A critic belongs to a visible revision round, and a graph node to a visible wave. `flow.unit_key` names the unit (`alpha`, `worker-2`, `phase-deploy`), and `flow.stage_key` / `flow.stage_span_count` describe the stage.
 
-Consumers link through the boundary that produced what they read, not around it: a synthesizer that consumes a validated handoff depends on `<unit>.handoff` rather than on `<unit>`, because validation, filtering, and the injection scan sit between a child's output and what the next prompt actually carried. This holds wherever one agent's output becomes another's prompt — an evaluate critic reads the prepared artifact, a loop judge the prepared body, a search scorer the prepared candidate — not only in the modes that use the integration adapter.
+Consumers link through the boundary that produced what they read, not around it. A synthesizer that consumes a validated handoff depends on `<unit>.handoff` rather than on `<unit>`. Validation, filtering, and the injection scan sit between a child's output and what the next prompt actually carried. This holds wherever one agent's output becomes another's prompt, not only in the modes that use the integration adapter. An evaluate critic reads the prepared artifact, a loop judge reads the prepared body, and a search scorer reads the prepared candidate.
 
-Dependencies are recorded as **links, not parentage**: a graph node that consumed another node's output was scheduled by its wave, not spawned by the node it read. `flow.depends_on` lists the unit keys and `flow.depends_on_span_ids` the resolved span ids. Both are comma-joined, and because node/phase/task ids are author-supplied, `%` and `,` inside a key are percent-escaped (`build,linux` → `build%2Clinux`) — decode before matching a key against `flow.unit_key`, which is escaped the same way. `flow.depends_on_unresolved` lists (same escaping, same structural cap) any declared keys that resolved to no span at write time — the writer's record of a handler bug, a `dependsOn` naming a unit that never registered; `flow.depends_on_unresolved_truncated` mirrors `flow.depends_on_truncated`. A row carrying the marker is structurally valid: read-back counts such edges as **dangling links**, reported separately from incomplete or structurally invalid traces, and `npm run trace:report -- --strict` still passes — an honest record of a bad link is not lost evidence.
+Dependencies are recorded as **links, not parentage**. A graph node that consumed another node's output was scheduled by its wave, not spawned by the node it read. `flow.depends_on` lists the unit keys, and `flow.depends_on_span_ids` lists the resolved span ids. Both are comma-joined. Node, phase, and task ids are author-supplied, so `%` and `,` inside a key are percent-escaped (`build,linux` → `build%2Clinux`). Decode before you match a key against `flow.unit_key`, which is escaped the same way. `flow.depends_on_unresolved` lists any declared keys that resolved to no span at write time, with the same escaping and the same structural cap. It is the writer's record of a handler bug: a `dependsOn` that names a unit that never registered. `flow.depends_on_unresolved_truncated` mirrors `flow.depends_on_truncated`. A row that carries the marker is structurally valid. Read-back counts such edges as **dangling links**, reported separately from incomplete or structurally invalid traces, and `npm run trace:report -- --strict` still passes. An honest record of a bad link is not lost evidence.
 
 #### Coordination events
 
 Not every failure happens inside a child run. Approvals, state transitions, budget refusals, gate results, and handoff acceptance move the flow without spawning anything, so each is written as its own zero-duration span with `flow.event_kind` ∈ `artifact`, `state`, `retry`, `approval`, `budget`, `validation`, `handoff`.
 
-Every event also states whose hand wrote it. An action that passes through a framework seam — a deterministic gate run, an approval receipt issued, a handoff consumed, the export's own certification — is minted by that seam, and the row carries `flow.event_minted:true` (omitted otherwise, never `false`). A mode's own decisions — state transitions, retries, and the verdicts its controllers parse from child output (`evaluate.panel_verdict`, `orchestrate.verify_verdict`, `loop.judge_verdict`, `debate.judge_verdict`, `vote.tally`, `search.scores`, each a `validation` event) — are recorded by the handler, and each mode declares once, on the mode table, which kinds its own hand records. The root span carries that declaration as `flow.trace.owed_event_kinds`, comma-joined and sorted: an empty value is a declaration of none, absence a trace written before the declaration existed. A declaration bounds kinds, not counts — whether a retry fires is runtime-dependent — but it makes an unminted event of an undeclared kind readable as corruption rather than as a mode's quirk (see strict mode below).
+Every event also states whose hand wrote it. Some actions pass through a framework seam: a deterministic gate run, an approval receipt issued, a handoff consumed, or the export's own certification. The seam mints those events, and the row carries `flow.event_minted:true` (omitted otherwise, never `false`). The handler records a mode's own decisions: state transitions, retries, and the verdicts its controllers parse from child output (`evaluate.panel_verdict`, `orchestrate.verify_verdict`, `loop.judge_verdict`, `debate.judge_verdict`, `vote.tally`, `search.scores`, each a `validation` event). Each mode declares once, on the mode table, which kinds its own hand records. The root span carries that declaration as `flow.trace.owed_event_kinds`, comma-joined and sorted. An empty value is a declaration of none. An absent value means the trace was written before the declaration existed. A declaration bounds kinds, not counts, because whether a retry fires is runtime-dependent. But it makes an unminted event of an undeclared kind readable as corruption rather than as a mode's quirk (see strict mode below).
 
-Contract validation is recorded at every contracted consumption, and the event name says whether a role boundary was crossed: `handoff.accepted` / `handoff.rejected` where another role consumed the result, `envelope.validated` / `envelope.rejected` for a terminal (parent-facing) report — which the glossary says is not a handoff — each followed by an `artifact.referenced` or `artifact.rejected` event per declared artifact. A terminal report stays exempt from injection-policy *enforcement*; only the recording is unconditional, so a digest mismatch leaves the same evidence whether the spend fed another role or came straight back to the parent.
+Contract validation is recorded at every contracted consumption, and the event name says whether a role boundary was crossed. `handoff.accepted` / `handoff.rejected` mean another role consumed the result. `envelope.validated` / `envelope.rejected` mean a terminal (parent-facing) report, which the glossary says is not a handoff. Each is followed by an `artifact.referenced` or `artifact.rejected` event per declared artifact. A terminal report stays exempt from injection-policy *enforcement*. Only the recording is unconditional, so a digest mismatch leaves the same evidence whether the spend fed another role or came straight back to the parent.
 
-Handoff events record what crossed the boundary — `flow.handoff.status`, `.compatibility`, `.acceptance` (`accepted` or `rejected:<CODE>`), `.raw_bytes` / `.carried_bytes` / `.filtered`, `.injection_warnings`, `.policy`, `.policy_action`, `.compositional`, `.scan_flagged`, `.payload_propagated`, `.payload_withheld`, `.sensitive_request_propagated`, `.artifact_refs`, and `.preserved_constraint_ids` — but never the summary prose or the envelope `data`. Constraint ids are content-derived (`constraint.1:<digest>`), so the same constraint keeps the same id at every hop and "was this preserved?" is answerable without copying the constraint text into the trace. These are operational enforcement facts, not ground-truth attack outcomes. The deterministic fault-portfolio report, whose scripted scenarios know whether content was benign and what the recipient actually did, keeps benign utility, attack success, propagation, containment, sensitive exposure, and false-positive block rates separate rather than deriving them from scanner labels.
+Handoff events record what crossed the boundary: `flow.handoff.status`, `.compatibility`, `.acceptance` (`accepted` or `rejected:<CODE>`), `.raw_bytes` / `.carried_bytes` / `.filtered`, `.injection_warnings`, `.policy`, `.policy_action`, `.compositional`, `.scan_flagged`, `.payload_propagated`, `.payload_withheld`, `.sensitive_request_propagated`, `.artifact_refs`, and `.preserved_constraint_ids`. They never record the summary prose or the envelope `data`. Constraint ids are content-derived (`constraint.1:<digest>`), so the same constraint keeps the same id at every hop. "Was this preserved?" is answerable without copying the constraint text into the trace. These are operational enforcement facts, not ground-truth attack outcomes. The deterministic fault-portfolio report keeps benign utility, attack success, propagation, containment, sensitive exposure, and false-positive block rates separate, and does not derive them from scanner labels. Its scripted scenarios know whether content was benign and what the recipient actually did.
 
 Child spans additionally identify the authority they ran under: `flow.agent_prompt_version` (a digest of the system prompt that actually ran), `flow.allowed_tools`, `flow.authority_may` / `_must_not` / `_requires_approval`, `flow.side_effect_class`, `flow.contract_id`, `flow.return_schema_digest`, `flow.constraint_ids`, `flow.delegation_reason` (the call's `why`), and the budget state after the run.
 
 #### Trace health and strict mode
 
-The root span accounts for the export itself: `flow.trace.expected_spans`, `.observed_spans`, `.dropped_spans`, `.redacted_spans`, `.failed_exports`, and `.health` (`recorded` / `degraded` / `missing`). The same counters come back on `details.trace.spans`. Reading a trace back compares the declared expectation against the rows actually present, so spans lost *after* a successful write still register as dropped. A strict run additionally returns `details.trace.structure` (`FlowTraceStructure`): whether reading the export back found a span tree, with `issue` naming the fault when it did not. The field is present only when the run verified its own export — today `traceStrict` — and **absent means unverified, never verified-fine**. A strict root also declares one span beyond its pre-verification count: the slot for the certification event the reader requires, so a landed certification matches the declaration exactly and a missing one reads as loss.
+The root span accounts for the export itself: `flow.trace.expected_spans`, `.observed_spans`, `.dropped_spans`, `.redacted_spans`, `.failed_exports`, and `.health` (`recorded` / `degraded` / `missing`). The same counters come back on `details.trace.spans`. Reading a trace back compares the declared expectation against the rows actually present, so spans lost *after* a successful write still register as dropped. A strict run additionally returns `details.trace.structure` (`FlowTraceStructure`): whether the read-back found a span tree, with `issue` naming the fault when it did not. The field is present only when the run verified its own export — today `traceStrict` — and **absent means unverified, never verified-fine**. A strict root also declares one span beyond its pre-verification count: the slot for the certification event the reader requires. A landed certification then matches the declaration exactly, and a missing one reads as loss.
 
-Trace health is deliberately not folded into execution success. A run whose spans were dropped is not a failed run — it is an unauditable one, and conflating the two turns every exporter hiccup into a phantom agent regression.
+Trace health is deliberately not folded into execution success. A run whose spans were dropped is not a failed run — it is an unauditable one. Conflating the two turns every exporter problem into a phantom agent regression.
 
-Tracing stays best-effort by default. Set `traceStrict:true` (or `PI_FLOWS_TRACE_STRICT=1`) to make evidence a gate: a missing trace file, dropped spans, or failed writes then fail the call with `TRACE_INCOMPLETE`. A strict run also reads its own export back before reporting a result, so a trace that was written completely but does not hold together as a span tree — a span that never reaches the root, or one outside its parent's interval — fails the same way rather than passing on the writer's count. The same reading holds unminted event rows to the root's declared `flow.trace.owed_event_kinds`, so an event span of a kind the mode never declared refuses the call too; rows carrying `flow.event_minted` are the seams' own statements and exempt, as are traces written before the declaration existed. The read-back reads only from the point the file had reached when the flow call began — the file is append-only, so earlier bytes cannot belong to the call — which keeps each finalize's cost proportional to its own rows (plus anything co-tenants append while it runs) when many flows share one `traceFile`; rows already in the file before the call (under any trace id) are judged by whole-file readers such as the report, not by the call's own gate. `npm run trace:report -- --strict` reruns that same reading over a trace you still have. Use it for evaluation and release runs, not for ordinary user flows. The eval harness has the matching switch — `npm run eval -- --strict-trace` blocks a run whose runtime traces are incomplete, reported as its own score family rather than as subject failures.
+Tracing stays best-effort by default. Set `traceStrict:true` (or `PI_FLOWS_TRACE_STRICT=1`) to make evidence a gate: a missing trace file, dropped spans, or failed writes then fail the call with `TRACE_INCOMPLETE`. A strict run also reads its own export back before it reports a result. A trace that was written completely but does not hold together as a span tree — a span that never reaches the root, or one outside its parent's interval — fails the same way. It does not pass on the writer's count. The same reading holds unminted event rows to the root's declared `flow.trace.owed_event_kinds`, so an event span of a kind the mode never declared refuses the call too. Rows that carry `flow.event_minted` are the seams' own statements and are exempt, as are traces written before the declaration existed. The read-back reads only from the point the file had reached when the flow call began. The file is append-only, so earlier bytes cannot belong to the call. When many flows share one `traceFile`, this keeps each finalize's cost proportional to its own rows, plus anything co-tenants append while it runs. Rows already in the file before the call, under any trace id, are judged by whole-file readers such as the report, not by the call's own gate. `npm run trace:report -- --strict` reruns that same reading over a trace you still have. Use it for evaluation and release runs, not for ordinary user flows. The eval harness has the matching switch: `npm run eval -- --strict-trace` blocks a run whose runtime traces are incomplete, reported as its own score family rather than as subject failures.
 
 Summarize a trace file from inside pi:
 
@@ -336,15 +339,15 @@ npm run trace:report -- flow-trace.jsonl
 npm run trace:report -- --strict flow-trace.jsonl   # exit 1 on incomplete evidence
 ```
 
-The report groups runs by `flow.mode` and `traceLabel`. **Execution success** means a run or flow settled without a process or coordination failure; it does not establish that the requested outcome was correct. **Verified outcome success** means an independent verifier established that the requested outcome met its acceptance criteria. It and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence; ordinary process completion is never promoted to verified outcome success. Elapsed, worker, and critical-path time remain separate. A trace-health line reports observed-vs-expected spans, drops, redactions, failed exports, how many runs are incomplete, and — when any exist — event spans of a kind the mode never declared; an undeclared-kind event makes its invocation incomplete, so `--strict` refuses the file. A topology line counts stage spans and coordination events. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data; traces written before span roles existed are read as root-plus-children.
+The report groups runs by `flow.mode` and `traceLabel`. **Execution success** means a run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct. **Verified outcome success** means an independent verifier established that the requested outcome met its acceptance criteria. It and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence. Ordinary process completion is never promoted to verified outcome success. Elapsed, worker, and critical-path time remain separate. A trace-health line reports observed-vs-expected spans, drops, redactions, failed exports, how many runs are incomplete, and, when any exist, event spans of a kind the mode never declared. An undeclared-kind event makes its invocation incomplete, so `--strict` refuses the file. A topology line counts stage spans and coordination events. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data. Traces written before span roles existed are read as root-plus-children.
 
 ## Return requirements, delegation contracts, and write isolation
 
 `returnContract` and `requireEvidence` supply prose **return requirements** that
 prevent summary loss at handoff boundaries. They are appended to child tasks in `single`, `parallel`, `chain`,
 `evaluate`, `vote`, `route`, and to `orchestrate` workers/synthesis. Workflow
-phases, worktree tasks, and dossier sections accept task-level return requirements; those
-override the top-level return requirements. Dossier sections and worktree tasks require
+phases, worktree tasks, and dossier sections accept task-level return requirements.
+Those override the top-level return requirements. Dossier sections and worktree tasks require
 evidence by default. `orchestrate.workerReturnContract` can set a worker-specific
 set of return requirements while the top-level `returnContract` still applies to synthesis.
 
@@ -352,31 +355,32 @@ For durable machine-checked handoffs, a delegation `contract` is the structured 
 It contains `objective`, `constraints`, `nonGoals`, `dependencies`, `authority`
 (`may`, `mustNot`, `requiresApproval`), `sideEffectClass`, `budget`,
 `acceptanceChecks`, a JSON Schema `returnSchema`, and `owner`. All fields are
-required; arrays and the budget object may be empty. Each dispatched delegation contract has
-a canonical `sha256:` identity. Every contracted mode, chain steps included, requires the child to echo
-that identity as `contractId`, so missing/stale returns fail with
-`RETURN_CONTRACT_MISMATCH` before a dependent child, synthesizer, or worktree
-merge can consume them. JSON Schema, artifact-boundary, and digest validation
-also happen before integration.
+required. Arrays and the budget object can be empty. Each dispatched delegation
+contract has a canonical `sha256:` identity. Every contracted mode, chain steps
+included, requires the child to echo that identity as `contractId`. Missing or
+stale returns fail with `RETURN_CONTRACT_MISMATCH` before a dependent child,
+synthesizer, or worktree merge can consume them. JSON Schema, artifact-boundary,
+and digest validation also happen before integration.
 
 Single and the evaluate operator use the top-level delegation contract, and chain
-uses it as the step fallback. Parallel tasks and vote/debate roles may use it
-directly; graph nodes, workflow phases, worktree tasks, dossier sections, and
-orchestrate roles can set their own delegation contract because their objectives
-and return schemas often differ. Final debrief/integrator roles in those modes
+uses it as the step fallback. Parallel tasks and vote/debate roles can use it
+directly. Graph nodes, workflow phases, worktree tasks, dossier sections, and
+orchestrate roles can set their own delegation contract, because their
+objectives and return schemas often differ. Final debrief/integrator roles in those modes
 fall back to the top-level delegation contract where their mode plan declares a
 `resolved` role.
 
 Every agent-reference role enforces its own `contract`, including evaluate critics,
 route controller, loop body/judge, search generator/scorer/debrief, and monitor
 reactor. Unless documented as `resolved`, it does not inherit the top-level contract.
-Control decisions read schema-checked `data` directly, never marker-scanning a
-serialized copy or summary prose. Contracted readers accept only their documented
-structured fields and values; schema-valid strings, booleans, or legacy synonyms
-are not coerced into verdicts, loop status, or scores. With `recordContent:false`, stored data remains
-omitted while schema-checked Integration control stays usable ephemerally. Concurrent waves
-validate every successful Return before exposing any result, retaining all spent
-Runs and rejection evidence if one or more Returns fail.
+Control decisions read schema-checked `data` directly. They never scan markers
+in a serialized copy or in summary prose. Contracted readers accept only their
+documented structured fields and values. Schema-valid strings, booleans, or
+legacy synonyms are not coerced into verdicts, loop status, or scores. With
+`recordContent:false`, stored data remains omitted while schema-checked
+Integration control stays usable ephemerally. Concurrent waves validate every
+successful Return before they expose any result. If one or more Returns fail,
+all spent Runs and rejection evidence are retained.
 
 Every result a downstream role consumes becomes a **handoff envelope**
 (`pi-flows.handoff-envelope.v1`) with source agent and step provenance. A terminal
@@ -385,8 +389,8 @@ Every result a downstream role consumes becomes a **handoff envelope**
 consumed it. Return envelopes retain delegation-contract identity, status, evidence,
 artifact references/digests, and schema-checked data. Existing prose-only results
 remain supported as `compatibility:"legacy-prose"` handoff envelopes with
-`contractId:null`; downstream prompts receive that explicit compatibility shape
-instead of trusting unlabelled prose. Partial and blocked return envelopes fail
+`contractId:null`. Downstream prompts receive that explicit compatibility shape
+instead of trusting unlabeled prose. Partial and blocked return envelopes fail
 closed unless `incompleteHandoffPolicy:"include"` is explicitly selected.
 
 Contract budgets apply at dispatch: timeout tightens each run's top-level limit,
@@ -424,8 +428,8 @@ delegation. Flow budgets remain shared across the flow.
 The child must return `pi-flows.return-envelope.v1` with `status`, `summary`,
 `evidence`, `artifactReferences`, `digests`, `changedState`,
 `unresolvedQuestions`, `retry`, and `data`. `data` is checked against
-`returnSchema`; declared SHA-256 digests are checked against files inside the
-child `cwd`; runtime usage is attached when available. Invalid schema data,
+`returnSchema`. Declared SHA-256 digests are checked against files inside the
+child `cwd`. Runtime usage is attached when available. Invalid schema data,
 unsafe/missing artifacts, or digest mismatches fail closed with a structured
 error before the Return can drive a dependent role or coordination decision. The
 validated envelope is retained on `details.results[].envelope`.
@@ -433,55 +437,57 @@ validated envelope is retained on `details.results[].envelope`.
 Existing `task`, `returnContract`, and `requireEvidence` calls remain prose-based
 and behave as before.
 
-Parallel fan-out is read-optimized by default. If two write-capable agents would
-run concurrently in the same `cwd`, pi-flows returns `SHARED_WRITE_CWD` before
-spawning them. A role is write-capable when its effective tools are pi defaults,
-or include `bash`, `edit`, or `write` — the toolset decides, never the role name
-or prompt, and the refusal names the tools that classified each agent. To
-recover, serialize with `concurrency:1`, use agents whose effective tools
-exclude `bash`/`edit`/`write`, swap `bash` for `bash-ro`, or give each writer a
-separate worktree/cwd. Set `allowSharedWriteCwd:true` only as a last resort,
-after deciding that concurrent writes in one shared checkout are intentional.
+Parallel fan-out is read-optimized by default. If a call asks two write-capable
+agents to run concurrently in the same `cwd`, pi-flows returns
+`SHARED_WRITE_CWD` before it spawns them. A role is write-capable when its
+effective tools are pi defaults, or include `bash`, `edit`, or `write`. The
+toolset decides, never the role name or prompt. The refusal names the tools that
+classified each agent. To recover, serialize with `concurrency:1`, use agents
+whose effective tools exclude `bash`/`edit`/`write`, swap `bash` for `bash-ro`,
+or give each writer a separate worktree/cwd. Set `allowSharedWriteCwd:true` only
+as a last resort, after you decide that concurrent writes in one shared checkout
+are intentional.
 
 `bash-ro` is not write-capable. It is enforced in two layers:
 
 - **OS sandbox (the security boundary).** On macOS the child runs under
   `sandbox-exec` with a profile that denies file writes anywhere under the
-  reviewed `cwd` while allowing everything else, so a write into the shared
-  checkout fails at the kernel regardless of what command produced it. Writes
+  reviewed `cwd` and allows everything else. A write into the shared checkout
+  fails at the kernel, whatever command produced it. Writes
   outside the checkout (pi's own temp files, npm/node caches) still work.
   Opt out with `PI_FLOWS_BASH_RO_NO_SANDBOX=1`.
 - **In-child command allowlist (defense-in-depth, and an opt-in fallback).**
-  The child loads an enforcer extension via an explicit `-e` (which survives
-  `--no-extensions`, since pi only drops *discovered* extensions) that blocks
-  bash commands outside a read-only allowlist: git inspection
-  (`log`/`diff`/`show`/`blame`/`status`/...), file inspection
+  The child loads an enforcer extension via an explicit `-e`. The explicit flag
+  survives `--no-extensions`, because pi only drops *discovered* extensions.
+  The enforcer blocks bash commands outside a read-only allowlist: git
+  inspection (`log`/`diff`/`show`/`blame`/`status`/...), file inspection
   (`ls`/`cat`/`grep`/`find`/...), and repo verification (`npm test`,
-  `npm run <script>`, `node --test`). It refuses shell expansion/substitution
-  and known write/exec flags fail-closed. Because command parsing can never be
-  exhaustive (getopt-style option abbreviation alone yields endless new
-  spellings across every tool), the allowlist is **best-effort, not a security
-  boundary**. It is the default fallback where the OS sandbox is unavailable;
-  a caller who needs a kernel-enforced guarantee sets
+  `npm run <script>`, `node --test`). It refuses shell expansion/substitution,
+  and known write/exec flags fail closed. Command parsing can never be
+  exhaustive — getopt-style option abbreviation alone yields endless new
+  spellings across every tool — so the allowlist is **best-effort, not a
+  security boundary**. It is the default fallback where the OS sandbox is
+  unavailable. A caller who needs a kernel-enforced guarantee sets
   `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1`, which refuses
   (`BASH_READONLY_UNENFORCEABLE`) instead of falling back.
 
-Every bash-ro child additionally runs with several repository-configured git
-helpers neutralized via `GIT_CONFIG_*` — pager, a command-valued `fsmonitor`,
-and hooks. `diff.external` and textconv drivers are deliberately *not* forced
-off (an empty `diff.external` makes git abort every diff), so a configured
-external-diff/textconv program can still launch on a plain `git diff`/`git
-show`; on the sandbox path its checkout writes are denied at the kernel, and on
-the fallback path it is a documented residual (see the limitations below).
+Every bash-ro child also runs with several repository-configured git helpers
+neutralized via `GIT_CONFIG_*`: the pager, a command-valued `fsmonitor`, and
+hooks. `diff.external` and textconv drivers are deliberately *not* forced off,
+because an empty `diff.external` makes git abort every diff. A configured
+external-diff/textconv program can therefore still launch on a plain
+`git diff`/`git show`. On the sandbox path, its checkout writes are denied at
+the kernel. On the fallback path, it is a documented residual (see the
+limitations below).
 
 When the sandbox enforces, verification commands that write *into* the checkout
-(a build cache, `*.tsbuildinfo`) will fail — that is the same shared-checkout
-mutation the guard exists to prevent; run those in a non-`bash-ro` role or a
-distinct cwd. A toolset carrying both `bash` and `bash-ro` is write-capable
-(plain bash wins). A `bash-ro` spawn is refused with
-`BASH_READONLY_UNENFORCEABLE` only when no layer can enforce it — the enforcer
+(a build cache, `*.tsbuildinfo`) fail. That is the same shared-checkout
+mutation the guard exists to prevent. Run those commands in a non-`bash-ro`
+role or a distinct cwd. A toolset carrying both `bash` and `bash-ro` is
+write-capable (plain bash wins). A `bash-ro` spawn is refused with
+`BASH_READONLY_UNENFORCEABLE` only when no layer can enforce it: the enforcer
 extension cannot be located, or `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX` is set on a
-host without the sandbox — rather than silently granting an unrestricted shell.
+host without the sandbox. It never silently grants an unrestricted shell.
 The child span records which layer enforced it (`flow.bash_ro.enforcement` =
 `sandbox` or `allowlist`).
 
@@ -492,15 +498,15 @@ best-effort, not a security boundary:
 
 - A repository-configured `diff.external` or textconv driver runs on a plain
   `git diff`/`git show`. Its command comes from *local* git config, which the
-  untrusted reviewed tree cannot set, and git offers no config/env switch to
-  disable it without breaking internal diff (only per-command `--no-ext-diff`).
-- `git status`/`git diff` may refresh `.git/index` stat data.
+  untrusted reviewed tree cannot set. Git offers no config/env switch to
+  disable it without breaking internal diff — only the per-command
+  `--no-ext-diff`.
+- `git status`/`git diff` can refresh `.git/index` stat data.
 - Command parsing cannot be exhaustive (option abbreviation).
 
-All three are contained on the sandbox path — the writes are denied at the
-kernel and git inspection still succeeds. Set
-`PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse rather than run best-effort where
-the sandbox is unavailable.
+All three are contained on the sandbox path: the writes are denied at the
+kernel, and git inspection still succeeds. Where the sandbox is unavailable,
+set `PI_FLOWS_BASH_RO_REQUIRE_SANDBOX=1` to refuse rather than run best-effort.
 
 ## Coordination-control protocol
 
@@ -513,33 +519,33 @@ derived from one vocabulary, so they cannot drift.
 
 | Protocol | Marker | Documented values | Authoritative position | Unparseable fallback |
 |---|---|---|---|---|
-| Verdict | `VERDICT` | `PASS`, `REVISE` | first non-empty line, e.g. `VERDICT: PASS` | `REVISE` |
-| Loop | `LOOP` | `DONE`, `CONTINUE` | first non-empty line, e.g. `LOOP: DONE` | `CONTINUE` |
-| Route | `ROUTE` | one candidate name exactly, or `none` | first non-empty line, e.g. `ROUTE: recon` | unresolved route (fallback agent, else `ROUTE_UNRESOLVED`) |
-| Score | `SCORE` | an integer or decimal in `0..100` | first non-empty line, e.g. `SCORE: 88` | unscored candidate (`0`) |
+| Verdict | `VERDICT` | `PASS`, `REVISE` | first non-empty line, for example `VERDICT: PASS` | `REVISE` |
+| Loop | `LOOP` | `DONE`, `CONTINUE` | first non-empty line, for example `LOOP: DONE` | `CONTINUE` |
+| Route | `ROUTE` | one candidate name exactly, or `none` | first non-empty line, for example `ROUTE: recon` | unresolved route (fallback agent, else `ROUTE_UNRESOLVED`) |
+| Score | `SCORE` | an integer or decimal in `0..100` | first non-empty line, for example `SCORE: 88` | unscored candidate (`0`) |
 
 A mention, quotation, negation, example, or a longer word that merely begins
-with an allowed token is ordinary prose and fails closed: `PASSPORT`,
+with an allowed token is ordinary prose and fails closed. `PASSPORT`,
 `APPROVED`, `LOOP: COMPLETE`, `SCORE: 150`, or a negated line such as `I cannot
 issue VERDICT: PASS` do not terminate or redirect coordination. Marker and
-value match case-insensitively; structured `data` values match their documented
-value and type exactly — the lowercase `"pass"`/`"revise"` and `"done"`/`"continue"`
+value match case-insensitively. Structured `data` values match their documented
+value and type exactly: the lowercase `"pass"`/`"revise"` and `"done"`/`"continue"`
 strings, a candidate-name route string, or a score number in `0..100`.
 
-Each protocol also accepts a JSON fallback — `{"verdict":"pass"}`,
-`{"loop":"done"}`, `{"route":"recon"}`, `{"score":88}` — accepting only the
-documented field and value type; anything else is unparseable.
+Each protocol also accepts a JSON fallback: `{"verdict":"pass"}`,
+`{"loop":"done"}`, `{"route":"recon"}`, `{"score":88}`. The fallback accepts
+only the documented field and value type. Anything else is unparseable.
 
 ## Evaluate mode (generator-evaluator loop)
 
-The `operator` builds an artifact against the top-level `task`; a separate `redteam` judges that artifact against the goal and returns a verdict. Top-level `task` is preferred, but `evaluate.operator.task` is accepted as the goal when the top-level field is omitted. On `REVISE` the operator is re-shown **its previous artifact plus the critique** and revises it in place (rather than rebuilding from scratch); the loop stops on `PASS` or when `maxIterations` is reached, returning the last attempt either way.
+The `operator` builds an artifact against the top-level `task`. A separate `redteam` judges that artifact against the goal and returns a verdict. Top-level `task` is preferred, but `evaluate.operator.task` is accepted as the goal when the top-level field is omitted. On `REVISE`, the operator is re-shown **its previous artifact plus the critique** and revises it in place, not from scratch. The loop stops on `PASS` or when it reaches `maxIterations`. Either way, it returns the last attempt.
 
-The two roles run in separate child processes with separate contexts, and the `redteam` is shown only the `operator`'s **output**, never its reasoning trace — so its judgment is independent (see the wiki's generator-evaluator-harness design rules).
+The two roles run in separate child processes with separate contexts. The `redteam` sees only the `operator`'s **output**, never its reasoning trace, so its judgment is independent (see the wiki's generator-evaluator-harness design rules).
 
 Two reliability levers beyond the single LLM critic:
 
-- **`checkCommand` — a deterministic gate (level-1 / code assertions).** A shell command run in the operator's `cwd` that must exit `0` each round. A non-zero exit is an automatic `REVISE` — the command output becomes the critique and the LLM critic is skipped that round (saving cost). `PASS` requires **both** the check (exit 0) **and** the critic(s). This is verification guaranteed by the harness, not merely requested in the prompt. A command that cannot even start (e.g. not found) fails with `CHECK_COMMAND_FAILED` rather than looping forever.
-- **`redteam` as a panel (god-metric → decomposed evaluators).** Pass an array of critics — for example one per dimension (correctness, security, tests). They run in parallel; `PASS` requires **every** critic to pass, and the `REVISE` critiques are merged for the next round.
+- **`checkCommand` — a deterministic gate (level-1 / code assertions).** A shell command run in the operator's `cwd` that must exit `0` each round. A non-zero exit is an automatic `REVISE`: the command output becomes the critique, and the LLM critic is skipped that round, which saves cost. `PASS` requires **both** the check (exit 0) **and** the critic(s). The harness guarantees this verification — the prompt does not merely request it. A command that cannot start (for example, not found) fails with `CHECK_COMMAND_FAILED` rather than looping forever.
+- **`redteam` as a panel (god-metric → decomposed evaluators).** Pass an array of critics — for example one per dimension (correctness, security, tests). They run in parallel. `PASS` requires **every** critic to pass, and the `REVISE` critiques are merged for the next round.
 
 ```json
 {
@@ -559,9 +565,9 @@ Two reliability levers beyond the single LLM critic:
 
 | Field | Default | Notes |
 |---|---|---|
-| `evaluate.operator` | `{ agent: "operator" }` | Builds the artifact. Its optional `contract` overrides the top-level contract; `task` can supply the goal when top-level `task` is omitted. |
-| `evaluate.redteam` | `{ agent: "redteam" }` | One critic or an array. Each accepts its own `contract` (no top-level fallback); contracted verdicts come from `data.verdict`. With a panel, `PASS` needs every critic to pass. |
-| `evaluate.checkCommand` | (none) | Deterministic gate: a shell command that must exit `0` each round. Non-zero → forced `REVISE`; non-runnable → `CHECK_COMMAND_FAILED`. |
+| `evaluate.operator` | `{ agent: "operator" }` | Builds the artifact. Its optional `contract` overrides the top-level contract. `task` can supply the goal when top-level `task` is omitted. |
+| `evaluate.redteam` | `{ agent: "redteam" }` | One critic or an array. Each accepts its own `contract` (no top-level fallback). Contracted verdicts come from `data.verdict`. With a panel, `PASS` needs every critic to pass. |
+| `evaluate.checkCommand` | (none) | Deterministic gate: a shell command that must exit `0` each round. Non-zero → forced `REVISE`. Non-runnable → `CHECK_COMMAND_FAILED`. |
 | `evaluate.maxIterations` | `3` | Integer `1..8`. Hard cap on generate→evaluate rounds. |
 | `evaluate.passContract` | (none) | Explicit acceptance criteria appended to the critic's rubric. Concrete criteria make the verdict reliable. |
 
@@ -569,7 +575,7 @@ Without a role contract, `redteam` signals `VERDICT: PASS|REVISE` as its first n
 
 ## Vote mode (parallelization / voting)
 
-Runs the same `task` across two or more voters, then either aggregates the answers via a `debrief` agent or returns all of them. Independent voters suppress non-deterministic errors; **different models** (vendor-diverse voting) additionally break correlated blind spots. When every voter has the same agent/model identity, pi-flows keeps the original task but adds complementary voter stances (solver, skeptic, evidence checker, etc.) so the ballots are not identical prompt replays.
+Runs the same `task` across two or more voters. Then it either aggregates the answers via a `debrief` agent or returns all of them. Independent voters suppress non-deterministic errors. **Different models** (vendor-diverse voting) additionally break correlated blind spots. When every voter has the same agent/model identity, pi-flows keeps the original task but adds complementary voter stances (for example solver, skeptic, and evidence checker), so the ballots are not identical prompt replays.
 
 ```json
 {
@@ -583,11 +589,11 @@ Runs the same `task` across two or more voters, then either aggregates the answe
 
 | Field | Default | Notes |
 |---|---|---|
-| `vote.voters` | (none) | Explicit voter list (heterogeneous models recommended). Each runs the same goal; identical agent/model voters get complementary stances. |
+| `vote.voters` | (none) | Explicit voter list (heterogeneous models recommended). Each runs the same goal. Identical agent/model voters get complementary stances. |
 | `vote.agent` + `vote.count` | count `3` | Same-agent voting: run one agent `count` times with complementary stances. `count` is `2..8`. |
 | `vote.debrief` | (none) | Optional `debrief` agent that merges the voter answers. Without it, all voter answers are returned for the parent to judge. |
 
-At least 2 voters are required (`TOO_FEW_VOTERS` otherwise) and at most `maxParallelTasks`. `concurrency` controls fan-out. Voter answers are free text, so consensus is decided by the `debrief` agent, not by programmatic majority.
+At least 2 voters are required (`TOO_FEW_VOTERS` otherwise) and at most `maxParallelTasks`. `concurrency` controls fan-out. Voter answers are free text, so the `debrief` agent decides consensus, not a programmatic majority.
 
 ## Route mode (classify → dispatch)
 
@@ -602,15 +608,15 @@ The `controller` reads the `task` plus the candidate descriptions and picks one 
 
 | Field | Default | Notes |
 |---|---|---|
-| `route.controller` | `{ agent: "controller" }` | Classifier. Sees the task and candidate descriptions; accepts its own `contract`, whose validated `data.route` is authoritative. |
-| `route.candidates` | (required) | Agent names the `controller` may choose from. |
+| `route.controller` | `{ agent: "controller" }` | Classifier. Sees the task and candidate descriptions. Accepts its own `contract`, whose validated `data.route` is authoritative. |
+| `route.candidates` | (required) | Agent names the `controller` can choose from. |
 | `route.fallback` | (none) | Agent to run if the `controller` names no valid candidate. Without it, an unresolved route returns `ROUTE_UNRESOLVED`. |
 
-Without a contract, the controller may return `ROUTE: <agent>` as its first non-empty line, or JSON `{ "route": "<agent>" }`; a candidate named anywhere else is prose and never selects. A contracted controller uses only validated `data.route`; embedded marker text cannot override it. A quarantined controller payload cannot select a candidate and falls back like `none`; without `route.fallback`, either case returns `ROUTE_UNRESOLVED`.
+Without a contract, the controller can return `ROUTE: <agent>` as its first non-empty line, or JSON `{ "route": "<agent>" }`. A candidate named anywhere else is prose and never selects. A contracted controller uses only validated `data.route`. Embedded marker text cannot override it. A quarantined controller payload cannot select a candidate and falls back like `none`. Without `route.fallback`, either case returns `ROUTE_UNRESOLVED`.
 
 ## Orchestrate mode (decompose → fan out → synthesize)
 
-The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results — the deep-research / orchestrator-workers shape. Top-level `task` is preferred; `orchestrate.task` is accepted as its fallback. Each worker sees both the overall goal or delegation contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
+The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results. This is the deep-research / orchestrator-workers shape. Top-level `task` is preferred. `orchestrate.task` is accepted as its fallback. Each worker sees both the overall goal or delegation contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
 
 ```json
 {
@@ -627,14 +633,14 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 | Field | Default | Notes |
 |---|---|---|
 | `orchestrate.task` | (none) | Goal fallback when top-level `task` is omitted. Prefer top-level `task` for new calls. |
-| `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON subtask array without a contract; its own contract carries that array as validated envelope `data`. |
+| `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON subtask array without a contract. Its own contract carries that array as validated envelope `data`. |
 | `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel, with the overall goal or delegation contract included for context. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
-| `orchestrate.verify` | (none) | Optional critic. Without its own contract it returns PASS/REVISE prose; with one, validated `data.verdict` controls the decision. |
-| `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict; `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`; `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
+| `orchestrate.verify` | (none) | Optional critic. Without its own contract, it returns PASS/REVISE prose. With one, validated `data.verdict` controls the decision. |
+| `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict. `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`. `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
 | `orchestrate.workerReturnContract` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
-| `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`; when top-level `task` is also omitted, this text may serve as the goal fallback for model-generated calls. |
+| `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`. When top-level `task` is also omitted, this text can serve as the goal fallback for model-generated calls. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Cap on subtasks (also bounded by `maxParallelTasks`). |
 
 If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
@@ -652,16 +658,16 @@ Composed with return requirements and a revising verifier:
     "verifyPolicy": "revise",
     "maxSubtasks": 5
   },
-  "why": "a broad cross-codebase map is more reading than one context should serialize"
+  "why": "a broad cross-codebase map is more reading than one context can serialize"
 }
 ```
 
-Workers receive the goal, the return requirements, and their assigned subtask; the `overwatch` verifier checks the merged answer against the goal, and `verifyPolicy:"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
+Workers receive the goal, the return requirements, and their assigned subtask. The `overwatch` verifier checks the merged answer against the goal, and `verifyPolicy:"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
 
 ## Graph mode (static DAG)
 
-`graph` runs a bounded static DAG. Nodes run once all `dependsOn` nodes have
-completed, and ready nodes in the same dependency wave may run in parallel.
+`graph` runs a bounded static DAG. A node runs after all its `dependsOn` nodes
+complete. Ready nodes in the same dependency wave can run in parallel.
 
 ```json
 {
@@ -685,7 +691,7 @@ output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
 
 `loop` repeats a body agent until an uncontracted body emits `LOOP: DONE` as its
 first non-empty line, or an uncontracted judge emits `VERDICT: PASS` the same
-way; contracted roles use validated `data.loop` / `data.verdict` instead.
+way. Contracted roles use validated `data.loop` / `data.verdict` instead.
 Anything but the exact `LOOP: DONE` marker — `LOOP: COMPLETE`, a negated
 `LOOP: DONE`, or no marker at all — means `CONTINUE`.
 
@@ -702,8 +708,8 @@ Anything but the exact `LOOP: DONE` marker — `LOOP: COMPLETE`, a negated
 
 | Field | Default | Notes |
 |---|---|---|
-| `loop.body` | (required) | Iteration agent. Accepts its own `contract`; without a judge, contracted `data.loop` controls DONE/CONTINUE. |
-| `loop.judge` | (none) | Optional critic with its own `contract`; contracted `data.verdict` controls PASS/REVISE. |
+| `loop.body` | (required) | Iteration agent. Accepts its own `contract`. Without a judge, contracted `data.loop` controls DONE/CONTINUE. |
+| `loop.judge` | (none) | Optional critic with its own `contract`. Contracted `data.verdict` controls PASS/REVISE. |
 | `loop.maxIterations` | `3` | Bounded iteration cap. |
 
 If the loop reaches `maxIterations` without a stop signal, pi-flows returns
@@ -711,10 +717,11 @@ If the loop reaches `maxIterations` without a stop signal, pi-flows returns
 
 ## Search mode (bounded beam search)
 
-`search` generates candidate paths, scores them with a legacy `SCORE: 0..100`
-marker on its first non-empty line or contracted `data.score`, keeps the best
-beam, optionally refines, then debriefs the winner. An out-of-range or
-unparseable score leaves the candidate unscored (`0`).
+`search` generates candidate paths and scores them. A score comes from a legacy
+`SCORE: 0..100` marker on the first non-empty line, or from contracted
+`data.score`. The mode keeps the best beam, optionally refines, then debriefs
+the winner. An out-of-range or unparseable score leaves the candidate unscored
+(`0`).
 
 ```json
 {
@@ -732,12 +739,12 @@ unparseable score leaves the candidate unscored (`0`).
 
 | Field | Default | Notes |
 |---|---|---|
-| `search.generator` | `{ agent: "strategist" }` | Accepts its own `contract`; every successful Return validates before reaching a scorer. |
-| `search.scorer` | `{ agent: "redteam", tools: "none" }` | Accepts its own `contract`; contracted scores come from validated `data.score`. |
-| `search.debrief` | `{ agent: "debrief" }` | Finalizer with its own contract; its terminal Return validates before reporting success. |
+| `search.generator` | `{ agent: "strategist" }` | Accepts its own `contract`. Every successful Return validates before it reaches a scorer. |
+| `search.scorer` | `{ agent: "redteam", tools: "none" }` | Accepts its own `contract`. Contracted scores come from validated `data.score`. |
+| `search.debrief` | `{ agent: "debrief" }` | Finalizer with its own contract. Its terminal Return validates before the mode reports success. |
 | `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation, retained beam, and refinement rounds. |
 
-Use `search` when several plausible plans or artifacts should be explored and
+Use `search` when several plausible plans or artifacts must be explored and
 ranked before synthesis. It is intentionally bounded by candidate count, beam
 width, rounds, concurrency, timeout, and cost/token ceilings.
 
@@ -749,8 +756,9 @@ parallel scoring cannot mutate the workspace.
 `workflow` runs an ordered state machine of work phases and approval nodes. It
 persists redacted outputs and structured handoff envelopes after every work
 phase, so a headless approval pause or later retry does not discard completed
-work. Version-2 and later state also stores a content-free attestation created only after
-the original contract, schema, artifact, and digest validation succeeds. Resume
+work. Version-2 and later state also stores a content-free attestation. The
+attestation is created only after the original contract, schema, artifact, and
+digest validation succeeds. Resume
 binds the sanitized envelope to that attestation and the current contract
 identity instead of revalidating policy-transformed content. Existing version-1
 states migrate to legacy compatibility envelopes before downstream reuse. The
@@ -791,50 +799,50 @@ profiles as described below.
 |---|---|---|
 | `workflow.phases` | required | Ordered `1..12` phases with unique `id` values. Each phase is exactly one kind: `agent` + `task`, or `approval.message`. |
 | `workflow.stateFile` | `.pi/flow-workflows/<digest>.json` | Audit/resume state. The digest covers the top-level task, phases, and debrief configuration. The file is written atomically with owner-only permissions. |
-| `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match, and every outstanding approval is rechecked against the profiles that would execute now. Resuming an already completed workflow is an audit-only no-op and spawns no Child. |
+| `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match, and every outstanding approval is rechecked against the profiles that execute now. Resuming an already completed workflow is an audit-only no-op and spawns no Child. |
 | `workflow.historicalThinking` | (none) | Optional v3 migration witness with `phases: { "<phase-id>": "<effective-level>" }` and/or `debrief`. Use only when bounded reconstruction requests it. A value never controls dispatch and is accepted only when it reproduces the spent receipt's binding digest. |
 | `workflow.debrief` | (none) | Optional final synthesizer over all persisted phase artifacts. A trailing approval binds its effective Agent profile too. |
 | `workflow.approvalTtlMs` | `86400000` (24h) | How long an approval receipt authorizes its gated action. Integer `60000..2592000000`. A resume after the window needs a fresh approval. |
 | `phase.task` | required for work | Supports `{task}`, `{previous}`, and `{phase.<id>}` output placeholders. |
-| `phase.checkCommand` | (none) | Deterministic gate run in the phase `cwd`; non-zero stops with `WORKFLOW_GATE_FAILED`. |
+| `phase.checkCommand` | (none) | Deterministic gate run in the phase `cwd`. Non-zero stops with `WORKFLOW_GATE_FAILED`. |
 | `phase.cwd` / `model` / `tier` / `thinking` / `tools` | inherited | Per-phase process and gate overrides. Approval binds their effective values after Agent and flow fallbacks. |
 | `phase.returnContract` / `requireEvidence` | top-level values | Per-phase handoff requirements. |
 
-Interactive approval nodes call the Pi confirmation UI. In headless contexts they
-fail closed with `WORKFLOW_APPROVAL_REQUIRED` after persisting completed artifacts
-and the next phase. Resume the same task/phases/state file in an interactive UI
-with `workflow.resume:true`. A denied approval returns
-`WORKFLOW_APPROVAL_DENIED`; it never silently advances.
+Interactive approval nodes call the Pi confirmation UI. In headless contexts
+they fail closed with `WORKFLOW_APPROVAL_REQUIRED` after they persist completed
+artifacts and the next phase. Resume the same task/phases/state file in an
+interactive UI with `workflow.resume:true`. A denied approval returns
+`WORKFLOW_APPROVAL_DENIED`. It never silently advances.
 
 ### Approval receipts
 
 A granted approval becomes a durable, expiring, single-use **approval receipt**
 (`pi-flows.approval-receipt.v1`) in the state
-file rather than a bare `APPROVED` marker. Each receipt binds one action — the
-approval phase and the contiguous run of work phases it gates — to the exact
-parameters approved, plus the requesting and approving actors, the workflow
-digest, the state schema version, an issue time, and an expiry.
+file rather than a bare `APPROVED` marker. Each receipt binds one action (the
+approval phase and the contiguous run of work phases it gates) to the exact
+parameters approved. It also records the requesting and approving actors, the
+workflow digest, the state schema version, an issue time, and an expiry.
 
-An approval authorizes exactly one action, and that action spans every step
+An approval authorizes exactly one action. That action spans every step
 between the approval and the next consent point: the work phases it gates, the
 approval that ends the run, and the workflow's own completion when nothing else
-follows. Each of those steps re-verifies the receipt against the live spec before
-running, so a resume landing in the middle of a gated run is checked rather than
-walking in behind a check it never reached. The receipt is spent once, by the
-action, at the first gated step that completes — so retrying a failed phase
-inside its own gated run is a resume, while presenting the receipt for a
+follows. Each of those steps re-verifies the receipt against the live spec
+before it runs. A resume that lands in the middle of a gated run is therefore
+checked — it does not walk in behind a check it never reached. The receipt is
+spent once, by the action, at the first gated step that completes. A retry of a
+failed phase inside its own gated run is a resume. Presenting the receipt for a
 different action is a replay and returns `APPROVAL_RECEIPT_CONSUMED`.
 
 For every gated Role, and for the debrief when the approval reaches workflow
 completion, the binding identifies these effective execution conditions:
 
-- selected Agent source (`package`, `user`, or `project`);
-- a full SHA-256 identity of the selected Agent system prompt, never its text;
-- effective tools after the Role override or Agent inheritance is applied;
+- selected Agent source (`package`, `user`, or `project`)
+- a full SHA-256 identity of the selected Agent system prompt, never its text
+- effective tools after the Role override or Agent inheritance is applied
 - canonical working-directory target plus a non-disclosing filesystem identity
-  (symlinks resolved);
-- concrete resolved model; and
-- Thinking level passed to Pi.
+  (symlinks resolved)
+- concrete resolved model
+- Thinking level passed to Pi
 
 The canonical cwd binding retained by verification is passed through the opaque
 Integration plan and child-run seam. The handler rechecks it after awaited state
@@ -847,82 +855,83 @@ the resolved handoff policies, and `incompleteHandoffPolicy`. Source shadowing,
 prompt edits, inherited-tool changes, model-roster changes, repointing a cwd
 symlink, replacing the canonical directory itself, or moving the default working
 directory therefore produce `APPROVAL_RECEIPT_STALE` even when the authored
-phase is unchanged. A missing Agent, nonexistent, non-directory, unreadable, or
-unsearchable cwd,
-Pi-default toolset, model selector without an exact current registry match, or
-implicit Thinking level cannot be identified exactly; a gated workflow
-refuses with `WORKFLOW_INVALID` before asking for consent, or before approved
-dispatch if a canonical target disappeared, until those conditions are concrete.
+phase is unchanged. Some conditions cannot be identified exactly: a missing
+Agent, a nonexistent, non-directory, unreadable, or unsearchable cwd, a
+Pi-default toolset, a model selector without an exact current registry match, or
+an implicit Thinking level. Until those conditions are concrete, a gated
+workflow refuses with `WORKFLOW_INVALID` before it asks for consent — or before
+approved dispatch, if a canonical target disappeared.
 
-A completed approval whose receipt has lapsed or been superseded is **reopened**
-rather than stranding the state file: the phase is un-completed, its receipt
-discarded, and consent asked for again in the same pass, with the reason carried
-into the prompt. Headless runs still fail closed with
+A completed approval whose receipt lapsed or was superseded is **reopened**
+rather than stranding the state file. The phase is un-completed, its receipt is
+discarded, and consent is asked for again in the same pass, with the reason
+carried into the prompt. Headless runs still fail closed with
 `WORKFLOW_APPROVAL_REQUIRED`. Only `APPROVAL_RECEIPT_STALE` and
-`APPROVAL_RECEIPT_EXPIRED` reopen; a consumed or malformed receipt is evidence of
-tampering and stays a hard refusal.
+`APPROVAL_RECEIPT_EXPIRED` reopen. A consumed or malformed receipt is evidence
+of tampering and stays a hard refusal.
 
 Reopening applies only while the receipt is unconsumed and **none** of the gated
-run has executed. Once a phase completed or a gated debrief began, a fresh
-receipt would claim to authorize work that already ran under the old conditions
-and would erase the receipt that authorized it. That case is refused outright,
-naming the completed phases or begun debrief, so restoring the approved profile
-and resuming, or starting a fresh run, stays the operator's call.
+run has executed. After a phase completed or a gated debrief began, a fresh
+receipt cannot be issued: it claims to authorize work that already ran under the
+old conditions, and it erases the receipt that authorized that work. That case
+is refused outright, and the refusal names the completed phases or begun
+debrief. The operator then decides: restore the approved profile and resume, or
+start a fresh run.
 
-Once the workflow itself is already `completed`, resume is an audit-only no-op:
-it rechecks persisted handoff and receipt integrity but neither reopens stale or
-expired consent nor reruns a Child, because no action remains to authorize.
-Malformed receipts and receipts consumed by another action still fail closed.
+When the workflow itself is already `completed`, resume is an audit-only no-op.
+It rechecks persisted handoff and receipt integrity. It does not reopen stale or
+expired consent, and it does not rerun a Child, because no action remains to
+authorize. Malformed receipts and receipts consumed by another action still fail
+closed.
 
-The expiry gates *starting* the authorized action. Once the receipt has been
-spent on it, a gated run finishes rather than aborting halfway because the clock
-passed — the binding still has to match, so nothing about the action can have
-changed.
+The expiry gates *starting* the authorized action. After the receipt is spent on
+it, a gated run finishes — it does not abort halfway because the clock passed.
+The binding still has to match, so nothing about the action can have changed.
 
-Every recorded field — actors, issue time, expiry, consumption — is additionally
-covered by a `receiptDigest`, so a partial write, a half-applied merge, or a tool
-that rewrites one field is caught rather than honoured. A receipt that fails that
-check is reported with `validation: "unverified"` wherever it surfaces, rather
-than having its claims repeated as fact.
+Every recorded field (actors, issue time, expiry, consumption) is also covered
+by a `receiptDigest`. A partial write, a half-applied merge, or a tool that
+rewrites one field is caught rather than honored. A receipt that fails that
+check is reported with `validation: "unverified"` wherever it surfaces. Its
+claims are not repeated as fact.
 
 Receipts surface in `details.approvals`, in the final answer, and on the trace
 root span (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
 `flow.approval_consumed_count`, `flow.approval_blocked`) as identifiers and
 status only. The effective conditions, including the prompt digest, participate
-in the binding digest but are not persisted as receipt fields; raw prompt text is
-never placed in workflow state. Set
-`PI_FLOWS_APPROVAL_ACTOR` to label the approving actor; it is an audit
+in the binding digest but are not persisted as receipt fields. Raw prompt text
+is never placed in workflow state. Set
+`PI_FLOWS_APPROVAL_ACTOR` to label the approving actor. It is an audit
 attribution, not an authenticated identity.
 
-Version-2 state files migrate on resume: a completed approval recorded as
+Version-2 state files migrate on resume. A completed approval recorded as
 `APPROVED` becomes a `legacy-compatibility` receipt with no approver and no
-expiry, which still binds the gated action. An unstarted v2 action reopens; a
-partially completed one fails closed because no receipt can prove one set of
+expiry, which still binds the gated action. An unstarted v2 action reopens. A
+partially completed one fails closed, because no receipt can prove one set of
 conditions for both halves. Version-3 receipts predate effective Agent-profile
 binding. Unconsumed outstanding v3 consent reopens. A valid receipt
 consumed by its own action keeps its identity as `legacy-compatibility`: audit-only
 after completion, or able to resume the same interrupted gated run or debrief.
 An in-progress migration binds new profile fields to the current bindable
-profile; later drift is caught. Completed audit reconstruction does not require
-the old model or its Thinking metadata to remain in today's roster; distinct
+profile. Later drift is caught. Completed audit reconstruction does not require
+the old model or its Thinking metadata to remain in today's roster. Distinct
 workflow-bound Role requests reconstruct independently when current metadata
 clamps them alike. Reconstruction models one coherent capability profile per
 model. If the bounded product is too large, resume leaves the v3 state intact
-and requests a `workflow.historicalThinking` witness for one or more phases;
-the witness is accepted only when the old binding digest verifies, and every
+and requests a `workflow.historicalThinking` witness for one or more phases.
+The witness is accepted only when the old binding digest verifies, and every
 supplied entry must belong to a spent binding search. Irrelevant, contradictory,
 malformed, and replayed v3 evidence remains a hard failure.
 
-This protects against replay and drift in a local state file, not against an
-attacker who can write that file — there is no key to sign a receipt with that
-would not live beside it.
+This protects against replay and drift in a local state file. It does not
+protect against an attacker who can write that file: any key that signs a
+receipt would live beside it.
 
 ## Worktree mode (isolated writers and integration)
 
-`worktree` provisions one branch and temporary git worktree per writer, runs the
-writers concurrently, commits each result, merges them into a separate integration
-branch, asks an integrator to review/fix the combined result, and optionally runs
-a deterministic integration check.
+`worktree` provisions one branch and one temporary git worktree per writer,
+then runs the writers concurrently and commits each result. It merges the
+results into a separate integration branch, asks an integrator to review and
+fix the combined result, and optionally runs a deterministic integration check.
 
 ```json
 {
@@ -944,22 +953,22 @@ a deterministic integration check.
 |---|---|---|
 | `worktree.tasks` | required | `2..8` independent write tasks. Each needs a unique `id`, `agent`, and concrete `task`. Evidence is required by default. |
 | `worktree.baseRef` | `HEAD` | Existing commit, branch, or tag from which every worker and the integration branch starts. |
-| `worktree.integrator` | `{ agent: "operator" }` | Resolves merge conflicts, reviews the integrated diff, and may make integration fixes. |
+| `worktree.integrator` | `{ agent: "operator" }` | Resolves merge conflicts, reviews the integrated diff, and can make integration fixes. |
 | `worktree.checkCommand` | (none) | Deterministic command run on the integration branch after integration review. |
-| `worktree.checkTimeoutMs` | flow timeout | Timeout for the integration command; minimum 1000 ms. |
-| `worktree.requireClean` | `true` | Refuses a dirty source checkout. `false` still branches from committed `baseRef`; uncommitted source changes are intentionally omitted. |
+| `worktree.checkTimeoutMs` | flow timeout | Timeout for the integration command. Minimum 1000 ms. |
+| `worktree.requireClean` | `true` | Refuses a dirty source checkout. `false` still branches from committed `baseRef`. Uncommitted source changes are intentionally omitted. |
 
-The source checkout is never switched or merged by the mode. On success,
-temporary worktrees and worker branches are removed, while the durable
-`pi-flow/<run>/integration` branch remains for explicit review/merge. Verification
-failure returns the integration branch name instead of merging an unverified
-result. Worker failure or return-envelope rejection retains the isolated worker
-state and returns every branch and worktree path needed for recovery.
-Conflict-resolution prompts include the validated handoff envelopes for
-the already-integrated and incoming workers, preserving delegation-contract identity,
-evidence, artifact references, and digests through each conflict choice and into
-the final integration review. Use this mode only when the tasks are genuinely
-independent; one writer belongs in `single` or `evaluate`.
+The mode never switches or merges the source checkout. On success, temporary
+worktrees and worker branches are removed. The durable
+`pi-flow/<run>/integration` branch remains for explicit review/merge.
+Verification failure returns the integration branch name instead of merging an
+unverified result. Worker failure or return-envelope rejection retains the
+isolated worker state and returns every branch and worktree path needed for
+recovery. Conflict-resolution prompts include the validated handoff envelopes
+for the already-integrated and incoming workers. Delegation-contract identity,
+evidence, artifact references, and digests are preserved through each conflict
+choice and into the final integration review. Use this mode only when the tasks
+are genuinely independent. One writer belongs in `single` or `evaluate`.
 
 ## Debate mode (advocates and adjudicator)
 
@@ -985,11 +994,11 @@ original constraints rather than majority or rhetoric.
 |---|---|---|
 | `debate.participants` | required | `2..8` advocates. Different agents/models reduce correlated reasoning. |
 | `debate.adjudicator` | `{ agent: "analyst" }` | Independently checks source material and returns one decision, constraint matrix, tradeoffs, mitigations, and reversal conditions. |
-| `debate.rounds` | `2` | Integer `1..3`. Round 1 opens independently; later rounds rebut and repair positions. |
+| `debate.rounds` | `2` | Integer `1..3`. Round 1 opens independently. Later rounds rebut and repair positions. |
 
 At least two advocates must produce usable arguments in every round. Debate is
-deliberately expensive; use it for high-consequence choices with real opposing
-cases, not quick preferences or questions one fact already settles. It is not an
+deliberately expensive. Use it for high-consequence choices with real opposing
+cases, not for quick preferences or questions one fact already settles. It is not an
 automatic route: in the paired Codex baselines, direct execution matched
 debate's decision quality, and the hard-case token rerun used 16.56× the tokens
 and 6.58× the estimated subject spend.
@@ -1018,15 +1027,15 @@ the successful sections into a source-grounded answer without smoothing conflict
 | `dossier.sections` | required | `2..8` `FlowTask` entries, normally one per source or claim family. `requireEvidence` defaults to `true` for extraction. |
 | `dossier.debrief` | `{ agent: "debrief" }` | Produces findings, cited claims, a conflict table, confidence by claim, unresolved gaps, and next evidence. |
 
-At least two extractors must succeed or the mode returns
-`DOSSIER_TOO_FEW_SECTIONS`; one surviving source cannot support cross-source
+At least two extractors must succeed, or the mode returns
+`DOSSIER_TOO_FEW_SECTIONS`. One surviving source cannot support cross-source
 reconciliation. Prefer read-only `recon`/`analyst` extractors unless source
-preparation genuinely requires writes.
+preparation requires writes.
 
 ## Monitor mode (bounded trigger and react)
 
 `monitor` runs a deterministic shell probe under a hard check/time bound. It does
-not spawn an agent until a typed trigger fires; the captured observation then
+not spawn an agent until a typed trigger fires. The captured observation then
 becomes untrusted evidence for one reactor agent.
 
 ```json
@@ -1048,16 +1057,16 @@ becomes untrusted evidence for one reactor agent.
 |---|---|---|
 | `monitor.command` | required | Shell probe run in the flow `cwd`. This is an observation source, not an agent task. |
 | `monitor.trigger` | `success` | `success` for exit 0, `failure` for non-zero, or `match` for a case-insensitive JavaScript regex over capped output. |
-| `monitor.pattern` | (none) | Required when `trigger:"match"`; invalid regexes return `MONITOR_INVALID`. |
+| `monitor.pattern` | (none) | Required when `trigger:"match"`. Invalid regexes return `MONITOR_INVALID`. |
 | `monitor.intervalMs` | `5000` | Delay between probes, `10..60000` ms. |
 | `monitor.maxChecks` | `6` | Hard attempt bound, `1..20`. |
-| `monitor.checkTimeoutMs` | flow timeout | Per-probe command timeout; minimum 1000 ms. |
-| `monitor.reactor` | `{ agent: "analyst" }` | Diagnoses impact/cause and bounded actions after a trigger; accepts its own `contract`, whose terminal Return validates before success. |
+| `monitor.checkTimeoutMs` | flow timeout | Per-probe command timeout. Minimum 1000 ms. |
+| `monitor.reactor` | `{ agent: "analyst" }` | Diagnoses impact/cause and bounded actions after a trigger. Accepts its own `contract`, whose terminal Return validates before success. |
 
 If no trigger fires, the mode returns retryable `MONITOR_NOT_TRIGGERED` plus the
-bounded observations. `monitor` is not durable scheduling: it stops when the flow
-call ends and should not replace a daemon, cron job, alerting system, or Codex
-automation.
+bounded observations. `monitor` is not durable scheduling: it stops when the
+flow call ends. Do not use it to replace a daemon, cron job, alerting system,
+or Codex automation.
 
 ## Human checkpoints and Reflexion
 
@@ -1080,11 +1089,11 @@ they can appear between persisted work phases and resume from `workflow.stateFil
 { "task": "...", "loop": { "body": { "agent": "operator" } }, "reflexion": { "enabled": true } }
 ```
 
-When enabled, reflexion applies flow-wide, to every mode: recent lessons from
+When enabled, reflexion applies flow-wide, to every mode. Recent lessons from
 `.pi/flow-reflections.jsonl` are appended to the top-level `task` before the
-mode runs, and after any run that spawned at least one child, a redacted lesson
-is recorded from the flow's final output. Lessons are injected only into the
-top-level `task` — a goal supplied solely via `evaluate.operator.task` is not
+mode runs. After any run that spawned at least one child, a redacted lesson is
+recorded from the flow's final output. Lessons are injected only into the
+top-level `task`. A goal supplied only via `evaluate.operator.task` is not
 lesson-augmented.
 
 ## Details object
@@ -1101,7 +1110,7 @@ lesson-augmented.
 - `presets`: discovered preset summaries and their declared override keys.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
-- `results`: redacted child summaries with usage, duration, stderr, optional validated `envelope`, and structured error. A result another role consumed also carries its provenance-bearing `handoff`; a terminal result does not. Provider errors add sanitized classification/diagnostic, termination path, known context window, and thinking-level verification; prior runs retain usage/cost.
+- `results`: redacted child summaries with usage, duration, stderr, optional validated `envelope`, and structured error. A result another role consumed also carries its provenance-bearing `handoff`. A terminal result does not. Provider errors add sanitized classification/diagnostic, termination path, known context window, and thinking-level verification. Prior runs retain usage/cost.
 
 ## Structured errors
 
@@ -1111,7 +1120,7 @@ Every error returned by the `flow` tool is structured:
 - `message` — what happened
 - `cause` — why
 - `fix` — the suggested next action
-- `retryable` — whether retrying unchanged may succeed
+- `retryable` — whether a retry with the unchanged call can succeed
 
 The model-visible error text repeats that last field as
 `Retryable unchanged: yes|no`. A `no` is terminal for the unchanged call:
@@ -1123,8 +1132,8 @@ task or fan-out first.
 
 The full list of `code` values, each with its cause and fix, lives in the
 **[canonical error-code catalog](../how-to/troubleshooting.md#error-codes)** in
-Troubleshooting. That catalog is the single source of truth and is verified in
-CI to cover every code the tool can return, so it never drifts from the source.
+Troubleshooting. That catalog is the single source of truth. CI verifies that it
+covers every code the tool can return, so it never drifts from the source.
 
 ## `/flows` command
 
@@ -1141,6 +1150,6 @@ CI to cover every code the tool can return, so it never drifts from the source.
 /flows report [trace-file]
 ```
 
-Invalid arguments return an error instead of silently falling back to another scope.
-List and status output include both presets and agents; status also reports both
+Invalid arguments return an error instead of a silent fallback to another scope.
+List and status output include both presets and agents. Status also reports both
 sets of discovery directories and diagnostics.
