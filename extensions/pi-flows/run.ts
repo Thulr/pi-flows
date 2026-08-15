@@ -1,8 +1,23 @@
 import { capBytes, getFinalAssistantText, isFailed, type ChildMessage } from "./sanitize.ts";
-import { MODEL_VISIBLE_OUTPUT_CAP, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
+import { MODEL_VISIBLE_OUTPUT_CAP, type DelegationHandoffEnvelope, type DelegationReturnCandidate, type DelegationReturnEnvelope, type FlowError, type FlowRunResult } from "./types.ts";
 
-/** Structurally recognizable child output rejected before it became a contract-bound Return envelope. */
-export type RejectedDelegationReturnEnvelope = Omit<DelegationReturnEnvelope, "contractId"> & { contractId?: string };
+/**
+ * A Return candidate that failed contract validation, retained in its stored
+ * (capture-policy) form as rejection evidence (CONTEXT.md: Rejected Return
+ * candidate). It kept whatever identity it was parsed with — missing or stale —
+ * so the rejection stays diagnosable, and it is never a Return envelope.
+ *
+ * Deliberately an alias, not a branded type: rejection changes what a value is
+ * evidence of, not its shape, and a validated envelope refused by completion
+ * policy is legitimately returned as rejected evidence — a brand would force a
+ * cast at exactly that seam. The boundary that matters is enforced where it
+ * lives: nothing rejected can reach `result.envelope`, because the attach
+ * transition below is held by validation alone.
+ */
+export type RejectedDelegationReturnCandidate = DelegationReturnCandidate;
+
+/** The attach transition for validated Return envelopes, held only by the claimant of {@link Run.claimReturnValidationSeam}. */
+export type AttachValidatedReturn = (result: FlowRunResult, validated: DelegationReturnEnvelope, stored: DelegationReturnEnvelope) => void;
 
 /** The four states a run can be in, as every surface names them (CONTEXT.md: Run state). */
 export type RunState = "queued" | "running" | "completed" | "failed";
@@ -63,6 +78,23 @@ export function runState(run: RunStateFields): RunState {
  */
 export class Run {
 	static readonly #byResult = new WeakMap<FlowRunResult, Run>();
+	static #returnValidationSeamClaimed = false;
+
+	/**
+	 * Claim the one attach transition for validated Return envelopes. The
+	 * validation transition (delegation.ts) claims it when that module loads,
+	 * and a second claim throws — so only validation can attach a Return
+	 * envelope to a Run (issue #143). There is no public method to call with a
+	 * value that never passed the contract checks; the closure this returns is
+	 * the capability, and it exists exactly once per process.
+	 */
+	static claimReturnValidationSeam(): AttachValidatedReturn {
+		if (Run.#returnValidationSeamClaimed) {
+			throw new TypeError("The Return-validation seam is already claimed: only the validation transition attaches a Return envelope to a Run.");
+		}
+		Run.#returnValidationSeamClaimed = true;
+		return (result, validated, stored) => Run.of(result).#acceptReturnEnvelope(validated, stored);
+	}
 
 	/** The run a result belongs to. One result, one run — repeated lookups answer with the same object. */
 	static of(result: FlowRunResult): Run {
@@ -78,7 +110,7 @@ export class Run {
 	readonly #result: FlowRunResult;
 	#envelopeCandidate?: string;
 	#validatedReturnEnvelope?: DelegationReturnEnvelope;
-	#rejectedReturnEnvelope?: RejectedDelegationReturnEnvelope;
+	#rejectedReturnCandidate?: RejectedDelegationReturnCandidate;
 
 	private constructor(result: FlowRunResult) {
 		this.#result = result;
@@ -111,9 +143,11 @@ export class Run {
 	 * result: the stored (capture-policy) form is attached for views, and the
 	 * validated content is retained privately — cloned, so a caller's later
 	 * mutation cannot drift what was validated — until a harness-owned formatter
-	 * consumes it.
+	 * consumes it. ECMAScript-private and reachable only through the claimed
+	 * {@link Run.claimReturnValidationSeam} capability, so nothing but the
+	 * validation transition can attach a Return envelope.
 	 */
-	acceptReturnEnvelope(validated: DelegationReturnEnvelope, stored: DelegationReturnEnvelope): void {
+	#acceptReturnEnvelope(validated: DelegationReturnEnvelope, stored: DelegationReturnEnvelope): void {
 		this.#validatedReturnEnvelope = structuredClone(validated);
 		this.#result.envelope = stored;
 	}
@@ -159,10 +193,10 @@ export class Run {
 	}
 
 	/**
-	 * Retain, in its stored (capture-policy) form, a rejected envelope whose
-	 * claims may still be surfaced. It never reaches `result.envelope` — that field
-	 * means "validated" — but the child's own claims are the evidence of what
-	 * the spend produced, and a harness formatter may surface them as
+	 * Retain, in its stored (capture-policy) form, a rejected Return candidate
+	 * whose claims may still be surfaced. It never reaches `result.envelope` — that
+	 * field means "validated" — but the child's own claims are the evidence of
+	 * what the spend produced, and a harness formatter may surface them as
 	 * Unvalidated claims rather than zeroing out the run (issue #104).
 	 *
 	 * Eligibility is the caller's to decide, not this object's — see the
@@ -170,14 +204,14 @@ export class Run {
 	 * why. Retaining anything else would put claims in front of the parent that
 	 * the glossary promises are never shown.
 	 */
-	retainRejectedEnvelope(stored: RejectedDelegationReturnEnvelope): void {
-		this.#rejectedReturnEnvelope = structuredClone(stored);
+	retainRejectedCandidate(stored: RejectedDelegationReturnCandidate): void {
+		this.#rejectedReturnCandidate = structuredClone(stored);
 	}
 
-	/** Consume the retained rejected envelope, as an isolated clone. */
-	takeRejectedReturnEnvelope(): RejectedDelegationReturnEnvelope | undefined {
-		const envelope = this.#rejectedReturnEnvelope;
-		this.#rejectedReturnEnvelope = undefined;
-		return envelope === undefined ? undefined : structuredClone(envelope);
+	/** Consume the retained rejected Return candidate, as an isolated clone. */
+	takeRejectedReturnCandidate(): RejectedDelegationReturnCandidate | undefined {
+		const candidate = this.#rejectedReturnCandidate;
+		this.#rejectedReturnCandidate = undefined;
+		return candidate === undefined ? undefined : structuredClone(candidate);
 	}
 }

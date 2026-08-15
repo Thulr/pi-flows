@@ -427,12 +427,19 @@ delegation. Flow budgets remain shared across the flow.
 
 The child must return `pi-flows.return-envelope.v1` with `status`, `summary`,
 `evidence`, `artifactReferences`, `digests`, `changedState`,
-`unresolvedQuestions`, `retry`, and `data`. `data` is checked against
-`returnSchema`. Declared SHA-256 digests are checked against files inside the
-child `cwd`. Runtime usage is attached when available. Invalid schema data,
-unsafe/missing artifacts, or digest mismatches fail closed with a structured
-error before the Return can drive a dependent role or coordination decision. The
-validated envelope is retained on `details.results[].envelope`.
+`unresolvedQuestions`, `retry`, and `data`. That output is a **Return
+candidate** until validation accepts it. A candidate can omit `contractId` or
+carry a stale one, and the rejection reports the identity it saw. Only a
+candidate that passes attribution, integrity, and conformance becomes a
+validated **Return envelope**. The envelope always carries the resolved
+contract identity. `data` is checked against `returnSchema`. Declared SHA-256
+digests are checked against files inside the child `cwd`. Runtime usage is
+attached when available. Invalid schema data, unsafe/missing artifacts, or
+digest mismatches fail closed with a structured error before the Return can
+drive a dependent role or coordination decision. Only validation attaches the
+envelope, retained on `details.results[].envelope`. For downstream validators,
+the public schema `FlowReturnCandidate` matches the candidate shape and
+`FlowReturnEnvelope` matches only the validated form.
 
 Existing `task`, `returnContract`, and `requireEvidence` calls remain prose-based
 and behave as before.

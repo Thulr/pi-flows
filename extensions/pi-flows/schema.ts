@@ -41,9 +41,12 @@ export const FlowDelegationContract = Type.Object({
 	description: "Machine-checked contract, resolved before its task or role spawns. It binds objective, Return shape, timeout, cost/token ceilings, and a validated pi-flows.return-envelope.v1 response.",
 });
 
-export const FlowReturnEnvelope = Type.Object({
-	schemaVersion: Type.Literal("pi-flows.return-envelope.v1"),
-	contractId: Type.String({ pattern: "^sha256:[a-fA-F0-9]{64}$", description: "Stable digest required whenever a delegation contract governs the child, including control and terminal roles." }),
+const RETURN_CONTRACT_ID_PATTERN = "^sha256:[a-fA-F0-9]{64}$";
+
+// The claim fields a Return candidate and a validated Return envelope share.
+// Fresh sub-schemas per call: TypeBox schemas are plain objects, and two public
+// exports must not alias each other's property definitions.
+const returnClaimProperties = () => ({
 	status: StringEnum(["completed", "partial", "blocked", "failed"] as const),
 	summary: Type.String({ minLength: 1 }),
 	evidence: Type.Array(Type.Object({ claim: Type.String({ minLength: 1 }), source: Type.String({ minLength: 1 }) })),
@@ -61,6 +64,20 @@ export const FlowReturnEnvelope = Type.Object({
 		afterMs: Type.Optional(Type.Number({ minimum: 0 })),
 	}),
 	data: Type.Any(),
+});
+
+export const FlowReturnCandidate = Type.Object({
+	schemaVersion: Type.Literal("pi-flows.return-envelope.v1"),
+	contractId: Type.Optional(Type.String({ pattern: RETURN_CONTRACT_ID_PATTERN, description: "The identity the child claimed, kept as parsed. It can be missing or stale, so a rejection stays diagnosable; validation checks it against the resolved contract." })),
+	...returnClaimProperties(),
+}, {
+	description: "Untrusted child output that is structurally a return envelope, offered for contract validation (a Return candidate). A value that satisfies this schema is not a validated Return envelope: validation must first bind it to the resolved contract identity, verify its artifacts, and check its data.",
+});
+
+export const FlowReturnEnvelope = Type.Object({
+	schemaVersion: Type.Literal("pi-flows.return-envelope.v1"),
+	contractId: Type.String({ pattern: RETURN_CONTRACT_ID_PATTERN, description: "The exact resolved delegation-contract identity the Return validated under. Always present: only validation constructs a Return envelope." }),
+	...returnClaimProperties(),
 	usage: Type.Optional(Type.Object({
 		input: Type.Number({ minimum: 0 }),
 		output: Type.Number({ minimum: 0 }),
@@ -72,7 +89,7 @@ export const FlowReturnEnvelope = Type.Object({
 		turns: Type.Number({ minimum: 0 }),
 	})),
 }, {
-	description: "Durable child return envelope used when a delegation contract is supplied. Runtime usage is attached to the validated envelope when available.",
+	description: "A validated Return envelope: a child return that passed attribution, integrity, and conformance under a resolved delegation contract. Validate raw child output against FlowReturnCandidate instead; runtime usage is attached to the validated envelope when available.",
 });
 
 const FlowTaskProperties = {

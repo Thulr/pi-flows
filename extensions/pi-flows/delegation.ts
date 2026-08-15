@@ -3,9 +3,14 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { ENVELOPE_VERSION, ResolvedDelegationContract, canonicalSha256, isRecord, nonEmptyString, storedError, stringArray } from "./contract-resolution.ts";
 import { extractLastJsonBlock } from "./protocol.ts";
-import { Run, type RejectedDelegationReturnEnvelope } from "./run.ts";
+import { Run, type RejectedDelegationReturnCandidate } from "./run.ts";
 import { capModelVisibleText, isFailed, redactValue, resultText } from "./sanitize.ts";
-import { flowError, type CapturePolicy, type DelegationHandoffEnvelope, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
+import { flowError, type CapturePolicy, type DelegationHandoffEnvelope, type DelegationReturnCandidate, type DelegationReturnEnvelope, type FlowError, type FlowRunResult, type IncompleteHandoffPolicy } from "./types.ts";
+
+// The one holder of the attach transition: claiming the seam here, at module
+// load, is what makes "only the validation transition attaches a Return
+// envelope to a Run" true at runtime rather than by convention (issue #143).
+const attachValidatedReturn = Run.claimReturnValidationSeam();
 
 // Contract identity/admission live in contract-resolution.ts; re-exported here.
 export { ResolvedDelegationContract, canonicalJsonValue, canonicalSha256, contractWrapUpRequirement, delegationContractId, isRecord, validateDelegationContract } from "./contract-resolution.ts";
@@ -37,7 +42,13 @@ function envelopeError(reason: string): FlowError {
 	);
 }
 
-function validateEnvelopeShape(value: unknown): value is RejectedDelegationReturnEnvelope {
+/**
+ * Is this child output a Return candidate? Structural recognition only — the
+ * candidate keeps a missing or stale `contractId` as parsed, so a later
+ * rejection can say exactly which identity it saw. Passing this check never
+ * makes the value a Return envelope; only contract validation does that.
+ */
+function isReturnCandidate(value: unknown): value is DelegationReturnCandidate {
 	if (!isRecord(value) || value.schemaVersion !== ENVELOPE_VERSION || !ENVELOPE_STATUSES.has(value.status) || !nonEmptyString(value.summary)) return false;
 	if (value.contractId !== undefined && !/^sha256:[a-f0-9]{64}$/i.test(value.contractId)) return false;
 	if (!Array.isArray(value.evidence) || !value.evidence.every((item: unknown) => isRecord(item) && nonEmptyString(item.claim) && nonEmptyString(item.source))) return false;
@@ -71,13 +82,13 @@ function artifactFile(cwd: string, artifact: string): { file?: string; error?: F
 	}
 }
 
-function validateDigests(envelope: RejectedDelegationReturnEnvelope, cwd: string): FlowError | null {
-	const referenced = new Set(envelope.artifactReferences.map((artifact) => artifact.path));
+function validateDigests(candidate: DelegationReturnCandidate, cwd: string): FlowError | null {
+	const referenced = new Set(candidate.artifactReferences.map((artifact) => artifact.path));
 	for (const artifact of referenced) {
 		const checked = artifactFile(cwd, artifact);
 		if (checked.error) return checked.error;
 	}
-	for (const digest of envelope.digests) {
+	for (const digest of candidate.digests) {
 		if (!referenced.has(digest.artifact)) return envelopeError(`Digest target is not declared in artifactReferences: ${digest.artifact}.`);
 		const artifact = artifactFile(cwd, digest.artifact);
 		if (artifact.error) return artifact.error;
@@ -102,26 +113,26 @@ function validateDigests(envelope: RejectedDelegationReturnEnvelope, cwd: string
 /**
  * The three contract checks, ordered so the one failure whose claims may still
  * be surfaced is the last one reachable: attribution, then integrity, then
- * conformance. Only an envelope that is attributable to this contract, whose
+ * conformance. Only a candidate that is attributable to this contract, whose
  * artifact references stay inside the child cwd, and whose declared digests
  * match, failing nothing but the strict `data` schema, carries Unvalidated
  * claims (CONTEXT.md).
  *
  * The order is the invariant, not an implementation detail. Checking conformance
- * first would report `claimsSurfaceable` for an envelope whose digests were
+ * first would report `claimsSurfaceable` for a candidate whose digests were
  * never verified, so an artifact reference that escaped the child cwd — or a
- * digest that no longer matches — would ride out on a schema miss. An envelope
+ * digest that no longer matches — would ride out on a schema miss. A candidate
  * that fails both integrity and conformance is reported as the integrity
  * failure: the more serious diagnosis, and the one whose fix carries the right
  * instruction for it.
  */
-function validateEnvelopeAgainstContract(
-	envelope: RejectedDelegationReturnEnvelope,
+function validateCandidateAgainstContract(
+	candidate: DelegationReturnCandidate,
 	contract: ResolvedDelegationContract,
 	cwd: string,
 ): { error: FlowError; claimsSurfaceable: boolean } | null {
-	if (envelope.contractId !== contract.id) {
-		const actual = envelope.contractId ?? "(missing)";
+	if (candidate.contractId !== contract.id) {
+		const actual = candidate.contractId ?? "(missing)";
 		return {
 			error: flowError(
 				"RETURN_CONTRACT_MISMATCH",
@@ -132,13 +143,13 @@ function validateEnvelopeAgainstContract(
 			claimsSurfaceable: false,
 		};
 	}
-	const digestError = validateDigests(envelope, cwd);
+	const digestError = validateDigests(candidate, cwd);
 	if (digestError) return { error: digestError, claimsSurfaceable: false };
-	if (!contract.checkReturnData(envelope.data)) return { error: envelopeError("Envelope `data` does not satisfy contract.returnSchema."), claimsSurfaceable: true };
+	if (!contract.checkReturnData(candidate.data)) return { error: envelopeError("Return candidate `data` does not satisfy contract.returnSchema."), claimsSurfaceable: true };
 	return null;
 }
 
-function storedEnvelope<T extends RejectedDelegationReturnEnvelope>(envelope: T, policy: CapturePolicy): T {
+function storedReturn<T extends DelegationReturnCandidate>(envelope: T, policy: CapturePolicy): T {
 	const stored = (value: string) => redactValue(value, policy) as string;
 	return {
 		...envelope,
@@ -154,7 +165,7 @@ function storedEnvelope<T extends RejectedDelegationReturnEnvelope>(envelope: T,
 }
 
 /**
- * Identity is always checked. An envelope naming a different contract, or none,
+ * Identity is always checked. A candidate naming a different contract, or none,
  * was not produced under the terms this child was dispatched with, and no caller
  * has ever wanted to accept one — making it optional only created call sites
  * that could forget.
@@ -163,34 +174,37 @@ function storedEnvelope<T extends RejectedDelegationReturnEnvelope>(envelope: T,
  * which a child result becomes integrable.
  *
  * @returns on success, the stored envelope. On rejection, the error — plus
- *   `rejected`, the child's own claims in stored form, when the envelope was at
- *   least structurally an envelope. A digest mismatch is exactly when those
- *   claims matter most: the artifact it named and the digest it asserted are the
- *   evidence of what went wrong, and discarding them loses the corruption along
- *   with the trust.
+ *   `rejected`, the child's own claims in stored form, when the output was at
+ *   least structurally a Return candidate. A digest mismatch is exactly when
+ *   those claims matter most: the artifact it named and the digest it asserted
+ *   are the evidence of what went wrong, and discarding them loses the
+ *   corruption along with the trust.
  */
 function validateReturnEnvelope(
 	result: FlowRunResult,
 	contract: ResolvedDelegationContract,
 	cwd: string,
 	policy: CapturePolicy,
-): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: RejectedDelegationReturnEnvelope } {
+): { envelope?: DelegationReturnEnvelope; error?: FlowError; rejected?: RejectedDelegationReturnCandidate } {
 	const run = Run.of(result);
 	const parsed = extractLastJsonBlock(run.takeEnvelopeCandidate() ?? resultText(result));
-	if (!validateEnvelopeShape(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
-	const validation = validateEnvelopeAgainstContract(parsed, contract, cwd);
+	if (!isReturnCandidate(parsed)) return { error: storedError(envelopeError("The child did not return a structurally valid pi-flows.return-envelope.v1 object."), policy) };
+	const validation = validateCandidateAgainstContract(parsed, contract, cwd);
 	if (validation) {
-		const rejected = storedEnvelope(parsed, policy);
-		// Every failure produces a rejected envelope, because a rejected envelope is
-		// trace evidence of what the spend produced. Only the one whose attribution
-		// and integrity held is retained on the run, where a harness-owned formatter
-		// may surface its Unvalidated claims.
-		if (validation.claimsSurfaceable) run.retainRejectedEnvelope(rejected);
+		const rejected = storedReturn(parsed, policy);
+		// Every failure produces a rejected Return candidate, because a rejected
+		// candidate is trace evidence of what the spend produced. Only the one whose
+		// attribution and integrity held is retained on the run, where a
+		// harness-owned formatter may surface its Unvalidated claims.
+		if (validation.claimsSurfaceable) run.retainRejectedCandidate(rejected);
 		return { error: storedError(validation.error, policy), rejected };
 	}
-	const validated: DelegationReturnEnvelope = { ...parsed, contractId: parsed.contractId!, usage: result.usage };
-	const envelope = storedEnvelope(validated, policy);
-	run.acceptReturnEnvelope(validated, envelope);
+	// Constructed only here, after attribution, integrity, and conformance all
+	// passed — and stamped with the resolved identity itself, so a validated
+	// Return envelope always carries the exact contract it validated under.
+	const validated: DelegationReturnEnvelope = { ...parsed, contractId: contract.id, usage: result.usage };
+	const envelope = storedReturn(validated, policy);
+	attachValidatedReturn(result, validated, envelope);
 	return { envelope };
 }
 
@@ -283,7 +297,7 @@ export function validatePersistedIntegrationHandoff(
 		retry: value.retry,
 		data: value.data,
 	};
-	if (!validateEnvelopeShape(envelope)) {
+	if (!isReturnCandidate(envelope)) {
 		return storedError(envelopeError("Persisted workflow handoff is structurally invalid."), options.policy);
 	}
 	if (options.contract) {
@@ -401,7 +415,7 @@ export function prepareIntegrationHandoff(
 		/** Opaque receipt returned by a prior successful call for deferred consumption. */
 		validation?: object;
 	},
-): { handoff?: DelegationHandoffEnvelope; validation?: object; error?: FlowError; rejected?: RejectedDelegationReturnEnvelope } {
+): { handoff?: DelegationHandoffEnvelope; validation?: object; error?: FlowError; rejected?: RejectedDelegationReturnCandidate } {
 	let handoff: DelegationHandoffEnvelope;
 	let returned: DelegationReturnEnvelope | undefined;
 	let validation = options.validation;

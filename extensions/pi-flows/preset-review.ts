@@ -132,12 +132,12 @@ export function formatPresetResult(
 		const anchored = output.details.results
 			.map((result) => Run.of(result).takeValidatedReturnEnvelope())
 			.flatMap(envelopeFindings);
-		// A rejected envelope that failed nothing but the strict schema still
-		// carries the child's own claims. Surfacing them as Unvalidated claims —
-		// the way incomplete coverage is surfaced — keeps a schema miss from
-		// zeroing out the spend, while never letting them count toward a verdict.
+		// A rejected Return candidate that failed nothing but the strict schema
+		// still carries the child's own claims. Surfacing them as Unvalidated
+		// claims — the way incomplete coverage is surfaced — keeps a schema miss
+		// from zeroing out the spend, while never letting them count toward a verdict.
 		const rejected = output.details.results
-			.map((result) => Run.of(result).takeRejectedReturnEnvelope())
+			.map((result) => Run.of(result).takeRejectedReturnCandidate())
 			.flatMap(envelopeFindings);
 		if (policy.recordContent && (anchored.length || rejected.length)) {
 			const sections = [
