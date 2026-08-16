@@ -344,5 +344,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // CHANGELOG.md. The file set grows to 111 for return-types.ts (on the #155
 // docs reorg base) and none from tests/, scripts/, or evals/; measured
 // 1_295_899.
-assert.ok(pack.unpackedSize < 1_300_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_315_000 for #144 (canonicalize persisted workflow identity):
+// the canonical/legacy digest pair, the v4 -> v5 state migration and receipt
+// rebinding in workflow-state.ts and approval.ts, the legacy state-file
+// lookup, and the reference/troubleshooting/CHANGELOG wording for the
+// transition. No new file: the set stays 111, none from tests/, scripts/, or
+// evals/; measured 1_306_148.
+assert.ok(pack.unpackedSize < 1_315_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

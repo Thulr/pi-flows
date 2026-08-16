@@ -385,6 +385,32 @@ export function migrateSpentApprovalReceipt(receipt: unknown, historical: Approv
 }
 
 /**
+ * Rebind a receipt across a state-identity transition that re-encodes the SAME
+ * live action. Both bindings here are recomputed from the live workflow and are
+ * fully bound, differing only in how the workflow identity and state version
+ * are written down — so verifying against the historical encoding IS
+ * revalidating against the migrated live workflow. That is why, unlike
+ * migrateSpentApprovalReceipt, unspent consent may be re-sealed and the receipt
+ * keeps its validation: nothing about the evidence weakened. Consumption,
+ * actors, issue time, and expiry all carry over unchanged.
+ */
+export function rebindApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): SpentApprovalMigration {
+	const verified = ApprovalAuthorization.verify(receipt, historical, { consumer: historical.action });
+	if (verified.error) return { error: verified.error };
+	const stored = receipt as ApprovalReceipt;
+	return {
+		receipt: sealReceipt({
+			...stored,
+			action: current.action,
+			bindingDigest: approvalBindingDigest(current),
+			requestedBy: current.requestedBy,
+			workflowDigest: current.workflowDigest,
+			stateVersion: current.stateVersion,
+		}),
+	};
+}
+
+/**
  * Identifiers and status only — the bound parameters never leave the binding
  * digest. Receipts reach this summary even when no step re-verified them this
  * run (an approval whose gated phases all completed earlier), so the integrity

@@ -769,8 +769,9 @@ digest validation succeeds. Resume
 binds the sanitized envelope to that attestation and the current contract
 identity instead of revalidating policy-transformed content. Existing version-1
 states migrate to legacy compatibility envelopes before downstream reuse. The
-current state schema is version 4, which binds approvals to effective Agent
-profiles as described below.
+current state schema is version 5. Version 4 added the effective Agent-profile
+binding described below. Version 5 changed the workflow identity to a canonical
+digest that does not depend on object key order (see `workflow.stateFile`).
 
 ```json
 {
@@ -805,8 +806,8 @@ profiles as described below.
 | Field | Default | Notes |
 |---|---|---|
 | `workflow.phases` | required | Ordered `1..12` phases with unique `id` values. Each phase is exactly one kind: `agent` + `task`, or `approval.message`. |
-| `workflow.stateFile` | `.pi/flow-workflows/<digest>.json` | Audit/resume state. The digest covers the top-level task, phases, and debrief configuration. The file is written atomically with owner-only permissions. |
-| `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match, and every outstanding approval is rechecked against the profiles that execute now. Resuming an already completed workflow is an audit-only no-op and spawns no Child. |
+| `workflow.stateFile` | `.pi/flow-workflows/<digest>.json` | Audit/resume state. The digest is a canonical SHA-256 short form over the top-level task, the phases in order, and the debrief configuration. Object key order does not change it. Task text, phase order, phase values, and debrief meaning do. The file is written atomically with owner-only permissions. |
+| `workflow.resume` | `false` | Load completed phases from `stateFile`. The task and workflow digest must match, and every outstanding approval is rechecked against the profiles that execute now. Resuming an already completed workflow is an audit-only no-op and spawns no Child. The default lookup prefers the canonical-digest file. When only a legacy (version 1–4) digest-named file exists, resume reads it, migrates it, writes it under the canonical name, and removes the legacy file. |
 | `workflow.historicalThinking` | (none) | Optional v3 migration witness with `phases: { "<phase-id>": "<effective-level>" }` and/or `debrief`. Use only when bounded reconstruction requests it. A value never controls dispatch and is accepted only when it reproduces the spent receipt's binding digest. |
 | `workflow.debrief` | (none) | Optional final synthesizer over all persisted phase artifacts. A trailing approval binds its effective Agent profile too. |
 | `workflow.approvalTtlMs` | `86400000` (24h) | How long an approval receipt authorizes its gated action. Integer `60000..2592000000`. A resume after the window needs a fresh approval. |
@@ -928,6 +929,17 @@ and requests a `workflow.historicalThinking` witness for one or more phases.
 The witness is accepted only when the old binding digest verifies, and every
 supplied entry must belong to a spent binding search. Irrelevant, contradictory,
 malformed, and replayed v3 evidence remains a hard failure.
+
+Version-4 states carry the older, key-order-sensitive workflow digest. Resume
+restamps the state with the canonical digest. It revalidates every completed
+approval receipt against the version-4 encoding of the live workflow, then
+rebinds the receipt to the version-5 encoding. A receipt that revalidates keeps
+its identity, actors, expiry, consumption record, and `typed` validation,
+because the approved action did not change. If a spent receipt does not
+revalidate, the migration fails with `APPROVAL_RECEIPT_STALE` and keeps the
+version-4 state, so a restore of the approved conditions can retry it. An
+unspent receipt that does not revalidate reopens or fails closed through the
+normal receipt paths described above.
 
 This protects against replay and drift in a local state file. It does not
 protect against an attacker who can write that file: any key that signs a
