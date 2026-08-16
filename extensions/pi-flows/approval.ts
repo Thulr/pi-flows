@@ -348,7 +348,7 @@ function receiptIssue(
 	return null;
 }
 
-type SpentApprovalMigration =
+type ApprovalReceiptMigration =
 	| { receipt: ApprovalReceipt; error?: undefined }
 	| { receipt?: undefined; error: FlowError };
 
@@ -357,7 +357,7 @@ type SpentApprovalMigration =
  * retain audit evidence; in-progress actions retain their same-action retry.
  * Checking consumption here prevents callers from re-sealing merely issued consent.
  */
-export function migrateSpentApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): SpentApprovalMigration {
+export function migrateSpentApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): ApprovalReceiptMigration {
 	const verified = ApprovalAuthorization.verify(receipt, historical, { consumer: historical.action });
 	if (verified.error) return { error: verified.error };
 	const stored = receipt as ApprovalReceipt;
@@ -380,6 +380,32 @@ export function migrateSpentApprovalReceipt(receipt: unknown, historical: Approv
 			workflowDigest: current.workflowDigest,
 			stateVersion: current.stateVersion,
 			validation: "legacy-compatibility",
+		}),
+	};
+}
+
+/**
+ * Rebind a receipt across a state-identity transition that re-encodes the SAME
+ * live action. Both bindings here are recomputed from the live workflow and are
+ * fully bound, differing only in how the workflow identity and state version
+ * are written down — so verifying against the historical encoding IS
+ * revalidating against the migrated live workflow. That is why, unlike
+ * migrateSpentApprovalReceipt, unspent consent may be re-sealed and the receipt
+ * keeps its validation: nothing about the evidence weakened. Consumption,
+ * actors, issue time, and expiry all carry over unchanged.
+ */
+export function rebindApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): ApprovalReceiptMigration {
+	const verified = ApprovalAuthorization.verify(receipt, historical, { consumer: historical.action });
+	if (verified.error) return { error: verified.error };
+	const stored = receipt as ApprovalReceipt;
+	return {
+		receipt: sealReceipt({
+			...stored,
+			action: current.action,
+			bindingDigest: approvalBindingDigest(current),
+			requestedBy: current.requestedBy,
+			workflowDigest: current.workflowDigest,
+			stateVersion: current.stateVersion,
 		}),
 	};
 }

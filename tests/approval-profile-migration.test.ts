@@ -89,7 +89,7 @@ test("a fully spent v2 approval migrates to audit-only evidence", async () => {
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
 	assert.equal(resumed.result.details.approvals?.[0].expiresAt, null);
 	assert.equal(resumed.result.details.approvals?.[0].consumedBy, "workflow.phase:approve");
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 	const shipped = resumed.calls.filter((call) => call.agent === "strategist").length;
 
 	const widened = await runFlow({ ...resumeParams, agentScope: "all", confirmProjectAgents: false }, { strategist: "MUST NOT RUN" }, { cwd, hasUI: true });
@@ -134,7 +134,7 @@ test("an unspent historical receipt reopens before more work runs", async () => 
 	const resumed = await runFlow(resumeParams, { strategist: "SHIPPED" }, { cwd });
 	assert.equal(resumed.result.details.error?.code, "WORKFLOW_APPROVAL_REQUIRED");
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 1);
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 });
 
 test("an unspent historical receipt consumed by another action remains a hard failure", async () => {
@@ -189,7 +189,7 @@ test("an unspent v3 approval reopens when the next consecutive approval is incom
 	const resumed = await runFlow({ ...consecutiveParams, workflow: { ...consecutiveParams.workflow, resume: true } }, {}, { cwd, hasUI: true, ui: { confirm: async () => { resumedPrompts += 1; return true; } } });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumedPrompts, 2, "both the under-bound first consent and the incomplete second consent are asked again");
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 });
 
 test("a malformed historical receipt remains a hard failure", async () => {
@@ -231,7 +231,7 @@ test("a completed v3 receipt migrates after its exact model leaves the current r
 	const resumed = await runFlow({ ...pinnedParams, workflow: { ...pinnedParams.workflow, resume: true } }, {}, { cwd, registry });
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 });
 
 test("a completed v3 receipt reconstructs clamped Thinking after model metadata changes", async () => {
@@ -268,7 +268,7 @@ test("a completed v3 receipt reconstructs clamped Thinking after model metadata 
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 1);
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 });
 
 test("a completed v3 receipt reconstructs distinct Role clamps after model metadata changes", async () => {
@@ -335,7 +335,7 @@ test("a completed v3 receipt reconstructs distinct Role clamps after model metad
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 2, "completed work is not dispatched again");
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 });
 
 test("a v3 Thinking witness soundly reduces a search beyond the candidate bound", async () => {
@@ -427,7 +427,7 @@ test("a v3 Thinking witness soundly reduces a search beyond the candidate bound"
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.result.details.approvals?.[0].validation, "legacy-compatibility");
 	assert.equal(resumed.calls.filter((call) => call.agent === "strategist").length, 7, "completed work is not dispatched again");
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 });
 
 test("a stale fully spent v3 receipt keeps its version so restoring conditions can retry migration", async () => {
@@ -441,7 +441,7 @@ test("a stale fully spent v3 receipt keeps its version so restoring conditions c
 
 	const restored = await runFlow(resumeParams, {}, { cwd });
 	assert.equal(restored.result.details.error, undefined);
-	assert.equal((await readState(cwd)).version, 4);
+	assert.equal((await readState(cwd)).version, 5);
 });
 
 test("a historical Thinking witness must identify a bound Role and reproduce the receipt", async () => {
@@ -542,7 +542,7 @@ test("a consumed v3 receipt resumes its interrupted debrief", async () => {
 	assert.equal(resumed.result.details.error, undefined);
 	assert.equal(resumed.calls.filter((call) => call.agent === "debrief").length, 2);
 	const migrated = await readState(cwd);
-	assert.equal(migrated.version, 4);
+	assert.equal(migrated.version, 5);
 	assert.equal(migrated.status, "completed");
 	assert.equal(migrated.receipts.signoff.validation, "legacy-compatibility");
 	assert.equal(migrated.receipts.signoff.receiptId, original.receiptId);

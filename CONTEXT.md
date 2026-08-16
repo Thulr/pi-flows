@@ -231,6 +231,10 @@ _Avoid_: approval gate, human gate
 A toolset token granting a child bash that cannot write the reviewed checkout, never requested by prompt. Enforced in two layers: an OS read-only-checkout sandbox (the security boundary) and an in-child command allowlist as defense-in-depth and the fallback where the sandbox is absent. Classified not write-capable for the shared-write guard, and refused only when neither layer is available. Coordination safety against ad-hoc mutations of a shared checkout.
 _Avoid_: safe bash (the sandbox is real, but the allowlist fallback is best-effort)
 
+**Workflow digest**:
+The content identity of one workflow — its top-level Task, phases in order, and debrief — as the extension's canonical (recursively key-sorted) digest, so authoring order never reads as different work. The persisted state version records which algorithm produced a stored digest; the order-sensitive legacy digest exists only to find and verify state from versions 1–4, never to name new state.
+_Avoid_: workflow hash, workflow fingerprint, state file name (the digest names the default file, it is not the file)
+
 **Approval receipt**:
 A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes, including every gated Role's **Effective Agent profile** and a gated debrief's profile. A receipt persists only binding identity and status, never raw prompt or parameter content.
 

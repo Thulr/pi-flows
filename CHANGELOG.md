@@ -55,6 +55,26 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Workflow identity is now canonical (#144): the state digest is the
+  extension's canonical (recursively key-sorted) SHA-256 over the task, phases,
+  and debrief, so reordering object keys at any nesting level no longer reads
+  as different work, while task text, phase order, phase values, and debrief
+  meaning still do. The state schema version moves to 5 — the version records
+  which algorithm produced a persisted digest. On resume, versions 1–4 are
+  still matched by their original order-sensitive digest and migrate forward:
+  the state is restamped with the canonical digest, and every completed
+  approval's receipt is revalidated against the v4 encoding of the live
+  workflow before being rebound to the v5 encoding — a receipt that
+  revalidates keeps its identity, actors, expiry, consumption record, and
+  `typed` validation; a spent receipt that does not fails the migration with
+  `APPROVAL_RECEIPT_STALE` and leaves the v4 state retryable; an unspent one
+  reopens or fails closed through the normal receipt paths. The default
+  `stateFile` lookup prefers the canonical-digest name and falls back to the
+  legacy-digest file only when the canonical one does not exist — never a
+  choice between two candidates — and a migrated legacy-named file is
+  rewritten under the canonical name and removed once the new record is
+  durable.
+
 - **Breaking (public API):** the Return vocabulary now distinguishes a **Return
   candidate** (untrusted child output, structurally an envelope, identity
   optional and kept as parsed so a rejection stays diagnosable), a **rejected

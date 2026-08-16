@@ -501,7 +501,7 @@ test("workflow resume uses validation attestations when stored content is omitte
 	}, { cwd });
 	assert.equal(initial.result.details.error, undefined);
 	const state = JSON.parse(await readFile(`${cwd}/workflow.json`, "utf8"));
-	assert.equal(state.version, 4);
+	assert.equal(state.version, 5);
 	assert.equal(state.attestations.inspect.validation, "typed");
 	assert.doesNotMatch(JSON.stringify(state), /resume-private-value/);
 
@@ -578,7 +578,7 @@ test("workflow resume migrates legacy version-1 state to compatibility handoffs"
 	assert.equal(resumed.result.details.error, undefined);
 	assert.match(resumed.calls.at(-1)?.task ?? "", /LEGACY_ANALYSIS/);
 	const migrated = JSON.parse(await readFile(stateFile, "utf8"));
-	assert.equal(migrated.version, 4);
+	assert.equal(migrated.version, 5);
 	assert.equal(migrated.handoffs.analyze.compatibility, "legacy-prose");
 	assert.equal(migrated.attestations.analyze.validation, "legacy-compatibility");
 });

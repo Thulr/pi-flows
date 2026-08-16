@@ -1,14 +1,12 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { encodeAuthorKey, flowError, modeSettle, type DelegationContract, type DelegationHandoffEnvelope, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "../types.ts";
 import { capModelVisibleText, escapeRegExp, resultText, sanitizeText } from "../sanitize.ts";
 import { resolveFlowCommandTimeoutMs, runCheckCommand } from "../commands.ts";
-import { ResolvedDelegationContract, canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, isRecord, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
+import { ResolvedDelegationContract, canonicalHandoff, createPersistedHandoffAttestation, incompleteHandoffSummary, validatePersistedIntegrationHandoff, type PersistedHandoffAttestation } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
-import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, legacyApprovalReceipt, resolveApprovalTtlMs, type ApprovalReceipt } from "../approval.ts";
-import { approvalAuthorizations, approvalBindingFor, approvalProfileRefusal, approverLabel, consumeAuthorization, gatedPhaseIds, resolveApprovalBinding, REAPPROVABLE_RECEIPT_ERRORS, workflowApprovalProfileRefusal, workflowProfileEnvironment, WORKFLOW_STATE_VERSION } from "./workflow-approval.ts";
-import { durablePhaseHandoff, freshState, migrateWorkflowStateV1, migrateWorkflowStateV2, migrateWorkflowStateV3, persistFailedState, persistState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
+import { ApprovalAuthorization, DEFAULT_APPROVAL_ACTOR, WORKFLOW_COMPLETE_STEP, approvalReceiptSummary, formatApprovalReceipt, issueApprovalReceipt, resolveApprovalTtlMs } from "../approval.ts";
+import { approvalAuthorizations, approvalBindingFor, approvalProfileRefusal, approverLabel, consumeAuthorization, gatedPhaseIds, resolveApprovalBinding, REAPPROVABLE_RECEIPT_ERRORS, workflowApprovalProfileRefusal, workflowProfileEnvironment } from "./workflow-approval.ts";
+import { durablePhaseHandoff, freshState, legacyWorkflowDigest, persistFailedState, persistState, restoreWorkflowState, workflowDigest, type WorkflowState } from "./workflow-state.ts";
 import { isWorkflowWorkPhase, resolvedCwd, workflowHeadlessApprovalRefusal, workflowPhasesRefusal, type CwdTargetBinding } from "../validate.ts";
 import { plannedRefs, sumRunDurations, type ModePlan, type PreSpawnContext } from "./plan.ts";
 
@@ -132,37 +130,16 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 	if ("error" in approvalTtl) return settle.refuse(approvalTtl.error);
 
 	const digest = workflowDigest(params.task, spec);
+	// The legacy-digest name matters only for the DEFAULT lookup: an explicit
+	// stateFile already says exactly which file holds the state.
 	const stateFile = path.resolve(defaultCwd, spec.stateFile ?? `.pi/flow-workflows/${digest}.json`);
+	const legacyStateFile = spec.stateFile == null ? path.resolve(defaultCwd, `.pi/flow-workflows/${legacyWorkflowDigest(params.task, spec)}.json`) : null;
 	const authorizations = approvalAuthorizations(phases);
 	let state = freshState(digest);
 	if (spec.resume) {
-		try {
-			const loaded = JSON.parse(await readFile(stateFile, "utf8")) as any;
-			if (![1, 2, 3, WORKFLOW_STATE_VERSION].includes(loaded.version) || loaded.digest !== digest || !Array.isArray(loaded.completedPhaseIds)
-				|| !loaded.outputs || typeof loaded.outputs !== "object" || Array.isArray(loaded.outputs)) throw new Error("state does not match this workflow");
-			let restored = loaded.version === 1 ? migrateWorkflowStateV1(loaded, phases, policy) : loaded;
-			if (!isRecord(restored.handoffs) || !isRecord(restored.attestations)) throw new Error("state does not match this workflow");
-			if (restored.version === 2) {
-				const migrated = migrateWorkflowStateV2(restored, phases, deps, digest);
-				if (migrated.error) return settle.refuse(migrated.error);
-				restored = migrated.state;
-			}
-			if (restored.version === 3) {
-				if (!isRecord(restored.receipts)) throw new Error("state does not match this workflow");
-				const migrated = migrateWorkflowStateV3(restored, phases, deps, digest);
-				if (migrated.error) return settle.refuse(migrated.error);
-				restored = migrated.state;
-			}
-			if (!isRecord(restored.receipts)) throw new Error("state does not match this workflow");
-			state = restored as WorkflowState;
-			if (state.status === "completed" && phases.some((phase: any) => !state.completedPhaseIds.includes(phase.id))) {
-				throw new Error("completed state omits one or more workflow phases");
-			}
-			if (loaded.version !== WORKFLOW_STATE_VERSION) await persistState(stateFile, state);
-		} catch (cause) {
-			const error = flowError("WORKFLOW_STATE_INVALID", "Workflow resume state is missing or incompatible.", `Could not resume ${sanitizeText(stateFile, policy)}: ${cause instanceof Error ? cause.message : String(cause)}.`, "Use the same task/phases/stateFile that created the state, or omit resume to start a fresh workflow.");
-			return settle.refuse(error);
-		}
+		const restored = await restoreWorkflowState(deps, phases, spec, digest, stateFile, legacyStateFile);
+		if (restored.error) return settle.refuse(restored.error);
+		state = restored.state;
 	} else {
 		await persistState(stateFile, state);
 	}

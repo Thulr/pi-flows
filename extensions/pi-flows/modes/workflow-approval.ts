@@ -17,8 +17,8 @@ const APPROVER_LABEL_CAP = 256;
 const PROFILE_REFUSAL_POLICY: CapturePolicy = { recordContent: true, redactSecrets: true };
 const V3_THINKING_CANDIDATE_LIMIT = 150_000;
 
-/** The state schema version an approval is granted against. */
-export const WORKFLOW_STATE_VERSION = 4;
+/** The state schema version an approval is granted against. Version 5 states carry the canonical (key-order independent) workflow digest; versions 1–4 carried the order-sensitive one (#144). */
+export const WORKFLOW_STATE_VERSION = 5;
 
 /**
  * Receipt failures a human can simply answer again: the approved action changed,
