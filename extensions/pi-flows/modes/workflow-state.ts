@@ -294,6 +294,29 @@ export function migrateWorkflowStateV3(legacy: any, phases: any[], deps: ModeDep
 }
 
 /**
+ * v4 -> v5: only the identity ALGORITHM changed (#144) — canonical key-sorted
+ * digests replace the order-sensitive ones — so the state digest is restamped
+ * and every completed approval's receipt is revalidated against the v4
+ * encoding of the live workflow, then rebound to the v5 encoding. A receipt
+ * that fails to revalidate means the approved conditions themselves drifted:
+ * a spent one fails the migration, keeping the legacy record so restoring the
+ * conditions can retry it; an unspent one is left for the phase loop, which
+ * reopens or refuses it against the current binding.
+ */
+export function migrateWorkflowStateV4(legacy: any, phases: any[], deps: ModeDeps, digest: string, historicalDigest: string): { state: WorkflowState; error?: FlowError } {
+	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, digest, receipts: { ...legacy.receipts } };
+	for (const [index, phase] of phases.entries()) {
+		if (!phase?.approval?.message || !state.completedPhaseIds.includes(phase.id)) continue;
+		const stored = state.receipts[phase.id];
+		const historical: ApprovalBinding = { ...approvalBindingFor(phases, index, deps, historicalDigest), stateVersion: 4 };
+		const rebound = rebindApprovalReceipt(stored, historical, approvalBindingFor(phases, index, deps, digest));
+		if (rebound.receipt) state.receipts[phase.id] = rebound.receipt;
+		else if (isRecord(stored) && typeof stored.consumedAt === "string") return { state, error: rebound.error };
+	}
+	return { state };
+}
+
+/**
  * Load, verify, and migrate a resumed workflow's persisted state to the current
  * version, persisting the migrated record under the canonical name. Returns the
  * current-version state, or the refusal explaining why the record cannot resume
@@ -352,36 +375,16 @@ export async function restoreWorkflowState(
 		}
 		return { state };
 	} catch (cause) {
+		// An fs error names the file that actually failed — on the legacy
+		// fallback path that is not the requested file, so prefer its path.
+		const failedFile = typeof (cause as NodeJS.ErrnoException)?.path === "string" ? (cause as NodeJS.ErrnoException).path! : sourceFile;
 		return {
 			error: flowError(
 				"WORKFLOW_STATE_INVALID",
 				"Workflow resume state is missing or incompatible.",
-				`Could not resume ${sanitizeText(sourceFile, deps.policy)}: ${cause instanceof Error ? cause.message : String(cause)}.`,
+				`Could not resume ${sanitizeText(failedFile, deps.policy)}: ${cause instanceof Error ? cause.message : String(cause)}.`,
 				"Use the same task/phases/stateFile that created the state, or omit resume to start a fresh workflow.",
 			),
 		};
 	}
-}
-
-/**
- * v4 -> v5: only the identity ALGORITHM changed (#144) — canonical key-sorted
- * digests replace the order-sensitive ones — so the state digest is restamped
- * and every completed approval's receipt is revalidated against the v4
- * encoding of the live workflow, then rebound to the v5 encoding. A receipt
- * that fails to revalidate means the approved conditions themselves drifted:
- * a spent one fails the migration, keeping the legacy record so restoring the
- * conditions can retry it; an unspent one is left for the phase loop, which
- * reopens or refuses it against the current binding.
- */
-export function migrateWorkflowStateV4(legacy: any, phases: any[], deps: ModeDeps, digest: string, historicalDigest: string): { state: WorkflowState; error?: FlowError } {
-	const state: WorkflowState = { ...legacy, version: WORKFLOW_STATE_VERSION, digest, receipts: { ...legacy.receipts } };
-	for (const [index, phase] of phases.entries()) {
-		if (!phase?.approval?.message || !state.completedPhaseIds.includes(phase.id)) continue;
-		const stored = state.receipts[phase.id];
-		const historical: ApprovalBinding = { ...approvalBindingFor(phases, index, deps, historicalDigest), stateVersion: 4 };
-		const rebound = rebindApprovalReceipt(stored, historical, approvalBindingFor(phases, index, deps, digest));
-		if (rebound.receipt) state.receipts[phase.id] = rebound.receipt;
-		else if (isRecord(stored) && typeof stored.consumedAt === "string") return { state, error: rebound.error };
-	}
-	return { state };
 }

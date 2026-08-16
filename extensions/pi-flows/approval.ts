@@ -348,7 +348,7 @@ function receiptIssue(
 	return null;
 }
 
-type SpentApprovalMigration =
+type ApprovalReceiptMigration =
 	| { receipt: ApprovalReceipt; error?: undefined }
 	| { receipt?: undefined; error: FlowError };
 
@@ -357,7 +357,7 @@ type SpentApprovalMigration =
  * retain audit evidence; in-progress actions retain their same-action retry.
  * Checking consumption here prevents callers from re-sealing merely issued consent.
  */
-export function migrateSpentApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): SpentApprovalMigration {
+export function migrateSpentApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): ApprovalReceiptMigration {
 	const verified = ApprovalAuthorization.verify(receipt, historical, { consumer: historical.action });
 	if (verified.error) return { error: verified.error };
 	const stored = receipt as ApprovalReceipt;
@@ -394,7 +394,7 @@ export function migrateSpentApprovalReceipt(receipt: unknown, historical: Approv
  * keeps its validation: nothing about the evidence weakened. Consumption,
  * actors, issue time, and expiry all carry over unchanged.
  */
-export function rebindApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): SpentApprovalMigration {
+export function rebindApprovalReceipt(receipt: unknown, historical: ApprovalBinding, current: ApprovalBinding): ApprovalReceiptMigration {
 	const verified = ApprovalAuthorization.verify(receipt, historical, { consumer: historical.action });
 	if (verified.error) return { error: verified.error };
 	const stored = receipt as ApprovalReceipt;

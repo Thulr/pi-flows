@@ -395,7 +395,10 @@ remove the stale state file and restart without `resume:true`.
 Note: state versions 1–4 used a digest that depends on object key order.
 When you resume such a state under its default name, pi-flows migrates it,
 saves it under the new canonical-digest name, and removes the old file. This
-is expected. Later resumes find the new file automatically.
+is expected. Later resumes find the new file automatically. A run without
+`resume:true` starts new work under the canonical name and does not read the
+legacy file. If you want the old progress, resume before you start a fresh
+run.
 
 ### `WORKFLOW_GATE_FAILED`
 

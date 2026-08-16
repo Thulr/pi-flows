@@ -937,9 +937,10 @@ rebinds the receipt to the version-5 encoding. A receipt that revalidates keeps
 its identity, actors, expiry, consumption record, and `typed` validation,
 because the approved action did not change. If a spent receipt does not
 revalidate, the migration fails with `APPROVAL_RECEIPT_STALE` and keeps the
-version-4 state, so a restore of the approved conditions can retry it. An
-unspent receipt that does not revalidate reopens or fails closed through the
-normal receipt paths described above.
+version-4 state. Restore the approved conditions to retry it. An unspent
+receipt that does not revalidate reopens or fails closed through the normal
+receipt paths described above. A run without `resume:true` always starts new
+work under the canonical name. It does not read or remove a legacy file.
 
 This protects against replay and drift in a local state file. It does not
 protect against an attacker who can write that file: any key that signs a
