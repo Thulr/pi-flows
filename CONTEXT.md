@@ -2,7 +2,7 @@
 
 pi-flows lets a parent pi session delegate bounded work to disposable children and get compact findings back, instead of doing everything in one long-running context.
 
-The value is not the spawning — anything can spawn a subprocess. It is that what comes back is **checkable**: a finding arrives bound to the contract it was produced under, carrying its own evidence, provenance, and cost, so the parent can act on it without re-reading the transcript that produced it.
+The value is not the spawning — anything can spawn a subprocess. It is that what comes back states its own assurance: an ordinary Result is the Child's account and claims nothing more; under a delegation contract, a finding arrives **checkable** — bound to the contract it was produced under, its artifacts digest-checked, its shape schema-checked, carrying its own evidence, provenance, and cost — so the parent can act on it without re-reading the transcript that produced it. Checkable is not verified: the truth of a finding is established only when an independent verifier assesses the outcome.
 
 This document is the project's domain glossary: the canonical terms, each with a concise definition and the synonyms it deliberately avoids. Which subdomain each module belongs to, and the import direction between subdomains, is the [architecture classification](./docs/reference/architecture.md); the reasoning behind that split is the [domain model](./docs/explanation/domain-model.md).
 
@@ -91,6 +91,10 @@ _Avoid_: retry, rerun
 
 ### Contracts and handoffs
 
+**Ordinary Result**:
+What an uncontracted Run reports back — the Child's own account of its work, settled and sanitized, with no machine contract assurance. The harness still judges its Execution success; every claim inside its content stays the Child's assertion. Return requirements can shape it, but shaping is prompting, not checking.
+_Avoid_: unverified Return (it is not a Return at all), raw output (sanitization still applies)
+
 **Delegation contract**:
 A machine-checked task definition that binds a child's objective, authority, contract budget, acceptance checks, and required return shape.
 _Avoid_: typed contract, task contract
@@ -112,8 +116,12 @@ Untrusted child output that is structurally a return envelope, offered for contr
 _Avoid_: unvalidated envelope, envelope candidate (that is the bounded final-message text a candidate is parsed from)
 
 **Return envelope**:
-A child return that passed attribution, integrity, and conformance under a resolved delegation contract. Only the validation transition constructs or attaches one, so it always carries the exact resolved contract identity.
+A child return that passed attribution, integrity, and conformance under a resolved delegation contract. Only the validation transition constructs or attaches one, so it always carries the exact resolved contract identity. What it carries is the Contract-bound Return assurance, no more.
 _Avoid_: response object, result contract, candidate (that is the pre-validation form)
+
+**Contract-bound Return**:
+The assurance a validated Return envelope carries: attribution to the exact resolved delegation contract, integrity of the artifacts whose digests it declared, and conformance of its `data` to the Return schema. It proves how the Return was produced and shaped — never that its claims are true or that prose acceptance checks were satisfied. Truth is a separate assurance only Verified outcome success grants.
+_Avoid_: verified Return (verification is an independent verifier's act), machine-checked findings (the shape is checked, the findings are not)
 
 **Rejected Return candidate**:
 A Return candidate that failed contract validation — its identity did not bind, its artifacts were uncontained or did not match their digests, or its `data` did not satisfy the return schema. It is never a handoff and never reaches `result.envelope`, but it is retained as trace evidence of what the spend produced: a digest mismatch's artifact claim is the record of the corruption. Not a kind of return envelope — that term asserts a binding a rejected candidate may not have.

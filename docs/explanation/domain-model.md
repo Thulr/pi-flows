@@ -4,7 +4,7 @@ This page explains why pi-flows is split the way it is: the reasoning behind the
 
 ## The differentiator is checkability
 
-The value of pi-flows is not the spawning — anything can spawn a subprocess. The value is that what comes back is **checkable**. A finding arrives bound to the contract it was produced under, and it carries its own evidence, provenance, and cost. So the parent can act on it without a re-read of the transcript that produced it.
+The value of pi-flows is not the spawning — anything can spawn a subprocess. The value is that what comes back states its own assurance. An ordinary Result is the Child's account, with no machine contract assurance. Under a delegation contract, a finding is **checkable**: it arrives bound to the contract it was produced under, and it carries its own evidence, provenance, and cost. So the parent can act on it without a re-read of the transcript that produced it. Checkable is not verified — only an independent verifier can establish that the outcome met its acceptance criteria (Verified outcome success).
 
 The subdomain split is a direct consequence. The **Core** domain is the part of the codebase that makes a finding checkable: delegation contracts and their identity, return and handoff envelopes, injection policy, approval receipts, budget authority, capture policy, and the coordination evidence that shows what happened. Everything else is a recombination of those primitives (**Supporting**), commodity plumbing (**Generic**), shared vocabulary (**Shared kernel**), or the wiring that connects them (**Composition root**).
 

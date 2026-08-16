@@ -16,7 +16,7 @@ Use pi-flows when the next step makes your parent pi session noisy, expensive, o
 | You want an implementation checked before you accept it. | "Add `/health` with a test, and accept it only after `npm test` passes." | A bounded generator-evaluator loop where a builder, critic, and optional command gate must pass. |
 | You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
 | A release or migration has named gates and an approval point. | "Analyze, plan, verify, then pause for approval before rollout." | Persisted phase state, deterministic gates, and a resumable human approval node. |
-| Several independent writers need to land one verified result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
+| Several independent writers need to land one gate-checked result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
 | A consequential decision has credible opposing options. | "Have advocates test both queue designs against the constraints, then adjudicate." | Bounded rebuttal rounds and an independent decision record. |
 | Several sources disagree or leave evidence gaps. | "Reconcile the runbook, deployed config, incident report, and ticket." | Source-specific extraction followed by cited synthesis that preserves conflicts and unknowns. |
 | A transient condition must be captured before diagnosis. | "Poll health up to six times; on `DEGRADED`, hand the event to an analyst." | A bounded deterministic probe, typed trigger, and one reactor agent. |
@@ -114,7 +114,7 @@ The harness enforces these guarantees regardless of what an agent does. They are
 - **Per-child timeout.** `timeoutMs` kills a stalled child (SIGTERM, then SIGKILL).
 - **Fail-closed project agents.** Headless runs refuse repo-controlled `.pi/flow-agents` prompts unless you explicitly trust them.
 - **Redaction + output caps.** Before anything returns to the parent, secret-shaped strings and home paths are redacted, and model-visible output is byte-capped.
-- **Return requirements.** `returnContract` / `requireEvidence` append explicit output and evidence requirements to delegated tasks. This reduces summary loss at handoff boundaries.
+- **Return requirements.** `returnContract` / `requireEvidence` append explicit output and evidence requirements to delegated tasks. This reduces summary loss at handoff boundaries. They are prompt-enforced, never machine-checked; a delegation `contract` is the machine-checked form.
 - **Shared-write isolation.** When multiple writers share one `cwd`, concurrent write-capable fan-out is refused (`SHARED_WRITE_CWD`). This pushes write work toward serialized runs (`concurrency:1`) or separate worktrees. The explicit override is a last resort for intentionally shared writes.
 - **Enforced handoff injection policy.** Child output reused as another child's prompt is stripped of invisible/bidi characters and scanned for instruction-override markers, including conjunctive attacks assembled across several boundaries. `handoffPolicy` selects compatible warning, payload quarantine, or fail-before-recipient-spawn. `modeHandoffPolicy` can set a stricter minimum (`prompt-injection-defense`).
 - **Native read-only agents.** `recon` and `analyst` ship without a shell, so the toolset enforces their read-only boundary, not prompt instructions (`native-enforcement-vs-prompt-enforcement`).
@@ -124,7 +124,7 @@ The harness enforces these guarantees regardless of what an agent does. They are
 - **Opt-in Reflexion lessons.** `reflexion.enabled:true` reads and appends redacted local lessons in `.pi/flow-reflections.jsonl`. It is disabled by default.
 - **Star topology.** One-way dispatch with a compact return. There is no agent-to-agent chatter, so there is no runaway coordination surface.
 
-For most modes, verification of a returned artifact is **not** automatic. That is the purpose of `evaluate` (with an optional `checkCommand` gate) and `orchestrate.verify`. Use them when a handoff must be validated rather than trusted.
+For most modes, verification of a returned artifact is **not** automatic. That is the purpose of `evaluate` (with an optional `checkCommand` gate) and `orchestrate.verify`. Use them when an outcome must be verified rather than trusted. A delegation contract validates a Return's attribution, artifact integrity, and shape — it never verifies that the Return's claims are true.
 
 ## Intentionally not built (yet)
 

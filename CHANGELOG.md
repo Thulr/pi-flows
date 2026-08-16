@@ -53,6 +53,21 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   but never recorded now leave `validation` evidence: `loop.judge_verdict`,
   `debate.judge_verdict`, `vote.tally`, and `search.scores`.
 
+- The Return assurance levels are now defined and exposed (#146). The glossary
+  names three levels a child's output can carry: an **ordinary Result** (the
+  Child's own account, no machine contract assurance), a **contract-bound
+  Return** (a validated Return envelope proving contract attribution, declared
+  artifact integrity, and return-schema conformance — never the truth of its
+  claims or satisfaction of prose `acceptanceChecks`), and **Verified outcome
+  success** (only when an independent verifier assessed the outcome). The
+  trace report adds a `Return assurance` line counting child runs dispatched
+  under a delegation contract against ordinary Results. The product value
+  statement, README, reference docs, and TypeBox schema descriptions now state
+  when a delegation contract is optional and exactly what supplying one
+  proves; prompt-only return requirements are labeled as never machine-checked;
+  and the code-review preset's rejected-envelope findings are labeled with the
+  glossary's "Unvalidated claims from a rejected Return candidate".
+
 ### Changed
 
 - Workflow identity is now canonical (#144): the state digest is the

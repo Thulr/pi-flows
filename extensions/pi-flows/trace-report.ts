@@ -40,6 +40,14 @@ export interface TraceReportBucket {
 	duplicateSpans: number;
 	/** Rows carrying no usable span id. Unusable as evidence, and they can stand in for a dropped row. */
 	malformedSpans: number;
+	/**
+	 * Child runs dispatched under an enforced delegation contract — the runs
+	 * whose Returns carry contract-bound assurance when validated. Counted from
+	 * `flow.contract_id`, which #137 stamps only for an enforced contract.
+	 */
+	contractedRuns: number;
+	/** Child runs without a contract: ordinary Results, with no machine contract assurance. */
+	uncontractedRuns: number;
 	/** Runs whose trace evidence is provably incomplete (dropped rows, duplicates, or failed exports). */
 	incompleteTraces: number;
 	/** Runs whose shape is corrupt: more than one root candidate, so every metric is derived from a guess. */
@@ -95,6 +103,8 @@ export function emptyTraceBucket(): TraceReportBucket {
 		failedExports: 0,
 		duplicateSpans: 0,
 		malformedSpans: 0,
+		contractedRuns: 0,
+		uncontractedRuns: 0,
 		incompleteTraces: 0,
 		structurallyInvalidTraces: 0,
 		danglingLinks: 0,
@@ -319,6 +329,8 @@ export function summarizeTraceSpans(spans: TraceSpanRecord[], parseErrors = 0, s
 			failedExports,
 			duplicateSpans,
 			malformedSpans,
+			contractedRuns: childSpans.filter((span) => hasAttr(span, "flow.contract_id")).length,
+			uncontractedRuns: childSpans.filter((span) => !hasAttr(span, "flow.contract_id")).length,
 			incompleteTraces: incomplete ? 1 : 0,
 			structurallyInvalidTraces: structure.invalid ? 1 : 0,
 			danglingLinks: structure.danglingLinks,
@@ -381,6 +393,7 @@ export function formatTraceReport(report: TraceReport): string {
 		`Runs: ${report.traces}`,
 		`Execution success: ${report.executionSuccesses}/${report.traces} (${formatRate(report.executionSuccesses, report.traces)})`,
 		`Verified outcome success: ${report.outcomeSuccesses}/${report.verifiedOutcomes} (${formatRate(report.outcomeSuccesses, report.verifiedOutcomes)}; ${report.traces - report.verifiedOutcomes} unavailable)`,
+		`Return assurance: ${report.contractedRuns} child run${report.contractedRuns === 1 ? "" : "s"} under a delegation contract, ${report.uncontractedRuns} ordinary Result${report.uncontractedRuns === 1 ? "" : "s"} (no machine contract assurance)`,
 		`Cost: $${report.costUsd.toFixed(4)}  Tokens: ${formatTokens(report.tokens)}`,
 		`Elapsed: ${(report.elapsedTimeMs / 1000).toFixed(1)}s  Worker: ${(report.workerTimeMs / 1000).toFixed(1)}s  Critical path: ${(report.criticalPathMs / 1000).toFixed(1)}s (${report.criticalPathTraces}/${report.traces} available)`,
 		`Verified TPSO: ${formatTpso({ ...emptyTraceBucket(), outcomeSuccesses: report.outcomeSuccesses, tokens: report.tokens })} tokens/success  Budget hits: ${report.budgetHits}  Same-model vote warnings: ${report.sameModelVoteWarnings}`,
