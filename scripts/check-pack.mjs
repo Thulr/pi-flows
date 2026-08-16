@@ -350,5 +350,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // lookup, and the reference/troubleshooting/CHANGELOG wording for the
 // transition. No new file: the set stays 111, none from tests/, scripts/, or
 // evals/; measured 1_306_148.
-assert.ok(pack.unpackedSize < 1_315_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_320_000 for #145 (verified vs carried judgment rows): the
+// review-policy wording in architecture.md, domain-model.md, AGENTS.md, and
+// CONTRIBUTING.md now describes fixed row identity, declared surfaces, and
+// digest-stamped provenance, and the CHANGELOG documents the change. No new
+// file: the set stays 111, none from tests/, scripts/, or evals/; measured
+// 1_317_407.
+assert.ok(pack.unpackedSize < 1_320_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

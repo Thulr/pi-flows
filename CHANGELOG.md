@@ -70,6 +70,23 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- The domain-model score now separates verified rows from carried ones (#145).
+  Judgment-row identity and required fields are fixed in
+  `scripts/domain-judgment.mjs`: a deleted, renamed, or invalid ledger row
+  reads as a missing judgment and fails the score, and an explicitly failed
+  verdict exits non-zero. Each row declares the code, mode, shared-kernel,
+  documentation, and test surfaces that can invalidate it, and a recorded
+  review stamps a content digest per surface plus a digest of the declared
+  list itself — so a ledger edit alone, including trimming a changed surface,
+  cannot mark a row fresh; only `node scripts/domain-score.mjs
+  --record=<rows|all>` records provenance for the current tree. Staleness is
+  content-based and needs no git history (dirty trees, divergent merges, and
+  shallow clones all answer alike), stays advisory, and every output leads
+  with the verified score while showing carried rows separately. The `acl`
+  and `core-domain` labels now state only what their mechanical checks prove,
+  and the score's `--json` shape changed accordingly (`carried` now counts
+  stale passing rows only).
+
 - Workflow identity is now canonical (#144): the state digest is the
   extension's canonical (recursively key-sorted) SHA-256 over the task, phases,
   and debrief, so reordering object keys at any nesting level no longer reads

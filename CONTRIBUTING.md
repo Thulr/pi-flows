@@ -27,6 +27,11 @@ extension/script/eval code, 800 for tests). When it fires, split the file into
 focused modules — `extensions/pi-flows/modes/` is the pattern — rather than
 raising the cap.
 
+`score:domain` fails on a structural finding and on a missing or explicitly
+failed judgment row. Stale judgment rows are advisory: the score carries them,
+shows them separately, and does not count them as verified. See the review
+policy in [`docs/reference/architecture.md`](docs/reference/architecture.md).
+
 `scan:privacy` blocks obvious secrets, high-signal PII, generated local artifacts,
 and internal-only paths. Keep research notes under `docs/research/`; that directory
 is intentionally ignored and must not be force-added to a PR. The Husky pre-commit

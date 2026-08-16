@@ -11,42 +11,49 @@
 // is rich or merely CRUD, whether the language holds together across docs, code,
 // and tests — no grep settles those. Inventing a number for them would produce a
 // metric that reads 10/10 while the model rots. So they are *carried* from the
-// last recorded review in docs/domain-review.json, and every carried row is
-// labelled with when that review was taken. When a Core module was touched more
-// recently than the review, the row is reported stale and drops out of the
+// last recorded review in docs/domain-review.json. Row identity and required
+// fields are fixed in scripts/domain-judgment.mjs; each row declares the surfaces
+// whose changes invalidate it and stamps a content digest per surface at review
+// time. A row whose surfaces moved is reported stale and drops out of the
 // verified score rather than being repeated as fact — the same rule this codebase
 // applies to an approval receipt whose digest no longer matches, and to trace
-// health versus execution success.
+// health versus execution success. Stale is advisory; a missing or explicitly
+// failed judgment is a failed score.
 //
 // Usage:
-//   node scripts/domain-score.mjs              # gate: fails on a NEW structural finding
-//   node scripts/domain-score.mjs --summary    # markdown for a PR comment, never fails
-//   node scripts/domain-score.mjs --json       # machine-readable
-//
-// Re-record the judgment rows by running the /domain-driven-design review and
-// updating docs/domain-review.json. Staleness is measured from when that file was
-// last touched relative to the Core modules, so editing it IS the re-recording —
-// no commit id has to be maintained by hand.
+//   node scripts/domain-score.mjs                 # gate: fails on a structural finding or a failed/missing judgment
+//   node scripts/domain-score.mjs --summary       # markdown for a PR comment, never fails
+//   node scripts/domain-score.mjs --json          # machine-readable
+//   node scripts/domain-score.mjs --record=<rows> # stamp review provenance for <rows> (comma-separated, or "all") against this tree
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { SPELLED_ONCE } from "./domain-spelled-once.mjs";
+import {
+  ARCHITECTURE_FILE,
+  JUDGMENT_ROWS,
+  MODULE_ROOT,
+  REVIEW_FILE,
+  SUBDOMAINS,
+  globToRe,
+  judgmentRows,
+  recordReview,
+  validateJudgment,
+} from "./domain-judgment.mjs";
 
 const root = process.cwd();
-const MODULE_ROOT = "extensions/pi-flows";
-const REVIEW_FILE = "docs/domain-review.json";
-const ARCHITECTURE_FILE = "docs/reference/architecture.md";
-// The subdomain classes the architecture ledger places every module into. The
-// last two are structural roles rather than subdomains proper, but they are
-// placements a module can hold, so they live in the same table.
-const SUBDOMAINS = ["Core", "Supporting", "Generic", "Shared kernel", "Composition root"];
 /** Evans' naming smells: a name that describes a technical role instead of a domain concept. */
 const JARGON = /(Manager|Helper|Processor|Utils?|Impl|Coordinator|Wrapper)$/;
 const FLAGS = new Set(["--summary", "--json"]);
 const args = new Set(process.argv.slice(2));
+let recordRows;
 for (const arg of args) {
-  if (!FLAGS.has(arg)) {
-    console.error(`✗ Unknown option "${arg}": expected one of ${[...FLAGS].join(", ")}, or no option to run as a gate.`);
+  if (arg.startsWith("--record=")) {
+    const named = arg.slice("--record=".length);
+    recordRows = named === "all" ? [...JUDGMENT_ROWS] : named.split(",").map((row) => row.trim()).filter(Boolean);
+    args.delete(arg);
+  } else if (!FLAGS.has(arg)) {
+    console.error(`✗ Unknown option "${arg}": expected --summary, --json, --record=<rows|all>, or no option to run as a gate.`);
     process.exit(2);
   }
 }
@@ -105,8 +112,6 @@ function declaredImportRules() {
   return rules;
 }
 
-const globToRe = (pattern) => new RegExp(`^${pattern.replace(/[.]/g, "\\.").replace(/\*/g, "[^/]*")}$`);
-
 // One import matcher for every row that reads imports. Single quotes, double
 // quotes and backticks are all valid specifiers, so accepting a subset would let
 // a Core-to-Supporting import — or a foreign package — walk past the gate that
@@ -154,6 +159,23 @@ const findings = [];
 const flag = (row, message) => findings.push({ row, message });
 const clean = (row) => !findings.some((finding) => finding.row === row);
 
+// ---------------------------------------------------------------- record mode
+// Stamping provenance is a distinct act from scoring: it asserts a human ran
+// the review on this tree for exactly the named rows, and it writes the ledger.
+if (recordRows) {
+  // The reviewer's local date, not UTC: an evening re-record must not stamp tomorrow.
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const problems = recordReview(root, review, recordRows, today, declaredSubdomains());
+  if (problems.length) {
+    for (const problem of problems) console.error(`✗ ${problem.message}`);
+    process.exit(1);
+  }
+  writeFileSync(path.join(root, REVIEW_FILE), JSON.stringify(review, null, 2) + "\n");
+  console.log(`recorded review provenance for ${recordRows.length} row(s) against the current tree: ${recordRows.join(", ")}`);
+  process.exit(0);
+}
+
 // ---------------------------------------------------------------- structural rows
 const sources = moduleSources();
 const subdomains = declaredSubdomains();
@@ -170,8 +192,9 @@ for (const [file, source] of sources) {
 }
 
 // Row: the classification names something real. A declared module that no longer
-// exists is the same rot from the other side — and if it was Core, its deletion
-// would otherwise never register as a Core change at all.
+// exists is the same rot from the other side — and its judgment-row consequence
+// is handled by the surface digests, which keep a deleted module's disappearance
+// visible even after this table stops naming it.
 for (const [subdomain, patterns] of subdomains) {
   for (const pattern of patterns) {
     if (![...sources.keys()].some((file) => globToRe(pattern).test(file))) {
@@ -201,9 +224,9 @@ for (const [file, hits] of placement) {
   }
 }
 
-// Row: anti-corruption layer. A foreign package type may be spoken only where the
-// tree says a foreign protocol is spoken; `debt` is the shrink-only ledger of
-// places that still leak one, and an entry that no longer leaks must be deleted.
+// Row: foreign-import containment. A foreign package type may be spoken only in
+// a declared adapter; `debt` is the shrink-only ledger of places that still leak
+// one, and an entry that no longer leaks must be deleted.
 const adapters = new Set(review.foreignImports.adapters);
 const debt = new Map(review.foreignImports.debt.map((entry) => [entry.module, entry]));
 const foreignImportsOf = (source) => new Set([...source.matchAll(FOREIGN_IMPORT)].map((match) => match[1]));
@@ -263,172 +286,96 @@ for (const [file, source] of sources) {
   }
 }
 
+// Labels state what the mechanical check actually proves — no more. "Foreign
+// imports confined to declared adapters" is provable by grep; "an anti-corruption
+// layer at every integration" is a judgment about translation quality, and lives
+// with the other judgments if anyone wants to record it.
 const structural = [
   { row: "names", label: "Expert-readable names", pass: clean("names") },
   { row: "boundaries", label: "Explicit context boundaries (enforced import direction)", pass: clean("boundaries") },
-  { row: "acl", label: "Anti-corruption layer at every external integration", pass: debt.size === 0 && clean("acl") },
-  { row: "core-domain", label: "Core Domain identified (every module classified)", pass: subdomains.get("Core").length > 0 && clean("core-domain") },
+  { row: "acl", label: "Foreign imports confined to declared adapters (debt ledger empty)", pass: debt.size === 0 && clean("acl") },
+  { row: "core-domain", label: "Every module classified exactly once, against a non-empty Core", pass: subdomains.get("Core").length > 0 && clean("core-domain") },
   { row: "spelled-once", label: "Consolidated concepts stay spelled once", pass: clean("spelled-once") },
 ];
 
-// ---------------------------------------------------------------- carried judgment rows
-/**
- * Paths with uncommitted changes, including untracked files.
- *
- * Parsed without trimming the blob: porcelain puts a two-column status code
- * before each path, and an unstaged edit leads with a space (" M path"), so
- * trimming first shifts every path one character left and the set silently
- * matches nothing.
- */
-function gitDirtyPaths() {
-  return execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" })
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const filePath = line.slice(3);
-      const renamedTo = filePath.indexOf(" -> ");
-      return renamedTo === -1 ? filePath : filePath.slice(renamedTo + 4);
-    });
-}
-
-/**
- * Judgment rows go stale when the Core Domain moved after the review was taken —
- * in the working tree, or in a commit later than the one that last touched the
- * review file.
- *
- * Anchored on when each file was last touched rather than on a recorded commit
- * id, because the recorded id cannot answer this question about itself: a review
- * file is *added* relative to the commit it names, so "was the review edited
- * since?" would read true forever and the rows would never go stale. Last-touched
- * also maintains itself — nobody has to bump a sha by hand, and a change that
- * edits Core and the review together is fresh by construction.
- */
-/** True when `ancestor` is reachable from `descendant`. Exit 1 means "no", which is an answer, not a failure. */
-function isAncestor(ancestor, descendant) {
-  try {
-    execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], { cwd: root, stdio: "ignore" });
-    return true;
-  } catch (error) {
-    if (error?.status === 1) return false;
-    throw error;
-  }
-}
-
-function reviewDrift(coreFiles) {
-  try {
-    // A shallow clone grafts every path's history onto the same commit, so the
-    // review file and the Core modules would report an identical "last touched"
-    // and drift would read as fresh — silently vouching for rows nobody checked.
-    // Unknown is the honest answer. CI checks out with fetch-depth: 0 for this.
-    if (git("rev-parse", "--is-shallow-repository") === "true") {
-      return { known: false, stale: true, modules: [], why: "this is a shallow clone, so every path reports the same grafted commit and nothing can be ordered" };
-    }
-    const dirty = new Set(gitDirtyPaths());
-    const dirtyCore = coreFiles.filter((file) => dirty.has(file));
-    // Re-reviewed in the same uncommitted change: fresh by construction.
-    if (dirty.has(REVIEW_FILE)) return { known: true, stale: false, modules: [] };
-    if (dirtyCore.length) return { known: true, stale: true, modules: dirtyCore, where: "in the working tree" };
-
-    const reviewSha = git("log", "-1", "--format=%H", "--", REVIEW_FILE);
-    const coreSha = git("log", "-1", "--format=%H", "--", ...coreFiles);
-    if (!reviewSha || !coreSha || reviewSha === coreSha) return { known: true, stale: false, modules: [] };
-    // Three cases, and only one of them is fresh. Testing "is the review an
-    // ancestor?" alone conflates the other two: a NOT-an-ancestor answer is
-    // returned both when the review is newer (fresh) and when the two sit on
-    // divergent branches of a merge, where neither is newer and the merged tree
-    // can hold a Core change the review never saw. Order them explicitly.
-    if (isAncestor(reviewSha, coreSha)) {
-      return {
-        known: true,
-        stale: true,
-        modules: git("diff", "--name-only", `${reviewSha}..HEAD`, "--", ...coreFiles).split("\n").filter(Boolean),
-        where: `after ${reviewSha.slice(0, 8)}`,
-      };
-    }
-    if (isAncestor(coreSha, reviewSha)) return { known: true, stale: false, modules: [] };
-    return {
-      known: false,
-      stale: true,
-      modules: [],
-      why: `the review (${reviewSha.slice(0, 8)}) and the latest Core change (${coreSha.slice(0, 8)}) sit on divergent histories, so neither is newer and the merged tree may hold a Core change the review never saw`,
-    };
-  } catch {
-    // No git, or history this checkout cannot read. Unknown is not "fresh" — say
-    // so rather than vouch for rows nobody verified.
-    return { known: false, stale: true, modules: [], why: "this checkout cannot be compared against the review (no git, or unreadable history)" };
-  }
-}
-
-// Declared paths, not present ones: a Core module deleted in this change is
-// exactly the Core change the judgment rows must not be reported as surviving.
-// git resolves these as pathspecs, so a glob and a deleted file both work.
-const coreFiles = subdomains.get("Core").map((pattern) => `${MODULE_ROOT}/${pattern}`);
-const drift = reviewDrift(coreFiles);
-const stale = drift.stale;
-const judgment = Object.entries(review.judgment).map(([row, entry]) => ({
-  row,
-  label: entry.label,
-  pass: entry.verdict === "pass",
-  stale,
-  note: entry.note,
-}));
+// ---------------------------------------------------------------- judgment rows
+const judgmentFindings = validateJudgment(review.judgment, subdomains);
+const invalidRows = new Set(judgmentFindings.map((finding) => finding.row));
+const judgment = judgmentRows(root, review.judgment, subdomains, invalidRows);
 
 const structuralHeld = structural.filter((entry) => entry.pass).length;
 const verified = structuralHeld + judgment.filter((entry) => entry.pass && !entry.stale).length;
-const carried = structuralHeld + judgment.filter((entry) => entry.pass).length;
+const carried = judgment.filter((entry) => entry.pass && entry.stale).length;
 const total = structural.length + judgment.length;
-// Provenance for the Basis column: when the review was taken. The tree state it
-// was taken against is the review file's own git history, which is also what
-// drift is measured from — so there is no second copy to keep in step.
-const reviewedOn = review.reviewedAt;
-const staleReason = drift.known
-  ? `${drift.modules.length} Core module(s) changed ${drift.where} without the review being re-recorded: ${drift.modules.join(", ")}`
-  : drift.why;
+const failedJudgment = judgment.filter((entry) => !entry.pass);
+const staleRows = judgment.filter((entry) => entry.stale);
 
 // ---------------------------------------------------------------- output
-const mark = (entry) => (entry.stale ? "◌" : entry.pass ? "✓" : "✗");
+const mark = (entry) => (!entry.pass ? "✗" : entry.stale ? "◌" : "✓");
+const staleText = (entry) => `surfaces changed since the ${entry.reviewedAt} review: ${entry.staleBecause.join(", ")}`;
+const recordHint = (rows) => `node scripts/domain-score.mjs --record=${rows.map((entry) => entry.row).join(",")}`;
 
 if (args.has("--json")) {
-  console.log(JSON.stringify({ verified, carried, total, stale, reviewedOn, ...(stale ? { staleReason } : {}), structural, judgment, findings }, null, 2));
+  console.log(JSON.stringify({ verified, carried, total, structural, judgment, findings, judgmentFindings }, null, 2));
 } else if (args.has("--summary")) {
   const lines = [
     "## Domain model score",
     "",
-    `**${carried}/${total}**${stale ? ` — ${verified}/${total} verified now, the rest carried from a review that is out of date` : " — structural rows verified on this commit"}`,
+    `**${verified}/${total} verified** on this commit${carried ? ` · ${carried} carried from an out-of-date review, shown separately below` : ""}${failedJudgment.length ? ` · ${failedJudgment.length} judgment row(s) failed` : ""}`,
     "",
     "| | Row | Basis |",
     "|---|---|---|",
     ...structural.map((entry) => `| ${mark(entry)} | ${entry.label} | checked on this commit |`),
-    ...judgment.map((entry) => `| ${mark(entry)} | ${entry.label} | ${entry.stale ? "**stale**" : `reviewed ${reviewedOn}`} |`),
+    ...judgment.filter((entry) => !entry.stale).map((entry) => `| ${mark(entry)} | ${entry.label} | ${entry.pass ? `reviewed ${entry.reviewedAt}, surfaces unchanged` : "failed or missing judgment"} |`),
     "",
   ];
+  if (staleRows.length) {
+    lines.push(
+      "### Carried, not verified",
+      "",
+      "These judgments passed an earlier review, but their declared surfaces changed since. They are carried for context and count for nothing above.",
+      "",
+      ...staleRows.map((entry) => `- ◌ **${entry.label}** — ${staleText(entry)}`),
+      "",
+      `Re-run \`/domain-driven-design\` over the changed surfaces, then \`${recordHint(staleRows)}\`.`,
+      "",
+    );
+  }
   if (findings.length) {
     lines.push("### Structural findings", "", ...findings.map((finding) => `- \`${finding.row}\` — ${finding.message}`), "");
   }
+  if (judgmentFindings.length) {
+    lines.push("### Judgment findings", "", ...judgmentFindings.map((finding) => `- \`${finding.row}\` — ${finding.message}`), "");
+  }
   // A scoreboard nobody can act on is a vanity metric. Every unmet row states what
   // is actually wrong, from the recorded review or from this run.
-  const open = judgment.filter((entry) => !entry.pass);
+  const open = failedJudgment.filter((entry) => !invalidRows.has(entry.row));
   if (open.length || debt.size) {
     lines.push("### Open rows", "");
     if (debt.size) {
-      lines.push(`- **Anti-corruption layer** — ${debt.size} accepted foreign-import debt: ${[...debt.values()].map((entry) => `\`${entry.module}\` (${(entry.imports ?? []).join(", ")})`).join(", ")}.`);
+      lines.push(`- **Foreign-import debt** — ${debt.size} accepted: ${[...debt.values()].map((entry) => `\`${entry.module}\` (${(entry.imports ?? []).join(", ")})`).join(", ")}.`);
     }
     lines.push(...open.map((entry) => `- **${entry.label}** — ${entry.note}`), "");
   }
-  if (stale) {
-    lines.push(`> Judgment rows are unverified for this change: ${staleReason}.`, "> Re-run `/domain-driven-design` and update `docs/domain-review.json` to re-establish them.", "");
-  }
-  lines.push(`<sub>\`node scripts/domain-score.mjs\` · rows and scoring defined by the domain-driven-design review · judgment rows recorded in \`${REVIEW_FILE}\`</sub>`);
+  lines.push(`<sub>\`node scripts/domain-score.mjs\` · rows fixed in \`scripts/domain-judgment.mjs\` · judgment evidence recorded in \`${REVIEW_FILE}\`</sub>`);
   console.log(lines.join("\n"));
 } else {
-  console.log(`domain model: ${carried}/${total}${stale ? ` (${verified}/${total} verified now)` : ""}`);
-  for (const entry of [...structural, ...judgment]) console.log(`  ${mark(entry)} ${entry.label}`);
-  if (stale) console.log(`  ◌ judgment rows unverified: ${staleReason}`);
+  console.log(`domain model: ${verified}/${total} verified${carried ? ` · ${carried} carried (stale)` : ""}`);
+  for (const entry of structural) console.log(`  ${mark(entry)} ${entry.label}`);
+  for (const entry of judgment) {
+    const basis = !entry.pass ? entry.note : entry.stale ? `carried, not verified — ${staleText(entry)}` : `reviewed ${entry.reviewedAt}, surfaces unchanged`;
+    console.log(`  ${mark(entry)} ${entry.label} — ${basis}`);
+  }
+  if (staleRows.length) console.log(`  ◌ ${staleRows.length} judgment row(s) carried, not verified (advisory): re-review, then \`${recordHint(staleRows)}\``);
   if (!baseline.known && debt.size) console.log(`  ◌ shrink-only ledger unverified: ${baseline.why}`);
-  for (const finding of findings) console.error(`✗ ${finding.message}`);
-  if (findings.length) {
-    console.error(`\n✗ domain model: ${findings.length} structural finding(s). These are mechanical rules — fix the code, or change the classification in ${ARCHITECTURE_FILE} deliberately.`);
+  for (const finding of [...findings, ...judgmentFindings]) console.error(`✗ ${finding.message}`);
+  if (findings.length || judgmentFindings.length) {
+    console.error(`\n✗ domain model: ${findings.length} structural finding(s), ${judgmentFindings.length} judgment finding(s). Fix the code, change ${ARCHITECTURE_FILE} deliberately, or restore the ledger row.`);
     process.exit(1);
   }
-  console.log(`domain ok: ${structuralHeld} of ${structural.length} structural rows hold, none regressed`);
+  if (failedJudgment.length) {
+    console.error(`✗ domain model: ${failedJudgment.length} judgment row(s) explicitly failed — a recorded failure is a failed score, not a smaller denominator.`);
+    process.exit(1);
+  }
+  console.log(`domain ok: ${structuralHeld} of ${structural.length} structural rows hold and ${verified - structuralHeld} of ${judgment.length} judgment rows are verified for this tree`);
 }
