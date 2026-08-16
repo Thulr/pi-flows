@@ -158,7 +158,7 @@ the parent context.
 | Mode | Activate when | Stay direct or use a simpler mode when |
 |---|---|---|
 | `workflow` | Named phases, persisted artifacts, deterministic gates, or a resumable human approval are part of correctness. | The work is one small edit or an ordinary linear handoff. Use the parent, `single`, `chain`, or `evaluate`. |
-| `worktree` | Isolation, ownership boundaries, or shared integration conflicts are part of correctness for multiple write-capable tasks, and a verified integration branch is required. | The parent can safely make the edits in one checkout, even when two files are involved. Use direct execution, `single`/`evaluate`, or read-only `parallel`. |
+| `worktree` | Isolation, ownership boundaries, or shared integration conflicts are part of correctness for multiple write-capable tasks, and a gate-checked integration branch is required. | The parent can safely make the edits in one checkout, even when two files are involved. Use direct execution, `single`/`evaluate`, or read-only `parallel`. |
 | `debate` | The user explicitly requests independent advocates/rebuttal/adjudication for a consequential decision. | Debate is not an automatic route today: direct Codex matched its decision quality with lower latency/tokens in the paired baseline. Answer directly unless independent opposition is itself requested. |
 | `dossier` | At least two sources or claim families must be cited and reconciled, including contradictions and gaps. | One source or lookup is enough. Use `single` with `recon`/`analyst`. |
 | `monitor` | A deterministic probe must be repeated under a hard bound, and a typed event must trigger one diagnosis/response. | One status check is enough, or the need is durable/background scheduling. Run the command directly or use an external automation system. |
@@ -186,7 +186,7 @@ the parent context.
 | `modeHandoffPolicy` | (none) | Per-mode minimums, for example `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`. A call cannot downgrade a high-consequence mode. |
 | `returnContract` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
-| `contract` | (none) | Machine-checked delegation contract. It can replace `task` in single/evaluate or be a documented `resolved`-role fallback. Every task/role contract resolves before that Child spawns and requires a validated `pi-flows.return-envelope.v1`. Role contracts override fallbacks. |
+| `contract` | (none) | Optional machine-checked delegation contract. It can replace `task` in single/evaluate or be a documented `resolved`-role fallback. Every task/role contract resolves before that Child spawns and requires a validated `pi-flows.return-envelope.v1`. Supplying one proves contract attribution, declared artifact integrity, and return-schema conformance — never that the Return's claims are true or that `acceptanceChecks` were satisfied. Without one, the child returns an ordinary Result. Role contracts override fallbacks. |
 | `incompleteHandoffPolicy` | `fail` | Integration modes reject `partial`/`blocked` return envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents must not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs. `"finalize"` asks after child work, before the final answer returns. Headless contexts fail closed. |
@@ -339,9 +339,18 @@ npm run trace:report -- flow-trace.jsonl
 npm run trace:report -- --strict flow-trace.jsonl   # exit 1 on incomplete evidence
 ```
 
-The report groups runs by `flow.mode` and `traceLabel`. **Execution success** means a run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct. **Verified outcome success** means an independent verifier established that the requested outcome met its acceptance criteria. It and verified TPSO are available only when an `evaluate` critic or explicit orchestrate verifier returned evidence. Ordinary process completion is never promoted to verified outcome success. Elapsed, worker, and critical-path time remain separate. A trace-health line reports observed-vs-expected spans, drops, redactions, failed exports, how many runs are incomplete, and, when any exist, event spans of a kind the mode never declared. An undeclared-kind event makes its invocation incomplete, so `--strict` refuses the file. A topology line counts stage spans and coordination events. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data. Traces written before span roles existed are read as root-plus-children.
+The report groups runs by `flow.mode` and `traceLabel`. **Execution success** means a run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct. **Verified outcome success** means an independent verifier established that the requested outcome met its acceptance criteria. It and verified TPSO are available only when an `evaluate` critic, an explicit orchestrate verifier, or the `code-review` preset's harness-derived outcome returned evidence. The report never promotes ordinary process completion to verified outcome success. A validated Return envelope does not qualify either: contract validation proves attribution, artifact integrity, and schema conformance. It never proves that the Return's claims are true. A **Return assurance** line counts the child runs dispatched under a delegation contract against ordinary Results, which carry no machine contract assurance. Elapsed, worker, and critical-path time remain separate. A trace-health line reports observed-vs-expected spans, drops, redactions, failed exports, how many runs are incomplete, and, when any exist, event spans of a kind the mode never declared. An undeclared-kind event makes its invocation incomplete, so `--strict` refuses the file. A topology line counts stage spans and coordination events. Older traces with root `flow.duration_ms_total` remain readable, are interpreted as accumulated worker time, and are explicitly marked as legacy compatibility data. Traces written before span roles existed are read as root-plus-children.
 
 ## Return requirements, delegation contracts, and write isolation
+
+A child's output carries one of three assurance levels. An **ordinary Result**
+is the child's own account, with no machine contract assurance. A
+**contract-bound Return** passed validation under a delegation contract:
+attribution to the resolved contract identity, declared artifact integrity,
+and return-schema conformance. Validation never proves that the Return's
+claims are true or that prose `acceptanceChecks` were satisfied. **Verified
+outcome success** exists only when an independent verifier assessed the
+outcome (see the trace report above).
 
 `returnContract` and `requireEvidence` supply prose **return requirements** that
 prevent summary loss at handoff boundaries. They are appended to child tasks in `single`, `parallel`, `chain`,
@@ -981,8 +990,8 @@ fix the combined result, and optionally runs a deterministic integration check.
 The mode never switches or merges the source checkout. On success, temporary
 worktrees and worker branches are removed. The durable
 `pi-flow/<run>/integration` branch remains for explicit review/merge.
-Verification failure returns the integration branch name instead of merging an
-unverified result. Worker failure or return-envelope rejection retains the
+A failed `checkCommand` returns the integration branch name instead of merging
+a result that failed its gate. Worker failure or return-envelope rejection retains the
 isolated worker state and returns every branch and worktree path needed for
 recovery. Conflict-resolution prompts include the validated handoff envelopes
 for the already-integrated and incoming workers. Delegation-contract identity,

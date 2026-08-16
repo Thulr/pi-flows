@@ -142,7 +142,7 @@ export function formatPresetResult(
 		if (policy.recordContent && (anchored.length || rejected.length)) {
 			const sections = [
 				anchored.length ? `Findings a validated review axis already anchored:\n${anchored.map(findingLine).join("\n")}` : "",
-				rejected.length ? `Findings from a review envelope that failed schema validation (unvalidated — verify before acting):\n${rejected.map(findingLine).join("\n")}` : "",
+				rejected.length ? `Unvalidated claims from a rejected Return candidate that failed schema validation (verify before acting):\n${rejected.map(findingLine).join("\n")}` : "",
 			].filter(Boolean);
 			const text = `${output.content[0]?.text ?? ""}\n\n${sections.join("\n\n")}`;
 			output.content = [{ type: "text", text: sanitizeText(text, policy) }];

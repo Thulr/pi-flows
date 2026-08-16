@@ -61,7 +61,7 @@ Expected: recon returns paths including `extensions/pi-flows/index.ts` and menti
 
 Expected: `details.results[0].envelope` has
 `schemaVersion:"pi-flows.return-envelope.v1"`, the dispatched delegation contract's
-`sha256:` `contractId`, validated evidence and `data`, plus runtime usage. A
+`sha256:` `contractId`, declared evidence and schema-checked `data`, plus runtime usage. A
 response whose `data` violates `returnSchema` returns
 `RETURN_ENVELOPE_INVALID`. A declared SHA-256 digest that does not match its
 artifact returns `RETURN_DIGEST_MISMATCH`. Integration modes also reject
@@ -215,7 +215,7 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
     ],
     "checkCommand": "npm test"
   },
-  "why": "two concurrent writers need isolated worktrees and a verified integration branch"
+  "why": "two concurrent writers need isolated worktrees and a gate-checked integration branch"
 }
 ```
 

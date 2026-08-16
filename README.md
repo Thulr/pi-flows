@@ -63,7 +63,7 @@ When the next step makes your parent pi session noisy, expensive, or hard to tru
 | You want one bounded review of a PR or branch. | "Review HEAD against main and issue #25 exactly once." | Two `overwatch` runs in named `standards` and `spec` roles, typed file coverage, and a harness-derived `CLEAN`, `FINDINGS`, or `PARTIAL` outcome. |
 | You want an implementation checked before you accept it. | "Add `/health` with a test, and accept it only after `npm test` passes." | A bounded generator-evaluator loop where a builder, a critic, and an optional command gate must pass. |
 | You have a broad research task. | "Document how auth works across login, refresh, and sessions." | Decompose, fan out, synthesize, and optionally verify the merged answer. |
-| Several independent writers need to land one verified result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
+| Several independent writers need to land one gate-checked result. | "Fix frontend and backend in isolated worktrees, integrate them, then run tests." | Separate worker branches plus a durable, reviewed integration branch. |
 | You care what the delegation cost. | "Run this with a $0.25 cap and save a trace." | Cumulative cost and token ceilings, OpenInference-shaped JSONL traces, and `/flows report`. |
 
 The [Patterns](./docs/explanation/patterns.md#when-a-flow-helps-you) page has the full situations table: parallel inspection, gated migrations, debate, dossier, and monitor. It also explains why a harness beats a folder of agent prompts.
@@ -100,7 +100,7 @@ pi runs this as an [evaluate loop](./docs/reference/flow-reference.md#evaluate-m
 
 ## What it adds
 
-- The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`. Every task and agent-reference role carries a machine-checked [delegation contract](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation). A child's Return candidate must validate into a Return envelope before coordination can act on it.
+- The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`. Every task and agent-reference role accepts an optional machine-checked [delegation contract](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation). With a contract, the child's Return must validate — contract attribution, artifact digests, and return-schema conformance — before coordination can act on it. Without one, the child returns an ordinary Result: the child's own account, with no machine contract assurance.
 - The `/flows` command and [live TUI monitoring](./docs/reference/flow-reference.md#live-tui-monitoring): a live tool row, `/flows inspect`, and a durable flow card. Every configured cost or token ceiling is disclosed, with its authority, before work starts.
 - Nine bundled agents in [`agents/`](./agents/) and three workflow presets in [`presets/`](./presets/).
 - Your own agents and presets, with no code required: one markdown file each, user-scoped or project-scoped. Project files are trust-gated, and shadowing shows visible diagnostics. See [Custom agents](./docs/how-to/custom-agents.md).
@@ -123,7 +123,7 @@ Raw parallel fan-out also requires deliberate model sizing before spend. Set `ti
 | [Loop](./docs/reference/flow-reference.md#loop-mode-generic-bounded-loop) | Repeat a body agent until `LOOP: DONE`, a judge's `VERDICT: PASS`, or the iteration cap. |
 | [Search](./docs/reference/flow-reference.md#search-mode-bounded-beam-search) | Bounded beam search: generate candidates, score `0..100`, keep the beam, debrief the winner. |
 | [Workflow](./docs/reference/flow-reference.md#workflow-mode-gated-resumable-phases) | Gated, resumable phases with persisted state and single-use [approval receipts](./docs/reference/flow-reference.md#approval-receipts). |
-| [Worktree](./docs/reference/flow-reference.md#worktree-mode-isolated-writers-and-integration) | Isolated writer worktrees merged onto a durable, verified integration branch. |
+| [Worktree](./docs/reference/flow-reference.md#worktree-mode-isolated-writers-and-integration) | Isolated writer worktrees merged onto a durable integration branch, with an integrator review and an optional deterministic check. |
 | [Debate](./docs/reference/flow-reference.md#debate-mode-advocates-and-adjudicator) | Independent advocates, bounded rebuttal, separate adjudication. |
 | [Dossier](./docs/reference/flow-reference.md#dossier-mode-evidence-mapreduce) | Per-source evidence extraction synthesized without smoothing conflicts away. |
 | [Monitor](./docs/reference/flow-reference.md#monitor-mode-bounded-trigger-and-react) | A bounded deterministic probe whose typed trigger hands one reactor the event. |
