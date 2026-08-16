@@ -2,7 +2,7 @@
 
 pi-flows lets a parent pi session delegate bounded work to disposable children and get compact findings back, instead of doing everything in one long-running context.
 
-The value is not the spawning — anything can spawn a subprocess. It is that what comes back states its own assurance: an ordinary Result is the Child's account and claims nothing more; under a delegation contract, a finding arrives **checkable** — bound to the contract it was produced under, its artifacts digest-checked, its shape schema-checked, carrying its own evidence, provenance, and cost — so the parent can act on it without re-reading the transcript that produced it. Checkable is not verified: the truth of a finding is established only when an independent verifier assesses the outcome.
+The value is not the spawning — anything can spawn a subprocess. It is that what comes back states its own assurance. An ordinary Result is the Child's account and claims nothing more. Under a delegation contract, a finding arrives **checkable**: bound to the contract it was produced under, its artifacts digest-checked, its shape schema-checked, carrying its own evidence, provenance, and cost. The parent can act on a checkable finding without re-reading the transcript that produced it. Checkable is not verified: only an independent verifier can establish that a finding is true.
 
 This document is the project's domain glossary: the canonical terms, each with a concise definition and the synonyms it deliberately avoids. Which subdomain each module belongs to, and the import direction between subdomains, is the [architecture classification](./docs/reference/architecture.md); the reasoning behind that split is the [domain model](./docs/explanation/domain-model.md).
 
@@ -212,7 +212,7 @@ _Avoid_: run-card (it summarizes a flow, not a run)
 ### Guardrails and selection
 
 **Gate**:
-A deterministic, machine-evaluated pass/fail check that blocks progress — a check command, a workflow phase gate, the spawn gate. Never a human decision.
+A deterministic, machine-evaluated pass/fail check that blocks progress — a check command, a workflow phase gate, the spawn gate. Never a human decision. An outcome that passed one is **gate-checked**, which asserts only what the gate's command checked.
 _Avoid_: check, approval
 
 **Spawn gate**:

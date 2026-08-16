@@ -17,6 +17,10 @@ const FlowHistoricalThinkingLevel = StringEnum(ThinkingValues, { description: "E
 const StringList = Type.Array(Type.String({ minLength: 1 }));
 const HandoffPolicy = StringEnum(["warn", "quarantine", "fail"] as const);
 
+// The one statement of what prose return requirements are, shared by every
+// returnContract/requireEvidence description so the qualifier cannot drift.
+const PromptOnlyNote = "Prompt guidance only — never machine-checked.";
+
 export const FlowDelegationContract = Type.Object({
 	objective: Type.String({ minLength: 1, description: "The outcome the child owns." }),
 	constraints: StringList,
@@ -103,8 +107,8 @@ const FlowTaskProperties = {
 	tools: Type.Optional(
 		Type.String({ description: 'Optional comma-separated tool override. Use "none" for no built-in tools or "default" for pi defaults. "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' }),
 	),
-	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this agent's task. Use them to specify summary shape, required fields, or max length. Prompt guidance only — never machine-checked; use contract for a machine-checked Return." })),
-	requireEvidence: Type.Optional(Type.Boolean({ description: "Ask for concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return. Prompt guidance only — the evidence is requested, never machine-checked.", default: false })),
+	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this agent's task. Use them to specify summary shape, required fields, or max length. ${PromptOnlyNote} Use contract for a machine-checked Return.` })),
+	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return. ${PromptOnlyNote}`, default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 };
 
@@ -191,7 +195,7 @@ export const FlowOrchestrate = Type.Object({
 		}),
 	),
 	verifyMaxIterations: Type.Optional(Type.Number({ description: "Max synthesize->verify rounds when verifyPolicy is revise. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
-	workerReturnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to every worker subtask before fan-out." })),
+	workerReturnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to every worker subtask before fan-out. ${PromptOnlyNote}` })),
 	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
 	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on decomposed subtasks (also bounded by maxParallelTasks). Integer 1..${MAX_PARALLEL_TASKS}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS })),
 }, {
@@ -208,8 +212,8 @@ export const FlowGraphNode = Type.Object({
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
-	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this node's task. Prompt guidance only — never machine-checked." })),
-	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this node's return.", default: false })),
+	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this node's task. ${PromptOnlyNote}` })),
+	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence in this node's return. ${PromptOnlyNote}`, default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 });
 
@@ -252,8 +256,8 @@ export const FlowWorkflowPhase = Type.Object({
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
-	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this phase task. Prompt guidance only — never machine-checked." })),
-	requireEvidence: Type.Optional(Type.Boolean({ description: "Require concrete evidence in this phase output.", default: false })),
+	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this phase task. ${PromptOnlyNote}` })),
+	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence in this phase output. ${PromptOnlyNote}`, default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 });
 
@@ -283,8 +287,8 @@ export const FlowWorktreeTask = Type.Object({
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
-	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to this worker task. Prompt guidance only — never machine-checked." })),
-	requireEvidence: Type.Optional(Type.Boolean({ description: "Require evidence in this worker output.", default: true })),
+	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this worker task. ${PromptOnlyNote}` })),
+	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for evidence in this worker output. ${PromptOnlyNote}`, default: true })),
 	contract: Type.Optional(FlowDelegationContract),
 });
 
@@ -423,8 +427,8 @@ export const FlowParams = Type.Object({
 		description: 'How integration modes handle return envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
 		default: "fail",
 	})),
-	returnContract: Type.Optional(Type.String({ description: "Prose return requirements appended to delegated and synthesis tasks. Use them to prevent summary loss on handoffs. Prompt guidance only — never machine-checked; use contract for a machine-checked Return." })),
-	requireEvidence: Type.Optional(Type.Boolean({ description: "Ask for concrete evidence in delegated outputs when return requirements are appended. Prompt guidance only — never machine-checked.", default: false })),
+	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to delegated and synthesis tasks. Use them to prevent summary loss on handoffs. ${PromptOnlyNote} Use contract for a machine-checked Return.` })),
+	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence in delegated outputs when return requirements are appended. ${PromptOnlyNote}`, default: false })),
 	allowSharedWriteCwd: Type.Optional(Type.Boolean({ description: "Allow concurrent write-capable agents to share a cwd. Default false; prefer distinct cwd/worktrees.", default: false })),
 	recordContent: Type.Optional(Type.Boolean({ description: "Store and return child message content after redaction. Set false to retain only structural usage/status data.", default: true })),
 	redactSecrets: Type.Optional(Type.Boolean({ description: "Redact secret-shaped strings, emails, and home-directory paths from content/details. Default true.", default: true })),
