@@ -23,7 +23,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 `docs/reference/architecture.md` classifies every module under `extensions/pi-flows/` into exactly one subdomain (Core / Supporting / Generic / shared kernel / composition root) and declares the import direction between subdomains. `npm run score:domain` reads that file directly and enforces the placement, the import direction, naming, foreign-package containment, and spelled-once containment (the `SPELLED_ONCE` ledger in `scripts/domain-spelled-once.mjs` holds each shipped consolidation's concept to its one home); it runs inside `npm run check` and CI posts the full score on each PR.
 
-Adding a module means classifying it in the architecture ledger. Changing a Core module means either re-running `/domain-driven-design` and updating `docs/domain-review.json` — the rows no check can settle are carried from there — or accepting that those rows report as stale on the PR.
+Adding a module means classifying it in the architecture ledger. The rows no check can settle are carried from `docs/domain-review.json`; their identity is fixed in `scripts/domain-judgment.mjs`, and each row declares the surfaces whose changes make it stale. Changing a declared surface means either re-running `/domain-driven-design` over it and re-stamping provenance with `node scripts/domain-score.mjs --record=<rows|all>`, or accepting that the row reports as carried (stale) on the PR. Stale is advisory; a missing or explicitly failed judgment fails the build.
 
 ## Use the glossary's vocabulary
 

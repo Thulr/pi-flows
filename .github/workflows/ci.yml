@@ -26,8 +26,9 @@ jobs:
       - run: npm run check
 
   # Reporting only. `npm run check` above is the gate that fails on a structural
-  # regression; this job exists so the score — including the rows no check can
-  # settle — is visible on the PR itself rather than buried in a log.
+  # regression or a failed/missing judgment row; this job exists so the score —
+  # including carried (stale) judgment rows — is visible on the PR itself rather
+  # than buried in a log.
   domain:
     runs-on: ubuntu-latest
     permissions:
@@ -36,8 +37,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # The judgment rows are carried from the commit they were reviewed at,
-          # so the score needs history deep enough to reach it.
+          # Judgment staleness is content-digest based and needs no history,
+          # but the shrink-only foreign-import debt ledger compares against the
+          # merge-base with origin/main, which does.
           fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
