@@ -197,9 +197,9 @@ export const FlowOrchestrate = Type.Object({
 	verifyMaxIterations: Type.Optional(Type.Number({ description: "Max synthesize->verify rounds when verifyPolicy is revise. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
 	workerReturnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to every worker subtask before fan-out. ${PromptOnlyNote}` })),
 	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
-	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on decomposed subtasks (also bounded by maxParallelTasks). Integer 1..${MAX_PARALLEL_TASKS}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS })),
+	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on the total subtasks in the commander's decomposition, dependent ones included. Integer 1..${MAX_GRAPH_NODES}. Default ${MAX_PARALLEL_TASKS}. A flat subtask list is silently cut to this cap; a decomposition with dependency edges is refused DECOMPOSITION_INVALID when it exceeds it, because cutting it would sever edges.`, minimum: 1, maximum: MAX_GRAPH_NODES })),
 }, {
-	description: "Orchestrator-workers mode: commander decomposes task, recon workers run in parallel, and debrief merges results. commander.contract carries its subtask array in validated envelope data; verify.contract uses validated data.verdict instead of legacy prose.",
+	description: "Orchestrator-workers mode: commander decomposes task, recon workers run in parallel, and debrief merges results. The commander may return a flat JSON array of subtask strings, or an array of subtask objects with id/objective and optional dependsOn edges — a dependent subtask runs only after the subtasks it names succeed. commander.contract carries the same array in validated envelope data; verify.contract uses validated data.verdict instead of legacy prose.",
 });
 
 export const FlowGraphNode = Type.Object({

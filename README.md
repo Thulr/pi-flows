@@ -118,7 +118,7 @@ Raw parallel fan-out also requires deliberate model sizing before spend. Set `ti
 | [Evaluate](./docs/reference/flow-reference.md#evaluate-mode-generator-evaluator-loop) | Generator-evaluator loop with an optional deterministic `checkCommand` gate and critic panel. |
 | [Vote](./docs/reference/flow-reference.md#vote-mode-parallelization--voting) | The same task across independent voters, merged by an optional aggregator. |
 | [Route](./docs/reference/flow-reference.md#route-mode-classify--dispatch) | A classifier picks one candidate agent — or falls back instead of forcing a guess. |
-| [Orchestrate](./docs/reference/flow-reference.md#orchestrate-mode-decompose--fan-out--synthesize) | Decompose → parallel workers → synthesis, with an optional verifier. |
+| [Orchestrate](./docs/reference/flow-reference.md#orchestrate-mode-decompose--fan-out--synthesize) | Decompose → workers, in parallel or in dependency order → synthesis, with an optional verifier. |
 | [Graph](./docs/reference/flow-reference.md#graph-mode-static-dag) | A bounded static DAG run wave by wave with `{node.id}` handoffs. |
 | [Loop](./docs/reference/flow-reference.md#loop-mode-generic-bounded-loop) | Repeat a body agent until `LOOP: DONE`, a judge's `VERDICT: PASS`, or the iteration cap. |
 | [Search](./docs/reference/flow-reference.md#search-mode-bounded-beam-search) | Bounded beam search: generate candidates, score `0..100`, keep the beam, debrief the winner. |

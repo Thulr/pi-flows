@@ -18,7 +18,13 @@ const PROTOCOL = {
 	score: { marker: "SCORE", min: 0, max: 100, token: "-?\\d+(?:\\.\\d+)?" },
 } as const;
 
-function readIntegrationControl(value: unknown): { data: unknown; legacy: boolean } {
+/**
+ * Split a control value into the two Integration emission paths: validated
+ * envelope data (`legacy: false`) or the child's raw prose (`legacy: true`).
+ * Exported for the readers that live outside this module — a second copy of
+ * this split would let a parser accept prose as contracted data.
+ */
+export function readIntegrationControl(value: unknown): { data: unknown; legacy: boolean } {
 	if (value && typeof value === "object") {
 		const control = value as Partial<IntegrationControl>;
 		if (control.source === "contract" && Object.hasOwn(control, "data")) return { data: control.data, legacy: false };
@@ -108,11 +114,33 @@ export function scoreProtocolInstruction(contracted = false): string {
 		: `Start with a line "${marker}: <number>" where the number is ${min}..${max}, then give terse justification and risks.`;
 }
 
+/**
+ * What a commander is told to write for a Decomposition (CONTEXT.md), in both
+ * emission paths. The two accepted shapes are stated here exactly as
+ * `parseDecomposition` (decomposition.ts) accepts them back: a flat JSON array
+ * of subtask strings for genuinely independent work, or a JSON array of subtask
+ * objects when one subtask needs another's output.
+ *
+ * The commander never writes a placeholder for a dependency's output. The
+ * orchestrate handler injects each dependency's validated handoff into the
+ * dependent worker's prompt, so a template the commander invents would reach
+ * the worker unrendered.
+ */
 export function subtasksJsonProtocolInstruction(maxSubtasks: number, contracted = false): string {
-	if (contracted) return `Break this goal into at most ${maxSubtasks} independent subtasks and set the return envelope's data to their JSON string array.`;
+	const shapes = [
+		`Use one of two shapes for the JSON array, never both in one array (max ${maxSubtasks} subtasks).`,
+		'Shape 1 (independent work): an array of subtask strings, e.g. ["Investigate X", "Investigate Y"]. Use this when no subtask needs another subtask\'s output.',
+		'Shape 2 (dependent work): an array of subtask objects. Each object requires "id" and "objective". Each object accepts optional "dependsOn" (the ids of the subtasks whose output this subtask needs), "scope", "nonGoals", "inputs", "expectedReturn", and "acceptanceEvidence".',
+		"Add a dependsOn edge only when the subtask cannot start without the named subtask's output. Independent subtasks run in parallel; dependent subtasks run in sequence, so an unnecessary edge makes the work slower.",
+		"Do not name an agent for a subtask: every subtask runs the same worker role. Do not write a placeholder for another subtask's output: the orchestrator inserts it.",
+	];
+	if (contracted) return [`Break this goal into subtasks and set the return envelope's data to the JSON array of subtasks.`, ...shapes].join(" ");
 	return [
-		`Break this goal into independent subtasks that can run in parallel without depending on each other's output. Return a JSON array of subtask strings (max ${maxSubtasks}), e.g.`,
+		"Break this goal into subtasks.",
+		...shapes,
+		"Examples:",
 		'```json\n["Investigate X", "Investigate Y"]\n```',
+		'```json\n[{"id":"survey","objective":"List the auth entry points"},{"id":"trace","objective":"Trace token refresh from the entry points","dependsOn":["survey"]}]\n```',
 		"Return only the JSON array.",
 	].join("\n");
 }
