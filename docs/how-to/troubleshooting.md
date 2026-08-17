@@ -243,9 +243,42 @@ Cause: the `commander` returned no usable subtask array. Either the legacy
 output contained no non-empty JSON array with usable entries, or the contracted
 envelope `data` was not a non-empty array of strings.
 
-Fix: require a JSON string array directly, or in envelope `data` when
-`orchestrate.commander.contract` is set. For work that does not decompose, use
-`chain` or `single` mode instead.
+Fix: require a JSON array of subtask strings, or of subtask objects. A
+contracted `commander` puts the same array in envelope `data`. For work that
+does not decompose, use `chain` or `single` mode instead.
+
+### `DECOMPOSITION_INVALID`
+
+Cause: the `commander` returned a decomposition that the flow cannot run. One of
+these defects applies. A subtask has no `id` or no `objective`. An `id` uses
+characters that are not permitted, or is longer than 64 characters. Two subtasks
+use one `id`. A `dependsOn` entry names a subtask that is not in the
+decomposition. A subtask names its own `agent`. A subtask string is mixed into
+an array of subtask objects. An array of subtask objects has more subtasks than
+`orchestrate.maxSubtasks` permits.
+
+The flow refuses this decomposition before the first worker starts. Only a flat
+list of subtask strings is cut to the cap. An array of subtask objects is
+refused above the cap, because a cut can sever the declared dependency edges.
+
+An `id` starts with a letter or a digit. Then it uses letters, digits, `_`, `.`
+and `-` only. The flow writes each id into the prompt headings of the dependent
+workers, so an id with a space or a line break in it could forge a section of
+those prompts.
+
+Fix: read the `Cause` line of the error. It names the subtask and the defect.
+Then correct the commander task, or raise `orchestrate.maxSubtasks` (maximum 16).
+Every subtask runs the one worker role that `orchestrate.recon` sets. For work
+that needs a different agent for each unit, use `graph` mode.
+
+### `DECOMPOSITION_CYCLE`
+
+Cause: the subtasks in the `commander` decomposition depend on each other in a
+loop. No subtask in the loop can start. The `Cause` line of the error shows the
+loop.
+
+Fix: remove one dependency edge from the loop. Every `dependsOn` chain must
+reach a subtask that depends on nothing.
 
 ### `FLOW_DEPTH_EXCEEDED`
 

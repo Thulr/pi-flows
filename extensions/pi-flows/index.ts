@@ -13,6 +13,7 @@ import {
 import { capModelVisibleText, redactText, safePath, scanForInjection, stripControlChars } from "./sanitize.ts";
 import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
+import { parseDecomposition, validateDecomposition } from "./decomposition.ts";
 import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
 import { loopProtocolInstruction, routeProtocolInstruction, scoreProtocolInstruction, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { appendReflexion, reflexionFile, withReflexion } from "./reflexion.ts";
@@ -57,6 +58,12 @@ export { redactText, scanForInjection, stripControlChars } from "./sanitize.ts";
 // child output (identity optional, kept for rejection evidence); FlowReturnEnvelope
 // validates only the validated form, whose contract identity is required.
 export { FlowDelegationContract, FlowReturnCandidate, FlowReturnEnvelope } from "./schema.ts";
+// The Decomposition (issue #148): the published return schema a contracted
+// commander is given, and the normalized breakdown both emission paths produce.
+// Parser and validator stay in decomposition.ts rather than being split across
+// the parse.ts/validate.ts facades, which would put one concept in two homes.
+export { FlowDecompositionReturn } from "./decomposition.ts";
+export type { Decomposition, DecompositionShape, DecompositionSubtask } from "./decomposition.ts";
 export type { DelegationReturnCandidate, DelegationReturnEnvelope } from "./types.ts";
 export type { RejectedDelegationReturnCandidate } from "./run.ts";
 
@@ -75,6 +82,8 @@ export const __test = {
 	currentFlowDepth,
 	parseRoute,
 	parseSubtasks,
+	parseDecomposition,
+	validateDecomposition,
 	extractLastJsonBlock,
 	HandoffWarnings,
 	prepareHandoff,

@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { DEFAULT_APPROVAL_TTL_MS, MAX_APPROVAL_TTL_MS, MIN_APPROVAL_TTL_MS } from "./approval.ts";
-import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, DEFAULT_TIMEOUT_MS, MAX_DEBATE_ROUNDS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, MAX_PARALLEL_TASKS, MAX_WORKFLOW_PHASES } from "./types.ts";
+import { DEFAULT_CONCURRENCY, DEFAULT_DEBATE_ROUNDS, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_MONITOR_CHECKS, DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_SEARCH_BEAM_WIDTH, DEFAULT_SEARCH_CANDIDATES, DEFAULT_SEARCH_ROUNDS, DEFAULT_TIMEOUT_MS, MAX_DEBATE_ROUNDS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_MONITOR_CHECKS, MAX_MONITOR_INTERVAL_MS, MAX_PARALLEL_TASKS, MAX_SUBTASKS, MAX_WORKFLOW_PHASES } from "./types.ts";
 
 const TierDescription = 'Capability tier for this child, portable across providers: "fast" for mechanical scouting/extraction/classification, "capable" (default) for ordinary work, "deep" for the hardest reasoning or final adjudication. Each tier resolves to a concrete model and thinking level derived from the models this install can actually run, so tiers work with no configuration; `flow showConfig:true` or `/flows models` shows what each currently resolves to. Prefer tier over model unless the user named a concrete model.';
 
@@ -197,9 +197,9 @@ export const FlowOrchestrate = Type.Object({
 	verifyMaxIterations: Type.Optional(Type.Number({ description: "Max synthesize->verify rounds when verifyPolicy is revise. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
 	workerReturnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to every worker subtask before fan-out. ${PromptOnlyNote}` })),
 	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
-	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on decomposed subtasks (also bounded by maxParallelTasks). Integer 1..${MAX_PARALLEL_TASKS}.`, minimum: 1, maximum: MAX_PARALLEL_TASKS })),
+	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on the total subtasks in the commander's decomposition, dependent ones included. Integer 1..${MAX_SUBTASKS}. Default ${MAX_PARALLEL_TASKS}. A flat subtask list is silently cut to this cap; a decomposition with dependency edges is refused DECOMPOSITION_INVALID when it exceeds it, because cutting it would sever edges.`, minimum: 1, maximum: MAX_SUBTASKS })),
 }, {
-	description: "Orchestrator-workers mode: commander decomposes task, recon workers run in parallel, and debrief merges results. commander.contract carries its subtask array in validated envelope data; verify.contract uses validated data.verdict instead of legacy prose.",
+	description: "Orchestrator-workers mode: commander decomposes task, recon workers run in parallel, and debrief merges results. The commander may return a flat JSON array of subtask strings, or an array of subtask objects with id/objective and optional dependsOn edges — a dependent subtask runs only after the subtasks it names succeed. commander.contract carries the same array in validated envelope data; verify.contract uses validated data.verdict instead of legacy prose.",
 });
 
 export const FlowGraphNode = Type.Object({

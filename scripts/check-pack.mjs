@@ -356,5 +356,25 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // digest-stamped provenance, and the CHANGELOG documents the change. No new
 // file: the set stays 111, none from tests/, scripts/, or evals/; measured
 // 1_317_407.
-assert.ok(pack.unpackedSize < 1_320_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_350_500 for #148 (dependency-aware Decomposition): the packaged
+// Core concept module decomposition.ts (the Decomposition type, the parser over
+// both emission paths, the published FlowDecompositionReturn schema, and the
+// deterministic validator), orchestrate's wave scheduling and not-completed
+// manifest, the commander protocol instruction naming both shapes, and the
+// reference/troubleshooting/CHANGELOG wording for the new codes and the raised
+// maxSubtasks ceiling. The file set grows to 112 for decomposition.ts and none
+// from tests/, scripts/, or evals/; measured 1_349_923.
+// Raised again to 1_366_000 for the #148 user docs: the flow-reference
+// Decomposition sections (both commander shapes, the subtask field table, the
+// validation rules, wave scheduling, and the stranding manifest), the new
+// docs/explanation/decomposition.md page with its index entry, and the
+// dependency-aware orchestrate example. The file set grows to 113 for the new
+// explanation page and none from tests/, scripts/, or evals/; measured
+// 1_365_138.
+// Raised again to 1_374_000 for the #148 review fixes: the subtask-id charset
+// and its refusal, the prose fields the published return schema now accepts in
+// either form, the prefixed worker span keys, and the reference, troubleshooting
+// and explanation wording for all three. The file set stays at 113 and none from
+// tests/, scripts/, or evals/; measured 1_371_721.
+assert.ok(pack.unpackedSize < 1_374_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

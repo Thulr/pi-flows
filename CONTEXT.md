@@ -63,7 +63,12 @@ The bounded unit of work text handed to a child.
 _Avoid_: prompt, job
 
 **Subtask**:
-A task produced by orchestrate's decomposition rather than authored upstream. A subtask is a kind of task.
+A task produced by a Decomposition rather than authored upstream. A subtask is a kind of task, and it may depend on other subtasks of the same Decomposition.
+_Avoid_: node (that names graph mode's author-supplied unit), planned unit
+
+**Decomposition**:
+The breakdown a commander returns for a goal — subtasks, plus any dependency edges between them — validated before any worker spawns. A flat subtask list is a Decomposition with no edges. Deliberately not a "plan": that word names a mode's declared pre-spawn waves and the admitted dispatch capability.
+_Avoid_: plan, work breakdown, task graph (that reads as graph mode's author-supplied DAG)
 
 **Run**:
 One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing. The run object owns its result's lifecycle: an envelope candidate is retained and consumed exactly once, and an envelope or handoff attaches to a result only through the run's own transitions.

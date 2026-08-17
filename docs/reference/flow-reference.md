@@ -632,7 +632,7 @@ Without a contract, the controller can return `ROUTE: <agent>` as its first non-
 
 ## Orchestrate mode (decompose → fan out → synthesize)
 
-The `commander` decomposes the `task` into independent subtasks, `recon` workers run them in parallel, and the `debrief` agent merges the results. This is the deep-research / orchestrator-workers shape. Top-level `task` is preferred. `orchestrate.task` is accepted as its fallback. Each worker sees both the overall goal or delegation contract and its assigned subtask, so terse decomposition output does not detach findings from the final answer requirements.
+The `commander` decomposes the `task` into subtasks, `recon` workers run them, and the `debrief` agent merges the results. Independent subtasks run in parallel. A subtask that declares a dependency runs after the subtasks it names succeed. This is the deep-research / orchestrator-workers shape. Top-level `task` is preferred. `orchestrate.task` is accepted as its fallback. Each worker sees the overall goal or delegation contract, and its assigned subtask. Terse decomposition output therefore stays attached to the final answer requirements.
 
 ```json
 {
@@ -649,17 +649,109 @@ The `commander` decomposes the `task` into independent subtasks, `recon` workers
 | Field | Default | Notes |
 |---|---|---|
 | `orchestrate.task` | (none) | Goal fallback when top-level `task` is omitted. Prefer top-level `task` for new calls. |
-| `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON subtask array without a contract. Its own contract carries that array as validated envelope `data`. |
-| `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, in parallel, with the overall goal or delegation contract included for context. Use `analyst` for deeper per-subtask investigation. |
+| `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON subtask array without a contract. Its own contract carries that array as validated envelope `data`. The array holds subtask strings, or subtask objects with `id`, `objective`, and optional `dependsOn` edges. |
+| `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, with the overall goal or delegation contract included for context. Independent subtasks run in parallel. A subtask with `dependsOn` runs after the subtasks it names succeed, and receives their output. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
 | `orchestrate.verify` | (none) | Optional critic. Without its own contract, it returns PASS/REVISE prose. With one, validated `data.verdict` controls the decision. |
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict. `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`. `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
 | `orchestrate.workerReturnContract` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
 | `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`. When top-level `task` is also omitted, this text can serve as the goal fallback for model-generated calls. |
-| `orchestrate.maxSubtasks` | `maxParallelTasks` | Cap on subtasks (also bounded by `maxParallelTasks`). |
+| `orchestrate.maxSubtasks` | `maxParallelTasks` | Integer `1..16`. Cap on the total subtasks, dependent ones included. A flat subtask list is cut to this cap. A structured Decomposition above the cap is refused `DECOMPOSITION_INVALID`, because a cut can sever declared edges. |
 
-If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
+If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. If it returns a decomposition with a defect, the call fails with `DECOMPOSITION_INVALID` or `DECOMPOSITION_CYCLE` before any worker starts. A failed subtask strands the subtasks that depend on it: they never start, and the `debrief` prompt lists them. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
+
+### The Decomposition
+
+The `commander` returns a **Decomposition**: the subtasks for the goal, plus any dependency edges between them. Two shapes are accepted. Do not mix the two shapes in one array.
+
+The **flat shape** is an array of subtask strings. It states independent work:
+
+```json
+["Map the login endpoints", "Map the token refresh path", "Map session storage"]
+```
+
+The **structured shape** is an array of subtask objects. It can also declare dependency edges:
+
+```json
+[
+  { "id": "survey", "objective": "List every authentication entry point" },
+  { "id": "login", "objective": "Trace the login path", "dependsOn": ["survey"] },
+  {
+    "id": "refresh",
+    "objective": "Trace token refresh",
+    "dependsOn": ["survey"],
+    "scope": "Server-side refresh only",
+    "nonGoals": "Do not read the frontend code",
+    "inputs": "Start at the entry points that the survey subtask returns",
+    "expectedReturn": "The steps from token expiry to a new token",
+    "acceptanceEvidence": "A file path and a line number for each step"
+  }
+]
+```
+
+| Subtask field | Required | Notes |
+|---|---|---|
+| `id` | Yes | Unique in the Decomposition. `dependsOn` and the trace span key use this id. Start it with a letter or a digit. Then use letters, digits, `_`, `.` and `-` only, to a maximum of 64 characters. |
+| `objective` | Yes | What the subtask must achieve. The worker prompt carries it as the assigned subtask. `task` is accepted as an alias. |
+| `dependsOn` | No | The ids of the subtasks whose output this subtask needs. Omit it for independent work. |
+| `scope` | No | Prose bounds on the subtask. |
+| `nonGoals` | No | What the subtask must not do. |
+| `inputs` | No | Starting material for the worker. |
+| `expectedReturn` | No | Return requirements for this subtask alone. The flow adds them under `orchestrate.workerReturnContract`. |
+| `acceptanceEvidence` | No | The evidence that makes this subtask's return acceptable. |
+
+Each prose field accepts one string, or an array of strings. The flow joins an array into lines. Each optional prose field becomes its own labeled section of the worker prompt. A subtask never names an agent. Every subtask of one Decomposition runs the single worker role that `orchestrate.recon` sets. For a different agent per unit, use [graph mode](#graph-mode-static-dag).
+
+### Decomposition validation
+
+The flow validates the Decomposition after the `commander` settles, and before the first worker starts. The check is deterministic, and it reads only the Decomposition. These defects return `DECOMPOSITION_INVALID`:
+
+- a subtask with no `id`, or with no `objective`
+- an `id` outside the permitted characters, or longer than 64 characters
+- two subtasks that use one `id`
+- a `dependsOn` entry that names a subtask outside this Decomposition
+- a `dependsOn` that is not an array of id strings
+- a subtask that names its own `agent`
+- a subtask string mixed into an array of subtask objects
+- a structured Decomposition with more subtasks than `orchestrate.maxSubtasks` permits
+
+A dependency loop returns `DECOMPOSITION_CYCLE`. The error shows the loop as a chain of subtask ids.
+
+The `id` rule is a safety rule. The flow writes each id into the prompt headings of the dependent workers, and into the manifest that `debrief` reads. The `commander` writes the id. An id with a line break in it could add a section that a worker reads as an instruction from the flow. The flow refuses such an id. It does not repair it, because a repaired id no longer matches the `dependsOn` entries that name it.
+
+The check does not judge the quality of the Decomposition. It does not refuse a coverage gap, and it does not refuse two subtasks with overlapping scope. See [Decomposition](../explanation/decomposition.md) for the reasons.
+
+`orchestrate.maxSubtasks` caps the total subtasks, dependent ones included. The range is `1..16`. The default is `maxParallelTasks` (8). Above the cap, the two shapes behave differently:
+
+- The flow cuts a flat subtask list to the cap. A flat list holds no edges, so a cut breaks nothing.
+- The flow refuses a structured Decomposition with `DECOMPOSITION_INVALID`. The shape decides this, not the edges: a structured Decomposition with no `dependsOn` is refused too. To recover, raise `maxSubtasks`, or narrow the goal.
+
+The shared-write rule applies to the whole Decomposition, not to one wave. Two subtasks can run at the same time when neither one depends on the other, directly or through a chain. If the worker role is write-capable, and two such subtasks share one `cwd`, the flow returns `SHARED_WRITE_CWD`. It refuses before the first worker starts. The usual releases apply: `concurrency:1`, worker tools that exclude `bash`/`edit`/`write`, a separate `cwd`, or `allowSharedWriteCwd:true`. A Decomposition that is one sequential chain stays admissible for a write-capable worker.
+
+### Waves, dependency output, and stranded subtasks
+
+The workers run wave by wave. Each wave holds the subtasks whose dependencies have all succeeded. `concurrency` limits how many workers of one wave run at the same time. A Decomposition with no edges is a single wave.
+
+The flow puts each dependency's validated handoff text into the dependent worker's prompt. The section heading names the source subtask, and marks the text as untrusted data. The `commander` writes no placeholder for that text. The flow inserts the text itself.
+
+If a subtask fails, every subtask that depends on it is **stranded**. A stranded subtask never starts, and it spends no budget. The `debrief` prompt then carries a "Subtasks not completed" manifest. The manifest names each subtask that did not succeed. For a failed subtask it gives a sanitized failure summary. For a stranded subtask it gives the id of the subtask it waits on.
+
+The flow header counts the outcome:
+
+```
+Flow orchestrate: 5 subtasks, 3 succeeded, 1 failed, 1 stranded, synthesized by debrief.
+```
+
+The `failed` and `stranded` counts appear only when they are above zero.
+
+A **terminal subtask** is a subtask that no other subtask depends on. If no terminal subtask succeeds, the flow does not run `debrief`. It returns the counts, and reports that there is nothing to synthesize.
+
+In the trace, each subtask has its own worker span. The unit key of that span is `worker-<id>`. Each `dependsOn` edge becomes a dependency link. A flat Decomposition keeps positional keys (`worker-1`, `worker-2`). The prefix keeps the ids of the `commander` apart from the keys of the flow itself, such as `decompose` and `synthesis-1`.
+
+### Contracted commanders
+
+Set `orchestrate.commander.contract` to receive the Decomposition as validated envelope `data`. Give that contract a `returnSchema`, and the flow checks the envelope against it before it parses the array. The package exports a ready return schema for this purpose: `FlowDecompositionReturn`. It accepts both shapes, and it describes every subtask field. It accepts each prose field as one string or as an array of strings, and it states the `id` rule. The schema is not applied for you. Pass it as the contract's `returnSchema` to gain the earlier, schema-level feedback. The validation rules above then apply to both emission paths.
 
 Composed with return requirements and a revising verifier:
 

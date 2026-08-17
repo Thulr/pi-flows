@@ -10,6 +10,32 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Orchestrate's commander can now return a dependency-aware Decomposition
+  (#148): a JSON array of subtask objects carrying `id`, `objective`, and
+  optional `dependsOn`, `scope`, `nonGoals`, `inputs`, `expectedReturn`, and
+  `acceptanceEvidence`, beside the flat subtask-string array, which is unchanged.
+  A new packaged Core module, `decomposition.ts`, holds the Decomposition type,
+  the parser over both emission paths, the published `FlowDecompositionReturn`
+  schema for contracted commanders, and the deterministic validator that runs
+  after the commander settles and before any worker spawns. The validator
+  refuses missing, duplicate, or unusable ids — an id must be one plain token,
+  because the flow writes it into the worker prompt headings and the trace span
+  keys — unknown `dependsOn` references, a subtask
+  that names its own agent, a structured decomposition above the ceiling
+  (`DECOMPOSITION_INVALID`), any dependency cycle (`DECOMPOSITION_CYCLE`), and a
+  shared-write topology no wave schedule could ever admit (`SHARED_WRITE_CWD`).
+  Dependent subtasks run wave by wave, receive each dependency's validated
+  handoff as labeled untrusted data, and link it in the trace; a failed subtask
+  strands its transitive dependents, and the debrief prompt and flow header name
+  every unit that did not complete. `orchestrate.maxSubtasks` now accepts 1..16
+  (default 8): a flat list is still cut to the cap, while a decomposition with
+  edges is refused above it rather than cut. `npm run eval:decomposition` is the
+  structural eval over that gate: 35 seeded, model-free fixtures report the
+  admission rate for well-formed decompositions, dependency-edge correctness,
+  refusal correctness per expected code, and the false-refusal rate on
+  defect-free controls. It scores the shipped predicates themselves, spends no
+  tokens, and makes no claim about decomposition quality.
+
 - Workflow approval receipts now bind every gated Role and gated debrief to the
   effective Agent profile (#138): selected package/user/project source, a
   non-disclosing prompt digest, post-override tools, canonical cwd target and

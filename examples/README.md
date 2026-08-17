@@ -187,6 +187,18 @@ Expected: the `commander` returns ~3 subtasks, three `recon` workers run in para
 
 Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: PASS/REVISE` gate on the merged answer. `details.results` then ends `[..., debrief, verify]`.
 
+### With dependent subtasks
+
+```json
+{
+  "task": "Explain how a request is authenticated, from the entry point to the session store",
+  "orchestrate": { "recon": { "agent": "recon" }, "maxSubtasks": 6 },
+  "why": "the later reading only makes sense after the entry points are known"
+}
+```
+
+Expected: the `commander` can return subtask objects instead of subtask strings. For example, it returns a `survey` subtask, plus `login` and `refresh` subtasks that both declare `"dependsOn": ["survey"]`. The `survey` worker runs first. The two dependent workers then run together, and each prompt carries the survey output as untrusted data. If `survey` fails, both dependents are stranded, and the flow header reports `1 failed, 2 stranded`. A defective decomposition returns `DECOMPOSITION_INVALID` or `DECOMPOSITION_CYCLE` before any worker starts.
+
 ## Workflow example
 
 ```json

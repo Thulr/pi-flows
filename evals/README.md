@@ -62,6 +62,7 @@ npm run eval -- --run-id=release-123 --runtime-trace=/tmp/runtime.jsonl # stable
 npm run eval -- --failure-ledger=/secure/failures.jsonl # include imported capability/regression cases
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 npm run eval:select                # tool-selection eval: should the parent model call flow at all?
+npm run eval:decomposition         # structural eval over the Decomposition gate: deterministic, model-free, free
 npm run eval:failure -- inspect --ledger=/secure/failures.jsonl # inspect the production-failure ledger
 npm run eval:release -- --run --run-id=release-1.2.3 --attest-hard-blockers # evaluate and decide in one command
 npm run eval:release -- --evidence=/secure/release-evidence.json ... # decide from artifacts already produced
@@ -757,6 +758,38 @@ when that clock expires, the case is reported as `INCONCLUSIVE` and removed from
 the pass-rate denominator instead of being scored as a wrong selection. A run
 with zero comparable cases exits non-zero because it produced no selection
 evidence, even though none of the excluded cases is counted as a wrong answer.
+
+## Decomposition structure
+
+`npm run eval:decomposition` measures the orchestrate Decomposition gate. It is
+deterministic and model-free. It spends no tokens, and it needs no provider.
+Each case is a seeded fixture in `decomposition-cases.mjs`. The eval scores
+the fixture with the extension's own `parseDecomposition` and
+`validateDecomposition`, so a defect is refused by the shipped gate or by
+nothing.
+
+The eval measures structure only. It makes no claim about decomposition quality.
+It reports four numbers:
+
+| Measure | What it counts |
+| --- | --- |
+| Admission rate | Well-formed Decompositions the gate admits. |
+| Dependency-edge usage | Structured cases that parse to the expected edge set. |
+| Refusal correctness | Seeded defects the gate refuses with the expected code. |
+| False-refusal rate | Defect-free controls the gate refuses. |
+
+The controls are flat lists, structured lists with no edges, chains, mixed DAGs,
+a coverage gap, and overlapping subtask scope. The last two are admitted on
+purpose: neither is decidable without the goal. The defects are cycles, an
+unknown `dependsOn`, a duplicate id, a missing id or objective, a malformed
+`dependsOn`, a mixed flat and structured array, a structured array above the
+ceiling, a subtask that names an agent, and an inadmissible shared-write
+topology.
+
+The script exits `1` when any case does not match. Use `--filter=<text>` to
+select cases by name. This eval is free, so `tests/decomposition-structure-eval.test.ts`
+runs the whole manifest under `npm test`. Do not add the script itself to
+`npm run check`: no eval entrypoint belongs there.
 
 ## Experiments: champion/challenger (and the optimizer)
 
