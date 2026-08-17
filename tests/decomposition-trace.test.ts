@@ -1,7 +1,8 @@
 // What a dispatched Decomposition leaves in the coordination trace (issue
-// #148): each subtask's id is the unit key of its worker span, and each
-// dependency edge is a link on the dependent span naming the handoff it
-// consumed — the way graph mode already records a dependency.
+// #148): each subtask's id carries the unit key of its worker span, under the
+// `worker-` prefix that keeps a commander-chosen id out of the mode's own key
+// namespace, and each dependency edge is a link on the dependent span naming
+// the handoff it consumed — the way graph mode already records a dependency.
 //
 // These run against the stub `pi` through the real dispatch path, so the spans
 // asserted are the spans a real run writes. The dispatch behavior itself is
@@ -50,27 +51,62 @@ test("each structured subtask id is its worker's unit key, and each edge is a li
 	const spans = await readSpans(stubDir);
 
 	// The commander's chosen ids address the worker spans, so a reader can match
-	// a span to the subtask the commander declared.
-	assert.deepEqual(unitKeys(spans).sort(), ["decompose", "diff", "lint", "survey", "synthesis-1", "trace"]);
+	// a span to the subtask the commander declared. They are prefixed, so no id
+	// can answer to a key the mode derives for itself — `decompose` and
+	// `synthesis-1` are both names a commander is free to give a subtask.
+	assert.deepEqual(unitKeys(spans).sort(), ["decompose", "synthesis-1", "worker-diff", "worker-lint", "worker-survey", "worker-trace"]);
 
 	// Every worker links the decomposition it came from; a dependent one also
 	// links each dependency's validated handoff, not the raw run behind it.
-	assert.deepEqual(dependsOn(unit(spans, "survey")), ["decompose.handoff"]);
-	assert.deepEqual(dependsOn(unit(spans, "trace")), ["decompose.handoff", "survey.handoff"]);
-	assert.deepEqual(dependsOn(unit(spans, "diff")), ["decompose.handoff", "survey.handoff", "lint.handoff"]);
+	assert.deepEqual(dependsOn(unit(spans, "worker-survey")), ["decompose.handoff"]);
+	assert.deepEqual(dependsOn(unit(spans, "worker-trace")), ["decompose.handoff", "worker-survey.handoff"]);
+	assert.deepEqual(dependsOn(unit(spans, "worker-diff")), ["decompose.handoff", "worker-survey.handoff", "worker-lint.handoff"]);
 
 	// A dependency is a link, not parentage: `trace` was scheduled by its wave.
 	const waveTwo = spans.find((span) => attr(span, "flow.stage_key") === "workers-2")!;
-	assert.equal(unit(spans, "trace")!.parent_span_id, waveTwo.span_id);
-	assert.notEqual(unit(spans, "trace")!.parent_span_id, unit(spans, "survey")!.span_id);
+	assert.equal(unit(spans, "worker-trace")!.parent_span_id, waveTwo.span_id);
+	assert.notEqual(unit(spans, "worker-trace")!.parent_span_id, unit(spans, "worker-survey")!.span_id);
 	// And each link resolves to the span it names.
 	assert.equal(
-		attr(unit(spans, "trace"), "flow.depends_on_span_ids"),
-		[unit(spans, "decompose.handoff")!.span_id, unit(spans, "survey.handoff")!.span_id].join(","),
+		attr(unit(spans, "worker-trace"), "flow.depends_on_span_ids"),
+		[unit(spans, "decompose.handoff")!.span_id, unit(spans, "worker-survey.handoff")!.span_id].join(","),
 	);
 
 	// The synthesizer rests on every worker handoff that actually reached it.
-	assert.deepEqual(dependsOn(unit(spans, "synthesis-1")).sort(), ["diff.handoff", "lint.handoff", "survey.handoff", "trace.handoff"]);
+	assert.deepEqual(
+		dependsOn(unit(spans, "synthesis-1")).sort(),
+		["worker-diff.handoff", "worker-lint.handoff", "worker-survey.handoff", "worker-trace.handoff"],
+	);
+});
+
+test("a subtask named after one of the mode's own units cannot answer to that unit's key", async () => {
+	// `decompose` and `synthesis-1` are ordinary words, and the commander picks
+	// its ids. Unprefixed, a subtask called `decompose` would advertise the key
+	// the commander's own span already holds, and a dependency link would resolve
+	// to whichever of the two registered first.
+	const { stubDir, result } = await runFlow(
+		{ task: "document how auth works", traceFile: TRACE, orchestrate: { recon: { agent: "recon" } } },
+		{
+			commander: JSON.stringify([
+				{ id: "decompose", objective: "Re-read the goal" },
+				{ id: "synthesis-1", objective: "Draft the summary", dependsOn: ["decompose"] },
+			]),
+			recon: [
+				{ whenTaskIncludes: "Re-read the goal", reply: "GOAL_OUTPUT" },
+				{ whenTaskIncludes: "Draft the summary", reply: "DRAFT_OUTPUT" },
+			],
+			debrief: "MERGED_DOC",
+		},
+	);
+	assert.equal(result.details.error, undefined);
+	const spans = await readSpans(stubDir);
+
+	assert.deepEqual(unitKeys(spans).sort(), ["decompose", "synthesis-1", "worker-decompose", "worker-synthesis-1"]);
+	// The commander's own span keeps `decompose`, and the subtask that took the
+	// same name depends on it under a key of its own.
+	assert.equal(attr(unit(spans, "decompose"), "flow.agent"), "commander");
+	assert.deepEqual(dependsOn(unit(spans, "worker-synthesis-1")), ["decompose.handoff", "worker-decompose.handoff"]);
+	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });
 
 test("a subtask id that would collide with the key separator is escaped the way graph escapes an author id", async () => {
@@ -98,10 +134,10 @@ test("a subtask id that would collide with the key separator is escaped the way 
 	// cannot answer to a framework-suffixed key, and the attribute writer then
 	// escapes that "%" again for the comma-joined lists.
 	assert.equal(encodeAuthorKey("auth.login"), "auth%2Elogin");
-	assert.ok(unit(spans, "auth%252Elogin"), "the dotted id reaches the trace escaped");
-	assert.equal(unit(spans, "auth.login"), undefined, "and never as a raw two-part key");
-	assert.equal(unit(spans, "auth"), undefined, "so nothing answers to the prefix before the dot");
-	assert.deepEqual(dependsOn(unit(spans, "auth%252Erefresh")), ["decompose.handoff", "auth%252Elogin.handoff"]);
+	assert.ok(unit(spans, "worker-auth%252Elogin"), "the dotted id reaches the trace escaped");
+	assert.equal(unit(spans, "worker-auth.login"), undefined, "and never as a raw two-part key");
+	assert.equal(unit(spans, "worker-auth"), undefined, "so nothing answers to the prefix before the dot");
+	assert.deepEqual(dependsOn(unit(spans, "worker-auth%252Erefresh")), ["decompose.handoff", "worker-auth%252Elogin.handoff"]);
 });
 
 test("a flat subtask list keeps its positional unit keys and links only the decomposition", async () => {
@@ -138,10 +174,10 @@ test("a stranded subtask leaves no span, and the trace still passes the read-bac
 	assert.equal(result.details.error, undefined);
 	const spans = await readSpans(stubDir);
 
-	assert.ok(unit(spans, "survey"), "the failed subtask ran and is recorded");
-	assert.equal(unit(spans, "trace"), undefined, "the stranded subtask has no span");
-	assert.equal(unit(spans, "survey.handoff"), undefined, "a failed run produced no handoff to consume");
-	assert.deepEqual(dependsOn(unit(spans, "synthesis-1")), ["lint.handoff"], "the answer rests only on the finding that arrived");
+	assert.ok(unit(spans, "worker-survey"), "the failed subtask ran and is recorded");
+	assert.equal(unit(spans, "worker-trace"), undefined, "the stranded subtask has no span");
+	assert.equal(unit(spans, "worker-survey.handoff"), undefined, "a failed run produced no handoff to consume");
+	assert.deepEqual(dependsOn(unit(spans, "synthesis-1")), ["worker-lint.handoff"], "the answer rests only on the finding that arrived");
 	assert.equal(traceReportIsComplete(summarizeTraceSpans(spans, 0, TRACE)), true);
 });
 

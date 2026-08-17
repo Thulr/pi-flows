@@ -17,11 +17,20 @@ This keeps the refusal reproducible. The same Decomposition always gets the same
 The price is a narrow set of defects. The check finds only the defects that make the Decomposition unrunnable:
 
 - a missing id or objective, and a duplicate id
+- an id outside the permitted characters
 - an edge to a subtask that does not exist, and a dependency loop
 - a size above the cap
 - a shared-write topology that no wave schedule could admit
 
 Each of these defects has one correct answer. A reader does not need the goal to find that answer.
+
+## Why an id is not prose
+
+A subtask id looks like a label, but the flow uses it as a key. It addresses the dependency edges. It becomes the unit key of the worker span. It also becomes a heading: the flow writes the id into the prompt of each dependent worker, and into the manifest that `debrief` reads.
+
+The `commander` writes that id, so it is model output in a position the reader trusts. An id with a line break in it could add a heading that a worker reads as an instruction from the flow, and not as data from another subtask. The flow therefore holds an id to a small character set, and refuses anything else.
+
+The refusal is not a repair. The id is the name that the `dependsOn` entries use, so a flow that rewrote it would break the edges the `commander` declared.
 
 ## Why coverage and overlap are not refused
 

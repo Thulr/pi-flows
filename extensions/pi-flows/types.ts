@@ -26,6 +26,8 @@ export const DEFAULT_TIMEOUT_MS = 10 * 60 * 60 * 1000;
 export const DEFAULT_EVALUATE_ITERATIONS = 3;
 export const MAX_EVALUATE_ITERATIONS = 8;
 export const MAX_GRAPH_NODES = 16;
+/** Ceiling on the subtasks of one orchestrate Decomposition. Deliberately the same number as MAX_GRAPH_NODES — both bound one fan-out — but a subtask is not a node, and the two ceilings move independently. */
+export const MAX_SUBTASKS = 16;
 export const DEFAULT_LOOP_ITERATIONS = 3;
 export const MAX_LOOP_ITERATIONS = 8;
 export const DEFAULT_SEARCH_CANDIDATES = 3;

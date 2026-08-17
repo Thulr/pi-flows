@@ -53,7 +53,7 @@ test("the eval measures both sides: admitted controls and refused defects, over 
 
 	// The case families the issue's brief requires, all present.
 	const families = new Set(rows.map((row) => row.family));
-	for (const family of ["flat", "structured-no-edges", "chain", "mixed-dag", "coverage-gap", "overlapping-scope", "ceiling", "shared-write", "cycle", "entry-defect", "edge-defect"]) {
+	for (const family of ["flat", "structured-no-edges", "chain", "mixed-dag", "coverage-gap", "overlapping-scope", "ceiling", "shared-write", "cycle", "entry-defect", "edge-defect", "unsafe-id"]) {
 		assert.ok(families.has(family), `missing case family: ${family}`);
 	}
 });

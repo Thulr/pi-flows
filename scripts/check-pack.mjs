@@ -371,5 +371,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // dependency-aware orchestrate example. The file set grows to 113 for the new
 // explanation page and none from tests/, scripts/, or evals/; measured
 // 1_365_138.
-assert.ok(pack.unpackedSize < 1_368_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised again to 1_374_000 for the #148 review fixes: the subtask-id charset
+// and its refusal, the prose fields the published return schema now accepts in
+// either form, the prefixed worker span keys, and the reference, troubleshooting
+// and explanation wording for all three. The file set stays at 113 and none from
+// tests/, scripts/, or evals/; measured 1_371_721.
+assert.ok(pack.unpackedSize < 1_374_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

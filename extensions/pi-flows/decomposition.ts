@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { MAX_GRAPH_NODES, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
+import { MAX_SUBTASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
 import { extractLastJsonBlock, parseSubtasks, readIntegrationControl } from "./protocol.ts";
 import { validateSharedWriteCwd } from "./validate.ts";
 
@@ -72,6 +72,27 @@ export interface Decomposition {
 }
 
 /**
+ * The charset a commander-chosen subtask id must match, and the length it must
+ * stay under.
+ *
+ * An id is not prose: it addresses a dependency edge, it becomes a span unit
+ * key, and it is written into the headings of a dependent worker's prompt and
+ * of the debrief's not-completed manifest. Commander output is untrusted there,
+ * so an id carrying a newline could forge a heading — a whole "## Output of
+ * subtask x" section the commander never earned — inside a prompt the worker
+ * reads as the flow's own words.
+ *
+ * The charset is the one `PROTOCOL.route` already fixes for a model-supplied
+ * control token (protocol.ts), plus the rule that an id opens on a letter or a
+ * digit, so no id can read as a flag or a separator.
+ */
+const SUBTASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+const MAX_SUBTASK_ID_LENGTH = 64;
+
+/** A prose subtask field, in either form the parser reads: one string, or the lines a model split it into. */
+const ProseField = (description: string) => Type.Union([Type.String(), Type.Array(Type.String())], { description });
+
+/**
  * The published return schema for a contracted commander: set it as
  * `orchestrate.commander.contract.returnSchema` and the commander's envelope
  * `data` is checked against it before {@link parseDecomposition} ever sees it.
@@ -79,22 +100,33 @@ export interface Decomposition {
  * gains earlier, schema-level feedback rather than different rules.
  *
  * Both accepted shapes are named here because both are accepted back: an array
- * of subtask strings, or an array of subtask objects. `agent` is not forbidden
- * by the schema — a subtask that names one is refused by
- * {@link validateDecomposition}, which can say why.
+ * of subtask strings, or an array of subtask objects. Every prose field admits
+ * the list form as well as the string, because {@link parseDecomposition} reads
+ * both: a schema narrower than the parser would refuse a contracted commander
+ * for writing what an uncontracted one may write.
+ *
+ * `agent` is not forbidden by the schema — a subtask that names one is refused
+ * by {@link validateDecomposition}, which can say why. An unusable id is
+ * refused there too: the charset is stated here so a contracted commander reads
+ * it in the schema, but only the validator can name the offending subtask.
  */
 export const FlowDecompositionReturn = Type.Array(
 	Type.Union([
 		Type.String({ minLength: 1, description: "One independent subtask, stated as prose. Use this shape when no subtask needs another subtask's output." }),
 		Type.Object({
-			id: Type.String({ minLength: 1, description: "Unique subtask id. Other subtasks reference it through dependsOn." }),
-			objective: Type.String({ minLength: 1, description: "What this subtask is to achieve." }),
+			id: Type.String({
+				minLength: 1,
+				maxLength: MAX_SUBTASK_ID_LENGTH,
+				pattern: SUBTASK_ID_PATTERN.source,
+				description: `Unique subtask id. Other subtasks reference it through dependsOn. Start it with a letter or a digit, then use letters, digits, "_", "." or "-" only, up to ${MAX_SUBTASK_ID_LENGTH} characters.`,
+			}),
+			objective: Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.String(), { minItems: 1 })], { description: "What this subtask is to achieve." }),
 			dependsOn: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Ids of the subtasks whose output this subtask needs. Omit for independent work." })),
-			scope: Type.Optional(Type.String({ description: "Prose bounds on this subtask." })),
-			nonGoals: Type.Optional(Type.String({ description: "What this subtask must not do." })),
-			inputs: Type.Optional(Type.String({ description: "Starting material for this subtask." })),
-			expectedReturn: Type.Optional(Type.String({ description: "Prose return requirements for this subtask alone." })),
-			acceptanceEvidence: Type.Optional(Type.String({ description: "The evidence that makes this subtask's return acceptable." })),
+			scope: Type.Optional(ProseField("Prose bounds on this subtask.")),
+			nonGoals: Type.Optional(ProseField("What this subtask must not do.")),
+			inputs: Type.Optional(ProseField("Starting material for this subtask.")),
+			expectedReturn: Type.Optional(ProseField("Prose return requirements for this subtask alone.")),
+			acceptanceEvidence: Type.Optional(ProseField("The evidence that makes this subtask's return acceptable.")),
 		}),
 	]),
 	{ description: "A Decomposition: either a flat array of subtask strings, or an array of subtask objects that may declare dependency edges. Do not mix the two shapes." },
@@ -203,6 +235,15 @@ function invalid(message: string, cause: string, fix: string): FlowError {
 }
 
 /**
+ * An id as a refusal may quote it: JSON-escaped, so the id that earned the
+ * refusal cannot forge a line of the message that reports it, and shortened, so
+ * a runaway id cannot crowd out the cause and the fix beside it.
+ */
+function quoteId(id: string): string {
+	return JSON.stringify(id.length > MAX_SUBTASK_ID_LENGTH ? `${id.slice(0, MAX_SUBTASK_ID_LENGTH)}…` : id);
+}
+
+/**
  * The subtasks that could run at the same time as some other subtask: those
  * that are dependency-independent of at least one peer. Neither being an
  * ancestor of the other is what makes two subtasks concurrent, because the wave
@@ -262,9 +303,11 @@ function findCycle(subtasks: readonly DecompositionSubtask[]): string[] | null {
  * be dispatched.
  *
  * What it refuses, and why each is a refusal rather than a repair:
- * - a defective subtask (no id, duplicate id, no objective, a named agent, a
- *   malformed dependsOn) — DECOMPOSITION_INVALID. Repairing any of these would
- *   invent work the commander did not ask for.
+ * - a defective subtask (no id, an id outside {@link SUBTASK_ID_PATTERN},
+ *   duplicate id, no objective, a named agent, a malformed dependsOn) —
+ *   DECOMPOSITION_INVALID. Repairing any of these would invent work the
+ *   commander did not ask for; repairing an id in particular would rewrite the
+ *   key its own dependency edges are addressed by.
  * - a dependsOn naming a subtask that is not in the Decomposition —
  *   DECOMPOSITION_INVALID. The edge cannot be honored and dropping it would
  *   run the dependent subtask without the input it declared it needs.
@@ -288,19 +331,15 @@ function findCycle(subtasks: readonly DecompositionSubtask[]): string[] | null {
  * guesses at them would refuse good decompositions.
  */
 export function validateDecomposition(decomposition: Decomposition, admission: DecompositionAdmission): FlowError | null {
+	// An empty Decomposition never reaches here: parseDecomposition returns null
+	// for output carrying no usable entries, which is the caller's
+	// ORCHESTRATE_NO_SUBTASKS case rather than a defect this validator names.
 	const { subtasks } = decomposition;
-	if (subtasks.length === 0) {
-		return invalid(
-			"The Decomposition contains no subtasks.",
-			"A Decomposition must break the goal into at least one subtask.",
-			"Tighten the commander task so it returns at least one subtask, or use chain/single mode for work that does not decompose.",
-		);
-	}
 	if (decomposition.shape === "structured" && subtasks.length > admission.maxSubtasks) {
 		return invalid(
 			`The Decomposition declares ${subtasks.length} subtasks, above the ceiling of ${admission.maxSubtasks}.`,
 			"A structured Decomposition is never sliced to the ceiling, because dropping subtasks would sever the dependency edges the commander declared. Only a flat subtask list, which has no edges, is sliced.",
-			`Raise orchestrate.maxSubtasks (up to ${MAX_GRAPH_NODES}), or narrow the goal so the commander returns at most ${admission.maxSubtasks} subtasks.`,
+			`Raise orchestrate.maxSubtasks (up to ${MAX_SUBTASKS}), or narrow the goal so the commander returns at most ${admission.maxSubtasks} subtasks.`,
 		);
 	}
 
@@ -319,6 +358,13 @@ export function validateDecomposition(decomposition: Decomposition, admission: D
 				`Decomposition entry ${position} has no "id".`,
 				"Every subtask of a structured Decomposition needs a unique id, because dependency edges and span keys are addressed by it.",
 				"Give every subtask a short unique id, such as \"survey\" or \"trace\".",
+			);
+		}
+		if (!SUBTASK_ID_PATTERN.test(subtask.id) || subtask.id.length > MAX_SUBTASK_ID_LENGTH) {
+			return invalid(
+				`Decomposition subtask id ${quoteId(subtask.id)} is not a usable id.`,
+				`A subtask id starts with a letter or a digit, then uses letters, digits, "_", "." and "-" only, up to ${MAX_SUBTASK_ID_LENGTH} characters. An id is written into the worker prompt headings and into the span keys, so an id carrying a line break or a heading marker would forge a section of a prompt that the commander never wrote.`,
+				'Give every subtask a short plain id, such as "survey" or "trace-refresh".',
 			);
 		}
 		if (ids.has(subtask.id)) {
@@ -356,7 +402,7 @@ export function validateDecomposition(decomposition: Decomposition, admission: D
 		for (const dep of subtask.dependsOn) {
 			if (!ids.has(dep)) {
 				return invalid(
-					`Decomposition subtask "${subtask.id}" depends on unknown subtask "${dep}".`,
+					`Decomposition subtask "${subtask.id}" depends on unknown subtask ${quoteId(dep)}.`,
 					"Every dependsOn entry must name another subtask of the same Decomposition.",
 					"Correct the dependsOn ids, or add the missing subtask.",
 				);

@@ -8,7 +8,8 @@
 // shapes lives in tests/decomposition.test.ts and is not repeated here.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseDecomposition } from "../extensions/pi-flows/decomposition.ts";
+import { FlowDecompositionReturn, parseDecomposition } from "../extensions/pi-flows/decomposition.ts";
+import { ResolvedDelegationContract } from "../extensions/pi-flows/delegation.ts";
 
 /** The legacy emission path: prose with a trailing fenced JSON block. */
 const legacy = (value: unknown) => `Here is the breakdown.\n\n\`\`\`json\n${typeof value === "string" ? value : JSON.stringify(value)}\n\`\`\``;
@@ -146,6 +147,50 @@ test("a non-string id is no id at all, and an entry naming an agent keeps the na
 	// An entry whose only structured field is `agent` still makes the array
 	// structured — otherwise the attempt would be silently read as flat prose.
 	assert.equal(parseDecomposition(legacy([{ agent: "operator" }]), 8)?.shape, "structured");
+});
+
+test("the published return schema admits exactly the shapes the parser reads", () => {
+	// FlowDecompositionReturn is what a contracted commander's envelope `data` is
+	// checked against, through the same compiled validator the flow uses. A
+	// schema narrower than the parser would refuse a contracted commander for
+	// writing what an uncontracted one may write — different rules per emission
+	// path, which is the one thing the two paths must not have.
+	const contract = ResolvedDelegationContract.resolve({
+		objective: "Break the goal into subtasks.",
+		constraints: [],
+		nonGoals: [],
+		dependencies: [],
+		authority: { may: ["Read the goal."], mustNot: [], requiresApproval: [] },
+		sideEffectClass: "read-only",
+		budget: {},
+		acceptanceChecks: ["Return one Decomposition."],
+		returnSchema: FlowDecompositionReturn,
+		owner: "tests",
+	}).resolved!;
+
+	// Every prose field in its list form: models split prose into bullets as
+	// readily as they write a paragraph, and the parser joins either into lines.
+	const bulleted = [{
+		id: "survey", objective: ["List entry points", "and their owners"],
+		scope: ["auth only", "server side"], nonGoals: ["no edits"], inputs: ["the router table"],
+		expectedReturn: ["a list", "with owners"], acceptanceEvidence: ["file:line"],
+	}, {
+		id: "trace", objective: "Trace token refresh", dependsOn: ["survey"], scope: "server only",
+	}];
+	assert.equal(contract.checkReturnData(bulleted), true, "the array form of a prose field is accepted by the schema");
+	const parsed = parseDecomposition(contracted(bulleted), 8);
+	assert.equal(parsed?.subtasks[0].scope, "auth only\nserver side", "and read by the parser as the lines it joined");
+	assert.equal(parsed?.subtasks[0].objective, "List entry points\nand their owners");
+
+	// The flat shape and the string form of every field stay accepted too.
+	assert.equal(contract.checkReturnData(["Map the login flow", "Map token refresh"]), true);
+	assert.equal(contract.checkReturnData([{ id: "survey", objective: "List entry points", scope: "auth only" }]), true);
+
+	// And the schema states the id rule the validator enforces, so a contracted
+	// commander is told before it spends a worker.
+	assert.equal(contract.checkReturnData([{ id: "two words", objective: "List entry points" }]), false);
+	assert.equal(contract.checkReturnData([{ id: "a".repeat(65), objective: "List entry points" }]), false);
+	assert.equal(contract.checkReturnData([{ id: "auth.login-2", objective: "List entry points" }]), true);
 });
 
 test("output carrying no usable array at all is no Decomposition, on either emission path", () => {

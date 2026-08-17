@@ -23,13 +23,17 @@ import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { handleEvaluate } from "../extensions/pi-flows/modes/evaluate.ts";
 import { handleParallel } from "../extensions/pi-flows/modes/parallel.ts";
 import { handleVote } from "../extensions/pi-flows/modes/vote.ts";
-import { makeTraceSink, strictTraceError, traceEvidenceIssue } from "../extensions/pi-flows/trace.ts";
-import { Budget, type DelegationContract, type FlowErrorCode, type FlowTraceLink, type ModeOutput } from "../extensions/pi-flows/types.ts";
+import { Budget, type DelegationContract, type FlowErrorCode, type ModeOutput } from "../extensions/pi-flows/types.ts";
 import { bankedDeliveries, faultDeps, makeFaultAdapter, type FaultAdapter, type FaultKind, type FaultLedger, type FaultRule, type ReplyScript } from "./fault-adapter.ts";
+import { decompositionScenarios } from "./fault-decomposition-scenarios.ts";
 import { flowLifecycleScenarios } from "./fault-flow-scenarios.ts";
+import { traceEvidenceScenarios } from "./fault-trace-scenarios.ts";
 import { wrapUpScenarios } from "./fault-wrapup-scenarios.ts";
 import { handoffPolicyScenarios } from "./fault-handoff-scenarios.ts";
 import { contractRoleScenarios } from "./fault-contract-role-scenarios.ts";
+// The trace-evidence family lives in its own module; its read-back helper is
+// re-exported here so a reader still finds the whole suite through the manifest.
+export { runTraceSuppression, type TraceSuppressionRun } from "./fault-trace-scenarios.ts";
 export const FAULT_SUITE = "fault-injection";
 
 export interface FaultChecks {
@@ -95,9 +99,9 @@ function contractFor(objective: string): DelegationContract {
 	};
 }
 
-const BASE_CONTRACT = contractFor("Return one verified finding.");
+export const BASE_CONTRACT = contractFor("Return one verified finding.");
 
-function envelopeFor(contract: DelegationContract, overrides: Record<string, unknown> = {}): string {
+export function envelopeFor(contract: DelegationContract, overrides: Record<string, unknown> = {}): string {
 	return JSON.stringify({
 		schemaVersion: "pi-flows.return-envelope.v1",
 		contractId: delegationContractId(contract),
@@ -114,7 +118,7 @@ function envelopeFor(contract: DelegationContract, overrides: Record<string, unk
 	});
 }
 
-function workspace(files: Record<string, string> = {}): string {
+export function workspace(files: Record<string, string> = {}): string {
 	const dir = mkdtempSync(path.join(tmpdir(), "pi-flow-fault-"));
 	for (const [name, content] of Object.entries(files)) writeFileSync(path.join(dir, name), content, "utf8");
 	return dir;
@@ -685,89 +689,6 @@ function evaluateRetryControlScenario(): FaultScenario {
 	};
 }
 
-// --- trace suppression -----------------------------------------------------
-
-/**
- * Trace suppression: the run coordinates correctly but its evidence never
- * reaches disk. Containment for this one lives outside a mode handler — the
- * export fails silently by design, and the strict-mode gate is what refuses to
- * treat the run as evidenced — so it drives a real fan-out through a poisoned
- * sink and then applies the same policy function the dispatch core applies.
- */
-export interface TraceSuppressionRun {
-	coordinationError: string | null;
-	childrenSucceeded: number;
-	spansAttempted: number;
-	health: string;
-	strictIssue: string | null;
-	link: FlowTraceLink;
-	output: ModeOutput;
-	adapter: FaultAdapter;
-}
-
-export async function runTraceSuppression(): Promise<TraceSuppressionRun> {
-	const cwd = workspace();
-	const sink = makeTraceSink(path.join(cwd, "missing-dir", "trace.jsonl"), "parallel", { recordContent: true, redactSecrets: true });
-	const adapter = makeFaultAdapter({ replies: { recon: envelopeFor(BASE_CONTRACT) } });
-	const deps = faultDeps(
-		{
-			task: "collect two findings", tier: "capable",
-			contract: BASE_CONTRACT,
-			tasks: [{ agent: "recon", task: "inspect A" }, { agent: "recon", task: "inspect B" }],
-		},
-		adapter,
-		cwd,
-		{ recordSpan: sink.record, recordEvent: sink.event },
-	);
-	const output = await handleParallel(deps);
-	const link = await sink.finalize({ ok: !output.details.error });
-	return {
-		coordinationError: output.details.error?.code ?? null,
-		childrenSucceeded: output.details.results.filter((result) => result.exitCode === 0).length,
-		spansAttempted: link.spans?.expectedSpans ?? 0,
-		health: link.health,
-		strictIssue: traceEvidenceIssue(link),
-		link,
-		output,
-		adapter,
-	};
-}
-
-function traceSuppressionScenario(): FaultScenario {
-	return {
-		id: "trace-suppression-under-strict",
-		suite: FAULT_SUITE,
-		portfolio: "adversarial",
-		faults: [],
-		faultKind: "none",
-		description: "The trace export is suppressed; strict mode refuses the run rather than the agents.",
-		attackOpportunities: 1,
-		benignOpportunities: 2,
-		expected: {
-			// Under strict tracing the missing evidence is the refusal, exactly as the
-			// dispatch core reports it.
-			outcome: { errorCode: "TRACE_INCOMPLETE" },
-			process: { dispatched: 2, refused: 0, unreached: ["debrief"] },
-			policy: { contained: true, falselyBlocked: false },
-			// Both children still completed and both handoffs were banked: what was
-			// lost is the evidence, not the work.
-			residualState: { retryable: false, acceptedHandoffs: 2 },
-		},
-		run: async () => {
-			const suppressed = await runTraceSuppression();
-			const checks = observe(suppressed.output, suppressed.adapter.ledger, ["debrief"], { attack: true });
-			// The real gate, not a copy of it: `strictTraceError` is the function the
-			// dispatch core calls, so changing the gate changes this case too.
-			const strictOutcome = checks.outcome.errorCode ?? strictTraceError(suppressed.link, true)?.code ?? null;
-			return {
-				...checks,
-				outcome: { errorCode: strictOutcome },
-				policy: { contained: strictOutcome !== null, falselyBlocked: false },
-			};
-		},
-	};
-}
-
 // --- manifest --------------------------------------------------------------
 export function faultScenarios(): FaultScenario[] {
 	return [
@@ -781,13 +702,14 @@ export function faultScenarios(): FaultScenario[] {
 		exhaustedBudgetScenario(),
 		sharedWriterRaceScenario(),
 		bashReadonlySharedCwdScenario(),
-		traceSuppressionScenario(),
 		failedVerifierScenario(),
 		partialThenRetryScenario(),
 		timeoutCeilingScenario(),
 		retryAfterPartialControlScenario(),
 		benignSlowChildScenario(),
 		evaluateRetryControlScenario(),
+		...decompositionScenarios(),
+		...traceEvidenceScenarios(),
 		...flowLifecycleScenarios(),
 		...handoffPolicyScenarios(),
 		...wrapUpScenarios(),

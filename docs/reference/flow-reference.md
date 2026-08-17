@@ -692,7 +692,7 @@ The **structured shape** is an array of subtask objects. It can also declare dep
 
 | Subtask field | Required | Notes |
 |---|---|---|
-| `id` | Yes | Unique in the Decomposition. `dependsOn` and the trace span key use this id. |
+| `id` | Yes | Unique in the Decomposition. `dependsOn` and the trace span key use this id. Start it with a letter or a digit. Then use letters, digits, `_`, `.` and `-` only, to a maximum of 64 characters. |
 | `objective` | Yes | What the subtask must achieve. The worker prompt carries it as the assigned subtask. `task` is accepted as an alias. |
 | `dependsOn` | No | The ids of the subtasks whose output this subtask needs. Omit it for independent work. |
 | `scope` | No | Prose bounds on the subtask. |
@@ -701,13 +701,14 @@ The **structured shape** is an array of subtask objects. It can also declare dep
 | `expectedReturn` | No | Return requirements for this subtask alone. The flow adds them under `orchestrate.workerReturnContract`. |
 | `acceptanceEvidence` | No | The evidence that makes this subtask's return acceptable. |
 
-Each optional prose field becomes its own labeled section of the worker prompt. A subtask never names an agent. Every subtask of one Decomposition runs the single worker role that `orchestrate.recon` sets. For a different agent per unit, use [graph mode](#graph-mode-static-dag).
+Each prose field accepts one string, or an array of strings. The flow joins an array into lines. Each optional prose field becomes its own labeled section of the worker prompt. A subtask never names an agent. Every subtask of one Decomposition runs the single worker role that `orchestrate.recon` sets. For a different agent per unit, use [graph mode](#graph-mode-static-dag).
 
 ### Decomposition validation
 
 The flow validates the Decomposition after the `commander` settles, and before the first worker starts. The check is deterministic, and it reads only the Decomposition. These defects return `DECOMPOSITION_INVALID`:
 
 - a subtask with no `id`, or with no `objective`
+- an `id` outside the permitted characters, or longer than 64 characters
 - two subtasks that use one `id`
 - a `dependsOn` entry that names a subtask outside this Decomposition
 - a `dependsOn` that is not an array of id strings
@@ -716,6 +717,8 @@ The flow validates the Decomposition after the `commander` settles, and before t
 - a structured Decomposition with more subtasks than `orchestrate.maxSubtasks` permits
 
 A dependency loop returns `DECOMPOSITION_CYCLE`. The error shows the loop as a chain of subtask ids.
+
+The `id` rule is a safety rule. The flow writes each id into the prompt headings of the dependent workers, and into the manifest that `debrief` reads. The `commander` writes the id, so an id with a line break in it could add a section that a worker reads as an instruction from the flow. The flow refuses such an id. It does not repair it, because a repaired id no longer matches the `dependsOn` entries that name it.
 
 The check does not judge the quality of the Decomposition. It does not refuse a coverage gap, and it does not refuse two subtasks with overlapping scope. See [Decomposition](../explanation/decomposition.md) for the reasons.
 
@@ -744,11 +747,11 @@ The `failed` and `stranded` counts appear only when they are above zero.
 
 A **terminal subtask** is a subtask that no other subtask depends on. If no terminal subtask succeeds, the flow does not run `debrief`. It returns the counts, and reports that there is nothing to synthesize.
 
-In the trace, each subtask id becomes the unit key of its worker span. Each `dependsOn` edge becomes a dependency link. A flat Decomposition keeps positional keys (`worker-1`, `worker-2`).
+In the trace, each subtask has its own worker span. The unit key of that span is `worker-<id>`. Each `dependsOn` edge becomes a dependency link. A flat Decomposition keeps positional keys (`worker-1`, `worker-2`). The prefix keeps the ids of the `commander` apart from the keys of the flow itself, such as `decompose` and `synthesis-1`.
 
 ### Contracted commanders
 
-Set `orchestrate.commander.contract` to receive the Decomposition as validated envelope `data`. Give that contract a `returnSchema`, and the flow checks the envelope against it before it parses the array. The package exports a ready return schema for this purpose: `FlowDecompositionReturn`. It accepts both shapes, and it describes every subtask field. The schema is not applied for you. Pass it as the contract's `returnSchema` to gain the earlier, schema-level feedback. The validation rules above then apply to both emission paths.
+Set `orchestrate.commander.contract` to receive the Decomposition as validated envelope `data`. Give that contract a `returnSchema`, and the flow checks the envelope against it before it parses the array. The package exports a ready return schema for this purpose: `FlowDecompositionReturn`. It accepts both shapes, and it describes every subtask field. It accepts each prose field as one string or as an array of strings, and it states the `id` rule. The schema is not applied for you. Pass it as the contract's `returnSchema` to gain the earlier, schema-level feedback. The validation rules above then apply to both emission paths.
 
 Composed with return requirements and a revising verifier:
 
