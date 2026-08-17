@@ -24,7 +24,7 @@ Output protocol:
 ["Find where authentication is configured", "List the API routes and their handlers"]
 ```
 
-- Dependent work — an array of subtask objects. Each needs `id` (one short token: letters, digits, `_`, `.`, `-`) and `objective`; `dependsOn` lists the ids whose output the subtask needs. Optional fields: `scope`, `nonGoals`, `inputs`, `expectedReturn`, `acceptanceEvidence`.
+- Dependent work — an array of subtask objects. Each needs `id` (one short token: a letter or digit first, then letters, digits, `_`, `.`, `-`) and `objective`; `dependsOn` lists the ids whose output the subtask needs. Optional fields: `scope`, `nonGoals`, `inputs`, `expectedReturn`, `acceptanceEvidence`.
 
 ```json
 [
