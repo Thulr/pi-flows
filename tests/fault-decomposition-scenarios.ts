@@ -88,7 +88,7 @@ function strandedDependentsScenario(): FaultScenario {
 			// omits it reads exactly like a complete one, which is what the
 			// manifest and the header exist to prevent.
 			const synthesis = adapter.ledger.dispatches.find((dispatch) => dispatch.agent === "debrief")?.task ?? "";
-			if (!/## Units not completed \(3\)/.test(synthesis)) throw new Error("the synthesizer was not told what is missing");
+			if (!/## Subtasks not completed \(3\)/.test(synthesis)) throw new Error("the synthesizer was not told what is missing");
 			if (!synthesis.includes(`- trace: ${TRACE} — stranded on subtask survey`)) throw new Error("the manifest does not name what the stranded subtask waits on");
 			if (!synthesis.includes(`- writeup: ${WRITEUP} — stranded on subtask trace`)) throw new Error("the transitively stranded subtask is missing from the manifest");
 			const text = output.content[0].text;

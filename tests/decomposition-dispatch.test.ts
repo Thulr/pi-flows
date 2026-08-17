@@ -53,7 +53,7 @@ test("a flat subtask list still fans out in one wave and is still silently cut t
 	const synthesis = byAgent(calls, "debrief")[0].task;
 	assert.match(synthesis, /### Subtask 1: map the login flow/);
 	assert.match(synthesis, /### Subtask 2: map token refresh/);
-	assert.doesNotMatch(synthesis, /Units not completed/, "nothing was left incomplete");
+	assert.doesNotMatch(synthesis, /Subtasks not completed/, "nothing was left incomplete");
 });
 
 test("a structured Decomposition with no edges fans out in one wave, exactly like the flat path", async () => {
@@ -222,7 +222,7 @@ test("a failed subtask strands its transitive dependents, which never spawn, whi
 
 	// The synthesizer is told by name what is missing, and why.
 	const synthesis = byAgent(calls, "debrief")[0].task;
-	assert.match(synthesis, /## Units not completed \(3\) — this work is missing, never report it as done/);
+	assert.match(synthesis, /## Subtasks not completed \(3\) — this work is missing, never report it as done/);
 	assert.match(synthesis, /- survey: List the auth entry points — failed: Flow agent "recon" exited with code 1\./);
 	assert.match(synthesis, /- trace: Trace token refresh — stranded on subtask survey/);
 	assert.match(synthesis, /- writeup: Write the refresh summary — stranded on subtask trace/);

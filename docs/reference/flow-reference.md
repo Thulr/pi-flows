@@ -718,7 +718,7 @@ The flow validates the Decomposition after the `commander` settles, and before t
 
 A dependency loop returns `DECOMPOSITION_CYCLE`. The error shows the loop as a chain of subtask ids.
 
-The `id` rule is a safety rule. The flow writes each id into the prompt headings of the dependent workers, and into the manifest that `debrief` reads. The `commander` writes the id, so an id with a line break in it could add a section that a worker reads as an instruction from the flow. The flow refuses such an id. It does not repair it, because a repaired id no longer matches the `dependsOn` entries that name it.
+The `id` rule is a safety rule. The flow writes each id into the prompt headings of the dependent workers, and into the manifest that `debrief` reads. The `commander` writes the id. An id with a line break in it could add a section that a worker reads as an instruction from the flow. The flow refuses such an id. It does not repair it, because a repaired id no longer matches the `dependsOn` entries that name it.
 
 The check does not judge the quality of the Decomposition. It does not refuse a coverage gap, and it does not refuse two subtasks with overlapping scope. See [Decomposition](../explanation/decomposition.md) for the reasons.
 
@@ -735,7 +735,7 @@ The workers run wave by wave. Each wave holds the subtasks whose dependencies ha
 
 The flow puts each dependency's validated handoff text into the dependent worker's prompt. The section heading names the source subtask, and marks the text as untrusted data. The `commander` writes no placeholder for that text. The flow inserts the text itself.
 
-If a subtask fails, every subtask that depends on it is **stranded**. A stranded subtask never starts, and it spends no budget. The `debrief` prompt then carries a "Units not completed" manifest. The manifest names each subtask that did not succeed. For a failed subtask it gives a sanitized failure summary. For a stranded subtask it gives the id of the subtask it waits on.
+If a subtask fails, every subtask that depends on it is **stranded**. A stranded subtask never starts, and it spends no budget. The `debrief` prompt then carries a "Subtasks not completed" manifest. The manifest names each subtask that did not succeed. For a failed subtask it gives a sanitized failure summary. For a stranded subtask it gives the id of the subtask it waits on.
 
 The flow header counts the outcome:
 

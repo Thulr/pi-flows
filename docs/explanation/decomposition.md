@@ -28,7 +28,7 @@ Each of these defects has one correct answer. A reader does not need the goal to
 
 A subtask id looks like a label, but the flow uses it as a key. It addresses the dependency edges. It becomes the unit key of the worker span. It also becomes a heading: the flow writes the id into the prompt of each dependent worker, and into the manifest that `debrief` reads.
 
-The `commander` writes that id, so it is model output in a position the reader trusts. An id with a line break in it could add a heading that a worker reads as an instruction from the flow, and not as data from another subtask. The flow therefore holds an id to a small character set, and refuses anything else.
+The `commander` writes that id, so it is model output in a position the reader trusts. An id with a line break in it could add a heading to a worker prompt. The worker could read that heading as an instruction from the flow, not as data from another subtask. The flow therefore holds an id to a small character set, and refuses anything else.
 
 The refusal is not a repair. The id is the name that the `dependsOn` entries use, so a flow that rewrote it would break the edges the `commander` declared.
 
@@ -60,7 +60,7 @@ A subtask runs after every subtask it depends on has succeeded. If a dependency 
 
 Stranding is a containment rule, not a repair. The flow does not retry the failed subtask, and it does not run the dependents without the input they declared they need. Findings built on missing evidence are worse than absent findings. They read the same as complete ones.
 
-That is also why the `debrief` prompt receives the "Units not completed" manifest by name. A merged answer that quietly omits a failed subtask looks like a full answer to the goal. The manifest makes the missing work visible to the synthesizer, and the flow header repeats the counts to the caller. Read a synthesized answer with the header beside it: a run with stranded subtasks answers less of the goal than its text suggests.
+That is also why the `debrief` prompt receives the "Subtasks not completed" manifest by name. A merged answer that quietly omits a failed subtask looks like a full answer to the goal. The manifest makes the missing work visible to the synthesizer, and the flow header repeats the counts to the caller. Read a synthesized answer with the header beside it: a run with stranded subtasks answers less of the goal than its text suggests.
 
 If no terminal subtask succeeds, there is nothing worth merging, and the flow says so instead of running `debrief` on partial evidence.
 

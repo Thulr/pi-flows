@@ -367,6 +367,9 @@ export function validateDecomposition(decomposition: Decomposition, admission: D
 				'Give every subtask a short plain id, such as "survey" or "trace-refresh".',
 			);
 		}
+		// Past the pattern check above, this subtask's id is safe to interpolate
+		// raw; only foreign text (an unknown dependency, an id that failed the
+		// check) still goes through quoteId.
 		if (ids.has(subtask.id)) {
 			return invalid(
 				`Decomposition subtask id "${subtask.id}" is used more than once.`,
@@ -402,7 +405,7 @@ export function validateDecomposition(decomposition: Decomposition, admission: D
 		for (const dep of subtask.dependsOn) {
 			if (!ids.has(dep)) {
 				return invalid(
-					`Decomposition subtask "${subtask.id}" depends on unknown subtask ${quoteId(dep)}.`,
+					`Decomposition subtask ${quoteId(subtask.id)} depends on unknown subtask ${quoteId(dep)}.`,
 					"Every dependsOn entry must name another subtask of the same Decomposition.",
 					"Correct the dependsOn ids, or add the missing subtask.",
 				);

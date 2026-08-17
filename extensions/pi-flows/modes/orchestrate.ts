@@ -308,7 +308,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const notCompleted = incompleteUnits.length === 0
 		? ""
 		: [
-			`\n## Units not completed (${incompleteUnits.length}) — this work is missing, never report it as done`,
+			`\n## Subtasks not completed (${incompleteUnits.length}) — this work is missing, never report it as done`,
 			...incompleteUnits.map((unit) => {
 				const outcome = outcomes.get(unit.subtask.id);
 				const objective = sanitizeText(oneLine(unit.subtask.objective), policy, 1024);
