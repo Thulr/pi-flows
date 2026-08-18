@@ -127,6 +127,7 @@ const ENFORCED: Array<{ mode: string; params: Record<string, any>; handler: (dep
 	{ mode: "route", params: { why: "w", route: { candidates: ["recon"] } }, handler: handleRoute, code: "INVALID_MODE" },
 	{ mode: "route", params: { why: "w", task: "pick one", route: {} }, handler: handleRoute, code: "INVALID_MODE" },
 	{ mode: "orchestrate", params: { why: "w", orchestrate: {} }, handler: handleOrchestrate, code: "INVALID_MODE" },
+	{ mode: "orchestrate", params: { why: "w", task: "map it", orchestrate: { reviewCriteria: "Cover every part." } }, handler: handleOrchestrate, code: "INVALID_MODE" },
 	{ mode: "loop", params: { why: "w", loop: { body: { agent: "recon" } } }, handler: handleLoop, code: "INVALID_MODE" },
 	{ mode: "loop", params: { why: "w", task: "iterate", loop: {} }, handler: handleLoop, code: "INVALID_MODE" },
 	{ mode: "search", params: { why: "w", search: {} }, handler: handleSearch, code: "INVALID_MODE" },

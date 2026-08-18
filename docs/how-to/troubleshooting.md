@@ -271,6 +271,16 @@ Then correct the commander task, or raise `orchestrate.maxSubtasks` (maximum 16)
 Every subtask runs the one worker role that `orchestrate.recon` sets. For work
 that needs a different agent for each unit, use `graph` mode.
 
+### `DECOMPOSITION_REVIEW_FAILED`
+
+Cause: the final Decomposition review returned REVISE. This error also occurs when a reviewer or revision commander Run fails.
+
+No worker starts after this error. The output includes the last admitted Decomposition and the latest bounded critique.
+
+Fix: read the critique. Narrow the goal. Improve the commander instructions.
+
+If another attempt is appropriate, increase `orchestrate.reviewMaxIterations` to a maximum of 4. Do not replay the call without a material change.
+
 ### `DECOMPOSITION_CYCLE`
 
 Cause: the subtasks in the `commander` decomposition depend on each other in a

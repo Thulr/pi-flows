@@ -17,12 +17,12 @@ export function parseToolsOverride(tools: string | undefined, fallback: string[]
 		.filter(Boolean);
 }
 
+export const RETURN_EVIDENCE_REQUIREMENT = "Ground every load-bearing claim in concrete evidence: file:line references, command output, citations, or explicit gaps when evidence is unavailable.";
+
 export function appendReturnRequirements(task: string, requirements: string | undefined, requireEvidence: boolean | undefined): string {
 	const sections: string[] = [];
 	if (requirements?.trim()) sections.push(requirements.trim());
-	if (requireEvidence) {
-		sections.push("Ground every load-bearing claim in concrete evidence: file:line references, command output, citations, or explicit gaps when evidence is unavailable.");
-	}
+	if (requireEvidence) sections.push(RETURN_EVIDENCE_REQUIREMENT);
 	if (sections.length === 0) return task;
 	return [task, "\n## Return requirements", ...sections.map((section) => `- ${section}`)].join("\n");
 }

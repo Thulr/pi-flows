@@ -32,13 +32,33 @@ The `commander` writes that id, so it is model output in a position the reader t
 
 The refusal is not a repair. The id is the name that the `dependsOn` entries use, so a flow that rewrote it would break the edges the `commander` declared.
 
-## Why coverage and overlap are not refused
+## Why coverage and overlap are not deterministic refusals
 
 A Decomposition can be structurally perfect and still be a bad breakdown of the goal. It can miss a part of the goal. Two subtasks can cover the same ground. A subtask can be too large for one worker.
 
 The flow does not refuse any of these. To decide whether a Decomposition covers a goal, a reader must understand the goal. That is a judgment, not a rule, and a deterministic gate that guesses at it would refuse good decompositions. A false refusal here is expensive: it discards a settled `commander` run and returns nothing.
 
-So coverage stays the `commander`'s responsibility, and the synthesis stage stays the place where a gap becomes visible. If you need the breakdown itself reviewed, add your own critic. Model review of a Decomposition is tracked as [issue #160](https://github.com/Thulr/pi-flows/issues/160).
+The deterministic validator therefore leaves these judgments open. Calls without `orchestrate.review` keep the original behavior and start workers after structural admission.
+
+## Why Decomposition review is optional
+
+`orchestrate.review` adds a model judgment between structural admission and worker dispatch. It judges coverage, overlap, worker fit, dependencies, context, and fragmentation.
+
+This judgment costs another child Run and can vary between model calls. The caller must select it explicitly.
+
+The reviewer sees the normalized Decomposition, not raw commander prose. Thus it judges the same fields that worker dispatch can use.
+
+A REVISE verdict starts a new commander Run when another attempt remains. The commander returns one complete replacement Decomposition.
+
+The flow does not patch a replacement. A patch can invent ids or edges that neither child returned.
+
+Every replacement passes through deterministic structural validation. A structural defect keeps its structural error code and stops the loop.
+
+`orchestrate.reviewMaxIterations` bounds the loop. The default is 2. The maximum is 4.
+
+The fixed rubric requires the smallest sufficient set of subtasks. Thus extra subtasks do not improve a review by themselves.
+
+A Decomposition PASS authorizes worker dispatch only. It does not prove that worker results or the final answer are correct.
 
 ## Why a subtask cannot name its agent
 
@@ -75,9 +95,6 @@ The dependency edge means the same thing in both: the dependent unit runs later,
 
 ## What this version does not do
 
-Two capabilities are out of scope on purpose:
+Post-dispatch replanning remains out of scope. A failed subtask does not send the goal back for a new Decomposition ([issue #161](https://github.com/Thulr/pi-flows/issues/161)).
 
-- **Quality review of a Decomposition** — no model judges coverage, overlap, or subtask size ([issue #160](https://github.com/Thulr/pi-flows/issues/160)).
-- **Replanning** — the `commander` runs once. A failed subtask does not send the goal back for a new Decomposition ([issue #161](https://github.com/Thulr/pi-flows/issues/161)).
-
-Both stay out until the trust question behind them is answered. A gate that revises model output is a second decision maker in the flow, and it needs its own bounds on cost, iterations, and evidence.
+Decomposition review occurs only before worker dispatch. It cannot replace a failed subtask or change the Decomposition after workers start.

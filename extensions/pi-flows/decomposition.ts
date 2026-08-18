@@ -71,6 +71,35 @@ export interface Decomposition {
 	readonly subtasks: readonly DecompositionSubtask[];
 }
 
+/** Build the established no-subtasks refusal for an initial or replacement commander result. */
+export function unusableDecompositionError(attempt: "initial" | "replacement" = "initial"): FlowError {
+	return flowError(
+		"ORCHESTRATE_NO_SUBTASKS",
+		"Decomposer did not return a usable subtask list.",
+		"The decomposer output contained no non-empty usable JSON array of subtasks.",
+		attempt === "initial"
+			? "Tighten the decomposer task to require a JSON array of either subtask strings or subtask objects, or use chain/single mode for work that does not decompose."
+			: "For a Decomposition, require a JSON array of subtask strings or objects. For work that does not decompose, use chain or single mode.",
+	);
+}
+
+/** Map every prose field while preserving the admitted ids, shape, and dependency edges. */
+export function mapDecompositionProse(decomposition: Decomposition, map: (text: string) => string): Decomposition {
+	const optional = (text: string | undefined) => text === undefined ? undefined : map(text);
+	return {
+		...decomposition,
+		subtasks: decomposition.subtasks.map((subtask) => ({
+			...subtask,
+			objective: map(subtask.objective),
+			scope: optional(subtask.scope),
+			nonGoals: optional(subtask.nonGoals),
+			inputs: optional(subtask.inputs),
+			expectedReturn: optional(subtask.expectedReturn),
+			acceptanceEvidence: optional(subtask.acceptanceEvidence),
+		})),
+	};
+}
+
 /**
  * The charset a commander-chosen subtask id must match, and the length it must
  * stay under.

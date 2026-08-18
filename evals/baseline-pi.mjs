@@ -23,19 +23,21 @@ function finalAssistantText(messages) {
 }
 
 /**
- * Run one plain `pi` headlessly on `task`. Returns a flow-shaped result. `model`
- * undefined → omit --model so the child uses pi's default (matches the flows arm's
- * "agent frontmatter" mode).
+ * Run one plain `pi` headlessly on `task`. Returns a flow-shaped result.
+ * When `model` is undefined, the child uses the default model. Set `tools` to
+ * an empty array to disable all built-in tools.
  */
-export async function runPlainPi({ task, cwd, model, timeoutMs = 120000, signal, killGraceMs = 5_000, maxCostUsd, maxGeneratedTokens, command = "pi" }) {
+export async function runPlainPi({ task, cwd, model, tools, timeoutMs = 120000, signal, killGraceMs = 5_000, maxCostUsd, maxGeneratedTokens, command = "pi" }) {
 	const startedAt = Date.now();
 	const dir = mkdtempSync(join(tmpdir(), "pi-baseline-"));
 	const taskFile = join(dir, "task.md");
 	writeFileSync(taskFile, `Task: ${task}\n`, { encoding: "utf8", mode: 0o600 });
 
-	// Plain pi: no extensions (so pi-flows is not loaded), no session, default system
-	// prompt + default tools. Same JSON protocol the flow children emit.
+	// Plain pi: no extensions (so pi-flows is not loaded), no session, and the
+	// default system prompt. The caller can restrict the built-in tools.
 	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions"];
+	if (tools?.length === 0) args.push("--no-builtin-tools");
+	else if (tools !== undefined) args.push("--tools", tools.join(","));
 	if (model) args.push("--model", model);
 	args.push(`@${taskFile}`);
 

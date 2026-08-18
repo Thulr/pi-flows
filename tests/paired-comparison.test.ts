@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runPlainPi } from "../evals/baseline-pi.mjs";
@@ -303,6 +303,31 @@ await new Promise(resolve => setTimeout(resolve, 30_000));
 	assert.equal(child.usage.output, 8);
 	assert.ok(child.durationMs < 15_000, "budget should stop the child well before its 30s hold elapses");
 	assert.ok(Date.now() - startedAt < 15_000, "budget should stop the held-open process before timeout");
+});
+
+test("plain Pi can disable all tools for an isolated judge", async () => {
+	const dir = mkdtempSync(path.join(tmpdir(), "pi-flow-isolated-judge-"));
+	const command = path.join(dir, "pi-stub.mjs");
+	const observationPath = path.join(dir, "observation.json");
+	writeFileSync(command, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(observationPath)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }));
+process.stdout.write(JSON.stringify({type:"message_end",message:{role:"assistant",content:[{type:"text",text:"judged"}],usage:{input:1,output:1,cost:{total:0.01},totalTokens:2},model:"stub"}})+"\\n");
+`);
+	chmodSync(command, 0o700);
+	const result = await runPlainPi({
+		task: "judge anonymous candidates",
+		cwd: dir,
+		model: "stub",
+		tools: [],
+		command,
+		timeoutMs: 20_000,
+	});
+	const observation = JSON.parse(readFileSync(observationPath, "utf8"));
+	assert.equal(result.details.results[0].exitCode, 0);
+	assert.equal(realpathSync(observation.cwd), realpathSync(dir));
+	assert.ok(observation.args.includes("--no-builtin-tools"));
+	assert.equal(observation.args.includes("--tools"), false);
 });
 
 test("plain Pi cost budgets fail closed when cost telemetry is absent", async () => {

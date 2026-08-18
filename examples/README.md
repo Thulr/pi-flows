@@ -187,6 +187,29 @@ Expected: the `commander` returns ~3 subtasks, three `recon` workers run in para
 
 Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: PASS/REVISE` gate on the merged answer. `details.results` then ends `[..., debrief, verify]`.
 
+### With Decomposition review
+
+```json
+{
+  "task": "Document login, refresh, and session storage",
+  "returnContract": "Give one evidence-backed section for each auth surface.",
+  "orchestrate": {
+    "review": { "agent": "overwatch" },
+    "reviewMaxIterations": 2,
+    "reviewCriteria": "Each auth surface must have one bounded subtask.",
+    "recon": { "agent": "recon" },
+    "maxSubtasks": 5
+  },
+  "why": "the broad task needs a reviewed breakdown before parallel research"
+}
+```
+
+Expected: `overwatch` judges the normalized Decomposition before workers start. A REVISE verdict starts one new commander attempt when the bound permits it.
+
+The commander returns a complete replacement Decomposition. Workers start only after PASS.
+
+If the final review returns REVISE, the flow returns `DECOMPOSITION_REVIEW_FAILED`. `details.results` preserves every commander and reviewer Run.
+
 ### With dependent subtasks
 
 ```json

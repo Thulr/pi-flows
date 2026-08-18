@@ -630,15 +630,20 @@ The `controller` reads the `task` plus the candidate descriptions and picks one 
 
 Without a contract, the controller can return `ROUTE: <agent>` as its first non-empty line, or JSON `{ "route": "<agent>" }`. A candidate named anywhere else is prose and never selects. A contracted controller uses only validated `data.route`. Embedded marker text cannot override it. A quarantined controller payload cannot select a candidate and falls back like `none`. Without `route.fallback`, either case returns `ROUTE_UNRESOLVED`.
 
-## Orchestrate mode (decompose → fan out → synthesize)
+## Orchestrate mode (decompose → review → fan out → synthesize)
 
-The `commander` decomposes the `task` into subtasks, `recon` workers run them, and the `debrief` agent merges the results. Independent subtasks run in parallel. A subtask that declares a dependency runs after the subtasks it names succeed. This is the deep-research / orchestrator-workers shape. Top-level `task` is preferred. `orchestrate.task` is accepted as its fallback. Each worker sees the overall goal or delegation contract, and its assigned subtask. Terse decomposition output therefore stays attached to the final answer requirements.
+The `commander` decomposes the `task` into subtasks. An optional review role judges the normalized Decomposition before worker dispatch.
+
+Independent `recon` subtasks run in parallel. A dependent subtask runs after the subtasks it names succeed. The `debrief` agent merges the results.
+
+Top-level `task` is preferred. `orchestrate.task` is its fallback. Each worker sees the overall goal and its assigned subtask.
 
 ```json
 {
   "task": "Document how authentication works across the codebase",
   "orchestrate": {
     "commander": { "agent": "commander" },
+    "review": { "agent": "overwatch" },
     "recon": { "agent": "recon" },
     "debrief": { "agent": "debrief" },
     "maxSubtasks": 5
@@ -650,6 +655,9 @@ The `commander` decomposes the `task` into subtasks, `recon` workers run them, a
 |---|---|---|
 | `orchestrate.task` | (none) | Goal fallback when top-level `task` is omitted. Prefer top-level `task` for new calls. |
 | `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON subtask array without a contract. Its own contract carries that array as validated envelope `data`. The array holds subtask strings, or subtask objects with `id`, `objective`, and optional `dependsOn` edges. |
+| `orchestrate.review` | (none) | Optional Decomposition-review role. It judges the normalized Decomposition before workers start. Its contract uses validated `data.verdict`. |
+| `orchestrate.reviewMaxIterations` | `2` | Integer `1..4`. Maximum Decomposition-review attempts. Each REVISE starts a new commander Run when another attempt remains. |
+| `orchestrate.reviewCriteria` | (none) | Additional review criteria. These criteria add to the fixed rubric and cannot replace or weaken it. |
 | `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, with the overall goal or delegation contract included for context. Independent subtasks run in parallel. A subtask with `dependsOn` runs after the subtasks it names succeed, and receives their output. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
 | `orchestrate.verify` | (none) | Optional critic. Without its own contract, it returns PASS/REVISE prose. With one, validated `data.verdict` controls the decision. |
@@ -659,7 +667,15 @@ The `commander` decomposes the `task` into subtasks, `recon` workers run them, a
 | `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`. When top-level `task` is also omitted, this text can serve as the goal fallback for model-generated calls. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Integer `1..16`. Cap on the total subtasks, dependent ones included. A flat subtask list is cut to this cap. A structured Decomposition above the cap is refused `DECOMPOSITION_INVALID`, because a cut can sever declared edges. |
 
-If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`. If it returns a decomposition with a defect, the call fails with `DECOMPOSITION_INVALID` or `DECOMPOSITION_CYCLE` before any worker starts. A failed subtask strands the subtasks that depend on it: they never start, and the `debrief` prompt lists them. `concurrency` controls worker fan-out. `details.results` is ordered commander → workers → debrief → (optional) verify.
+If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`.
+
+If the Decomposition has a structural defect, the call fails with `DECOMPOSITION_INVALID` or `DECOMPOSITION_CYCLE`. No worker starts.
+
+A failed subtask strands its dependents. The `debrief` prompt lists this missing work. `concurrency` controls worker fan-out.
+
+Without review, `details.results` keeps its existing order: commander → workers → debrief → optional verifier.
+
+With review, commander and reviewer attempts appear in chronological order before the workers.
 
 ### The Decomposition
 
@@ -729,6 +745,35 @@ The check does not judge the quality of the Decomposition. It does not refuse a 
 
 The shared-write rule applies to the whole Decomposition, not to one wave. Two subtasks can run at the same time when neither one depends on the other, directly or through a chain. If the worker role is write-capable, and two such subtasks share one `cwd`, the flow returns `SHARED_WRITE_CWD`. It refuses before the first worker starts. The usual releases apply: `concurrency:1`, worker tools that exclude `bash`/`edit`/`write`, a separate `cwd`, or `allowSharedWriteCwd:true`. A Decomposition that is one sequential chain stays admissible for a write-capable worker.
 
+### Decomposition review
+
+Set `orchestrate.review` to add a model judgment after structural validation. The reviewer receives the exact normalized Decomposition that the flow can dispatch.
+
+The review task also contains the goal, applicable Return requirements, and this fixed rubric:
+
+- The subtasks cover every material part of the goal.
+- The subtasks avoid unnecessary overlap and duplicate work.
+- Each subtask is suitable for one worker.
+- Each dependency is necessary, and all necessary dependencies exist.
+- Each subtask has enough context for execution after its dependencies finish.
+- The Decomposition uses the smallest sufficient set of subtasks.
+
+`orchestrate.reviewCriteria` adds caller criteria. A PASS requires every fixed and caller criterion. Missing evidence or an inconclusive judgment requires REVISE.
+
+An uncontracted reviewer starts its reply with `VERDICT: PASS` or `VERDICT: REVISE`. A contracted reviewer uses validated `data.verdict` only.
+
+On PASS, the flow dispatches the reviewed Decomposition. A Decomposition PASS does not establish Verified outcome success.
+
+On REVISE, the flow starts a new commander Run when another attempt remains. The revision prompt contains the current Decomposition and prepared critique.
+
+The commander returns one complete replacement. The flow does not patch ids, prose fields, or dependency edges.
+
+Each replacement passes through the same parser and structural validator. The replacement can change between flat and structured shapes.
+
+The final REVISE returns `DECOMPOSITION_REVIEW_FAILED`. A failed reviewer or revision commander returns the same code.
+
+Return validation, Handoff policy, budget, parsing, and structural errors keep their existing codes. No worker starts after a review-loop failure.
+
 ### Waves, dependency output, and stranded subtasks
 
 The workers run wave by wave. Each wave holds the subtasks whose dependencies have all succeeded. `concurrency` limits how many workers of one wave run at the same time. A Decomposition with no edges is a single wave.
@@ -753,7 +798,7 @@ In the trace, each subtask has its own worker span. The unit key of that span is
 
 Set `orchestrate.commander.contract` to receive the Decomposition as validated envelope `data`. Give that contract a `returnSchema`, and the flow checks the envelope against it before it parses the array. The package exports a ready return schema for this purpose: `FlowDecompositionReturn`. It accepts both shapes, and it describes every subtask field. It accepts each prose field as one string or as an array of strings, and it states the `id` rule. The schema is not applied for you. Pass it as the contract's `returnSchema` to gain the earlier, schema-level feedback. The validation rules above then apply to both emission paths.
 
-Composed with return requirements and a revising verifier:
+Composed with Decomposition review, Return requirements, and a revising outcome verifier:
 
 ```json
 {
@@ -761,6 +806,8 @@ Composed with return requirements and a revising verifier:
   "returnContract": "Return sections for login, token refresh, session storage, and gaps.",
   "requireEvidence": true,
   "orchestrate": {
+    "review": { "agent": "overwatch" },
+    "reviewCriteria": "Each auth surface must have one owner.",
     "recon": { "agent": "recon" },
     "verify": { "agent": "overwatch" },
     "verifyPolicy": "revise",
@@ -770,7 +817,9 @@ Composed with return requirements and a revising verifier:
 }
 ```
 
-Workers receive the goal, the return requirements, and their assigned subtask. The `overwatch` verifier checks the merged answer against the goal, and `verifyPolicy:"revise"` reruns `debrief` with the critique until pass or `verifyMaxIterations`.
+The review role checks the Decomposition before workers start. The verifier checks the merged answer after synthesis.
+
+`verifyPolicy:"revise"` reruns `debrief` with the verifier critique until PASS or `verifyMaxIterations`.
 
 ## Graph mode (static DAG)
 

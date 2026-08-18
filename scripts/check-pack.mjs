@@ -376,5 +376,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // either form, the prefixed worker span keys, and the reference, troubleshooting
 // and explanation wording for all three. The file set stays at 113 and none from
 // tests/, scripts/, or evals/; measured 1_371_721.
-assert.ok(pack.unpackedSize < 1_374_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_395_000 for #160 (review a Decomposition before dispatch): the
+// packaged Supporting module owns the bounded review and revision loop. The
+// prompt includes all Return requirements. The schema, orchestrate mode,
+// glossary, changelog, and user documents expose the contract.
+// The file set grows to 114 for decomposition-review.ts. No file from tests/,
+// scripts/, or evals/ ships. The measured size is 1_394_429.
+assert.ok(pack.unpackedSize < 1_395_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
