@@ -81,6 +81,7 @@
     "eval:pareto": "node evals/pareto.mjs",
     "eval:select": "node --import tsx evals/select.mjs",
     "eval:decomposition": "node --import tsx evals/decomposition-structure.mjs",
+    "eval:decomposition-quality": "node --import tsx evals/decomposition-quality.mjs",
     "eval:failure": "node --import tsx evals/failure.mjs",
     "eval:release": "node --import tsx evals/release.mjs",
     "trace:report": "node --import tsx scripts/trace-report.mjs"

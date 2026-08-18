@@ -18,7 +18,7 @@ pi-flows adds a `flow` tool to [pi](https://github.com/earendil-works/pi). The t
 ## Explanation — understand the design
 
 - [Patterns](./explanation/patterns.md) — when a flow helps, which agent-design pattern each mode encodes, and what the harness guarantees.
-- [Decomposition](./explanation/decomposition.md) — what a commander's Decomposition is, which defects the flow refuses before a worker starts, and which judgments it leaves to you.
+- [Decomposition](./explanation/decomposition.md) — structural admission, optional Decomposition review, dependency waves, and the boundary with post-dispatch replanning.
 - [Domain model](./explanation/domain-model.md) — why the codebase is split into Core, Supporting, and Generic subdomains, and why the import direction and review policy are what they are.
 - [Privacy & telemetry](./explanation/privacy-telemetry.md) — what leaves your machine (nothing by default), what is redacted, and the controls.
 

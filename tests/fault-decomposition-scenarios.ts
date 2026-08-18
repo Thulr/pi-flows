@@ -99,6 +99,81 @@ function strandedDependentsScenario(): FaultScenario {
 	};
 }
 
+function failedReviewScenario(): FaultScenario {
+	const faults: FaultRule[] = [{ kind: "failure", agent: "overwatch", occurrence: 1, errorCode: "CHILD_EXIT_NONZERO" }];
+	return {
+		id: "failed-decomposition-review-stops-workers",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		faults,
+		faultKind: "failure",
+		description: "The Decomposition reviewer dies before a verdict, so no worker can run.",
+		attackOpportunities: 1,
+		benignOpportunities: 1,
+		expected: {
+			outcome: { errorCode: "DECOMPOSITION_REVIEW_FAILED" },
+			process: { dispatched: 2, refused: 0, unreached: ["recon", "debrief"] },
+			policy: { contained: true, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 1 },
+		},
+		run: async () => {
+			const cwd = mkdtempSync(path.join(tmpdir(), "pi-flow-decomposition-review-fault-"));
+			const adapter = makeFaultAdapter({ replies: { commander: DECOMPOSITION, overwatch: "MUST NOT ARRIVE", recon: "MUST NOT RUN" }, faults });
+			const output = await handleOrchestrate(faultDeps(
+				{
+					task: "document how auth works",
+					orchestrate: {
+						commander: { agent: "commander" }, review: { agent: "overwatch" }, reviewMaxIterations: 2,
+						recon: { agent: "recon" }, debrief: { agent: "debrief" },
+					},
+				},
+				adapter,
+				cwd,
+			));
+			return observe(output, adapter.ledger, ["recon", "debrief"], { attack: true });
+		},
+	};
+}
+
+function failedRevisionScenario(): FaultScenario {
+	const faults: FaultRule[] = [{ kind: "failure", agent: "commander", occurrence: 2, errorCode: "CHILD_EXIT_NONZERO" }];
+	return {
+		id: "failed-decomposition-revision-stops-workers",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		faults,
+		faultKind: "failure",
+		description: "The commander dies while replacing a rejected Decomposition, so no worker can run.",
+		attackOpportunities: 1,
+		benignOpportunities: 2,
+		expected: {
+			outcome: { errorCode: "DECOMPOSITION_REVIEW_FAILED" },
+			process: { dispatched: 3, refused: 0, unreached: ["recon", "debrief"] },
+			policy: { contained: true, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 2 },
+		},
+		run: async () => {
+			const cwd = mkdtempSync(path.join(tmpdir(), "pi-flow-decomposition-revision-fault-"));
+			const adapter = makeFaultAdapter({
+				replies: { commander: DECOMPOSITION, overwatch: "VERDICT: REVISE\nAdd the missing path.", recon: "MUST NOT RUN" },
+				faults,
+			});
+			const output = await handleOrchestrate(faultDeps(
+				{
+					task: "document how auth works",
+					orchestrate: {
+						commander: { agent: "commander" }, review: { agent: "overwatch" }, reviewMaxIterations: 2,
+						recon: { agent: "recon" }, debrief: { agent: "debrief" },
+					},
+				},
+				adapter,
+				cwd,
+			));
+			return observe(output, adapter.ledger, ["recon", "debrief"], { attack: true });
+		},
+	};
+}
+
 export function decompositionScenarios(): FaultScenario[] {
-	return [strandedDependentsScenario()];
+	return [strandedDependentsScenario(), failedReviewScenario(), failedRevisionScenario()];
 }

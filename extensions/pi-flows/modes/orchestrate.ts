@@ -1,30 +1,30 @@
 import { MAX_PARALLEL_TASKS, MAX_SUBTASKS, encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
-import { parseDecomposition, validateDecomposition, type DecompositionSubtask } from "../decomposition.ts";
+import { mapDecompositionProse, parseDecomposition, validateDecomposition, type DecompositionSubtask } from "../decomposition.ts";
+import { reviewDecomposition, unusableDecompositionError } from "../decomposition-review.ts";
 import { incompleteHandoffSummary, integrationControl } from "../delegation.ts";
 import { consumeIntegrationResult, dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
- * Orchestrate's plan: commander (the opening — it decomposes the goal before
- * any recon worker runs), the recon worker role, the optional verifier, and
- * the debrief synthesizer. Nothing is guarded: the handler's shared-write
- * check fires only after the commander's decomposition, which is a mid-run
- * concern the pre-spawn mirror must not claim. Commander, recon, and verify
- * carry only their own contracts; the debrief resolves against the call's
- * fallback.
+ * Orchestrate's plan: commander, optional Decomposition reviewer, recon worker,
+ * optional outcome verifier, and debrief. Nothing is guarded because the
+ * shared-write check occurs after decomposition. Each role carries its own
+ * contract, while debrief also resolves the call fallback.
  */
 export function planOrchestrate(params: any): ModePlan {
 	if (!params.orchestrate) return { waves: [], opening: [] };
 	const spec = params.orchestrate ?? {};
 	const commander = plannedRefs([spec.commander ?? { agent: "commander" }]);
 	const recon = plannedRefs([spec.recon ?? { agent: "recon" }]);
+	const review = plannedRefs([spec.review]);
 	const verify = plannedRefs([spec.verify]);
 	const debrief = plannedRefs([spec.debrief ?? { agent: "debrief" }]);
 	return {
 		waves: [
 			{ refs: commander, guarded: false, contracts: "own" },
+			...(review.length > 0 ? [{ refs: review, guarded: false, contracts: "own" as const }] : []),
 			{ refs: recon, guarded: false, contracts: "own" },
 			...(verify.length > 0 ? [{ refs: verify, guarded: false, contracts: "own" as const }] : []),
 			{ refs: debrief, guarded: false, contracts: "resolved" },
@@ -69,6 +69,15 @@ const verifyKey = (round: number) => `verify-${round}`;
 export function preSpawnRefusalOrchestrate(params: any): FlowError | null {
 	if (params?.orchestrate === undefined) return null;
 	const spec = params.orchestrate ?? {};
+	const hasReviewOptions = spec.reviewMaxIterations !== undefined || spec.reviewCriteria !== undefined;
+	if (hasReviewOptions && !(spec.review && typeof spec.review.agent === "string" && spec.review.agent.trim())) {
+		return flowError(
+			"INVALID_MODE",
+			"Orchestrate Decomposition-review options require a review role.",
+			"orchestrate.reviewMaxIterations and orchestrate.reviewCriteria only apply when orchestrate.review selects an agent.",
+			"Add orchestrate.review with one agent reference, or remove the Decomposition-review options.",
+		);
+	}
 	const nestedTask = typeof spec.task === "string" ? spec.task : undefined;
 	const nestedReturnContract = typeof spec.returnContract === "string" ? spec.returnContract : undefined;
 	const goal = params.task ?? nestedTask ?? nestedReturnContract;
@@ -97,8 +106,10 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const decomposerRef: FlowAgentRefInput = spec.commander ?? { agent: "commander" };
 	const workerRef: FlowAgentRefInput = spec.recon ?? { agent: "recon" };
 	const synthesizerRef: FlowAgentRefInput = spec.debrief ?? { agent: "debrief" };
+	const reviewRef: FlowAgentRefInput | undefined = spec.review && typeof spec.review.agent === "string" ? spec.review : undefined;
 	const verifyRef: FlowAgentRefInput | undefined = spec.verify && typeof spec.verify.agent === "string" ? spec.verify : undefined;
 	const maxSubtasks = Number.isFinite(spec.maxSubtasks) ? Math.max(1, Math.min(MAX_SUBTASKS, Math.floor(spec.maxSubtasks))) : MAX_PARALLEL_TASKS;
+	const reviewMaxIterations = Number.isFinite(spec.reviewMaxIterations) ? Math.max(1, Math.min(4, Math.floor(spec.reviewMaxIterations))) : 2;
 	const verifyPolicy: VerifyPolicy = ["fail", "revise"].includes(spec.verifyPolicy) ? spec.verifyPolicy : "note";
 	const verifyMaxIterations = Number.isFinite(spec.verifyMaxIterations) ? Math.max(1, Math.min(4, Math.floor(spec.verifyMaxIterations))) : 2;
 
@@ -120,45 +131,51 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const decomposerHandoff = decomposerDispatch.handoff;
 	const decomposition = parseDecomposition(integrationControl(decomposerDispatch.result), maxSubtasks);
 	if (!decomposition) {
-		return settle.refuse(flowError(
-			"ORCHESTRATE_NO_SUBTASKS",
-			"Decomposer did not return a usable subtask list.",
-			"The decomposer output contained no non-empty usable JSON array of subtasks.",
-			"Tighten the decomposer task to require a JSON array of either subtask strings or subtask objects, or use chain/single mode for work that does not decompose.",
-		));
+		return settle.refuse(unusableDecompositionError());
 	}
-	// Deterministic admission of the Decomposition, after the commander settled
-	// and before any worker spawns: ids, edges, cycles, the ceiling, and the
-	// shared-write topology across the whole Decomposition rather than one wave.
-	const inadmissible = validateDecomposition(decomposition, {
+	const decompositionAdmission = {
 		discovery: deps.discovery,
 		defaultCwd: deps.defaultCwd,
 		workerRef,
 		allowSharedWriteCwd: params.allowSharedWriteCwd,
 		concurrency: deps.concurrency,
 		maxSubtasks,
-	});
+	};
+	const inadmissible = validateDecomposition(decomposition, decompositionAdmission);
 	if (inadmissible) return settle.refuse(inadmissible);
+	let admittedDecomposition = decomposition;
+	let decompositionDependencyKeys = [decomposerHandoff.dependencyKey];
+	let decompositionReviewAttempts = 0;
+	if (reviewRef) {
+		const reviewed = await reviewDecomposition({
+			deps,
+			settle,
+			goal,
+			returnRequirements: returnContract,
+			commanderRef: decomposerRef,
+			reviewerRef: reviewRef,
+			reviewCriteria: typeof spec.reviewCriteria === "string" ? spec.reviewCriteria : undefined,
+			maxIterations: reviewMaxIterations,
+			maxSubtasks,
+			admission: decompositionAdmission,
+			initial: decomposition,
+			initialDependencyKey: decomposerHandoff.dependencyKey,
+		});
+		if (reviewed.status === "refused") return reviewed.output;
+		admittedDecomposition = reviewed.decomposition;
+		decompositionDependencyKeys = reviewed.dependencyKeys;
+		decompositionReviewAttempts = reviewed.attempts;
+	}
 
-	// Subtask text is commander output reused as worker prompts — a trust
-	// boundary. Strip invisible characters and flag injection markers in every
-	// prose field before fan-out, not just the objective.
-	const prepared = (text: string | undefined) => text === undefined ? undefined : deps.handoffs.prepareText(text).text;
-	const prepareSubtask = (subtask: DecompositionSubtask): DecompositionSubtask => ({
-		...subtask,
-		objective: deps.handoffs.prepareText(subtask.objective).text,
-		scope: prepared(subtask.scope),
-		nonGoals: prepared(subtask.nonGoals),
-		inputs: prepared(subtask.inputs),
-		expectedReturn: prepared(subtask.expectedReturn),
-		acceptanceEvidence: prepared(subtask.acceptanceEvidence),
-	});
-	const units = decomposition.subtasks.map((subtask, position) => ({
-		subtask: prepareSubtask(subtask),
+	const dispatchDecomposition = reviewRef
+		? admittedDecomposition
+		: mapDecompositionProse(admittedDecomposition, (text) => deps.handoffs.prepareText(text).text);
+	const units = dispatchDecomposition.subtasks.map((subtask, position) => ({
+		subtask,
 		// A flat Decomposition keeps its positional keys and headings; a
 		// structured one is addressed by the id the commander chose.
-		key: decomposition.shape === "flat" ? workerKey(position) : structuredWorkerKey(subtask.id),
-		label: decomposition.shape === "flat" ? String(position + 1) : subtask.id,
+		key: dispatchDecomposition.shape === "flat" ? workerKey(position) : structuredWorkerKey(subtask.id),
+		label: dispatchDecomposition.shape === "flat" ? String(position + 1) : subtask.id,
 	}));
 	type OrchestrateUnit = (typeof units)[number];
 
@@ -240,7 +257,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				scope: {
 					key: unit.key,
 					dependsOn: [
-						decomposerHandoff.dependencyKey,
+						...decompositionDependencyKeys,
 						...unit.subtask.dependsOn.flatMap((dependency) => {
 							const key = outcomes.get(dependency)?.outputKey;
 							return key ? [key] : [];
@@ -278,10 +295,11 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const dependedOn = new Set(units.flatMap((unit) => [...unit.subtask.dependsOn]));
 	const terminalUnits = units.filter((unit) => !dependedOn.has(unit.subtask.id));
 	if (!terminalUnits.some((unit) => stateOf(unit.subtask.id) === "succeeded")) {
+		const reviewSummary = reviewRef ? `Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}; ` : "";
 		return settle.complete(sanitizeText(
 			succeededCount === 0 && strandedCount === 0
-				? `Flow orchestrate: all ${units.length} workers failed; nothing to synthesize.`
-				: `Flow orchestrate: ${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.`,
+				? `Flow orchestrate: ${reviewSummary}all ${units.length} workers failed; nothing to synthesize.`
+				: `Flow orchestrate: ${reviewSummary}${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.`,
 			policy,
 		));
 	}
@@ -474,6 +492,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				? ` Verification REVISE noted by ${verifyRef.agent}.`
 				: ` Verification not completed by ${verifyRef.agent}.`
 		: "";
-	const header = `Flow orchestrate: ${subtaskSummary}, synthesized by ${synthesizerRef.agent}.${verificationSummary}${incompleteHandoffSummary([...settle.results])}`;
+	const reviewSummary = reviewRef ? `Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}; ` : "";
+	const header = `Flow orchestrate: ${reviewSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}.${verificationSummary}${incompleteHandoffSummary([...settle.results])}`;
 	return settle.complete(capModelVisibleText(`${header}${warningNote}\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`));
 }

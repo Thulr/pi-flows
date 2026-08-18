@@ -650,14 +650,15 @@ test("run mode contract metadata centralizes detection, render labels, and defau
   assert.equal(__test.renderRunModeLabel({ task: "x", orchestrate: { recon: { agent: "analyst" } } }), "orchestrate ->analyst");
 });
 
-test("requestedAgentNames covers panel critics and orchestrate.verify (so project-agent gating still applies)", () => {
+test("requestedAgentNames covers panel critics and both orchestrate review roles", () => {
   const defaultNames = __test.requestedAgentNames({ task: "g", evaluate: {}, route: { candidates: ["recon"] }, orchestrate: {}, search: {} });
   for (const name of ["operator", "redteam", "controller", "recon", "commander", "debrief", "strategist"]) assert.ok(defaultNames.has(name), `${name} default role should be a requested agent`);
 
   const evalNames = __test.requestedAgentNames({ task: "g", evaluate: { operator: { agent: "op" }, redteam: [{ agent: "critic-a" }, { agent: "critic-b" }] } });
   for (const name of ["op", "critic-a", "critic-b"]) assert.ok(evalNames.has(name), `${name} should be a requested agent`);
 
-  const orchNames = __test.requestedAgentNames({ task: "g", orchestrate: { verify: { agent: "verifier" } } });
+  const orchNames = __test.requestedAgentNames({ task: "g", orchestrate: { review: { agent: "decomposition-reviewer" }, verify: { agent: "verifier" } } });
+  assert.ok(orchNames.has("decomposition-reviewer"), "orchestrate.review agent should be a requested agent");
   assert.ok(orchNames.has("verifier"), "orchestrate.verify agent should be a requested agent");
 
   const graphNames = __test.requestedAgentNames({ graph: { nodes: [{ id: "a", agent: "node-a", task: "x" }], debrief: { agent: "merge" } } });

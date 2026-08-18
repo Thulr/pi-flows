@@ -187,6 +187,9 @@ export const FlowOrchestrate = Type.Object({
 	commander: Type.Optional(FlowAgentRef),
 	recon: Type.Optional(FlowAgentRef),
 	debrief: Type.Optional(FlowAgentRef),
+	review: Type.Optional(FlowAgentRef),
+	reviewMaxIterations: Type.Optional(Type.Number({ description: "Maximum Decomposition-review attempts. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
+	reviewCriteria: Type.Optional(Type.String({ minLength: 1, description: "Additional Decomposition-review criteria. These criteria add to the fixed quality rubric and cannot replace it." })),
 	verify: Type.Optional(FlowAgentRef),
 	verifyPolicy: Type.Optional(
 		StringEnum(["note", "fail", "revise"] as const, {
@@ -199,7 +202,7 @@ export const FlowOrchestrate = Type.Object({
 	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
 	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on the total subtasks in the commander's decomposition, dependent ones included. Integer 1..${MAX_SUBTASKS}. Default ${MAX_PARALLEL_TASKS}. A flat subtask list is silently cut to this cap; a decomposition with dependency edges is refused DECOMPOSITION_INVALID when it exceeds it, because cutting it would sever edges.`, minimum: 1, maximum: MAX_SUBTASKS })),
 }, {
-	description: "Orchestrator-workers mode: commander decomposes task, recon workers run in parallel, and debrief merges results. The commander may return a flat JSON array of subtask strings, or an array of subtask objects with id/objective and optional dependsOn edges — a dependent subtask runs only after the subtasks it names succeed. commander.contract carries the same array in validated envelope data; verify.contract uses validated data.verdict instead of legacy prose.",
+	description: "Orchestrator-workers mode: commander decomposes the task, an optional review role judges the normalized Decomposition before dispatch, recon workers run by dependency wave, and debrief merges results. A REVISE review starts a bounded commander revision. commander.contract carries the Decomposition in validated envelope data. review.contract and verify.contract use validated data.verdict instead of legacy prose.",
 });
 
 export const FlowGraphNode = Type.Object({

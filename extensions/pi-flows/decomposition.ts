@@ -71,6 +71,23 @@ export interface Decomposition {
 	readonly subtasks: readonly DecompositionSubtask[];
 }
 
+/** Map every prose field while preserving the admitted ids, shape, and dependency edges. */
+export function mapDecompositionProse(decomposition: Decomposition, map: (text: string) => string): Decomposition {
+	const optional = (text: string | undefined) => text === undefined ? undefined : map(text);
+	return {
+		...decomposition,
+		subtasks: decomposition.subtasks.map((subtask) => ({
+			...subtask,
+			objective: map(subtask.objective),
+			scope: optional(subtask.scope),
+			nonGoals: optional(subtask.nonGoals),
+			inputs: optional(subtask.inputs),
+			expectedReturn: optional(subtask.expectedReturn),
+			acceptanceEvidence: optional(subtask.acceptanceEvidence),
+		})),
+	};
+}
+
 /**
  * The charset a commander-chosen subtask id must match, and the length it must
  * stay under.

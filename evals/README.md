@@ -63,6 +63,7 @@ npm run eval -- --failure-ledger=/secure/failures.jsonl # include imported capab
 npm run eval -- --dry-run          # framework smoke: canned results, no model, no thulr calls
 npm run eval:select                # tool-selection eval: should the parent model call flow at all?
 npm run eval:decomposition         # structural eval over the Decomposition gate: deterministic, model-free, free
+npm run eval:decomposition-quality # live Decomposition-review accuracy and paired quality evaluation
 npm run eval:failure -- inspect --ledger=/secure/failures.jsonl # inspect the production-failure ledger
 npm run eval:release -- --run --run-id=release-1.2.3 --attest-hard-blockers # evaluate and decide in one command
 npm run eval:release -- --evidence=/secure/release-evidence.json ... # decide from artifacts already produced
@@ -790,6 +791,32 @@ The script exits `1` when any case does not match. Use `--filter=<text>` to
 select cases by name. This eval is free, so `tests/decomposition-structure-eval.test.ts`
 runs the whole manifest under `npm test`. Do not add the script itself to
 `npm run check`: no eval entrypoint belongs there.
+
+## Decomposition quality
+
+`npm run eval:decomposition-quality` is a live, model-backed evaluation. It remains separate from the deterministic structure evaluation.
+
+The first layer measures reviewer PASS/REVISE accuracy on labeled controls and quality defects. The corpus covers flat and structured Decompositions.
+
+The defect families cover gaps, overlap, oversized subtasks, needless dependencies, weak context, and excessive fragmentation.
+
+The second layer starts each trial from one fixed initial Decomposition. It compares that value with the final replacement from the bounded review loop.
+
+A distinct judge model sees anonymous candidates. Candidate order changes across cases and trials.
+
+The judge scores each goal obligation once. It scores overlap, worker fit, dependencies, and context in the quality composite.
+
+Fragmentation remains a separate dimension. Subtask count remains a separate guardrail and never adds quality points.
+
+The report includes reviewer accuracy, judge calibration, paired quality, fragmentation, subtask count, cost, generated tokens, total tokens, and latency.
+
+The report claims improvement only when the paired quality interval is positive. Fragmentation must not regress, and judge accuracy must be at least 80%.
+
+Use `--trials=<1..5>` for repeated subject trials. Use `--filter=<text>` to select a case or family.
+
+Use `--model=<id>` and `--judge-model=<id>` to select distinct models. Use `--dry-run` for a model-free harness test.
+
+The deterministic calculations run in `tests/decomposition-quality-eval.test.ts`. The live command does not run under `npm run check`.
 
 ## Experiments: champion/challenger (and the optimizer)
 
