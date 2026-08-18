@@ -1,6 +1,6 @@
 // Trace evidence for Decomposition review (issue #160): each attempt has a
 // unique child span, each verdict and retry is explicit, and worker dispatch
-// depends on the final PASS gate.
+// depends on the final PASS boundary.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -31,7 +31,7 @@ const params = (max = 2) => ({
 	},
 });
 
-test("a first PASS records the review gate before worker dispatch", async () => {
+test("a first PASS records the Decomposition review before worker dispatch", async () => {
 	const { stubDir, result } = await runFlow(
 		params(),
 		{ commander: JSON.stringify(replacement), overwatch: "VERDICT: PASS\nComplete.", recon: "FINDING", debrief: "REPORT" },
