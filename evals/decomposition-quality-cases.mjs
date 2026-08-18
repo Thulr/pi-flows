@@ -108,8 +108,8 @@ export function validateDecompositionQualityCases(cases = DECOMPOSITION_QUALITY_
 		if (!testCase?.id || ids.has(testCase.id)) issues.push(`case id is missing or duplicated: ${testCase?.id ?? "<missing>"}`);
 		ids.add(testCase?.id);
 		if (!new Set(["pass", "revise"]).has(testCase?.label)) issues.push(`${testCase?.id}: label must be pass or revise`);
-		if (!testCase?.goal || !Array.isArray(testCase?.entries) || testCase.entries.length === 0) issues.push(`${testCase?.id}: goal and entries are required`);
-		if (!Array.isArray(testCase?.obligations) || testCase.obligations.length === 0) issues.push(`${testCase?.id}: obligations are required`);
+		if (!testCase?.goal || !Array.isArray(testCase?.entries) || testCase.entries.length === 0) issues.push(`${testCase?.id}: each case requires a goal and entries`);
+		if (!Array.isArray(testCase?.obligations) || testCase.obligations.length === 0) issues.push(`${testCase?.id}: each case requires obligations`);
 		const obligationIds = new Set(testCase?.obligations?.map((item) => item.id));
 		if (obligationIds.size !== testCase?.obligations?.length) issues.push(`${testCase?.id}: obligation ids must be unique`);
 	}

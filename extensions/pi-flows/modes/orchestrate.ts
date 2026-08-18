@@ -2,14 +2,14 @@ import { MAX_PARALLEL_TASKS, MAX_SUBTASKS, encodeAuthorKey, flowError, modeSettl
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { mapDecompositionProse, parseDecomposition, validateDecomposition, type DecompositionSubtask } from "../decomposition.ts";
-import { reviewDecomposition, unusableDecompositionError } from "../decomposition-review.ts";
+import { decompositionReviewOptionsRefusal, reviewDecomposition } from "../decomposition-review.ts";
 import { incompleteHandoffSummary, integrationControl } from "../delegation.ts";
 import { consumeIntegrationResult, dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
  * Orchestrate's plan: commander, optional Decomposition reviewer, recon worker,
- * optional outcome verifier, and debrief. Nothing is guarded because the
+ * optional outcome verifier, and debrief. No wave uses a guard because the
  * shared-write check occurs after decomposition. Each role carries its own
  * contract, while debrief also resolves the call fallback.
  */
@@ -69,15 +69,8 @@ const verifyKey = (round: number) => `verify-${round}`;
 export function preSpawnRefusalOrchestrate(params: any): FlowError | null {
 	if (params?.orchestrate === undefined) return null;
 	const spec = params.orchestrate ?? {};
-	const hasReviewOptions = spec.reviewMaxIterations !== undefined || spec.reviewCriteria !== undefined;
-	if (hasReviewOptions && !(spec.review && typeof spec.review.agent === "string" && spec.review.agent.trim())) {
-		return flowError(
-			"INVALID_MODE",
-			"Orchestrate Decomposition-review options require a review role.",
-			"orchestrate.reviewMaxIterations and orchestrate.reviewCriteria only apply when orchestrate.review selects an agent.",
-			"Add orchestrate.review with one agent reference. If you do not want a review role, remove the Decomposition-review options.",
-		);
-	}
+	const reviewRefusal = decompositionReviewOptionsRefusal(spec);
+	if (reviewRefusal) return reviewRefusal;
 	const nestedTask = typeof spec.task === "string" ? spec.task : undefined;
 	const nestedReturnContract = typeof spec.returnContract === "string" ? spec.returnContract : undefined;
 	const goal = params.task ?? nestedTask ?? nestedReturnContract;
@@ -130,7 +123,12 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const decomposerHandoff = decomposerDispatch.handoff;
 	const decomposition = parseDecomposition(integrationControl(decomposerDispatch.result), maxSubtasks);
 	if (!decomposition) {
-		return settle.refuse(unusableDecompositionError());
+		return settle.refuse(flowError(
+			"ORCHESTRATE_NO_SUBTASKS",
+			"Decomposer did not return a usable subtask list.",
+			"The decomposer output contained no non-empty usable JSON array of subtasks.",
+			"Tighten the decomposer task to require a JSON array of either subtask strings or subtask objects, or use chain/single mode for work that does not decompose.",
+		));
 	}
 	const decompositionAdmission = {
 		discovery: deps.discovery,
@@ -296,11 +294,13 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const dependedOn = new Set(units.flatMap((unit) => [...unit.subtask.dependsOn]));
 	const terminalUnits = units.filter((unit) => !dependedOn.has(unit.subtask.id));
 	if (!terminalUnits.some((unit) => stateOf(unit.subtask.id) === "succeeded")) {
-		const reviewSummary = reviewRef ? `Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}. ` : "";
+		if (reviewRef) return settle.complete(sanitizeText(succeededCount === 0 && strandedCount === 0
+			? `Flow orchestrate: Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}. All ${units.length} workers failed. Nothing to synthesize.`
+			: `Flow orchestrate: Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}. ${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.`, policy));
 		return settle.complete(sanitizeText(
 			succeededCount === 0 && strandedCount === 0
-				? `Flow orchestrate: ${reviewSummary}all ${units.length} workers failed; nothing to synthesize.`
-				: `Flow orchestrate: ${reviewSummary}${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.`,
+				? `Flow orchestrate: all ${units.length} workers failed; nothing to synthesize.`
+				: `Flow orchestrate: ${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.`,
 			policy,
 		));
 	}

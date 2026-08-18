@@ -71,7 +71,7 @@ The breakdown a commander returns for a goal — subtasks, plus any dependency e
 _Avoid_: plan, work breakdown, task graph (that reads as graph mode's author-supplied DAG)
 
 **Decomposition review**:
-An optional pre-dispatch judgment that a Decomposition covers its goal with suitably bounded, non-overlapping subtasks and necessary dependency edges. When requested, it must pass before workers can run.
+An optional pre-dispatch judgment that a Decomposition covers its goal with suitably bounded, non-overlapping subtasks and necessary dependency edges. If the caller requests Decomposition review, the review must pass before workers can run.
 _Avoid_: plan review, validation (that names deterministic structural admission), verification (that judges the synthesized outcome)
 
 **Run**:

@@ -54,7 +54,7 @@ The flow does not patch a replacement. A patch can invent ids or edges that neit
 
 Every replacement passes through deterministic structural validation. A structural defect keeps its structural error code and stops the loop.
 
-The loop is bounded by `orchestrate.reviewMaxIterations`. Its default is 2, and its maximum is 4.
+`orchestrate.reviewMaxIterations` bounds the loop. The default is 2. The maximum is 4.
 
 The fixed rubric requires the smallest sufficient set of subtasks. Thus extra subtasks do not improve a review by themselves.
 

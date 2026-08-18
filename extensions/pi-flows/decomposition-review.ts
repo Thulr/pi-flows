@@ -4,7 +4,7 @@ import { consumeIntegrationResult, dispatchIntegrationPlan, integrationRunPlan }
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { resultText, sanitizeText } from "./sanitize.ts";
 import type { Settle } from "./settle.ts";
-import { flowError, type FlowAgentRefInput, type ModeDeps, type ModeOutput } from "./types.ts";
+import { flowError, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput } from "./types.ts";
 import { RETURN_EVIDENCE_REQUIREMENT } from "./validate.ts";
 
 /** The fixed quality rules for every Decomposition review. Caller criteria can add rules, but cannot replace these rules. */
@@ -32,14 +32,17 @@ export function normalizedDecompositionJson(decomposition: Decomposition): strin
 	return JSON.stringify({ shape: decomposition.shape, subtasks }, null, 2);
 }
 
-export interface DecompositionReviewTaskInput {
+interface DecompositionPromptContext {
 	goal: string;
 	returnRequirements?: string;
 	workerReturnRequirements?: string;
 	requireEvidence?: boolean;
 	decomposition: Decomposition;
-	reviewCriteria?: string;
 	contracted?: boolean;
+}
+
+export interface DecompositionReviewTaskInput extends DecompositionPromptContext {
+	reviewCriteria?: string;
 }
 
 /** Build the complete task for one Decomposition-review attempt. */
@@ -67,7 +70,7 @@ export function decompositionReviewTask(input: DecompositionReviewTaskInput): st
 		.join("\n");
 }
 
-function reviewReturnRequirements(input: Pick<DecompositionReviewTaskInput, "returnRequirements" | "workerReturnRequirements" | "requireEvidence">): string[] {
+function reviewReturnRequirements(input: DecompositionPromptContext): string[] {
 	return [
 		input.returnRequirements?.trim(),
 		input.workerReturnRequirements?.trim() ? `Every worker must satisfy this requirement: ${input.workerReturnRequirements.trim()}` : undefined,
@@ -75,15 +78,9 @@ function reviewReturnRequirements(input: Pick<DecompositionReviewTaskInput, "ret
 	].filter((requirement): requirement is string => Boolean(requirement));
 }
 
-export interface DecompositionRevisionTaskInput {
-	goal: string;
-	returnRequirements?: string;
-	workerReturnRequirements?: string;
-	requireEvidence?: boolean;
-	decomposition: Decomposition;
+export interface DecompositionRevisionTaskInput extends DecompositionPromptContext {
 	critique: string;
 	maxSubtasks: number;
-	contracted?: boolean;
 }
 
 /** Build the complete task for one commander revision. The commander must return one replacement, not a patch. */
@@ -106,8 +103,20 @@ export function decompositionRevisionTask(input: DecompositionRevisionTaskInput)
 		.join("\n");
 }
 
-/** The existing parse failure for any commander attempt. Review does not replace this code with a review failure. */
-export function unusableDecompositionError() {
+/** Refuse review-only options when the caller did not select a review role. */
+export function decompositionReviewOptionsRefusal(spec: any): FlowError | null {
+	const hasOptions = spec.reviewMaxIterations !== undefined || spec.reviewCriteria !== undefined;
+	if (!hasOptions || (spec.review && typeof spec.review.agent === "string" && spec.review.agent.trim())) return null;
+	return flowError(
+		"INVALID_MODE",
+		"Orchestrate Decomposition-review options require a review role.",
+		"orchestrate.reviewMaxIterations and orchestrate.reviewCriteria only apply when orchestrate.review selects an agent.",
+		"Add orchestrate.review with one agent reference. If you do not want a review role, remove the Decomposition-review options.",
+	);
+}
+
+/** A replacement that has no subtask array keeps the commander's existing parse-failure code. */
+function unusableReplacementError() {
 	return flowError(
 		"ORCHESTRATE_NO_SUBTASKS",
 		"Decomposer did not return a usable subtask list.",
@@ -151,7 +160,7 @@ function reviewFailure(options: ReviewDecompositionOptions, decomposition: Decom
 		cause,
 		"Narrow the goal. Improve the commander instructions. Increase orchestrate.reviewMaxIterations within its limit. Address the reviewer critique before you rerun the flow.",
 	);
-	const latest = critique?.trim() ? sanitizeText(critique, options.deps.policy, 8 * 1024) : "No usable critique was returned.";
+	const latest = critique?.trim() ? sanitizeText(critique, options.deps.policy, 8 * 1024) : "The reviewer returned no usable critique.";
 	const boundedDecomposition = sanitizeText(normalizedDecompositionJson(decomposition), options.deps.policy, 12 * 1024);
 	return options.settle.refuse(error, {
 		footer: `\n\n## Last admitted Decomposition\n\n${boundedDecomposition}\n\n## Latest review critique\n\n${latest}${options.deps.handoffs.warningSummary()}`,
@@ -264,7 +273,7 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 		}
 
 		const replacement = parseDecomposition(integrationControl(commander.result), options.maxSubtasks);
-		if (!replacement) return { status: "refused", output: settle.refuse(unusableDecompositionError()) };
+		if (!replacement) return { status: "refused", output: settle.refuse(unusableReplacementError()) };
 		const inadmissible = validateDecomposition(replacement, options.admission);
 		if (inadmissible) return { status: "refused", output: settle.refuse(inadmissible) };
 		decomposition = prepareDecomposition(deps, replacement);
