@@ -157,9 +157,10 @@ function reviewFailure(options: ReviewDecompositionOptions, decomposition: Decom
 	});
 }
 
-function budgetFailure(options: ReviewDecompositionOptions, result: FlowRunResult): ModeOutput | undefined {
-	if (result.error?.code !== "BUDGET_EXCEEDED" && result.error?.code !== "BUDGET_UNOBSERVABLE") return undefined;
-	return options.settle.refuse(result.error);
+function bindingFailure(options: ReviewDecompositionOptions, result: FlowRunResult): ModeOutput | undefined {
+	const error = result.error;
+	if (!error || !["BUDGET_EXCEEDED", "BUDGET_UNOBSERVABLE", "HANDOFF_POLICY_VIOLATION"].includes(error.code)) return undefined;
+	return options.settle.refuse(error);
 }
 
 /**
@@ -189,8 +190,8 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 		const dispatched = await dispatchIntegrationPlan(deps, plan.plan!, settle, { completion: "terminal", enforceCompletion: true });
 		if (dispatched.status === "refused") return { status: "refused", output: dispatched.output };
 		if (dispatched.status === "failed") {
-			const budgetOutput = budgetFailure(options, dispatched.result);
-			if (budgetOutput) return { status: "refused", output: budgetOutput };
+			const bindingOutput = bindingFailure(options, dispatched.result);
+			if (bindingOutput) return { status: "refused", output: bindingOutput };
 			return {
 				status: "refused",
 				output: reviewFailure(
@@ -257,8 +258,8 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 		const commander = await dispatchIntegrationPlan(deps, commanderPlan.plan!, settle);
 		if (commander.status === "refused") return { status: "refused", output: commander.output };
 		if (commander.status === "failed") {
-			const budgetOutput = budgetFailure(options, commander.result);
-			if (budgetOutput) return { status: "refused", output: budgetOutput };
+			const bindingOutput = bindingFailure(options, commander.result);
+			if (bindingOutput) return { status: "refused", output: bindingOutput };
 			return {
 				status: "refused",
 				output: reviewFailure(
