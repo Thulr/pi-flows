@@ -179,3 +179,20 @@ test("a contracted reviewer decides only through validated data.verdict", async 
 	assert.equal(result.details.error?.code, "DECOMPOSITION_REVIEW_FAILED");
 	assert.deepEqual(calls.map((call) => call.agent), ["commander", "overwatch"]);
 });
+
+test("later terminal headers retain the successful Decomposition review", async () => {
+	const failed = { reply: "CHILD_FAILED", exitCode: 1 };
+	const cases = [
+		{ orchestrate: {}, plan: { overwatch: "VERDICT: PASS", debrief: failed } },
+		{ orchestrate: { verify: { agent: "overwatch" }, verifyPolicy: "fail" }, plan: { overwatch: ["VERDICT: PASS", failed], debrief: "DRAFT" } },
+		{ orchestrate: { verify: { agent: "overwatch" }, verifyPolicy: "fail" }, plan: { overwatch: ["VERDICT: PASS", "VERDICT: REVISE\nIncomplete."], debrief: "DRAFT" } },
+		{ orchestrate: { verify: { agent: "overwatch" }, verifyPolicy: "revise", verifyMaxIterations: 2 }, plan: { overwatch: ["VERDICT: PASS", "VERDICT: REVISE\nIncomplete."], debrief: ["DRAFT", failed] } },
+	];
+	for (const testCase of cases) {
+		const { text } = await runFlow(
+			{ task: "Map auth.", orchestrate: orchestrate(testCase.orchestrate) },
+			{ commander: JSON.stringify(first), recon: "FINDING", ...testCase.plan },
+		);
+		assert.match(text, /Decomposition review PASS after 1 attempt/);
+	}
+});

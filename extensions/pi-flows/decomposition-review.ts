@@ -1,4 +1,4 @@
-import { mapDecompositionProse, parseDecomposition, validateDecomposition, type Decomposition, type DecompositionAdmission } from "./decomposition.ts";
+import { mapDecompositionProse, parseDecomposition, unusableDecompositionError, validateDecomposition, type Decomposition, type DecompositionAdmission } from "./decomposition.ts";
 import { integrationControl } from "./delegation.ts";
 import { consumeIntegrationResult, dispatchIntegrationPlan, integrationRunPlan } from "./integration.ts";
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
@@ -112,16 +112,6 @@ export function decompositionReviewOptionsRefusal(spec: any): FlowError | null {
 		"Orchestrate Decomposition-review options require a review role.",
 		"orchestrate.reviewMaxIterations and orchestrate.reviewCriteria only apply when orchestrate.review selects an agent.",
 		"Add orchestrate.review with one agent reference. If you do not want a review role, remove the Decomposition-review options.",
-	);
-}
-
-/** A replacement that has no subtask array keeps the commander's existing parse-failure code. */
-function unusableReplacementError() {
-	return flowError(
-		"ORCHESTRATE_NO_SUBTASKS",
-		"Decomposer did not return a usable subtask list.",
-		"The decomposer output contained no non-empty usable JSON array of subtasks.",
-		"For a Decomposition, require a JSON array of subtask strings or objects. For work that does not decompose, use chain or single mode.",
 	);
 }
 
@@ -273,7 +263,7 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 		}
 
 		const replacement = parseDecomposition(integrationControl(commander.result), options.maxSubtasks);
-		if (!replacement) return { status: "refused", output: settle.refuse(unusableReplacementError()) };
+		if (!replacement) return { status: "refused", output: settle.refuse(unusableDecompositionError("replacement")) };
 		const inadmissible = validateDecomposition(replacement, options.admission);
 		if (inadmissible) return { status: "refused", output: settle.refuse(inadmissible) };
 		decomposition = prepareDecomposition(deps, replacement);

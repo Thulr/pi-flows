@@ -1,7 +1,7 @@
 import { MAX_PARALLEL_TASKS, MAX_SUBTASKS, encodeAuthorKey, flowError, modeSettle, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
-import { mapDecompositionProse, parseDecomposition, validateDecomposition, type DecompositionSubtask } from "../decomposition.ts";
+import { mapDecompositionProse, parseDecomposition, unusableDecompositionError, validateDecomposition, type DecompositionSubtask } from "../decomposition.ts";
 import { decompositionReviewOptionsRefusal, reviewDecomposition } from "../decomposition-review.ts";
 import { incompleteHandoffSummary, integrationControl } from "../delegation.ts";
 import { consumeIntegrationResult, dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
@@ -123,12 +123,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const decomposerHandoff = decomposerDispatch.handoff;
 	const decomposition = parseDecomposition(integrationControl(decomposerDispatch.result), maxSubtasks);
 	if (!decomposition) {
-		return settle.refuse(flowError(
-			"ORCHESTRATE_NO_SUBTASKS",
-			"Decomposer did not return a usable subtask list.",
-			"The decomposer output contained no non-empty usable JSON array of subtasks.",
-			"Tighten the decomposer task to require a JSON array of either subtask strings or subtask objects, or use chain/single mode for work that does not decompose.",
-		));
+		return settle.refuse(unusableDecompositionError());
 	}
 	const decompositionAdmission = {
 		discovery: deps.discovery,
@@ -165,6 +160,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		decompositionDependencyKeys = reviewed.dependencyKeys;
 		decompositionReviewAttempts = reviewed.attempts;
 	}
+	const reviewSummary = reviewRef ? `Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}. ` : "";
 
 	const dispatchDecomposition = reviewRef
 		? admittedDecomposition
@@ -295,8 +291,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const terminalUnits = units.filter((unit) => !dependedOn.has(unit.subtask.id));
 	if (!terminalUnits.some((unit) => stateOf(unit.subtask.id) === "succeeded")) {
 		if (reviewRef) return settle.complete(sanitizeText(succeededCount === 0 && strandedCount === 0
-			? `Flow orchestrate: Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}. All ${units.length} workers failed. Nothing to synthesize.`
-			: `Flow orchestrate: Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}. ${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.`, policy));
+			? `Flow orchestrate: ${reviewSummary}All ${units.length} workers failed. Nothing to synthesize.`
+			: `Flow orchestrate: ${reviewSummary}${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.`, policy));
 		return settle.complete(sanitizeText(
 			succeededCount === 0 && strandedCount === 0
 				? `Flow orchestrate: all ${units.length} workers failed; nothing to synthesize.`
@@ -382,7 +378,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	if (synthesisPlan.error) return settle.refuse(synthesisPlan.error);
 	const synthesisDispatch = await dispatchIntegrationPlan(deps, synthesisPlan.plan!, settle, { completion: verifyRef ? "integrate" : "terminal", enforceCompletion: true });
 	if (synthesisDispatch.status === "failed") {
-		return settle.complete(sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed.\n\n${resultText(synthesisDispatch.result)}`, policy));
+		return settle.complete(sanitizeText(`Flow orchestrate: ${reviewSummary}${reviewRef ? "Synthesizer" : "synthesizer"} "${synthesizerRef.agent}" failed.\n\n${resultText(synthesisDispatch.result)}`, policy));
 	}
 	if (synthesisDispatch.status === "refused") return synthesisDispatch.output;
 	let synthesized = synthesisDispatch.result;
@@ -431,7 +427,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					`Orchestrate verifier "${verifyRef.agent}" failed.`,
 					`The verifier child run failed or returned no usable verdict, so the ${verifyPolicy} policy cannot prove the synthesized answer passed.`,
 				);
-				return verificationRefusal(error, `Flow orchestrate: ${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification failed.`);
+				return verificationRefusal(error, `Flow orchestrate: ${reviewSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification failed.`);
 			}
 			if (verifyDispatch.status === "refused") return verifyDispatch.output;
 			const verified = verifyDispatch.result;
@@ -453,7 +449,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					"Orchestrate verification returned REVISE.",
 					`Verifier "${verifyRef.agent}" returned REVISE after ${round} verification round${round === 1 ? "" : "s"} under verifyPolicy "${verifyPolicy}".`,
 				);
-				return verificationRefusal(error, `Flow orchestrate: ${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`);
+				return verificationRefusal(error, `Flow orchestrate: ${reviewSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`);
 			}
 
 			// The verdict crossed as a terminal report above; the critique crossing
@@ -477,7 +473,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			if (synthesisPlan.error) return settle.refuse(synthesisPlan.error);
 			const revised = await dispatchIntegrationPlan(deps, synthesisPlan.plan!, settle);
 			if (revised.status === "failed") {
-				return settle.complete(sanitizeText(`Flow orchestrate: synthesizer "${synthesizerRef.agent}" failed while revising after verifier feedback.\n\n${resultText(revised.result)}`, policy));
+				return settle.complete(sanitizeText(`Flow orchestrate: ${reviewSummary}${reviewRef ? "Synthesizer" : "synthesizer"} "${synthesizerRef.agent}" failed while revising after verifier feedback.\n\n${resultText(revised.result)}`, policy));
 			}
 			if (revised.status === "refused") return revised.output;
 			synthesized = revised.result;
@@ -493,7 +489,6 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				? ` Verification REVISE noted by ${verifyRef.agent}.`
 				: ` Verification not completed by ${verifyRef.agent}.`
 		: "";
-	const reviewSummary = reviewRef ? `Decomposition review PASS after ${decompositionReviewAttempts} attempt${decompositionReviewAttempts === 1 ? "" : "s"}. ` : "";
 	const header = `Flow orchestrate: ${reviewSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}.${verificationSummary}${incompleteHandoffSummary([...settle.results])}`;
 	return settle.complete(capModelVisibleText(`${header}${warningNote}\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`));
 }
