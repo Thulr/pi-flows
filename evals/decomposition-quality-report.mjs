@@ -11,6 +11,7 @@ export function decompositionPresentationOrder(caseIndex, trialIndex) {
 const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 const rounded = (value) => value === null ? null : Number(value.toFixed(6));
 const finiteScore = (value) => Number.isFinite(value) && value >= 0 && value <= QUALITY_SCORE_MAX;
+const finiteUnitScore = (value) => Number.isFinite(value) && value >= 0 && value <= 1;
 
 /** The quality score excludes fragmentation and subtask count. Those values are separate guardrails. */
 export function decompositionQualityScore(judgment, obligations) {
@@ -70,7 +71,8 @@ export function aggregateMetrics(rows, read = (row) => row.metrics) {
 
 /** Build paired quality evidence. A positive quality interval alone is not enough when fragmentation regresses. */
 export function pairedDecompositionQualityReport(rows, judgeCalibration) {
-	const eligible = rows.filter((row) => row.reviewPassed === true && Number.isFinite(row.initialQuality) && Number.isFinite(row.finalQuality));
+	const eligible = rows.filter((row) => row.reviewPassed === true
+		&& [row.initialQuality, row.finalQuality, row.initialFragmentation, row.finalFragmentation].every(finiteUnitScore));
 	const initial = caseClustered(eligible, (row) => row.initialQuality);
 	const final = caseClustered(eligible, (row) => row.finalQuality);
 	const deltas = caseClustered(eligible, (row) => row.finalQuality - row.initialQuality);

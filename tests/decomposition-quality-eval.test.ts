@@ -68,6 +68,12 @@ test("the paired report claims improvement only for a positive interval without 
 	const rejected = pairedDecompositionQualityReport(rows.map((row) => ({ ...row, reviewPassed: false })), calibration);
 	assert.equal(rejected.rows, 0);
 	assert.equal(rejected.claimImprovement, false);
+
+	for (const invalid of [Number.NaN, -0.25, 1.25]) {
+		const malformed = pairedDecompositionQualityReport(rows.map((row) => ({ ...row, finalFragmentation: invalid })), calibration);
+		assert.equal(malformed.rows, 0);
+		assert.equal(malformed.claimImprovement, false);
+	}
 });
 
 test("candidate presentation order is blind and counterbalanced", () => {
