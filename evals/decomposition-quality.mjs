@@ -12,7 +12,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { decompositionReviewTask, decompositionRevisionTask, normalizedDecompositionJson } from "../extensions/pi-flows/decomposition-review.ts";
 import { parseDecomposition, validateDecomposition } from "../extensions/pi-flows/decomposition.ts";
 import { extractLastJsonBlock, parseVerdict } from "../extensions/pi-flows/protocol.ts";
@@ -61,7 +60,6 @@ if (selected.length === 0) refusal(`No Decomposition-quality case matches "${fil
 if (!dryRun && subjectModel === judgeModel) refusal("The subject and judge models must be different. Use --model and --judge-model with distinct model ids.");
 if (!dryRun && !runPreflight([requireBinary("pi", "`pi` was not found on PATH. Install and configure pi before you run the live Decomposition-quality evaluation.")])) process.exit(2);
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workspace = mkdtempSync(path.join(tmpdir(), "pi-decomposition-quality-"));
 const flow = dryRun ? null : flowTool();
 
@@ -143,7 +141,14 @@ function readJudgments(text, names) {
 
 async function judge(testCase, candidates) {
 	const startedAt = Date.now();
-	const result = await runPlainPi({ task: judgePrompt(testCase, candidates), cwd: repoRoot, model: judgeModel, timeoutMs, maxCostUsd: runCapUsd });
+	const result = await runPlainPi({
+		task: judgePrompt(testCase, candidates),
+		cwd: workspace,
+		model: judgeModel,
+		tools: [],
+		timeoutMs,
+		maxCostUsd: runCapUsd,
+	});
 	const problem = infraError(result);
 	if (problem) throw new Error(`judge did not reach its model: ${problem}`);
 	return {
