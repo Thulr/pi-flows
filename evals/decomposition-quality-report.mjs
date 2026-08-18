@@ -22,6 +22,11 @@ export function decompositionQualityScore(judgment, obligations) {
 	return rounded(mean(scores) / QUALITY_SCORE_MAX);
 }
 
+/** Normalize one valid raw judge score. Invalid values stay ineligible. */
+export function normalizedFragmentationScore(value) {
+	return finiteScore(value) ? value / QUALITY_SCORE_MAX : null;
+}
+
 /** PASS requires every quality and fragmentation score to be at least 3. Missing scores fail safe to REVISE. */
 export function judgmentVerdict(judgment, obligations) {
 	const scores = [

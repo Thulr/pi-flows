@@ -1,14 +1,6 @@
-// Live model-backed Decomposition-quality evaluation for issue #160.
-//
-// Layer 1 measures PASS/REVISE accuracy on a labeled corpus. Layer 2 starts
-// each paired trial from one fixed Decomposition, runs the shipped review and
-// revision prompts, then compares that initial value with the final replacement.
-// A distinct judge model sees anonymous candidates in counterbalanced order.
-//
-// Usage:
-//   npm run eval:decomposition-quality
-//   npm run eval:decomposition-quality -- --trials=2 --filter=coverage
-//   npm run eval:decomposition-quality -- --dry-run
+// Live model-backed Decomposition-quality evaluation. It calibrates review
+// verdicts and compares initial and reviewed Decompositions. A separate judge
+// sees counterbalanced anonymous candidates.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -27,6 +19,7 @@ import {
 	decompositionQualityScore,
 	formatDecompositionQualityReport,
 	judgmentVerdict,
+	normalizedFragmentationScore,
 	pairedDecompositionQualityReport,
 	verdictAccuracy,
 } from "./decomposition-quality-report.mjs";
@@ -260,8 +253,8 @@ async function main() {
 				reviewPassed: subject.passed,
 				initialQuality: decompositionQualityScore(initialJudgment, testCase.obligations),
 				finalQuality: decompositionQualityScore(finalJudgment, testCase.obligations),
-				initialFragmentation: Number(initialJudgment.fragmentation) / 4,
-				finalFragmentation: Number(finalJudgment.fragmentation) / 4,
+				initialFragmentation: normalizedFragmentationScore(initialJudgment.fragmentation),
+				finalFragmentation: normalizedFragmentationScore(finalJudgment.fragmentation),
 				initialSubtasks: initial.subtasks.length,
 				finalSubtasks: subject.final.subtasks.length,
 				subjectMetrics: subject.metrics,

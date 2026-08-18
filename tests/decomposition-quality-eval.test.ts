@@ -11,6 +11,7 @@ import {
 	decompositionPresentationOrder,
 	decompositionQualityScore,
 	judgmentVerdict,
+	normalizedFragmentationScore,
 	pairedDecompositionQualityReport,
 	verdictAccuracy,
 } from "../evals/decomposition-quality-report.mjs";
@@ -40,6 +41,13 @@ test("each goal obligation is required once and missing scores fail safe", () =>
 	assert.equal(decompositionQualityScore(good, obligations), 1);
 	assert.equal(decompositionQualityScore({ ...good, obligations: { a: 4 } }, obligations), null);
 	assert.equal(judgmentVerdict({ ...good, obligations: { a: 4 } }, obligations), "revise");
+});
+
+test("fragmentation normalization rejects nonnumeric and out-of-range judge values", () => {
+	assert.equal(normalizedFragmentationScore(4), 1);
+	for (const invalid of [null, "", true, Number.NaN, -1, 5]) {
+		assert.equal(normalizedFragmentationScore(invalid), null);
+	}
 });
 
 test("the paired report claims improvement only for a positive interval without fragmentation regression", () => {
