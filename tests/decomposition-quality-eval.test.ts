@@ -40,12 +40,14 @@ test("extra subtasks cannot increase the quality score by themselves", () => {
 test("each goal obligation is required once and missing scores fail safe", () => {
 	assert.equal(decompositionQualityScore(good, obligations), 1);
 	assert.equal(decompositionQualityScore({ ...good, obligations: { a: 4 } }, obligations), null);
+	assert.equal(decompositionQualityScore({ ...good, overlap: 3.5 }, obligations), null);
 	assert.equal(judgmentVerdict({ ...good, obligations: { a: 4 } }, obligations), "revise");
+	assert.equal(judgmentVerdict({ ...good, overlap: 3.5 }, obligations), "revise");
 });
 
 test("fragmentation normalization rejects nonnumeric and out-of-range judge values", () => {
 	assert.equal(normalizedFragmentationScore(4), 1);
-	for (const invalid of [null, "", true, Number.NaN, -1, 5]) {
+	for (const invalid of [null, "", true, Number.NaN, -1, 3.5, 5]) {
 		assert.equal(normalizedFragmentationScore(invalid), null);
 	}
 });

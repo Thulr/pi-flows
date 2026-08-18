@@ -10,7 +10,7 @@ export function decompositionPresentationOrder(caseIndex, trialIndex) {
 
 const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 const rounded = (value) => value === null ? null : Number(value.toFixed(6));
-const finiteScore = (value) => Number.isFinite(value) && value >= 0 && value <= QUALITY_SCORE_MAX;
+const finiteScore = (value) => Number.isInteger(value) && value >= 0 && value <= QUALITY_SCORE_MAX;
 const finiteUnitScore = (value) => Number.isFinite(value) && value >= 0 && value <= 1;
 
 /** The quality score excludes fragmentation and subtask count. Those values are separate guardrails. */
