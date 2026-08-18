@@ -4,7 +4,7 @@ import { consumeIntegrationResult, dispatchIntegrationPlan, integrationRunPlan }
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "./protocol.ts";
 import { resultText, sanitizeText } from "./sanitize.ts";
 import type { Settle } from "./settle.ts";
-import { flowError, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput } from "./types.ts";
+import { flowError, type FlowAgentRefInput, type FlowError, type FlowRunResult, type ModeDeps, type ModeOutput } from "./types.ts";
 import { RETURN_EVIDENCE_REQUIREMENT } from "./validate.ts";
 
 /** The fixed quality rules for every Decomposition review. Caller criteria can add rules, but cannot replace these rules. */
@@ -157,6 +157,11 @@ function reviewFailure(options: ReviewDecompositionOptions, decomposition: Decom
 	});
 }
 
+function budgetFailure(options: ReviewDecompositionOptions, result: FlowRunResult): ModeOutput | undefined {
+	if (result.error?.code !== "BUDGET_EXCEEDED" && result.error?.code !== "BUDGET_UNOBSERVABLE") return undefined;
+	return options.settle.refuse(result.error);
+}
+
 /**
  * Run the bounded Decomposition-review loop.
  *
@@ -184,6 +189,8 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 		const dispatched = await dispatchIntegrationPlan(deps, plan.plan!, settle, { completion: "terminal", enforceCompletion: true });
 		if (dispatched.status === "refused") return { status: "refused", output: dispatched.output };
 		if (dispatched.status === "failed") {
+			const budgetOutput = budgetFailure(options, dispatched.result);
+			if (budgetOutput) return { status: "refused", output: budgetOutput };
 			return {
 				status: "refused",
 				output: reviewFailure(
@@ -250,6 +257,8 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 		const commander = await dispatchIntegrationPlan(deps, commanderPlan.plan!, settle);
 		if (commander.status === "refused") return { status: "refused", output: commander.output };
 		if (commander.status === "failed") {
+			const budgetOutput = budgetFailure(options, commander.result);
+			if (budgetOutput) return { status: "refused", output: budgetOutput };
 			return {
 				status: "refused",
 				output: reviewFailure(

@@ -105,6 +105,41 @@ test("an unreadable review verdict fails safe to REVISE", async () => {
 	assert.deepEqual(calls.map((call) => call.agent), ["commander", "overwatch"]);
 });
 
+test("review and revision runs preserve binding budget errors", async () => {
+	const cases = [
+		{
+			params: { maxGeneratedTokens: 12 },
+			plan: { commander: JSON.stringify(first), overwatch: { reply: "VERDICT: PASS", holdOpenMs: 5_000 } },
+			code: "BUDGET_EXCEEDED",
+			agents: ["commander", "overwatch"],
+		},
+		{
+			params: { maxGeneratedTokens: 20 },
+			plan: {
+				commander: [JSON.stringify(first), { reply: JSON.stringify(replacement), holdOpenMs: 5_000 }],
+				overwatch: "VERDICT: REVISE\nAdd the missing path.",
+			},
+			code: "BUDGET_EXCEEDED",
+			agents: ["commander", "overwatch", "commander"],
+		},
+		{
+			params: { maxCostUsd: 1 },
+			plan: { commander: JSON.stringify(first), overwatch: { reply: "VERDICT: PASS", omitCost: true, holdOpenMs: 5_000 } },
+			code: "BUDGET_UNOBSERVABLE",
+			agents: ["commander", "overwatch"],
+		},
+	];
+	for (const testCase of cases) {
+		const { result, calls, text } = await runFlow(
+			{ task: "Map auth.", orchestrate: orchestrate({ reviewMaxIterations: 2 }), ...testCase.params },
+			testCase.plan,
+		);
+		assert.equal(result.details.error?.code, testCase.code);
+		assert.deepEqual(calls.map((call) => call.agent), testCase.agents);
+		assert.doesNotMatch(text, /DECOMPOSITION_REVIEW_FAILED/);
+	}
+});
+
 test("review options without a review role refuse before the commander starts", async () => {
 	for (const option of [{ reviewMaxIterations: 3 }, { reviewCriteria: "Cover every route." }]) {
 		const { result, calls } = await runFlow(

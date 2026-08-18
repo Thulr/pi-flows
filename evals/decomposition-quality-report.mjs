@@ -70,7 +70,7 @@ export function aggregateMetrics(rows, read = (row) => row.metrics) {
 
 /** Build paired quality evidence. A positive quality interval alone is not enough when fragmentation regresses. */
 export function pairedDecompositionQualityReport(rows, judgeCalibration) {
-	const eligible = rows.filter((row) => Number.isFinite(row.initialQuality) && Number.isFinite(row.finalQuality));
+	const eligible = rows.filter((row) => row.reviewPassed === true && Number.isFinite(row.initialQuality) && Number.isFinite(row.finalQuality));
 	const initial = caseClustered(eligible, (row) => row.initialQuality);
 	const final = caseClustered(eligible, (row) => row.finalQuality);
 	const deltas = caseClustered(eligible, (row) => row.finalQuality - row.initialQuality);

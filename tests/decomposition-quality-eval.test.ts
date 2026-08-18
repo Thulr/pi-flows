@@ -45,6 +45,7 @@ test("each goal obligation is required once and missing scores fail safe", () =>
 test("the paired report claims improvement only for a positive interval without fragmentation regression", () => {
 	const rows = ["one", "two", "three"].map((caseId) => ({
 		caseId,
+		reviewPassed: true,
 		initialQuality: 0.4,
 		finalQuality: 0.8,
 		initialFragmentation: 0.5,
@@ -63,6 +64,10 @@ test("the paired report claims improvement only for a positive interval without 
 
 	const uncalibrated = pairedDecompositionQualityReport(rows, { ...calibration, accuracy: 0.5 });
 	assert.equal(uncalibrated.claimImprovement, false);
+
+	const rejected = pairedDecompositionQualityReport(rows.map((row) => ({ ...row, reviewPassed: false })), calibration);
+	assert.equal(rejected.rows, 0);
+	assert.equal(rejected.claimImprovement, false);
 });
 
 test("candidate presentation order is blind and counterbalanced", () => {
