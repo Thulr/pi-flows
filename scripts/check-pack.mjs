@@ -380,6 +380,6 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // packaged Supporting module owns the bounded review and revision loop. The
 // schema, orchestrate mode, glossary, and user documents expose its contract.
 // The file set grows to 114 for decomposition-review.ts. No file from tests/,
-// scripts/, or evals/ ships; measured 1_391_674.
+// scripts/, or evals/ ships. The measured size is 1_391_674.
 assert.ok(pack.unpackedSize < 1_392_200, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

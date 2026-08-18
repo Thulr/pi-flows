@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
 import { DECOMPOSITION_REVIEW_RUBRIC } from "../extensions/pi-flows/decomposition-review.ts";
+import { flowParamsSchemaError } from "../extensions/pi-flows/schema.ts";
 import { byAgent, runFlow } from "./stub-harness.ts";
 
 const orchestrate = (extra: Record<string, unknown> = {}) => ({
@@ -27,14 +28,24 @@ const replacement = [
 
 test("a first-attempt PASS dispatches the exact normalized Decomposition that the reviewer judged", async () => {
 	const { result, calls, text } = await runFlow(
-		{ task: "Map login and refresh.", returnContract: "Name both paths.", orchestrate: orchestrate({ reviewCriteria: "Each path must name its entry route." }) },
+		{
+			task: "Map login and refresh.",
+			returnContract: "Name both paths.",
+			requireEvidence: true,
+			orchestrate: orchestrate({
+				reviewCriteria: "Each path must name its entry route.",
+				workerReturnContract: "Return file and symbol names.",
+			}),
+		},
 		{ commander: JSON.stringify(first), overwatch: "VERDICT: PASS\nAll criteria pass.", recon: "WORKER_FINDING", debrief: "MERGED_DOC" },
 	);
 
 	assert.equal(result.details.error, undefined);
 	assert.deepEqual(calls.map((call) => call.agent), ["commander", "overwatch", "recon", "recon", "debrief"]);
 	const reviewTask = byAgent(calls, "overwatch")[0].task;
-	assert.match(reviewTask, /## Return requirements\nName both paths\./);
+	assert.match(reviewTask, /## Return requirements\n- Name both paths\./);
+	assert.match(reviewTask, /Every worker must satisfy this requirement: Return file and symbol names\./);
+	assert.match(reviewTask, /Ground every load-bearing claim in concrete evidence/);
 	assert.match(reviewTask, /"shape": "structured"/);
 	assert.match(reviewTask, /"objective": "Map token refresh"/);
 	assert.match(reviewTask, /Each path must name its entry route\./);
@@ -103,6 +114,13 @@ test("review options without a review role refuse before the commander starts", 
 		assert.equal(result.details.error?.code, "INVALID_MODE");
 		assert.deepEqual(calls, []);
 	}
+});
+
+test("the public schema requires an integer review-attempt bound", () => {
+	assert.match(
+		flowParamsSchemaError({ task: "Map auth.", why: "review the breakdown", orchestrate: orchestrate({ reviewMaxIterations: 1.5 }) }) ?? "",
+		/must be integer/,
+	);
 });
 
 test("a structurally invalid commander replacement keeps the structural refusal code", async () => {

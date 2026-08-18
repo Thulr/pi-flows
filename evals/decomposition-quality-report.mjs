@@ -106,11 +106,11 @@ export function formatDecompositionQualityReport(report) {
 	return [
 		`review verdict accuracy  ${report.reviewerAccuracy.correct}/${report.reviewerAccuracy.cases} (${percent(report.reviewerAccuracy.accuracy)})`,
 		`judge calibration        ${report.judgeAccuracy.correct}/${report.judgeAccuracy.cases} (${percent(report.judgeAccuracy.accuracy)})`,
-		`paired quality           ${number(report.paired.quality.initialMean)} -> ${number(report.paired.quality.finalMean)}; delta ${number(report.paired.quality.meanDelta)}; 95% CI ${interval ? `[${number(interval.lower)}, ${number(interval.upper)}]` : "n/a"}`,
-		`fragmentation            ${number(report.paired.fragmentation.initialMean)} -> ${number(report.paired.fragmentation.finalMean)}; delta ${number(report.paired.fragmentation.meanDelta)}`,
-		`subtask-count guardrail  ${number(report.paired.subtaskCount.initialMean)} -> ${number(report.paired.subtaskCount.finalMean)}; delta ${number(report.paired.subtaskCount.meanDelta)}`,
-		`subject resources        $${report.subjectMetrics.costUsd.toFixed(4)}; ${report.subjectMetrics.generatedTokens} generated tokens; ${report.subjectMetrics.totalTokens} total tokens; ${report.subjectMetrics.latencyMs}ms`,
-		`judge resources          $${report.judgeMetrics.costUsd.toFixed(4)}; ${report.judgeMetrics.generatedTokens} generated tokens; ${report.judgeMetrics.totalTokens} total tokens; ${report.judgeMetrics.latencyMs}ms`,
-		`improvement claim        ${report.paired.claimImprovement ? "YES" : `NO — ${report.paired.claimBlockers.join("; ")}`}`,
+		`paired quality           ${number(report.paired.quality.initialMean)} -> ${number(report.paired.quality.finalMean)} | delta ${number(report.paired.quality.meanDelta)} | 95% CI ${interval ? `[${number(interval.lower)}, ${number(interval.upper)}]` : "n/a"}`,
+		`fragmentation            ${number(report.paired.fragmentation.initialMean)} -> ${number(report.paired.fragmentation.finalMean)} | delta ${number(report.paired.fragmentation.meanDelta)}`,
+		`subtask-count guardrail  ${number(report.paired.subtaskCount.initialMean)} -> ${number(report.paired.subtaskCount.finalMean)} | delta ${number(report.paired.subtaskCount.meanDelta)}`,
+		`subject resources        $${report.subjectMetrics.costUsd.toFixed(4)} | ${report.subjectMetrics.generatedTokens} generated tokens | ${report.subjectMetrics.totalTokens} total tokens | ${report.subjectMetrics.latencyMs}ms`,
+		`judge resources          $${report.judgeMetrics.costUsd.toFixed(4)} | ${report.judgeMetrics.generatedTokens} generated tokens | ${report.judgeMetrics.totalTokens} total tokens | ${report.judgeMetrics.latencyMs}ms`,
+		`improvement claim        ${report.paired.claimImprovement ? "YES" : `NO — ${report.paired.claimBlockers.join(" | ")}`}`,
 	].join("\n");
 }

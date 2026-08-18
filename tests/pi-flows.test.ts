@@ -658,7 +658,7 @@ test("requestedAgentNames covers panel critics and both orchestrate review roles
   for (const name of ["op", "critic-a", "critic-b"]) assert.ok(evalNames.has(name), `${name} should be a requested agent`);
 
   const orchNames = __test.requestedAgentNames({ task: "g", orchestrate: { review: { agent: "decomposition-reviewer" }, verify: { agent: "verifier" } } });
-  assert.ok(orchNames.has("decomposition-reviewer"), "orchestrate.review agent should be a requested agent");
+  assert.ok(orchNames.has("decomposition-reviewer"), "orchestrate.review agent must be a requested agent");
   assert.ok(orchNames.has("verifier"), "orchestrate.verify agent should be a requested agent");
 
   const graphNames = __test.requestedAgentNames({ graph: { nodes: [{ id: "a", agent: "node-a", task: "x" }], debrief: { agent: "merge" } } });

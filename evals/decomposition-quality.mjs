@@ -97,7 +97,7 @@ async function runRole(agent, task) {
 		{ cwd: workspace, hasUI: false, ui: { confirm: async () => true, notify: () => undefined } },
 	);
 	const problem = infraError(result);
-	if (problem) throw new Error(`${agent} could not reach the subject model: ${problem}`);
+	if (problem) throw new Error(`${agent} did not reach the subject model: ${problem}`);
 	return { text: answerText(result), metrics: resultMetrics(result, Date.now() - startedAt) };
 }
 
@@ -113,7 +113,7 @@ function judgePrompt(testCase, candidates) {
 		"Return only one JSON object. Put each candidate under candidates.A or candidates.B.",
 		"For each candidate, return obligations as an id-to-score object.",
 		"Also return overlap, workerFit, dependencies, context, and fragmentation scores.",
-		"Use a high fragmentation score only when the candidate uses the smallest sufficient set of subtasks.",
+		"Only when the candidate uses the smallest sufficient set of subtasks, use a high fragmentation score.",
 		"\n## Goal",
 		testCase.goal,
 		testCase.returnRequirements ? "\n## Return requirements" : "",
@@ -145,7 +145,7 @@ async function judge(testCase, candidates) {
 	const startedAt = Date.now();
 	const result = await runPlainPi({ task: judgePrompt(testCase, candidates), cwd: repoRoot, model: judgeModel, timeoutMs, maxCostUsd: runCapUsd });
 	const problem = infraError(result);
-	if (problem) throw new Error(`judge could not reach its model: ${problem}`);
+	if (problem) throw new Error(`judge did not reach its model: ${problem}`);
 	return {
 		judgments: readJudgments(answerText(result), Object.keys(candidates)),
 		metrics: resultMetrics(result, Date.now() - startedAt),

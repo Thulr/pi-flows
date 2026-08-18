@@ -277,7 +277,7 @@ Cause: the final Decomposition review returned REVISE. This error also occurs wh
 
 No worker starts after this error. The output includes the last admitted Decomposition and the latest bounded critique.
 
-Fix: read the critique. Narrow the goal, or improve the commander instructions.
+Fix: read the critique. Narrow the goal. Improve the commander instructions.
 
 If another attempt is appropriate, increase `orchestrate.reviewMaxIterations` to a maximum of 4. Do not replay the call without a material change.
 

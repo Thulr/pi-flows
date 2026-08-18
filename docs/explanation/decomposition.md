@@ -50,7 +50,7 @@ The reviewer sees the normalized Decomposition, not raw commander prose. Thus it
 
 A REVISE verdict starts a new commander Run when another attempt remains. The commander returns one complete replacement Decomposition.
 
-The flow does not patch a replacement. A patch could invent ids or edges that neither child returned.
+The flow does not patch a replacement. A patch can invent ids or edges that neither child returned.
 
 Every replacement passes through deterministic structural validation. A structural defect keeps its structural error code and stops the loop.
 

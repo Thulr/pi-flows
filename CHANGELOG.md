@@ -10,6 +10,14 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Orchestrate can now review a Decomposition before worker dispatch (#160).
+  The optional review role judges the normalized Decomposition against a fixed
+  quality rubric and caller criteria. A bounded REVISE loop asks the commander
+  for a complete replacement. Each replacement passes structural admission.
+  Failed or exhausted reviews return `DECOMPOSITION_REVIEW_FAILED` before any
+  worker starts. The new `npm run eval:decomposition-quality` command measures
+  verdict accuracy and paired quality without rewarding extra subtasks.
+
 - Orchestrate's commander can now return a dependency-aware Decomposition
   (#148): a JSON array of subtask objects carrying `id`, `objective`, and
   optional `dependsOn`, `scope`, `nonGoals`, `inputs`, `expectedReturn`, and
