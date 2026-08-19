@@ -382,5 +382,12 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // glossary, changelog, and user documents expose the contract.
 // The file set grows to 114 for decomposition-review.ts. No file from tests/,
 // scripts/, or evals/ ships. The measured size is 1_394_429.
-assert.ok(pack.unpackedSize < 1_395_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_425_000 for #164 (the budget headroom gate): effortWeight joins
+// the subtask type, parser, validator, published return schema, reviewer JSON,
+// and commander prompt; Budget gains the headroom projection and its refusal;
+// orchestrate gains the pre-dispatch gate, the replan-smaller route, and the
+// per-wave budget stranding. The file set grows to 116 for the two size splits
+// (decomposition-graph.ts, modes/orchestrate-outcomes.ts). No file from
+// tests/, scripts/, or evals/ ships. The measured size is 1_415_957.
+assert.ok(pack.unpackedSize < 1_425_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

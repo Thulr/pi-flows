@@ -10,6 +10,22 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Orchestrate now gates an admitted Decomposition on budget headroom (#164).
+  Each subtask can carry an optional `effortWeight` (integer 1..5, absent means
+  1, malformed refused `DECOMPOSITION_INVALID`) through the parser, the
+  validator, the published `FlowDecompositionReturn` schema, and the reviewer's
+  normalized JSON. After the commander settles, the flow projects the remaining
+  effort weight times the observed spend per unit of weight — the commander's
+  own settled spend before any worker settles — against the flow budget and the
+  worker contract budget, and refuses an unaffordable plan with the new
+  `BUDGET_HEADROOM_EXCEEDED` before any worker spawns. With
+  `orchestrate.review` set, the refusal first routes back to the commander as a
+  "replan smaller" critique inside the same `reviewMaxIterations` bound. The
+  wave loop also consults the budget spawn gate before it builds each wave:
+  once a budget refuses, the whole remainder is stranded at once with the
+  refusal as the reason, instead of each child being dispatched and refused one
+  by one.
+
 - Orchestrate can now review a Decomposition before worker dispatch (#160).
   The optional review role judges the normalized Decomposition against a fixed
   quality rubric and caller criteria. A bounded REVISE loop asks the commander

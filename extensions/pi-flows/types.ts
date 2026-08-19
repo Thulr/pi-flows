@@ -101,6 +101,7 @@ export const FLOW_ERROR_CODES = [
 	"FLOW_DEPTH_EXCEEDED",
 	"BUDGET_EXCEEDED",
 	"BUDGET_UNOBSERVABLE",
+	"BUDGET_HEADROOM_EXCEEDED",
 	"CHECK_COMMAND_FAILED",
 	"ORCHESTRATE_VERIFY_FAILED",
 	"DECOMPOSITION_REVIEW_FAILED",
@@ -156,7 +157,7 @@ export interface FlowError {
 	cause: string;
 	fix: string;
 	retryable?: boolean;
-	/** Exact configured ceiling that bound a BUDGET_EXCEEDED result. */
+	/** Exact configured ceiling that bound a BUDGET_EXCEEDED or BUDGET_HEADROOM_EXCEEDED result. */
 	budgetCeiling?: BudgetCeiling;
 }
 

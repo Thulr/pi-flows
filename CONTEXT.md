@@ -74,6 +74,10 @@ _Avoid_: plan, work breakdown, task graph (that reads as graph mode's author-sup
 An optional pre-dispatch judgment that a Decomposition covers its goal with suitably bounded, non-overlapping subtasks and necessary dependency edges. If the caller requests Decomposition review, the review must pass before workers can run.
 _Avoid_: plan review, validation (that names deterministic structural admission), verification (that judges the synthesized outcome)
 
+**Effort weight**:
+A subtask's declared relative effort against its siblings, an integer 1–5 with absent meaning 1. A ranking the Budget headroom projection scales observed spend by — never a token, cost, or time figure, and never the Thinking level a child runs at.
+_Avoid_: cost estimate, token estimate, size, effort (bare — that word belongs to the Thinking-level Avoid list)
+
 **Run**:
 One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing. The run object owns its result's lifecycle: an envelope candidate is retained and consumed exactly once, and an envelope or handoff attaches to a result only through the run's own transitions.
 _Avoid_: execution, invocation
@@ -278,6 +282,10 @@ _Avoid_: cap, limit
 **Budget authority**:
 Which budget a ceiling belongs to — flow or contract. Carried wherever a ceiling is shown or a refusal is reported, so a refusal is never attributed to a budget the run never had.
 _Avoid_: budget owner, budget scope
+
+**Budget headroom**:
+A budget's forward question: does the planned remaining work fit in what remains of each ceiling? Projected spend is current spend plus remaining effort weight times the observed spend per unit of weight, refused (`BUDGET_HEADROOM_EXCEEDED`) before anything spawns against it. Distinct from exhaustion: a budget already spent refuses at the spawn gate as `BUDGET_EXCEEDED`, and headroom never speaks for it.
+_Avoid_: budget forecast, affordability check, remaining budget (that names the plain subtraction, not the projection against planned work), reservation (nothing is set aside — the projection admits or refuses, it does not hold funds)
 
 **Wrap-up notice**:
 The steer a budget delivers at 80% of a ceiling it would stop a live run for — to every live child governed by that ceiling the moment any child's settled turn crosses it, and at spawn to a child joining a ceiling already inside the window: stop working and emit the return envelope now, recording unfinished work as skipped coverage and unresolved questions. Owned by the budget — the notice must name the authority and spend of the ceiling about to bind. Requesting is not receiving: only a notice seen echoed back into the child session counts as delivered. A ceiling crossed after a delivered notice settles the run gracefully instead of forfeiting it; a ceiling crossed before any notice could be delivered keeps the hard stop.

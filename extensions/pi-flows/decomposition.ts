@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { MAX_SUBTASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
+import { concurrentSubtasks, findCycle } from "./decomposition-graph.ts";
 import { extractLastJsonBlock, parseSubtasks, readIntegrationControl } from "./protocol.ts";
 import { validateSharedWriteCwd } from "./validate.ts";
 
@@ -63,6 +64,16 @@ export interface DecompositionSubtask {
 	readonly declaredAgent?: string;
 	/** True when the entry declared `dependsOn` in a shape that is not a list of subtask ids. */
 	readonly malformedDependsOn: boolean;
+	/**
+	 * The commander's relative effort estimate for this subtask, an integer
+	 * {@link MIN_EFFORT_WEIGHT}..{@link MAX_EFFORT_WEIGHT}. Absent means 1. The
+	 * budget headroom projection multiplies the remaining weight by the observed
+	 * spend per unit of weight, so a weight ranks subtasks against each other —
+	 * it is never a token or cost figure itself.
+	 */
+	readonly effortWeight?: number;
+	/** True when the entry declared `effortWeight` in a shape that is not an integer in the accepted range. */
+	readonly malformedEffortWeight: boolean;
 }
 
 /** A commander's breakdown of one goal, normalized from either emission path. A flat subtask list is a Decomposition with no edges. */
@@ -118,6 +129,20 @@ export function mapDecompositionProse(decomposition: Decomposition, map: (text: 
 const SUBTASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const MAX_SUBTASK_ID_LENGTH = 64;
 
+/**
+ * The range an effort weight must sit in. Five steps, because the weight is a
+ * relative ranking the headroom projection scales an *observed* spend by:
+ * uniform misestimation cancels out entirely, so extra resolution would only
+ * invite false precision the commander does not have.
+ */
+export const MIN_EFFORT_WEIGHT = 1;
+export const MAX_EFFORT_WEIGHT = 5;
+
+/** The total effort weight of these subtasks, with an absent weight counting as 1. */
+export function decompositionEffortWeight(subtasks: readonly DecompositionSubtask[]): number {
+	return subtasks.reduce((total, subtask) => total + (subtask.effortWeight ?? MIN_EFFORT_WEIGHT), 0);
+}
+
 /** A prose subtask field, in either form the parser reads: one string, or the lines a model split it into. */
 const ProseField = (description: string) => Type.Union([Type.String(), Type.Array(Type.String())], { description });
 
@@ -151,6 +176,11 @@ export const FlowDecompositionReturn = Type.Array(
 			}),
 			objective: Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.String(), { minItems: 1 })], { description: "What this subtask is to achieve." }),
 			dependsOn: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: "Ids of the subtasks whose output this subtask needs. Omit for independent work." })),
+			effortWeight: Type.Optional(Type.Integer({
+				minimum: MIN_EFFORT_WEIGHT,
+				maximum: MAX_EFFORT_WEIGHT,
+				description: `Relative effort of this subtask against its siblings, integer ${MIN_EFFORT_WEIGHT}..${MAX_EFFORT_WEIGHT}. Omitted means ${MIN_EFFORT_WEIGHT}. Not a token or cost figure.`,
+			})),
 			scope: Type.Optional(ProseField("Prose bounds on this subtask.")),
 			nonGoals: Type.Optional(ProseField("What this subtask must not do.")),
 			inputs: Type.Optional(ProseField("Starting material for this subtask.")),
@@ -162,7 +192,7 @@ export const FlowDecompositionReturn = Type.Array(
 );
 
 /** Fields that only a structured entry carries. One of them present anywhere in the array is what makes the array structured. */
-const STRUCTURED_FIELDS = ["id", "objective", "dependsOn", "agent", "scope", "nonGoals", "inputs", "expectedReturn", "acceptanceEvidence"] as const;
+const STRUCTURED_FIELDS = ["id", "objective", "dependsOn", "agent", "scope", "nonGoals", "inputs", "expectedReturn", "acceptanceEvidence", "effortWeight"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -198,6 +228,14 @@ function structuredSubtask(entry: unknown): DecompositionSubtask {
 	// else that is not a list of ids is one, and stays visible for refusal.
 	const malformedDependsOn = declaredDependsOn !== undefined && declaredDependsOn !== null
 		&& (!Array.isArray(declaredDependsOn) || declaredDependsOn.length !== dependsOn.length);
+	// The same null rule as dependsOn: null means "unweighted", anything else
+	// outside an integer in range is a defect the validator names.
+	const declaredWeight = record.effortWeight;
+	const effortWeight = typeof declaredWeight === "number" && Number.isInteger(declaredWeight)
+		&& declaredWeight >= MIN_EFFORT_WEIGHT && declaredWeight <= MAX_EFFORT_WEIGHT
+		? declaredWeight
+		: undefined;
+	const malformedEffortWeight = declaredWeight !== undefined && declaredWeight !== null && effortWeight === undefined;
 	return {
 		// An id is a key, not prose: only a string can be one.
 		id: typeof record.id === "string" ? record.id.trim() : "",
@@ -213,6 +251,8 @@ function structuredSubtask(entry: unknown): DecompositionSubtask {
 		acceptanceEvidence: prose(record.acceptanceEvidence),
 		declaredAgent: prose(record.agent),
 		malformedDependsOn,
+		...(effortWeight !== undefined ? { effortWeight } : {}),
+		malformedEffortWeight,
 	};
 }
 
@@ -241,7 +281,7 @@ export function parseDecomposition(value: unknown, maxSubtasks: number): Decompo
 		if (!tasks) return null;
 		return {
 			shape: "flat",
-			subtasks: tasks.map((objective, index) => ({ id: String(index + 1), objective, dependsOn: [], malformedDependsOn: false })),
+			subtasks: tasks.map((objective, index) => ({ id: String(index + 1), objective, dependsOn: [], malformedDependsOn: false, malformedEffortWeight: false })),
 		};
 	}
 	return { shape: "structured", subtasks: array.map(structuredSubtask) };
@@ -273,67 +313,14 @@ function quoteId(id: string): string {
 }
 
 /**
- * The subtasks that could run at the same time as some other subtask: those
- * that are dependency-independent of at least one peer. Neither being an
- * ancestor of the other is what makes two subtasks concurrent, because the wave
- * schedule releases a subtask as soon as its own dependencies succeed.
- *
- * The Decomposition is known acyclic before this runs, so the reachability walk
- * terminates.
- */
-function concurrentSubtasks(subtasks: readonly DecompositionSubtask[]): DecompositionSubtask[] {
-	const byId = new Map(subtasks.map((subtask) => [subtask.id, subtask]));
-	const reachable = new Map<string, Set<string>>();
-	const dependenciesOf = (id: string): Set<string> => {
-		const known = reachable.get(id);
-		if (known) return known;
-		const transitive = new Set<string>();
-		reachable.set(id, transitive);
-		for (const dep of byId.get(id)?.dependsOn ?? []) {
-			transitive.add(dep);
-			for (const inherited of dependenciesOf(dep)) transitive.add(inherited);
-		}
-		return transitive;
-	};
-	const ordered = (a: DecompositionSubtask, b: DecompositionSubtask) => dependenciesOf(a.id).has(b.id) || dependenciesOf(b.id).has(a.id);
-	return subtasks.filter((subtask) => subtasks.some((peer) => peer !== subtask && !ordered(subtask, peer)));
-}
-
-/** The first dependency cycle, as the chain that closes it, or null when the Decomposition is acyclic. */
-function findCycle(subtasks: readonly DecompositionSubtask[]): string[] | null {
-	const byId = new Map(subtasks.map((subtask) => [subtask.id, subtask]));
-	const visiting = new Set<string>();
-	const settled = new Set<string>();
-	const path: string[] = [];
-	const walk = (id: string): string[] | null => {
-		if (visiting.has(id)) return [...path.slice(path.indexOf(id)), id];
-		if (settled.has(id)) return null;
-		visiting.add(id);
-		path.push(id);
-		for (const dep of byId.get(id)?.dependsOn ?? []) {
-			const cycle = walk(dep);
-			if (cycle) return cycle;
-		}
-		path.pop();
-		visiting.delete(id);
-		settled.add(id);
-		return null;
-	};
-	for (const subtask of subtasks) {
-		const cycle = walk(subtask.id);
-		if (cycle) return cycle;
-	}
-	return null;
-}
-
-/**
  * Refuse an inadmissible Decomposition, deterministically, after the commander
  * settles and before any worker spawns. Returns null when the Decomposition may
  * be dispatched.
  *
  * What it refuses, and why each is a refusal rather than a repair:
  * - a defective subtask (no id, an id outside {@link SUBTASK_ID_PATTERN},
- *   duplicate id, no objective, a named agent, a malformed dependsOn) —
+ *   duplicate id, no objective, a named agent, a malformed dependsOn, a
+ *   malformed effortWeight) —
  *   DECOMPOSITION_INVALID. Repairing any of these would invent work the
  *   commander did not ask for; repairing an id in particular would rewrite the
  *   key its own dependency edges are addressed by.
@@ -426,6 +413,13 @@ export function validateDecomposition(decomposition: Decomposition, admission: D
 				`Decomposition subtask "${subtask.id}" has a malformed "dependsOn".`,
 				"dependsOn must be an array of non-empty subtask id strings.",
 				'Write dependsOn as an array of ids, such as ["survey"], or omit it for independent work.',
+			);
+		}
+		if (subtask.malformedEffortWeight) {
+			return invalid(
+				`Decomposition subtask "${subtask.id}" has a malformed "effortWeight".`,
+				`effortWeight must be an integer from ${MIN_EFFORT_WEIGHT} to ${MAX_EFFORT_WEIGHT}. It ranks a subtask's effort against its siblings; the budget headroom projection scales observed spend by it, so a value outside the range would be a guess the projection cannot honor.`,
+				`Write effortWeight as an integer from ${MIN_EFFORT_WEIGHT} to ${MAX_EFFORT_WEIGHT}, or omit it for an ordinary subtask (weight ${MIN_EFFORT_WEIGHT}).`,
 			);
 		}
 	}

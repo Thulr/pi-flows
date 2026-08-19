@@ -134,6 +134,36 @@ test("every prose field accepts a string or a list of strings, and a list joins 
 	assert.equal(blank?.subtasks[0].inputs, undefined);
 });
 
+test("an effortWeight parses in range, defaults absent, and is retained as malformed outside it", () => {
+	// The same totality rule as dependsOn: the parser never repairs a weight,
+	// because a clamped weight would feed the headroom projection a figure the
+	// commander did not state.
+	const weighted = parseDecomposition(legacy([{ id: "a", objective: "a", effortWeight: 3 }]), 8);
+	assert.equal(weighted?.subtasks[0].effortWeight, 3);
+	assert.equal(weighted?.subtasks[0].malformedEffortWeight, false);
+
+	const absent = parseDecomposition(legacy([{ id: "a", objective: "a" }]), 8);
+	assert.equal(absent?.subtasks[0].effortWeight, undefined, "absent means weight 1, stated by the reader, not filled in here");
+	assert.equal(absent?.subtasks[0].malformedEffortWeight, false);
+
+	const explicitNone = parseDecomposition(legacy([{ id: "a", objective: "a", effortWeight: null }]), 8);
+	assert.equal(explicitNone?.subtasks[0].malformedEffortWeight, false, "null is an answer, not a defect");
+
+	for (const declared of [0, 6, 2.5, "3", [3]]) {
+		const malformed = parseDecomposition(legacy([{ id: "a", objective: "a", effortWeight: declared }]), 8);
+		assert.equal(malformed?.subtasks[0].effortWeight, undefined);
+		assert.equal(malformed?.subtasks[0].malformedEffortWeight, true, `${JSON.stringify(declared)} stays visible for refusal`);
+	}
+
+	// An entry whose only structured field is effortWeight is a structured
+	// attempt, not flat prose — the same rule as a lone `agent` field.
+	assert.equal(parseDecomposition(legacy([{ effortWeight: 2 }]), 8)?.shape, "structured");
+
+	// The flat path never weights: every positional subtask is an ordinary one.
+	const flat = parseDecomposition(legacy(["one", "two"]), 8);
+	assert.deepEqual(flat?.subtasks.map((subtask) => subtask.effortWeight), [undefined, undefined]);
+});
+
 test("a non-string id is no id at all, and an entry naming an agent keeps the name for refusal", () => {
 	// An id is a key that dependency edges and span keys are addressed by, so
 	// only a string can be one. A number is not coerced into a key.
@@ -191,6 +221,13 @@ test("the published return schema admits exactly the shapes the parser reads", (
 	assert.equal(contract.checkReturnData([{ id: "two words", objective: "List entry points" }]), false);
 	assert.equal(contract.checkReturnData([{ id: "a".repeat(65), objective: "List entry points" }]), false);
 	assert.equal(contract.checkReturnData([{ id: "auth.login-2", objective: "List entry points" }]), true);
+
+	// The effort-weight rule is stated the same way: the range at the schema so a
+	// contracted commander reads it, the refusal at the validator that can name
+	// the subtask.
+	assert.equal(contract.checkReturnData([{ id: "survey", objective: "List entry points", effortWeight: 5 }]), true);
+	assert.equal(contract.checkReturnData([{ id: "survey", objective: "List entry points", effortWeight: 0 }]), false);
+	assert.equal(contract.checkReturnData([{ id: "survey", objective: "List entry points", effortWeight: 2.5 }]), false);
 });
 
 test("output carrying no usable array at all is no Decomposition, on either emission path", () => {
