@@ -43,7 +43,7 @@ function strandedDependentsScenario(): FaultScenario {
 		portfolio: "adversarial",
 		faults,
 		faultKind: "failure",
-		description: "A subtask two others depend on dies; the dependents must never spawn, and the independent branch must still finish.",
+		description: "With replan:false, a subtask two others depend on dies; the dependents must never spawn, and the independent branch must still finish.",
 		attackOpportunities: 1,
 		// The clean deliveries the fault must leave alone: the Decomposition
 		// itself, the independent subtask, and the synthesis over what survived.
@@ -71,7 +71,7 @@ function strandedDependentsScenario(): FaultScenario {
 			const output = await handleOrchestrate(faultDeps(
 				{
 					task: "document how auth works",
-					orchestrate: { commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" } },
+					orchestrate: { commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" }, replan: false },
 				},
 				adapter,
 				cwd,
@@ -249,6 +249,103 @@ function midFlowExhaustionScenario(): FaultScenario {
 	};
 }
 
+function midFlowReplanScenario(): FaultScenario {
+	// The head of the chain dies, stranding `trace` and `writeup`. With the
+	// default replan enabled, the commander returns one replacement for the
+	// remainder: a fresh survey, plus a writeup that depends on it and on the
+	// succeeded `lint`. The same ceilings keep binding after the replan: once
+	// the fresh survey settles, the between-wave headroom projection refuses
+	// the revision's own dependent before it can spawn into the ceiling — and
+	// with the one replan spent, that refusal strands instead of replanning.
+	const SURVEY2 = "Redo the auth entry survey from the lint findings";
+	const WRITEUP2 = "Write the summary from the fresh survey";
+	const REVISION = [
+		"Replacing the remainder.",
+		"",
+		"```json",
+		JSON.stringify([
+			{ id: "survey-2", objective: SURVEY2 },
+			{ id: "writeup-2", objective: WRITEUP2, dependsOn: ["survey-2", "lint"] },
+		]),
+		"```",
+	].join("\n");
+	const faults: FaultRule[] = [{ kind: "failure", agent: "recon", occurrence: 1, errorCode: "CHILD_EXIT_NONZERO" }];
+	return {
+		id: "stranding-failure-replans-and-ceilings-still-bind",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		faults,
+		faultKind: "failure",
+		description: "A failure strands the dependent chain; the one mid-flow replan dispatches a revision, and the budget ceilings still bind the revision's remainder.",
+		attackOpportunities: 1,
+		// The clean deliveries the fault must leave alone: both commander
+		// Decompositions, the independent lint finding, and the fresh survey.
+		benignOpportunities: 4,
+		expected: {
+			// Stranding is containment without a refusal, before and after a replan.
+			outcome: { errorCode: null },
+			// Commander twice (initial plan, replan), then survey, lint, and the
+			// revision's fresh survey. writeup-2 is stranded by the headroom
+			// projection before it spawns, so nothing is dispatched-then-refused.
+			process: { dispatched: 5, refused: 0, unreached: ["debrief"] },
+			policy: { contained: true, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 4 },
+		},
+		run: async () => {
+			const cwd = mkdtempSync(path.join(tmpdir(), "pi-flow-decomposition-replan-fault-"));
+			// 200 tokens per turn. Commander turns cost 200; each worker plays two
+			// turns (400). Ceiling 1250: the initial plan projects 200 + 4×200 =
+			// 1000 at admission and is admitted; the revision projects 800 + 2×400
+			// = 1200 after the replan commander settles and is admitted; once the
+			// fresh survey lands the remainder projects 1200 + 800/3 ≈ 1467 and is
+			// refused — the ceiling binds the revision exactly as it bound the plan.
+			const adapter = makeFaultAdapter({
+				replies: {
+					commander: [DECOMPOSITION, REVISION],
+					recon: [{ reply: "MUST NOT ARRIVE", turns: 2 }, { reply: "LINT_OUTPUT", turns: 2 }, { reply: "SURVEY2_OUTPUT", turns: 2 }],
+					debrief: "MUST NOT RUN",
+				},
+				faults,
+				usage: { input: 100, output: 100, cost: 0 },
+			});
+			const output = await handleOrchestrate(faultDeps(
+				{
+					task: "document how auth works",
+					orchestrate: { commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" } },
+				},
+				adapter,
+				cwd,
+				{ budget: Budget.forFlow({ maxTokens: 1250 }) },
+			));
+
+			// The replan is on the record as the mode's own retry event.
+			if (!adapter.ledger.eventNames("retry").includes("orchestrate.replan_decomposition")) {
+				throw new Error("the replan left no orchestrate.replan_decomposition event behind");
+			}
+			if (adapter.ledger.dispatches.filter((dispatch) => dispatch.agent === "commander").length !== 2) {
+				throw new Error("the replan did not dispatch exactly one revision commander");
+			}
+			// The revision dispatched; the stranded plan-1 subtasks never ran, and
+			// neither did the revision subtask the ceiling refused.
+			const workerTasks = adapter.ledger.dispatches.filter((dispatch) => dispatch.agent === "recon").map((dispatch) => dispatch.task);
+			if (!workerTasks.some((task) => task.includes(SURVEY2))) throw new Error("the revision's fresh survey never dispatched");
+			for (const neverSpawned of [TRACE, WRITEUP, WRITEUP2]) {
+				if (workerTasks.some((task) => task.includes(neverSpawned))) throw new Error(`a replaced or headroom-stranded subtask was spawned anyway: ${neverSpawned}`);
+			}
+			// The refused remainder stays visible, with the headroom refusal named.
+			// (That a revision subtask receives a succeeded original's output is
+			// pinned in tests/orchestrate-replan.test.ts.)
+			const text = output.content[0].text;
+			if (!/Decomposition replanned once mid-flow/.test(text)) throw new Error(`the replan is not reported: ${text.split("\n")[0]}`);
+			if (!/2 succeeded, 1 failed, 1 stranded/.test(text)) throw new Error(`the outcome counts are wrong: ${text.split("\n")[0]}`);
+			if (!text.includes(`- writeup-2: ${WRITEUP2} — stranded: Flow budget headroom exceeded`)) {
+				throw new Error("the manifest does not name the headroom refusal that stranded the revision's remainder");
+			}
+			return observe(output, adapter.ledger, ["debrief"], { attack: true });
+		},
+	};
+}
+
 export function decompositionScenarios(): FaultScenario[] {
-	return [strandedDependentsScenario(), failedReviewScenario(), failedRevisionScenario(), midFlowExhaustionScenario()];
+	return [strandedDependentsScenario(), failedReviewScenario(), failedRevisionScenario(), midFlowExhaustionScenario(), midFlowReplanScenario()];
 }

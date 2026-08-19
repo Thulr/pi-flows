@@ -40,6 +40,14 @@ export interface ChildSpanScope {
 	 * would misreport the topology.
 	 */
 	dependsOn?: string[];
+	/**
+	 * Facts about the unit's place in the coordination — which plan revision
+	 * governed a worker, for one — stamped onto its span beside the placement
+	 * attributes. Carried here because the mode that placed the unit is the only
+	 * party that knows them; the sink's own placement facts still win on any
+	 * shared key.
+	 */
+	attributes?: Record<string, unknown>;
 }
 
 /**

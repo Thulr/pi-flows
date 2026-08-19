@@ -297,6 +297,14 @@ export interface DecompositionAdmission {
 	readonly concurrency: number;
 	/** Total subtask ceiling for this call. */
 	readonly maxSubtasks: number;
+	/**
+	 * Ids of subtasks that already succeeded when this Decomposition is a
+	 * mid-flow revision. A revision subtask may depend on one — the dependency
+	 * resolves as satisfied and its output hands off — but may not redefine one:
+	 * the work already ran, and a second subtask under its id would make every
+	 * edge naming it ambiguous. Absent for an initial Decomposition.
+	 */
+	readonly satisfiedIds?: ReadonlySet<string>;
 }
 
 function invalid(message: string, cause: string, fix: string): FlowError {
@@ -394,6 +402,13 @@ export function validateDecomposition(decomposition: Decomposition, admission: D
 			);
 		}
 		ids.add(subtask.id);
+		if (admission.satisfiedIds?.has(subtask.id)) {
+			return invalid(
+				`Decomposition subtask "${subtask.id}" redefines a succeeded subtask.`,
+				"A mid-flow revision replaces only the work that has not run. A subtask that already succeeded keeps its id and its output; a second subtask under that id would make every dependency edge naming it ambiguous.",
+				"Give the new subtask a fresh id. To build on the finished work, declare dependsOn with the succeeded id instead.",
+			);
+		}
 		if (!subtask.objective) {
 			return invalid(
 				`Decomposition subtask "${subtask.id}" has no "objective".`,
@@ -426,10 +441,10 @@ export function validateDecomposition(decomposition: Decomposition, admission: D
 
 	for (const subtask of subtasks) {
 		for (const dep of subtask.dependsOn) {
-			if (!ids.has(dep)) {
+			if (!ids.has(dep) && !admission.satisfiedIds?.has(dep)) {
 				return invalid(
 					`Decomposition subtask ${quoteId(subtask.id)} depends on unknown subtask ${quoteId(dep)}.`,
-					"Every dependsOn entry must name another subtask of the same Decomposition.",
+					"Every dependsOn entry must name another subtask of the same Decomposition, or a subtask that already succeeded when the Decomposition is a mid-flow revision.",
 					"Correct the dependsOn ids, or add the missing subtask.",
 				);
 			}
