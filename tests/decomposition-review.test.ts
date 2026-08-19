@@ -108,11 +108,11 @@ test("an unreadable review verdict fails safe to REVISE", async () => {
 test("review and revision runs preserve binding budget errors", async () => {
 	// Ceilings sit exactly at the headroom projection (the stub charges 8
 	// generated tokens per turn, so a commander spend of 8 projects 8 more per
-	// unit of remaining weight): the plan is admitted as affordable, and the
-	// budget error then comes from the held-open run actually crossing the
-	// ceiling mid-run — the binding error this test exists to preserve. An
-	// unaffordable plan is the headroom gate's own path, pinned in
-	// tests/budget-headroom.test.ts.
+	// unit of remaining weight): the Decomposition is admitted as fitting, and
+	// the budget error then comes from the held-open run actually crossing the
+	// ceiling mid-run — the binding error this test exists to preserve. A
+	// Decomposition that does not fit is the headroom gate's own path, pinned
+	// in tests/budget-headroom.test.ts.
 	const cases = [
 		{
 			params: { maxGeneratedTokens: 16 },
