@@ -30,7 +30,7 @@ test("single: appends return requirements, clears duplicate UI, and writes a ses
 	const widgetUpdates: Array<string[] | undefined> = [];
 	const entries: Array<{ customType: string; data: any }> = [];
 	const { calls } = await runFlow(
-		{ agent: "recon", task: "find SAMPLE_IDENTIFIER", returnContract: "Return one sentence with value and evidence path.", requireEvidence: true },
+		{ agent: "recon", task: "find SAMPLE_IDENTIFIER", returnRequirements: "Return one sentence with value and evidence path.", requireEvidence: true },
 		{ recon: "SAMPLE_IDENTIFIER=xyzzy-42 in settings.txt" },
 		{
 			api: { appendEntry: (customType: string, data: any) => entries.push({ customType, data }) },
@@ -264,9 +264,9 @@ test("orchestrate: commander decomposes, recon workers fan out, debrief merges",
 	assert.match(text, /MERGED_DOC/);
 });
 
-test("orchestrate: nested returnContract is accepted as a goal alias", async () => {
+test("orchestrate: nested returnRequirements is accepted as a goal alias", async () => {
 	const { calls } = await runFlow(
-		{ orchestrate: { recon: { agent: "recon" }, maxSubtasks: 1, returnContract: "map agent discovery, schema validation, and runner handoff" } },
+		{ orchestrate: { recon: { agent: "recon" }, maxSubtasks: 1, returnRequirements: "map agent discovery, schema validation, and runner handoff" } },
 		{ commander: '["map the extension flow"]', recon: "WORKER_FINDING", debrief: "MERGED_DOC" },
 	);
 

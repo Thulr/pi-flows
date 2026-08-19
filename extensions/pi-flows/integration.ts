@@ -70,7 +70,7 @@ export interface IntegrationRunPlanOptions {
 	fallbackContract?: DelegationContract;
 	/** Set false only when an equal contract governs a distinct delegation, as with separate chain steps. The ceiling always comes from the resolved contract. */
 	shareContractBudget?: boolean;
-	returnContract?: string;
+	returnRequirements?: string;
 	requireEvidence?: boolean;
 	/** Approval-bound cwd identity carried through the opaque plan to the production spawn seam. */
 	cwdBinding?: CwdTargetBinding;
@@ -126,8 +126,8 @@ export function integrationRunPlan(
 		contract = resolution.resolved;
 	}
 	const renderedTask = contract
-		? contract.renderTask(task, options.returnContract, options.requireEvidence)
-		: appendReturnRequirements(task, options.returnContract, options.requireEvidence);
+		? contract.renderTask(task, options.returnRequirements, options.requireEvidence)
+		: appendReturnRequirements(task, options.returnRequirements, options.requireEvidence);
 	const cwd = resolveCwdTarget(deps.defaultCwd, ref.cwd);
 	const cwdError = options.cwdBinding ? cwdTargetDriftError(options.cwdBinding, cwd) : null;
 	if (cwdError) return { error: cwdError };

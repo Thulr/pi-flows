@@ -11,7 +11,7 @@ import {
 	type CapturePolicy,
 } from "./types.ts";
 import { capModelVisibleText, redactText, safePath, scanForInjection, stripControlChars } from "./sanitize.ts";
-import { appendReturnContract, appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
+import { appendReturnRequirements, canMutateWorkspace, clampIterations, clampLoopIterations, currentFlowDepth, validateConcurrency, validateSharedWriteCwd, writeCapabilityAttribution } from "./validate.ts";
 import { extractLastJsonBlock, parseLoopStatus, parseRoute, parseScore, parseSubtasks, parseVerdict, renderTaskTemplate } from "./parse.ts";
 import { parseDecomposition, validateDecomposition } from "./decomposition.ts";
 import { HandoffWarnings, prepareHandoff, prepareTextHandoff } from "./handoff.ts";
@@ -111,7 +111,6 @@ export const __test = {
 	clampThinking,
 	describeModelRoster,
 	availableModelsFromRegistry,
-	appendReturnContract,
 	appendReturnRequirements,
 	canMutateWorkspace,
 	validateSharedWriteCwd,

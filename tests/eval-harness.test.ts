@@ -748,7 +748,7 @@ test("selection eval flow argument matcher recognizes implicit delegation modes"
 	assert.equal(flowCallMatchesExpectation({ arguments: { why: "independent critic", task: "Draft and verify", evaluate: {} } }, { mode: "evaluate", agent: "operator", taskPattern: "verify" }).pass, true);
 	assert.equal(flowCallMatchesExpectation({ arguments: { why: "independent critic", evaluate: { operator: { agent: "operator", task: "Draft the release checklist for install, safety, and evals." } } } }, { mode: "evaluate", agent: "operator", taskPattern: "release checklist|install|safety|eval" }).pass, true);
 	assert.equal(flowCallMatchesExpectation({ arguments: { why: "broad map", task: "Map modules", orchestrate: {} } }, { modes: ["orchestrate", "parallel"], agents: ["recon"] }).pass, true);
-	assert.equal(flowCallMatchesExpectation({ arguments: { why: "broad map", orchestrate: { returnContract: "Map agent discovery, schema validation, and child process running." } } }, { modes: ["orchestrate", "parallel"], agents: ["recon"], taskPattern: "agent discovery|schema|child process" }).pass, true);
+	assert.equal(flowCallMatchesExpectation({ arguments: { why: "broad map", orchestrate: { returnRequirements: "Map agent discovery, schema validation, and child process running." } } }, { modes: ["orchestrate", "parallel"], agents: ["recon"], taskPattern: "agent discovery|schema|child process" }).pass, true);
 	// minTasks over a workflow counts work phases only, so the approval phase
 	// contributes to neither the count nor the agents allowlist (#88).
 	assert.equal(flowCallMatchesExpectation({ arguments: { why: "gated phases", task: "Release migration", workflow: { phases: [{ id: "scan", agent: "recon", task: "Analyze migration" }, { id: "check", agent: "operator", task: "Verify migration" }, { id: "approve", approval: { message: "Approve release" } }] } } }, { mode: "workflow", agents: ["recon", "operator"], minTasks: 2, taskPattern: "migration|approve" }).pass, true);
@@ -767,7 +767,7 @@ test("selection eval refuses a preset call that also names raw workflow shape", 
 	// scored against the preset that was actually selected.
 	assert.equal(flowCallMatchesExpectation({ arguments: { why: "author-independent review", preset: "code-review", task: "Review.", tier: "fast" } }, { mode: "preset", preset: "code-review" }).pass, true);
 	assert.equal(flowCallMatchesExpectation({ arguments: { why: "broad map", preset: "map-codebase", task: "Map.", tier: "fast" } }, { mode: "preset", preset: "map-codebase" }).pass, false);
-	for (const shape of [{ evaluate: {} }, { tasks: [{ agent: "recon", task: "Inspect." }] }, { agent: "recon" }, { contract: { returnSchema: {} } }, { returnContract: "typed findings" }, { requireEvidence: true }]) {
+	for (const shape of [{ evaluate: {} }, { tasks: [{ agent: "recon", task: "Inspect." }] }, { agent: "recon" }, { contract: { returnSchema: {} } }, { returnRequirements: "typed findings" }, { requireEvidence: true }]) {
 		const match = flowCallMatchesExpectation({ arguments: { preset: "code-review", task: "Review HEAD against main.", ...shape } }, { mode: "preset", preset: "code-review" });
 		assert.equal(match.pass, false, `preset + ${Object.keys(shape)[0]} must not score as a preset selection`);
 		assert.match(match.notes, /preset-conflict/);

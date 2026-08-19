@@ -1,0 +1,8 @@
+# Rename `returnContract` to `returnRequirements`, keep the persisted binding key
+
+The public param for prose return requirements was named `returnContract`, which the glossary bans: it reads as a machine-checked delegation contract, and the feature is prompt-enforced shaping with no contract assurance. We renamed the param to `returnRequirements` at every level and removed the `appendReturnContract` alias, accepting the break for a 0.x tool whose primary caller re-reads the schema each session. Two deliberate consequences: retired keys are refused loudly with `PARAM_RENAMED` (the schema accepts unknown keys, so without a tombstone an old call would pass validation and its requirements would silently never reach a child — worse than a break); and the workflow approval binding record keeps its pre-rename `returnContract` key, because that key is canonical-digest input for durable receipts — renaming it would stale every issued receipt and break the byte-exact reconstruction of legacy (v1–v4) bindings. The alternative, accepting both spellings as aliases, was rejected because it publishes the banned term to every model call and reintroduces the double vocabulary the rename exists to remove.
+
+## Consequences
+
+- Workflow identity content spells a phase's prose return requirements under the pre-rename key, so a spec re-authored with the new spelling reproduces its old digest: persisted state files and approval receipts stay reachable. A spec replayed with the old spelling is refused by the tombstone rather than resumed.
+- Any future param rename should reuse `PARAM_RENAMED` and the `RENAMED_PARAMS` map in `validate.ts`.

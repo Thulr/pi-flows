@@ -27,12 +27,12 @@
       ],
       "note": "Flow (flow.ts) is the aggregate root CONTEXT.md promised: one bounded delegation whose admission yields exactly one of described, refused, or admitted — described and refused are terminal alternatives, and only an admitted flow owns a mode and the explicit typed progression dispatched → settled. The root stays small by owning ordering only — every pre-spawn gate is a supplied predicate/approval object walked in the aggregate's declared order, and Budget, the handoff consumer, and the trace sink remain separate objects the root holds references to. Run (run.ts) is the one root over a child result's lifecycle. index.ts execute() is a composition root again: it adapts ctx/ui/liveFlows/session persistence into the aggregate's ports and hands over (#97). The residue #100 named is resolved: the aggregate carries the one ResolvedCall (post-preset params, policy, preset) and hands it to ports as arguments — resolvePreset is pure, the details builder is constructed once from the resolution, preset formatting comes back from preparation — so no port in execute() assigns a local another port reads (tests/flow-capture-ownership.test.ts).",
       "reviewed": {
-        "at": "2026-08-18",
+        "at": "2026-08-19",
         "declared": "5d8e9f2d4ec4f234",
         "surfaces": {
-          "extensions/pi-flows/flow.ts": "135948c68e032341",
+          "extensions/pi-flows/flow.ts": "e8dbc8c90d783fd7",
           "extensions/pi-flows/run.ts": "52321721a19ea929",
-          "extensions/pi-flows/index.ts": "bfd5871426a1561c",
+          "extensions/pi-flows/index.ts": "07b8bf373b96ee45",
           "tests/flow-capture-ownership.test.ts": "effa7169437e12b3",
           "tests/flow-lifecycle.test.ts": "1384fe2663de7b73"
         }
@@ -52,13 +52,13 @@
       ],
       "note": "Budget owns its rule. DelegationContract's transitions live on ResolvedDelegationContract, and receipt consumption exists only on ApprovalAuthorization — the capability verify returns, bound to the verified consumer (PR #98 review). The residue named by #97 is resolved: an envelope or handoff now attaches to a result only through the Run object's own transitions (run.ts — since #143 the envelope transition is ECMAScript-private behind the single-claim validation seam, and Run.acceptHandoff remains the handoff door), and what sanitize.ts held as two module-level WeakMap side-channels is now ECMAScript-private state of the one Run object per result, with consume-once semantics (the envelope candidate is capped on capture, discarded on failure, and taken exactly once). This is encapsulation behind domain transitions, not field privacy: FlowRunResult deliberately stays the plain, writable read projection the views and the runner fill (exit codes, usage, durations), and the identity lookup Run.of is itself WeakMap-backed — the difference is that the state and its ordering now live inside one object that owns them. #106 extends the same pattern in both directions. Run's rejected-envelope retention is ECMAScript-private state under the same consume-once discipline (stored as an isolated clone, taken exactly once), and eligibility is deliberately not Run's to decide — delegation.ts decides it, which is why the check ordering that makes the retention safe is documented on the check rather than on the field. Budget absorbed the wrap-up threshold as its own rule (nearsLiveStop, wrapUpNotice) instead of exposing a fraction for callers to compare against: the notice has to name the authority and spend of the ceiling about to bind, so one cascade at a scaled fraction resolves both the notice and the later refusal and they cannot describe different ceilings.",
       "reviewed": {
-        "at": "2026-08-18",
+        "at": "2026-08-19",
         "declared": "c72d33a99f11b48d",
         "surfaces": {
           "extensions/pi-flows/budget.ts": "d70575e0af79683c",
           "extensions/pi-flows/run.ts": "52321721a19ea929",
           "extensions/pi-flows/delegation.ts": "68f0d1ef5bdfb5f3",
-          "extensions/pi-flows/approval.ts": "3f50b42c717817a0",
+          "extensions/pi-flows/approval.ts": "49d89669a4c6eebf",
           "extensions/pi-flows/sanitize.ts": "8aa314b1c9588392",
           "tests/behavior-objects.test.ts": "fc24eb6a2eadab5e",
           "tests/budget-wrapup.test.ts": "c5fa6aa4b0c1b9d1"
@@ -101,11 +101,11 @@
       ],
       "note": "Trace evidence is now gated on both questions it raises rather than only the one the writer can answer: export accounting from the sink, and structure from reading the finished file back. That distinction is Core content, not plumbing — CONTEXT.md sells a finding that arrives carrying its own evidence, and a gate that certifies a file no reader can follow sells the claim without the thing. Contract identity by canonical digest, envelope-to-contract binding, artifact digest verification with realpath escape checks, single-use expiring approval receipts with binding digests, compositional injection, budget authority, and trace health kept separate from execution success and from verified outcome success. The admissibility seam adds another, and this review sharpened its mechanism: the selection eval no longer reassembles the tool's pre-spawn gates from imported predicates. Aggregate-level gates are still Core predicates the eval imports (the spawn gate, depth, concurrency, strict-trace config) and workflow's phase rules remain shared Core (validate-workflow.ts), but every per-mode refusal is now declared by the mode that enforces it and resolved through the table (preSpawnRefusalForParams), so the scored gate cannot drift from the enforced one by construction rather than by hand-maintained agreement, and a mode added to the table is covered without the eval changing. What the eval scores stays its own decision, named in one place (SCORED_PRE_SPAWN_CODES) instead of being implied by which predicates it happened to import. The distinction the declarations force is itself domain content: a refusal knowable before dispatch is the mode's declaration, while one only reachable mid-run (a probe that fails to start, a cycle stranding only later waves) stays in the handler and names a different moment.",
       "reviewed": {
-        "at": "2026-08-18",
+        "at": "2026-08-19",
         "declared": "5de7c7e878db7b19",
         "surfaces": {
-          "subdomain:Core": "03a3a2da01f03732",
-          "CONTEXT.md": "825754eaa5baeecf"
+          "subdomain:Core": "d68ecc617c487a95",
+          "CONTEXT.md": "fe0b73a65559c7fe"
         }
       }
     },
@@ -123,14 +123,14 @@
       ],
       "note": "Follows small-aggregates. Flow-level ordering — admission (preset expansion, mode detection, spawn gate, depth, concurrency, preset trust, preset preparation, strict-trace config, project-agent trust, spawn checkpoint, handler resolution, budget construction) and the settle sequence (blocking handoffs → preset formatting → reflexion → finalize checkpoint → trace finalize → strict-trace refusal → persistence last) — is enforced by the Flow aggregate's typed transitions: admission returns the only dispatch capability, dispatch returns the only thing that can settle, and both spend themselves. Rules like 'a refusal after the sink exists finalizes the trace with child_count 0' are internal to the aggregate. Named by tests/flow-lifecycle.test.ts and the checkpoint-skipped-before-spawn / settle-without-dispatch fault-manifest entries.",
       "reviewed": {
-        "at": "2026-08-18",
+        "at": "2026-08-19",
         "declared": "0c434bc6254ba539",
         "surfaces": {
-          "extensions/pi-flows/flow.ts": "135948c68e032341",
+          "extensions/pi-flows/flow.ts": "e8dbc8c90d783fd7",
           "extensions/pi-flows/budget.ts": "d70575e0af79683c",
           "extensions/pi-flows/run.ts": "52321721a19ea929",
           "extensions/pi-flows/settle.ts": "216279d4eeeec231",
-          "extensions/pi-flows/modes/*.ts": "d374aae5fd497cc5",
+          "extensions/pi-flows/modes/*.ts": "cfa4d5cf854e457c",
           "tests/flow-lifecycle.test.ts": "1384fe2663de7b73",
           "tests/flow-budget.test.ts": "700c3e37f43040d7"
         }
@@ -147,12 +147,12 @@
       ],
       "note": "A seventh blemish was found and fixed by the strict-trace review: 'trace health' was doing duty for both how much of the export was written and whether the export is a tree, two questions with different answers and different observers. CONTEXT.md now carries Trace structure beside Trace health with each on the other's Avoid list, and the code keeps them as separate members so neither can be reported as the other. CONTEXT.md carries Avoid lists; code and test names use the glossary's terms. A sixth blemish was found and fixed by the run-state review: the four states queued/running/completed/failed were named identically by three surfaces but derived three ways, so the ubiquitous language held while the derivation behind it forked — the failure mode this row exists to catch, appearing as agreeing words over disagreeing code rather than as competing words. CONTEXT.md now carries Run state, Settled names runSettled/runFailed as the question's one home and records why isFailed keeps a deliberately different contract, and the shared type is re-exported from run.ts rather than declared twice. A fifth blemish was found and fixed by the mode pre-spawn refusal review: that change claimed the bare phrase 'pre-spawn refusal' for a narrow new concept while six existing sites already used it for any refusal before spawning, and it simultaneously shipped 'pre-spawn declaration' as a second word for the same new concept. CONTEXT.md now carries Mode pre-spawn refusal with the bare phrase and the competing word both on its Avoid list, the mode files and the test speak the recorded term, and Mirror is sharpened to say a mirror is a second derivation that must be kept in agreement — preferring a declaration, which removes the second copy. A fourth blemish was found and fixed by the #106 review: #106 shipped the rejected-envelope concept with no glossary entry and under three competing words — 'rejected' (used in delegation.ts for both the always-returned trace evidence and the conditionally-retained Run field, which sit on opposite sides of the Return envelope entry's binding line), 'salvageable' (the discriminator), and 'unvalidated' (the label already shipped in preset-review.ts, troubleshooting.md, and the CHANGELOG). CONTEXT.md now carries Rejected envelope and Unvalidated claims — the outward-facing word won, so no user-visible sweep was needed — and delegation.ts, run.ts, preset-review.ts, troubleshooting.md, and the tests speak them, the discriminator having been renamed salvageable → claimsSurfaceable so the retired word does not survive in the code that retired it. One residue is deliberate: runner-budget.ts's 'distinguish salvage from loss' is the budget wrap-up sense (a run salvaged from forfeiture), not this concept, and is left alone. Three known blemishes remain. (1) 'contract' is overloaded between DelegationContract and RunModeContract. (2) topology.ts is named for mode topology but holds spec-parameter arithmetic, which is why it sits in Generic while the modes it is named after are Supporting. (3) 'the active child' is standard phrasing at 11 occurrences across docs/reference/flow-reference.md, docs/explanation (patterns, privacy-telemetry), docs/how-to/troubleshooting.md, examples, tests, budget.ts, and the schema.ts param descriptions (the README occurrence left with the Diátaxis reorg), though 'active' is on the Live entry's Avoid list; that sweep needs its own change, because fixing a subset breaks the README / flow-reference / TypeBox-params sync rule in AGENTS.md. Consequently budget.ts deliberately holds both vocabularies: the new API it introduces (stopsLiveRun and its JSDoc) takes the glossary term, while the pre-existing user-visible error cause keeps 'active child' so it stays consistent with the docs until they are swept together. Separately, the exported span attributes flow.budget.limit_* in trace-attributes.ts keep 'limit' as wire format - renaming them would break trace consumers, so they are a deliberate carve-out from the Budget ceiling Avoid list, not drift.",
       "reviewed": {
-        "at": "2026-08-18",
+        "at": "2026-08-19",
         "declared": "9b6b8633e640c2e6",
         "surfaces": {
-          "CONTEXT.md": "825754eaa5baeecf",
-          "subdomain:Core": "03a3a2da01f03732",
-          "subdomain:Shared kernel": "923ac76125252e15",
+          "CONTEXT.md": "fe0b73a65559c7fe",
+          "subdomain:Core": "d68ecc617c487a95",
+          "subdomain:Shared kernel": "2b5daf5135a7ecd2",
           "docs/reference/architecture.md": "e40a4540019099e0"
         }
       }

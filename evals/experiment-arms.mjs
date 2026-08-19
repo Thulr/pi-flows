@@ -86,7 +86,7 @@ function baseParams(testCase) {
 		task: params.task,
 		...(params.why ? { why: params.why } : {}),
 		...(params.cwd ? { cwd: params.cwd } : {}),
-		...(params.returnContract ? { returnContract: params.returnContract } : {}),
+		...(params.returnRequirements ? { returnRequirements: params.returnRequirements } : {}),
 		...(params.requireEvidence !== undefined ? { requireEvidence: params.requireEvidence } : {}),
 	};
 }

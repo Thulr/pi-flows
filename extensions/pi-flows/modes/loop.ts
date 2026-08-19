@@ -42,7 +42,7 @@ export async function handleLoop(deps: ModeDeps): Promise<ModeOutput> {
 	if (entryRefusal) return settle.refuse(entryRefusal);
 	const goal = params.task as string;
 	const maxIterations = clampLoopIterations(spec.maxIterations);
-	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence);
 	const bodyRef: FlowAgentRefInput = spec.body;
 	const judgeRef: FlowAgentRefInput | undefined = spec.judge?.agent ? spec.judge : undefined;
 	let previous = "";

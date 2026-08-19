@@ -227,7 +227,7 @@ test("evaluate critics see an operator contract as context, not a competing Retu
 	});
 	const { result, calls, text } = await runFlow({
 		task: "Build the artifact.",
-		returnContract: "Include a rollout section.",
+		returnRequirements: "Include a rollout section.",
 		requireEvidence: true,
 		evaluate: {
 			operator: { agent: "operator", contract: operatorContract },

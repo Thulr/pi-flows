@@ -93,7 +93,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 			].join("\n");
 			const planned = integrationRunPlan(deps, ref, task, {
 				fallbackContract: params.contract as DelegationContract | undefined,
-				returnContract: params.returnContract,
+				returnRequirements: params.returnRequirements,
 				requireEvidence: params.requireEvidence,
 				placeholderTask: `advocate ${index + 1}, round ${round}`,
 				// Each advocate rebuts the whole prior round, so the dependency is the
@@ -138,7 +138,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 	].join("\n");
 	const planned = integrationRunPlan(deps, adjudicator, adjudicationTask, {
 		fallbackContract: params.contract as DelegationContract | undefined,
-		returnContract: params.returnContract,
+		returnRequirements: params.returnRequirements,
 		requireEvidence: params.requireEvidence,
 		scope: { key: "adjudicator", dependsOn: consumedAdvocateKeys },
 	});

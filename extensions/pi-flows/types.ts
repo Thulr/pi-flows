@@ -90,6 +90,7 @@ export const FLOW_ERROR_CODES = [
 	"PROJECT_PRESET_APPROVAL_REQUIRED",
 	"PROJECT_PRESET_APPROVAL_DENIED",
 	"INVALID_MODE",
+	"PARAM_RENAMED",
 	"WHY_REQUIRED",
 	"INVALID_SCOPE",
 	"INVALID_CONCURRENCY",
@@ -313,7 +314,7 @@ export interface FlowTaskInput {
 	tier?: string;
 	thinking?: ThinkingLevel;
 	tools?: string;
-	returnContract?: string;
+	returnRequirements?: string;
 	requireEvidence?: boolean;
 	contract?: DelegationContract;
 }

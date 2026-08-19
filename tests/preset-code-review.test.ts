@@ -131,6 +131,15 @@ test("code-review formatter derives CLEAN, FINDINGS, and PARTIAL from Git-verifi
 	const salvaged = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), partialRun]), policy, repo, range);
 	assert.equal(salvaged.details.presetOutcome, "PARTIAL", "an unproven axis cannot settle the verdict");
 	assert.match(salvaged.content[0].text, /partial-envelope-claim/, "a finding anchored by a partial reviewer must still be reported");
+
+	// A timed-out reviewer can exit 0 with a completed-status envelope in hand.
+	// The verdict reads the run-state derivation, so that axis never counts as
+	// reviewed and the output names the halted axis instead of claiming CLEAN.
+	const timedOut = reviewRun("spec", range);
+	timedOut.stopReason = "timeout";
+	const halted = formatPresetResult(reviewPreset, makeOutput([reviewRun("standards", range), timedOut]), policy, repo, range);
+	assert.equal(halted.details.presetOutcome, "PARTIAL", "a failed axis cannot count toward the verdict, whatever its exit code");
+	assert.match(halted.content[0].text, /did not return: spec \(timeout\)/);
 });
 
 test("code-review retains validated metadata privately when returned content is omitted", async () => {

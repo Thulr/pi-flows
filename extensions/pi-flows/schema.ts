@@ -18,7 +18,7 @@ const StringList = Type.Array(Type.String({ minLength: 1 }));
 const HandoffPolicy = StringEnum(["warn", "quarantine", "fail"] as const);
 
 // The one statement of what prose return requirements are, shared by every
-// returnContract/requireEvidence description so the qualifier cannot drift.
+// returnRequirements/requireEvidence description so the qualifier cannot drift.
 const PromptOnlyNote = "Prompt guidance only — never machine-checked.";
 
 export const FlowDelegationContract = Type.Object({
@@ -107,7 +107,7 @@ const FlowTaskProperties = {
 	tools: Type.Optional(
 		Type.String({ description: 'Optional comma-separated tool override. Use "none" for no built-in tools or "default" for pi defaults. "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' }),
 	),
-	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this agent's task. Use them to specify summary shape, required fields, or max length. ${PromptOnlyNote} Use contract for a machine-checked Return.` })),
+	returnRequirements: Type.Optional(Type.String({ description: `Prose return requirements appended to this agent's task. Use them to specify summary shape, required fields, or max length. ${PromptOnlyNote} Use contract for a machine-checked Return.` })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence (file:line, command output, citations, or explicit gaps) in this agent's return. ${PromptOnlyNote}`, default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 };
@@ -199,8 +199,8 @@ export const FlowOrchestrate = Type.Object({
 	),
 	verifyMaxIterations: Type.Optional(Type.Number({ description: "Max synthesize->verify rounds when verifyPolicy is revise. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
 	replan: Type.Optional(Type.Boolean({ description: "Allow one mid-flow Decomposition replan (default true). When a failure strands remaining subtasks, or the between-wave budget headroom projection refuses the remainder, the commander returns one full replacement for the work that has not run; a refused replacement strands and reports. Exactly one replan per flow. Set false to strand and report without replanning.", default: true })),
-	workerReturnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to every worker subtask before fan-out. ${PromptOnlyNote}` })),
-	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
+	workerReturnRequirements: Type.Optional(Type.String({ description: `Prose return requirements appended to every worker subtask before fan-out. ${PromptOnlyNote}` })),
+	returnRequirements: Type.Optional(Type.String({ description: "Optional alias for top-level returnRequirements. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
 	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on the total subtasks in the commander's decomposition, dependent ones included. Integer 1..${MAX_SUBTASKS}. Default ${MAX_PARALLEL_TASKS}. A flat subtask list is silently cut to this cap; a decomposition with dependency edges is refused DECOMPOSITION_INVALID when it exceeds it, because cutting it would sever edges.`, minimum: 1, maximum: MAX_SUBTASKS })),
 }, {
 	description: "Orchestrator-workers mode. The commander decomposes the task. An optional review role judges the normalized Decomposition. Recon workers run by dependency wave. The debrief role merges results. A REVISE review starts a bounded commander revision, and one mid-flow replan can replace remaining work that a failure stranded or the budget headroom projection refused. commander.contract carries the Decomposition in validated envelope data. review.contract and verify.contract use validated data.verdict instead of legacy prose.",
@@ -216,7 +216,7 @@ export const FlowGraphNode = Type.Object({
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
-	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this node's task. ${PromptOnlyNote}` })),
+	returnRequirements: Type.Optional(Type.String({ description: `Prose return requirements appended to this node's task. ${PromptOnlyNote}` })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence in this node's return. ${PromptOnlyNote}`, default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -260,7 +260,7 @@ export const FlowWorkflowPhase = Type.Object({
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
-	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this phase task. ${PromptOnlyNote}` })),
+	returnRequirements: Type.Optional(Type.String({ description: `Prose return requirements appended to this phase task. ${PromptOnlyNote}` })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence in this phase output. ${PromptOnlyNote}`, default: false })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -291,7 +291,7 @@ export const FlowWorktreeTask = Type.Object({
 	tier: Type.Optional(FlowTier),
 	thinking: Type.Optional(FlowThinking),
 	tools: Type.Optional(Type.String({ description: 'Optional comma-separated tool override. "none" or "default". "bash-ro" = bash under a child-enforced read-only allowlist (not write-capable; bash+bash-ro together = plain bash).' })),
-	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to this worker task. ${PromptOnlyNote}` })),
+	returnRequirements: Type.Optional(Type.String({ description: `Prose return requirements appended to this worker task. ${PromptOnlyNote}` })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for evidence in this worker output. ${PromptOnlyNote}`, default: true })),
 	contract: Type.Optional(FlowDelegationContract),
 });
@@ -431,7 +431,7 @@ export const FlowParams = Type.Object({
 		description: 'How integration modes handle return envelopes with partial or blocked status. "fail" is the default; "include" is an explicit decision to synthesize while preserving incomplete status and provenance.',
 		default: "fail",
 	})),
-	returnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to delegated and synthesis tasks. Use them to prevent summary loss on handoffs. ${PromptOnlyNote} Use contract for a machine-checked Return.` })),
+	returnRequirements: Type.Optional(Type.String({ description: `Prose return requirements appended to delegated and synthesis tasks. Use them to prevent summary loss on handoffs. ${PromptOnlyNote} Use contract for a machine-checked Return.` })),
 	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence in delegated outputs when return requirements are appended. ${PromptOnlyNote}`, default: false })),
 	allowSharedWriteCwd: Type.Optional(Type.Boolean({ description: "Allow concurrent write-capable agents to share a cwd. Default false; prefer distinct cwd/worktrees.", default: false })),
 	recordContent: Type.Optional(Type.Boolean({ description: "Store and return child message content after redaction. Set false to retain only structural usage/status data.", default: true })),

@@ -56,8 +56,8 @@ export function preSpawnRefusalOrchestrate(params: any): FlowError | null {
 	const reviewRefusal = decompositionReviewOptionsRefusal(spec);
 	if (reviewRefusal) return reviewRefusal;
 	const nestedTask = typeof spec.task === "string" ? spec.task : undefined;
-	const nestedReturnContract = typeof spec.returnContract === "string" ? spec.returnContract : undefined;
-	const goal = params.task ?? nestedTask ?? nestedReturnContract;
+	const nestedReturnRequirements = typeof spec.returnRequirements === "string" ? spec.returnRequirements : undefined;
+	const goal = params.task ?? nestedTask ?? nestedReturnRequirements;
 	if (typeof goal === "string" && goal.trim()) return null;
 	return flowError(
 		"INVALID_MODE",
@@ -71,13 +71,13 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy } = deps;
 	const spec = params.orchestrate ?? {};
-	const orchestrateAliases = spec as typeof spec & { task?: unknown; returnContract?: unknown };
+	const orchestrateAliases = spec as typeof spec & { task?: unknown; returnRequirements?: unknown };
 	const nestedTask = typeof orchestrateAliases.task === "string" ? orchestrateAliases.task : undefined;
-	const nestedReturnContract = typeof orchestrateAliases.returnContract === "string" ? orchestrateAliases.returnContract : undefined;
+	const nestedReturnRequirements = typeof orchestrateAliases.returnRequirements === "string" ? orchestrateAliases.returnRequirements : undefined;
 	const entryRefusal = preSpawnRefusalOrchestrate(params);
 	if (entryRefusal) return settle.refuse(entryRefusal);
-	const goal = (params.task ?? nestedTask ?? nestedReturnContract) as string;
-	const returnContract = params.returnContract ?? (params.task || nestedTask ? nestedReturnContract : undefined);
+	const goal = (params.task ?? nestedTask ?? nestedReturnRequirements) as string;
+	const returnRequirements = params.returnRequirements ?? (params.task || nestedTask ? nestedReturnRequirements : undefined);
 	const contractedGoal = goal;
 
 	const decomposerRef: FlowAgentRefInput = spec.commander ?? { agent: "commander" };
@@ -149,8 +149,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			deps,
 			settle,
 			goal,
-			returnRequirements: returnContract,
-			workerReturnRequirements: typeof spec.workerReturnContract === "string" ? spec.workerReturnContract : undefined,
+			returnRequirements,
+			workerReturnRequirements: typeof spec.workerReturnRequirements === "string" ? spec.workerReturnRequirements : undefined,
 			requireEvidence: params.requireEvidence,
 			commanderRef: decomposerRef,
 			reviewerRef: reviewRef,
@@ -184,9 +184,9 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const consumedWorkerKeys: string[] = [];
 	const findingSections: string[] = [];
 	// The subtask's own return requirements sit under the flow-wide ones: both
-	// reach the worker, and the mode-wide contract stays the general case.
-	const workerReturnContract = (subtask: DecompositionSubtask) =>
-		[spec.workerReturnContract, subtask.expectedReturn].filter((part): part is string => Boolean(part?.trim())).join("\n") || undefined;
+	// reach the worker, and the mode-wide requirements stay the general case.
+	const workerReturnRequirements = (subtask: DecompositionSubtask) =>
+		[spec.workerReturnRequirements, subtask.expectedReturn].filter((part): part is string => Boolean(part?.trim())).join("\n") || undefined;
 
 	const remaining = new Map(units.map((unit) => [unit.subtask.id, unit]));
 
@@ -196,8 +196,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		deps,
 		settle,
 		goal,
-		returnRequirements: returnContract,
-		workerReturnRequirements: typeof spec.workerReturnContract === "string" ? spec.workerReturnContract : undefined,
+		returnRequirements,
+		workerReturnRequirements: typeof spec.workerReturnRequirements === "string" ? spec.workerReturnRequirements : undefined,
 		requireEvidence: params.requireEvidence,
 		commanderRef: decomposerRef,
 		commanderUsage: decomposerDispatch.result.usage,
@@ -266,7 +266,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		const workerPlans: IntegrationRunPlan[] = [];
 		for (const unit of ready) {
 			const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(contractedGoal, unit, (id) => outcomes.get(id)?.outputText), {
-				returnContract: workerReturnContract(unit.subtask),
+				returnRequirements: workerReturnRequirements(unit.subtask),
 				placeholderTask: unit.subtask.objective,
 				// A dependency is a link, not parentage: the subtask consumed its
 				// output but was scheduled by the wave, not spawned by it. The span
@@ -363,7 +363,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		synthesisRound += 1;
 		return integrationRunPlan(deps, synthesizerRef, task, {
 			fallbackContract: params.contract as DelegationContract | undefined,
-			returnContract,
+			returnRequirements,
 			requireEvidence: params.requireEvidence,
 			scope: {
 				key: synthesisKey(synthesisRound),

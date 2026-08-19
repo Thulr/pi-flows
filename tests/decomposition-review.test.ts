@@ -30,11 +30,11 @@ test("a first-attempt PASS dispatches the exact normalized Decomposition that th
 	const { result, calls, text } = await runFlow(
 		{
 			task: "Map login and refresh.",
-			returnContract: "Name both paths.",
+			returnRequirements: "Name both paths.",
 			requireEvidence: true,
 			orchestrate: orchestrate({
 				reviewCriteria: "Each path must name its entry route.",
-				workerReturnContract: "Return file and symbol names.",
+				workerReturnRequirements: "Return file and symbol names.",
 			}),
 		},
 		{ commander: JSON.stringify(first), overwatch: "VERDICT: PASS\nAll criteria pass.", recon: "WORKER_FINDING", debrief: "MERGED_DOC" },

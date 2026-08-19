@@ -330,7 +330,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		const phaseCwd = approvedPhaseCwd?.path ?? resolvedCwd(defaultCwd, phase.cwd);
 		const ref: FlowAgentRefInput = { agent: phase.agent, cwd: phaseCwd, model: phase.model, tier: phase.tier, thinking: phase.thinking, tools: phase.tools, contract: phase.contract };
 		const planned = integrationRunPlan(deps, ref, renderPhaseTask(phase.task, params.task, previous, state.outputs), {
-			returnContract: phase.returnContract ?? params.returnContract,
+			returnRequirements: phase.returnRequirements ?? params.returnRequirements,
 			requireEvidence: phase.requireEvidence ?? params.requireEvidence,
 			cwdBinding: approvedPhaseCwd,
 			// The child's key must differ from its stage's: a workflow phase is both,
@@ -441,7 +441,7 @@ export async function handleWorkflow(deps: ModeDeps): Promise<ModeOutput> {
 		].join("\n");
 		const planned = integrationRunPlan(deps, debriefRef, debriefTask, {
 			fallbackContract: params.contract as DelegationContract | undefined,
-			returnContract: params.returnContract,
+			returnRequirements: params.returnRequirements,
 			requireEvidence: params.requireEvidence,
 			cwdBinding: approvedDebriefCwd,
 			scope: { key: "debrief", dependsOn: phaseUnitKeys },

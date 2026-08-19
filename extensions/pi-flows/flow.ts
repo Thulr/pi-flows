@@ -25,7 +25,7 @@ import {
 	type RunMode,
 	type Update,
 } from "./types.ts";
-import { currentFlowDepth, spawnJustificationMissing, validateConcurrency } from "./validate.ts";
+import { currentFlowDepth, renamedParamError, spawnJustificationMissing, validateConcurrency } from "./validate.ts";
 
 /** The live-presence surface a flow reports itself to: started at dispatch, updated as runs settle, and settled on every path the aggregate controls — a handler failure settles it before propagating, and `settle()` settles it in its own finally. */
 export interface FlowPresence {
@@ -170,7 +170,8 @@ export class Flow {
 	 * Walk the pre-spawn gates in the aggregate's declared order: the describe
 	 * surfaces (`list` wins over `showConfig`, and both answer before anything
 	 * else — a describing call never resolves a preset and never reaches mode
-	 * detection), preset expansion, mode detection, the spawn gate (`why`),
+	 * detection), preset expansion, mode detection, the renamed-param
+	 * tombstone, the spawn gate (`why`),
 	 * delegation depth, concurrency bounds, preset trust, preset-owned
 	 * preparation, strict-trace configuration, then — once the trace sink
 	 * exists — project-agent trust, the spawn checkpoint, handler resolution,
@@ -213,6 +214,13 @@ export class Flow {
 			details: makeDetails(mode)([], error),
 		});
 		const refuse = (error: FlowError): FlowAdmission => ({ refused: refusalOutput(error) });
+
+		// A retired param key refuses loudly here, after preset expansion, so a
+		// stale preset template is caught the same way a stale direct call is.
+		// The public schema does not reject unknown keys, so without this gate
+		// the old key would pass validation and be silently ignored.
+		const renamed = renamedParamError(call.params);
+		if (renamed) return refuse(renamed);
 
 		// Structural friction against reflexive delegation: a spawning call must
 		// articulate why isolation beats doing the work in the parent context.

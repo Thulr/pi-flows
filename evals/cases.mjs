@@ -71,7 +71,7 @@ export const CASES = defineCases([
 		params: {
 			agent: "recon",
 			task: "Find the value assigned to SAMPLE_IDENTIFIER in this repo. Reply with one sentence containing the value and the evidence path (the file it lives in).",
-			returnContract: "Return one sentence containing the value and the evidence path.",
+			returnRequirements: "Return one sentence containing the value and the evidence path.",
 			requireEvidence: true,
 		},
 		cwd: fixturesRepo,

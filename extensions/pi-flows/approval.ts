@@ -10,7 +10,8 @@
 // phases, debrief) and rejects a resume whose state describes a different
 // workflow. The receipt covers what that digest cannot see: the EFFECTIVE
 // parameters the gated phases resolve to — each effective Agent profile,
-// agentScope, returnContract, requireEvidence, incompleteHandoffPolicy, the
+// agentScope, returnRequirements (persisted under its pre-rename binding key
+// returnContract), requireEvidence, incompleteHandoffPolicy, the
 // enforced injection-handoff policy, and the resolved delegation contract.
 // Source shadowing, a prompt/tool edit, or a changed cwd path/identity therefore
 // needs fresh approval instead of riding the old one.

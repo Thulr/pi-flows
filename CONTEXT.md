@@ -82,6 +82,10 @@ _Avoid_: replanning loop (there is no loop — one revision, hard-bounded), plan
 A subtask's declared relative effort against its siblings, an integer 1–5 with absent meaning 1. A ranking the Budget headroom projection scales observed spend by — never a token, cost, or time figure, and never the Thinking level a child runs at.
 _Avoid_: cost estimate, token estimate, size, effort (bare — that word belongs to the Thinking-level Avoid list)
 
+**Stranded**:
+A subtask that never ran — cut off when a dependency failed, a replacement was refused, or a budget refused the remainder — the third terminal outcome beside succeeded and failed. Stranding is containment, not repair: the work is named and reported, never silently dropped and never retried on the flow's own initiative. Only a subtask strands; a run that started always **settles**.
+_Avoid_: skipped (that reads as a choice), blocked (a stranded subtask will never run in this flow), cancelled
+
 **Run**:
 One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing. The run object owns its result's lifecycle: an envelope candidate is retained and consumed exactly once, and an envelope or handoff attaches to a result only through the run's own transitions.
 _Avoid_: execution, invocation
@@ -124,6 +128,14 @@ _Avoid_: validated contract, compiled contract
 The input from a settled Run in a Role that may steer coordination: either schema-checked data from its accepted return envelope or explicitly legacy prose from an uncontracted Role. The two forms remain distinct so validated strings cannot re-enter marker parsing and unvalidated prose cannot masquerade as contract data.
 _Avoid_: control value, parsed output, ambiguous string
 
+**Control marker**:
+The one-line `MARKER: TOKEN` grammar a mode tells an uncontracted child to emit and the parser accepts back. Both halves render from one vocabulary, so "tell it to write" and "read what it wrote" cannot drift. A token is authoritative only as the exact first non-empty line: a mention, quotation, negation, or longer word that merely begins with a token stays ordinary prose. Validated envelope data never re-enters marker parsing.
+_Avoid_: magic string, sentinel, protocol (that names the whole vocabulary, not one marker)
+
+**Verdict**:
+The pass-or-revise judgment a judging Role returns to steer coordination, read from validated envelope data or from the legacy **Control marker**. A missing, malformed, or merely mentioned verdict fails closed to revise: silence never passes work.
+_Avoid_: score (that is the numeric control), review (the act, not the judgment), approval (a verdict is a child's, never a human's)
+
 **Return requirements**:
 Prompt-enforced instructions that constrain a child's returned shape or evidence without creating a machine-checked delegation contract.
 _Avoid_: return contract
@@ -141,12 +153,16 @@ The assurance a validated Return envelope carries: attribution to the exact reso
 _Avoid_: verified Return (verification is an independent verifier's act), machine-checked findings (the shape is checked, the findings are not)
 
 **Rejected Return candidate**:
-A Return candidate that failed contract validation — its identity did not bind, its artifacts were uncontained or did not match their digests, or its `data` did not satisfy the return schema. It is never a handoff and never reaches `result.envelope`, but it is retained as trace evidence of what the spend produced: a digest mismatch's artifact claim is the record of the corruption. Not a kind of return envelope — that term asserts a binding a rejected candidate may not have.
+A Return candidate that failed contract validation — its identity did not bind, its artifacts were uncontained or did not match their digests, or its `data` did not satisfy the return schema. It is never a handoff and never reaches `result.envelope`, but it is retained as trace evidence of what the spend produced: a digest mismatch's artifact claim is the record of the corruption. Not a kind of return envelope — that term asserts a binding a rejected candidate may not have. One recorded carve-out: the trace event kind keeps its historical wire name `envelope.rejected`, which predates this vocabulary.
 _Avoid_: rejected envelope (asserts the binding the rejection refused), invalid envelope, failed envelope (both read as "discard it")
 
 **Unvalidated claims**:
 The claims a rejected Return candidate still carries, surfaced to the parent labeled as unverified and never counted toward a verdict. Available from exactly one rejection: attribution and integrity held — the candidate binds to the dispatched contract, its artifact references stay inside the child cwd, and any digests it declared match — and only conformance failed. A candidate whose identity was stale, or whose artifacts escaped the cwd or failed a digest it declared, has no unvalidated claims — it is untrustworthy, not merely unchecked — which is why the three checks are ordered attribution, integrity, conformance, and why that order is an invariant rather than an implementation detail.
 _Avoid_: salvaged findings, partial results (that names an envelope status), unverified evidence
+
+**Artifact**:
+A file a child pointed at in its result, with any digest it declared for it. Artifact integrity — every reference contained inside the child's cwd, every declared digest matching the file — is one of the three contract checks. A recorded artifact is verified only when the harness checked its digest; a rejected Return candidate's artifact claim stays recorded as the evidence of what the spend produced, explicitly unverified.
+_Avoid_: attachment, output file (an artifact is referenced and checked, not carried)
 
 **Handoff**:
 The prepared value that crosses from one role to another after applicable validation, redaction, and policy handling. A child's output is not a handoff until another role consumes it.
@@ -175,23 +191,23 @@ A grouping span for work that belongs together — a graph wave, a debate round,
 _Avoid_: group, batch, phase (that names one specific stage kind)
 
 **Unit key**:
-The stable name a stage or child span carries inside one flow, so another span can reference it. Referenced from `dependsOn`.
-_Avoid_: id, node name
+The stable name a child or coordination-event span carries inside one flow, so another span can reference it from `dependsOn`. A stage carries a stage key in a deliberately separate namespace; a reference resolves against unit keys first, then stage keys.
+_Avoid_: id, node name, stage key (that is the separate namespace a stage's name lives in)
 
 **Dependency link**:
 A recorded "this unit consumed that unit's output" edge. Deliberately not parentage: a graph node that reads another node's output was scheduled by its wave, not spawned by the node it read.
 _Avoid_: parent, edge
 
 **Coordination event**:
-A zero-duration span for a boundary that is not a run — an artifact reference, a state transition, a retry, an approval, a budget change, a validation result, a handoff. Named by its `flow.event_kind`.
+A zero-duration span for a boundary that is not a run — an artifact reference, a state transition, a retry, an approval, a budget change, a validation result, a handoff. Classified by its event kind (which boundary family) and named separately by its event name (which boundary).
 _Avoid_: log, marker
 
 **Approval** (as an event kind):
-The recorded fact that a human approval point was reached and how it resolved. Covers both **Checkpoint** approvals and workflow-phase approval receipts, which is why the event kind is broader than either term.
+The recorded fact that a human approval point was reached and how it resolved. Covers **Checkpoint** approvals, workflow-phase approval receipts, and **Project-source trust** decisions, which is why the event kind is broader than any one of those terms.
 _Avoid_: gate (a gate is machine-evaluated)
 
 **Minted event**:
-A coordination event recorded by the seam that performs the action instead of by the mode that requested it — the runner's child spans, the handoff consumer's events, the aggregate's approval decision, the deterministic gate's outcome, receipt issuance. The caller supplies an attribution — the event's name, placement, and facts — and the seam's kind and outcome merge last, so attribution cannot override what happened. Recording through the seam is a capability a mode handler does not have; a mode's own decisions — its state transitions, retries, and parsed verdicts — stay hand-placed and are the separate remainder the **Owed event kinds** declaration bounds.
+A coordination event recorded by the seam that performs the action instead of by the mode that requested it — the handoff consumer's events, the aggregate's approval decision, the deterministic gate's outcome, receipt issuance. A child span is not one: the runner records it, but it is a run's span, not a coordination event. The caller supplies an attribution — the event's name, placement, and facts — and the seam's kind and outcome merge last, so attribution cannot override what happened. Recording through the seam is a capability a mode handler does not have; a mode's own decisions — its state transitions, retries, and parsed verdicts — stay hand-placed and are the separate remainder the **Owed event kinds** declaration bounds.
 _Avoid_: framework event, auto-event
 
 **Owed event kinds**:
@@ -218,9 +234,17 @@ _Avoid_: offset (a byte position claims no ownership), byte range
 A run or flow settled without a process or coordination failure. It does not establish that the requested outcome was correct.
 _Avoid_: task success, verified success
 
+**Provider failure**:
+A child failure attributed to the model provider rather than to the task — classified context window, rate limit, authentication, capacity, or unknown. The category carries its own recovery guidance and is the one place **Replay** advice inverts: a rate-limit or capacity failure is re-issuable unchanged within remaining budget, while an authentication or context-window failure repeats until its cause is repaired.
+_Avoid_: infrastructure error, model error (the model answered; the provider could not serve)
+
 **Verified outcome success**:
 Independent verification established that a flow's requested outcome met its acceptance criteria. It is unavailable when no verifier assessed the outcome.
 _Avoid_: execution success, completion
+
+**Critical path**:
+The mode-declared longest dependent chain through a flow's settled runs — the third time measure beside a flow's elapsed time and its total worker time, and what concurrency is measured against. Each mode declares its own arithmetic; undefined is a declared "not derivable", never zero and never a silent fall-through.
+_Avoid_: total duration, wall clock (that is the flow's elapsed time)
 
 **Flow card**:
 The durable summary of one settled flow — status, per-run outcomes, spend, and evidence pointer — that outlives any live view of it.
@@ -235,6 +259,14 @@ _Avoid_: check, approval
 **Spawn gate**:
 The gate that refuses a spawning call before any child starts when the delegation carries no justification. Surfaces that answer without spawning sit outside it.
 _Avoid_: why check, delegation justification (as the gate's name)
+
+**Write-capable**:
+Whether a role's effective tools can mutate a checkout — bash, edit, or write among them, or the pi defaults, which include all three; `bash-ro` is not write-capable. Classified by the effective toolset alone, never by the agent's name or prompt, so renaming an agent changes nothing.
+_Avoid_: mutating agent (the toolset classifies, not the agent), trusted/untrusted
+
+**Shared-write guard**:
+The gate that refuses a concurrent wave placing two or more **Write-capable** roles in one working directory (`SHARED_WRITE_CWD`) before any child spawns. Coordination safety, not access control: it prevents conflicting edits in one checkout, and an explicit opt-in can lift it when concurrent writes there are actually intended.
+_Avoid_: write lock (nothing is locked — the guard refuses, it does not serialize), cwd check
 
 **Admissibility**:
 Whether the tool itself would admit a call rather than refuse it before any child spawns. Judged with the same predicates the tool enforces, so a scored rule cannot drift from the enforced one.
@@ -252,8 +284,16 @@ _Avoid_: the bare "pre-spawn refusal" (that covers any refusal before spawning, 
 A human approval point in a flow, before spawning or before finalizing. A checkpoint is not a gate.
 _Avoid_: approval gate, human gate
 
+**Tombstone**:
+The loud refusal a retired param key gets, naming its replacement. It exists because the public schema accepts unknown keys: without it, a call written against the old vocabulary would pass validation and be silently weaker, which is worse than a break.
+_Avoid_: deprecation warning (nothing runs — the call is refused), alias (an alias accepts the old key; a tombstone refuses it)
+
+**Project-source trust**:
+The human decision to trust repo-controlled agent or preset definitions before anything defined by them runs, made once per call and fail-closed where no UI can ask. A third human decision beside **Checkpoint** (which approves a flow's action, not a source) and the workflow **Approval receipt** (which it is deliberately not: trusting a source leaves no durable, reusable authorization). Recorded as an **Approval** event.
+_Avoid_: project approval (that reads as approving the project's work), confirmation prompt (the prompt is the mechanism, not the decision)
+
 **Read-only bash (`bash-ro`)**:
-A toolset token granting a child bash that cannot write the reviewed checkout, never requested by prompt. Enforced in two layers: an OS read-only-checkout sandbox (the security boundary) and an in-child command allowlist as defense-in-depth and the fallback where the sandbox is absent. Classified not write-capable for the shared-write guard, and refused only when neither layer is available. Coordination safety against ad-hoc mutations of a shared checkout.
+A toolset token granting a child bash that cannot write the reviewed checkout, never requested by prompt. Enforced in two layers: an OS read-only-checkout sandbox (the security boundary) and an in-child command allowlist as defense-in-depth and the fallback where the sandbox is absent. Classified not **Write-capable** for the **Shared-write guard**, and refused when neither layer is available — or when the operator requires the sandbox and it is unusable, even though the allowlist alone could run. Coordination safety against ad-hoc mutations of a shared checkout.
 _Avoid_: safe bash (the sandbox is real, but the allowlist fallback is best-effort)
 
 **Workflow digest**:
@@ -261,11 +301,12 @@ The content identity of one workflow — its top-level Task, phases in order, an
 _Avoid_: workflow hash, workflow fingerprint, state file name (the digest names the default file, it is not the file)
 
 **Approval receipt**:
-A durable, expiring, single-use record that binds one human approval to the exact workflow action and conditions it authorizes, including every gated Role's **Effective Agent profile** and a gated debrief's profile. A receipt persists only binding identity and status, never raw prompt or parameter content.
+A durable, expiring, single-action record that binds one human approval to the exact workflow action and conditions it authorizes, including every gated Role's **Effective Agent profile** and a gated debrief's profile. A receipt persists only binding identity and status, never raw prompt or parameter content. Two deliberate softenings: a receipt reconstructed from pre-receipt state persists without expiry, labeled migrated; and the same consumer resuming the same action re-verifies and receives the same receipt back — a resume, not a second use.
+_Avoid_: approval marker, checkpoint receipt, single-use (that reads as single-call; consumption is idempotent per action)
 
 **Historical Thinking witness**:
-A one-time effective Thinking value supplied only to bound legacy receipt migration when automatic reconstruction would exceed its work limit. It is evidence, not a dispatch setting: only a value that reproduces the intact spent receipt's binding digest is accepted.
-_Avoid_: approval marker, checkpoint receipt
+Caller-supplied historical effective Thinking values — one per workflow phase, optionally the debrief — that bound legacy receipt migration. Requested only when automatic reconstruction would exceed its work limit, but constraining the reconstruction whenever supplied. Evidence, not a dispatch setting: only values that reproduce the intact spent receipt's binding digest are accepted.
+_Avoid_: Thinking override (it never changes what a child runs at), migration parameter
 
 **Approval authorization**:
 The capability to spend an approval receipt, produced only by verifying the receipt against the action about to run and bound to that action. Consuming without verifying is not a call order that exists.
@@ -276,8 +317,8 @@ A machine-enforced cost or token ceiling shared by every run in one flow.
 _Avoid_: quota, allowance
 
 **Contract budget**:
-A machine-enforced time, cost, or token ceiling scoped to the runs fulfilling one delegation contract, independent of the flow budget.
-_Avoid_: quota, allowance
+Machine-enforced cost and token ceilings cumulative over the runs fulfilling one delegation contract, independent of the flow budget. A contract's timeout is not one of them: it is a per-run wall-clock bound applied at dispatch, never a cumulative ceiling.
+_Avoid_: quota, allowance, time ceiling (the timeout bounds each run, not the contract's total)
 
 **Budget ceiling**:
 One configured cost or token limit, disclosed before work starts rather than discovered when it binds.
@@ -288,7 +329,7 @@ Which budget a ceiling belongs to — flow or contract. Carried wherever a ceili
 _Avoid_: budget owner, budget scope
 
 **Budget headroom**:
-A budget's forward question: does the remaining work fit in what remains of each ceiling? Projected spend is current spend plus remaining effort weight times the observed spend per unit of weight, refused (`BUDGET_HEADROOM_EXCEEDED`) before anything spawns against it. Distinct from exhaustion: a budget already spent refuses at the spawn gate as `BUDGET_EXCEEDED`, and headroom never speaks for it.
+A budget's forward question: does the remaining work fit in what remains of each ceiling? Projected spend is current spend plus remaining effort weight times the observed spend per unit of weight, refused (`BUDGET_HEADROOM_EXCEEDED`) before anything spawns against it. Distinct from exhaustion: a budget already spent refuses the spawn itself as `BUDGET_EXCEEDED` (the budget's own refusal, not the **Spawn gate**, which names the justification check), and headroom never speaks for it.
 _Avoid_: budget forecast, affordability check, remaining budget (that names the plain subtraction, not the projection against remaining work), reservation (nothing is set aside — the projection admits or refuses, it does not hold funds)
 
 **Wrap-up notice**:
@@ -300,7 +341,7 @@ The pair of switches that decide what child content may appear in returned conte
 _Avoid_: redaction settings, privacy mode
 
 **Tier**:
-A portable capability level (fast, capable, deep) that resolves to a concrete model per install.
+A portable capability level (fast, capable, deep). Per install it resolves to a concrete model, to "run the pi default" (deliberately not a named model), or to a refusal when no model the install can run satisfies the tier's scope. Collapsing the default answer or the refusal into "a model" is the mistake this three-way answer exists to prevent.
 _Avoid_: model class, size
 
 **Roster**:
@@ -308,7 +349,7 @@ The concrete model and thinking level each tier resolves to on one install, deri
 _Avoid_: fleet, model map, tier mapping
 
 **Thinking level**:
-The reasoning effort one child runs at, lowered to what its model supports. Reported as what the child ran at, never as what was requested.
+The reasoning effort one child runs at, lowered to what its model supports when the model is known. On an unknown model the requested level passes through unclamped, and every report labels it requested-but-unverified rather than presenting it as what ran.
 _Avoid_: effort, reasoning budget
 
 **Reflexion**:

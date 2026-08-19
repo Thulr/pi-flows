@@ -7,8 +7,8 @@
  * and expansion facade and re-exports this module's public names.
  */
 import { execFileSync } from "node:child_process";
-import { Run } from "./run.ts";
-import { isFailed, sanitizeText } from "./sanitize.ts";
+import { Run, runState } from "./run.ts";
+import { sanitizeText } from "./sanitize.ts";
 import type { CapturePolicy, FlowPreset, ModeOutput } from "./types.ts";
 
 function findingLine(finding: any): string {
@@ -149,11 +149,13 @@ export function formatPresetResult(
 		}
 		return output;
 	}
-	const completed = output.details.results.filter((result) => result.exitCode === 0 && result.envelope?.status === "completed");
+	// runState, not exitCode: a child can exit 0 from an aborted or timed-out
+	// turn, and a failed axis must never count toward the verdict.
+	const completed = output.details.results.filter((result) => runState(result) === "completed" && result.envelope?.status === "completed");
 	// A reviewer that skipped a file can still have anchored a real bug in the files
 	// it did read. Its envelope cannot prove coverage, so it never counts toward the
 	// verdict, but dropping its findings would hide the one thing worth acting on.
-	const incomplete = output.details.results.filter((result) => result.exitCode === 0 && result.envelope && !completed.includes(result));
+	const incomplete = output.details.results.filter((result) => runState(result) === "completed" && result.envelope && !completed.includes(result));
 	const envelopes = completed.map((result) => Run.of(result).takeValidatedReturnEnvelope() ?? result.envelope);
 	const incompleteEnvelopes = incomplete.map((result) => Run.of(result).takeValidatedReturnEnvelope() ?? result.envelope);
 	const incompleteFindings = incompleteEnvelopes.flatMap(envelopeFindings);
@@ -217,7 +219,7 @@ export function formatPresetResult(
 	const gap = complete ? "" : `\n\nCoverage could not be proven complete across both review axes; do not treat this result as clean.${gapItems.length ? ` Gaps — ${gapItems.join(" · ")}.` : ""}`;
 	// This formatter replaces the ordinary parallel summary, so a reviewer that
 	// timed out or died would otherwise be reported as an unexplained PARTIAL.
-	const failed = output.details.results.filter(isFailed)
+	const failed = output.details.results.filter((result) => runState(result) === "failed")
 		.map((result) => `${result.role ?? result.agent} (${result.error?.code ?? result.stopReason ?? `exit ${result.exitCode}`})`);
 	const failureText = failed.length ? `\n\nReview axes that did not return: ${failed.join(", ")}.` : "";
 	output.content = [{ type: "text", text: sanitizeText(`Code review: ${status}${details}${gap}${failureText}`, policy) }];

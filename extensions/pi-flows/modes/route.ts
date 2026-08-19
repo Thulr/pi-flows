@@ -62,7 +62,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 	if (entryRefusal) return settle.refuse(entryRefusal);
 	const goal = params.task as string;
 	const candidates: string[] = spec.candidates.filter((name: any) => typeof name === "string" && name.trim());
-	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence);
 
 	const routerRef: FlowAgentRefInput = spec.controller ?? { agent: "controller" };
 	const routerTask = [
