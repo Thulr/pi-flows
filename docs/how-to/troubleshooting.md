@@ -187,6 +187,17 @@ Fix: choose exactly one of `list:true`, `showConfig:true`, `agent`+(`task` or `c
 `dossier{}`, or `monitor{}`. Supply that mode's required fields. Run
 `showConfig:true` to inspect the defaults before execution.
 
+### `PARAM_RENAMED`
+
+Cause: the call used a renamed parameter key. `returnContract` is now
+`returnRequirements`, and `orchestrate.workerReturnContract` is now
+`orchestrate.workerReturnRequirements`. The refusal is deliberate. The schema
+accepts unknown keys, so a retired key would pass validation and its
+requirements would never reach a child.
+
+Fix: re-issue the call with the key the refusal names. The value is unchanged.
+Update any preset template or script that still uses the retired key.
+
 ### `INVALID_SCOPE`
 
 Cause: an agent scope other than `user`, `project`, or `all` was requested.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appendReturnContract, appendReturnRequirements } from "../extensions/pi-flows/validate.ts";
+import { appendReturnRequirements, renamedParamError } from "../extensions/pi-flows/validate.ts";
 
 test("return requirements append explicit output and evidence requirements", () => {
 	const task = appendReturnRequirements("Map the auth flow.", "Return a table with path, purpose, and evidence.", true);
@@ -12,8 +12,19 @@ test("return requirements append explicit output and evidence requirements", () 
 	assert.equal(appendReturnRequirements("plain", undefined, false), "plain");
 });
 
-test("the legacy return-contract helper remains a compatibility alias", () => {
-	const args = ["Map the auth flow.", "Return a table.", true] as const;
+// The retired keys refuse loudly wherever they can appear, because the public
+// schema does not reject unknown keys: without the tombstone an old call would
+// pass validation and its requirements would silently never reach a child.
+test("a retired returnContract key is refused, not silently ignored", () => {
+	assert.equal(renamedParamError({ task: "x", returnRequirements: "shape" }), null, "the current vocabulary is admissible");
+	assert.equal(renamedParamError({ task: "x", returnContract: "shape" })?.code, "PARAM_RENAMED", "the retired top-level key refuses");
+	assert.equal(renamedParamError({ tasks: [{ agent: "recon", task: "x", returnContract: "shape" }] })?.code, "PARAM_RENAMED", "a retired per-task key refuses");
+	assert.equal(renamedParamError({ orchestrate: { workerReturnContract: "shape" } })?.code, "PARAM_RENAMED", "the retired orchestrate worker key refuses");
+	const error = renamedParamError({ workflow: { phases: [{ id: "a", returnContract: "shape" }] } });
+	assert.match(error?.fix ?? "", /returnRequirements/, "the fix names the replacement key");
+});
 
-	assert.equal(appendReturnContract(...args), appendReturnRequirements(...args));
+test("a contract's returnSchema may declare data fields by any name", () => {
+	const params = { agent: "recon", task: "x", contract: { returnSchema: { properties: { returnContract: { type: "string" } } } } };
+	assert.equal(renamedParamError(params), null, "contract subtrees are never scanned for retired keys");
 });

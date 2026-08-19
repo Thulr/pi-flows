@@ -182,7 +182,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 			const ref = { agent: worker.task.agent, model: worker.task.model, tier: worker.task.tier, thinking: worker.task.thinking, tools: worker.task.tools, cwd: worker.cwd, contract: worker.task.contract };
 			const task = ["## Overall integration goal", params.task ?? "Complete the assigned implementation tasks and integrate them.", `\n## Your isolated worktree assignment (${worker.id})`, worker.task.task, "\n## Harness contract", "Work only in this worktree. Make the requested edits and run focused verification. Do not commit or merge; the harness owns git integration. Report changed files, verification, and remaining risks."].join("\n");
 			const planned = integrationRunPlan(deps, ref, task, {
-				returnContract: worker.task.returnContract ?? params.returnContract,
+				returnRequirements: worker.task.returnRequirements ?? params.returnRequirements,
 				requireEvidence: worker.task.requireEvidence ?? true,
 				placeholderTask: worker.task.task,
 				scope: { key: workerKey(worker.id), dependsOn: [BRANCHES_KEY] },
@@ -350,7 +350,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		].join("\n");
 		const reviewPlan = integrationRunPlan(deps, integrator, reviewTask, {
 			fallbackContract: params.contract as DelegationContract | undefined,
-			returnContract: params.returnContract,
+			returnRequirements: params.returnRequirements,
 			requireEvidence: params.requireEvidence,
 			// The branch under review contains any conflict resolution that produced
 			// it, so the reviewed result's provenance includes the resolvers.

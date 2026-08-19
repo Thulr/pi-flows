@@ -92,8 +92,8 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		));
 	}
 	const evaluationGoal = contract
-		? contract.reviewContext(appendReturnRequirements(goal, params.returnContract, params.requireEvidence))
-		: appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
+		? contract.reviewContext(appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence))
+		: appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence);
 
 	const generatorRef: FlowAgentRefInput = spec.operator ?? { agent: "operator" };
 	// The critic may be a single agent or a panel (god-metric → decomposed evaluators:
@@ -173,7 +173,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 					].join("\n");
 		const planned = integrationRunPlan(deps, generatorRef, generatorTask, {
 			fallbackContract: params.contract,
-			returnContract: params.returnContract,
+			returnRequirements: params.returnRequirements,
 			requireEvidence: params.requireEvidence,
 			// A revision's prompt carries the prior artifact and the feedback that
 			// sent it back. Both are declared: reachability through the panel is

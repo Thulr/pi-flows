@@ -169,7 +169,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 	for (const [index, voter] of voters.entries()) {
 		const planned = integrationRunPlan(deps, voter, voterTask(contractedGoal, index, voters.length, diversifyVoters), {
 			fallbackContract: params.contract as DelegationContract | undefined,
-			returnContract: params.returnContract,
+			returnRequirements: params.returnRequirements,
 			requireEvidence: params.requireEvidence,
 			placeholderTask: contractedGoal,
 			scope: { key: voterKey(index) },
@@ -240,7 +240,7 @@ export async function handleVote(deps: ModeDeps): Promise<ModeOutput> {
 		].join("\n");
 		const planned = integrationRunPlan(deps, aggregatorRef, aggregatorTask, {
 			fallbackContract: params.contract as DelegationContract | undefined,
-			returnContract: params.returnContract,
+			returnRequirements: params.returnRequirements,
 			requireEvidence: params.requireEvidence,
 			scope: { key: "aggregator", dependsOn: consumedBallotKeys },
 		});

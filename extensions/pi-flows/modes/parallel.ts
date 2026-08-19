@@ -72,7 +72,7 @@ export async function handleParallel(deps: ModeDeps): Promise<ModeOutput> {
 	for (const task of tasks) {
 		const planned = integrationRunPlan(deps, task, task.task, {
 			fallbackContract: params.contract as DelegationContract | undefined,
-			returnContract: task.returnContract ?? params.returnContract,
+			returnRequirements: task.returnRequirements ?? params.returnRequirements,
 			requireEvidence: task.requireEvidence ?? params.requireEvidence,
 			placeholderTask: task.task,
 		});

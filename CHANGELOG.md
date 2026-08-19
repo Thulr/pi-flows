@@ -8,6 +8,33 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** the prose return-requirements params are renamed to match the
+  domain glossary. `returnContract` is now `returnRequirements` at every level
+  (top-level, `tasks[]`, graph nodes, workflow phases, worktree workers, chain
+  steps, dossier sections, and the `orchestrate` goal alias), and
+  `orchestrate.workerReturnContract` is now
+  `orchestrate.workerReturnRequirements`. A call, preset template, or script
+  using a retired key is refused with the new `PARAM_RENAMED` error naming the
+  replacement, because the schema accepts unknown keys and the old spelling
+  would otherwise be silently ignored. The `appendReturnContract` export is
+  removed; use `appendReturnRequirements`. Durable workflow approval receipts
+  are unaffected: the persisted binding record keeps its pre-rename
+  `returnContract` key, so existing receipts still verify and legacy
+  reconstruction still reproduces historical digests.
+
+### Fixed
+
+- The flow card colors a fully recorded trace as success again. It compared
+  trace health against `"complete"`, a value the sink never writes, so every
+  trace — `recorded` included — rendered in the warning color.
+
+- The code-review preset's verdict now reads the shared run-state derivation
+  instead of the exit code. A reviewer that timed out or aborted after exiting
+  0 with a completed-status envelope counted toward CLEAN; it now reads as a
+  failed axis and the verdict stays PARTIAL.
+
 ### Added
 
 - Orchestrate can now replan the Decomposition once, mid-flow, for the work

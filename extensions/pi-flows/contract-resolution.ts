@@ -169,10 +169,10 @@ export class ResolvedDelegationContract {
 	}
 
 	/** Render the child task with the contract terms and the return protocol bound to this contract's identity. */
-	renderTask(task: string | undefined, returnContract?: string, requireEvidence?: boolean): string {
+	renderTask(task: string | undefined, returnRequirements?: string, requireEvidence?: boolean): string {
 		const goal = task?.trim() || this.contract.objective;
 		return [
-			appendReturnRequirements(goal, returnContract, requireEvidence),
+			appendReturnRequirements(goal, returnRequirements, requireEvidence),
 				"\n## Delegation contract",
 			JSON.stringify(this.contract, null, 2),
 			"\n## Required return protocol",

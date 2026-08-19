@@ -76,7 +76,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const scorerWriteError = validateSharedWriteCwd(discovery, defaultCwd, repeatedScorers, params.allowSharedWriteCwd, concurrency);
 	if (scorerWriteError) return settle.refuse(scorerWriteError);
 
-	const contractedGoal = appendReturnRequirements(goal, params.returnContract, params.requireEvidence);
+	const contractedGoal = appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence);
 	// Carry the score unit that selected each candidate into the next round.
 	let beam: Array<{ text: string; score: number; scoreKey: string }> = [];
 

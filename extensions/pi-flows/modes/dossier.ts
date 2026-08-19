@@ -65,7 +65,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 				"Return atomic claims with source/file citations, direct supporting evidence, confidence, contradictions, and explicit unknowns. Do not synthesize across sources you did not inspect.",
 			].join("\n");
 		const planned = integrationRunPlan(deps, section, task, {
-			returnContract: section.returnContract ?? params.returnContract,
+			returnRequirements: section.returnRequirements ?? params.returnRequirements,
 			requireEvidence: section.requireEvidence ?? true,
 			placeholderTask: section.task,
 			scope: { key: sectionKey(index) },
@@ -99,7 +99,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	].join("\n");
 	const planned = integrationRunPlan(deps, debriefRef, synthesisTask, {
 		fallbackContract: params.contract as DelegationContract | undefined,
-		returnContract: params.returnContract,
+		returnRequirements: params.returnRequirements,
 		requireEvidence: params.requireEvidence,
 		// Only the sections that succeeded reach the synthesis prompt, so only those
 		// belong in its dependency list — claiming it consumed a failed section's

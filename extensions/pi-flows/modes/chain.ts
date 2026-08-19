@@ -52,7 +52,7 @@ export async function handleChain(deps: ModeDeps): Promise<ModeOutput> {
 				// Each chain step is a distinct delegation, even when it inherits the same contract value.
 				shareContractBudget: false,
 				fallbackContract: params.contract,
-				returnContract: step.returnContract ?? params.returnContract,
+				returnRequirements: step.returnRequirements ?? params.returnRequirements,
 				requireEvidence: step.requireEvidence ?? params.requireEvidence,
 				// A chain step consumed the previous step's output; the link records
 				// that without pretending the earlier step spawned this one.

@@ -27,8 +27,49 @@ export function appendReturnRequirements(task: string, requirements: string | un
 	return [task, "\n## Return requirements", ...sections.map((section) => `- ${section}`)].join("\n");
 }
 
-/** Compatibility alias for the original helper name; prefer appendReturnRequirements. */
-export const appendReturnContract = appendReturnRequirements;
+/**
+ * Params keys retired by rename, refused loudly (PARAM_RENAMED) so a call
+ * written against the old vocabulary is never silently weaker: the public
+ * schema does not reject unknown keys, so without this gate an old
+ * `returnContract` would pass validation and its requirements would simply
+ * never reach a child.
+ */
+const RENAMED_PARAMS: Record<string, string> = {
+	returnContract: "returnRequirements",
+	workerReturnContract: "workerReturnRequirements",
+};
+
+/**
+ * Find a retired key anywhere in the call's params. Skips `contract` subtrees:
+ * a delegation contract's returnSchema may legitimately declare a data field
+ * by any name, and the retired keys never lived inside a contract.
+ */
+export function renamedParamError(value: unknown, path = ""): FlowError | null {
+	if (!value || typeof value !== "object") return null;
+	if (Array.isArray(value)) {
+		for (const [index, item] of value.entries()) {
+			const error = renamedParamError(item, `${path}[${index}]`);
+			if (error) return error;
+		}
+		return null;
+	}
+	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (key === "contract") continue;
+		const where = path ? `${path}.${key}` : key;
+		const renamed = RENAMED_PARAMS[key];
+		if (renamed) {
+			return flowError(
+				"PARAM_RENAMED",
+				`Flow call refused: \`${where}\` was renamed to \`${renamed}\`.`,
+				`The prose return-requirements params were renamed (returnContract -> returnRequirements); refusing is deliberate, because the old key would otherwise pass schema validation and be silently ignored.`,
+				`Re-issue the call with \`${renamed}\` in place of \`${key}\`. The value is unchanged.`,
+			);
+		}
+		const nested = renamedParamError(entry, where);
+		if (nested) return nested;
+	}
+	return null;
+}
 
 export function effectiveTools(discovery: FlowDiscovery, ref: { agent: string; tools?: string }): string[] | undefined | null {
 	const agent = discovery.agents.find((candidate) => candidate.name === ref.agent);

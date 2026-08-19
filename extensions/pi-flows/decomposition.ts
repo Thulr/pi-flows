@@ -56,7 +56,7 @@ export interface DecompositionSubtask {
 	readonly nonGoals?: string;
 	/** Starting material the worker is given, carried into the worker prompt. */
 	readonly inputs?: string;
-	/** Per-subtask prose return contract, composed with the mode's workerReturnContract. */
+	/** Per-subtask prose return requirements, composed with the mode's workerReturnRequirements. */
 	readonly expectedReturn?: string;
 	/** What evidence makes this subtask's return acceptable, carried into the worker prompt. */
 	readonly acceptanceEvidence?: string;

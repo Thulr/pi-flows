@@ -149,7 +149,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		for (const node of ready) {
 			const depOutputs = new Map(outputs);
 			const planned = integrationRunPlan(deps, node, renderGraphTask(node.task, contractedTask, depOutputs), {
-				returnContract: node.returnContract ?? params.returnContract,
+				returnRequirements: node.returnRequirements ?? params.returnRequirements,
 				requireEvidence: node.requireEvidence ?? params.requireEvidence,
 				placeholderTask: node.task,
 				// A node's dependencies are links, not parentage: node b consumed node
@@ -200,7 +200,7 @@ export async function handleGraph(deps: ModeDeps): Promise<ModeOutput> {
 		].join("\n");
 		const planned = integrationRunPlan(deps, debriefRef, debriefTask, {
 			fallbackContract: params.contract as DelegationContract | undefined,
-			returnContract: params.returnContract,
+			returnRequirements: params.returnRequirements,
 			requireEvidence: params.requireEvidence,
 			scope: { key: "debrief", dependsOn: terminalIds.flatMap((id: string) => {
 				const key = outputKeys.get(id);

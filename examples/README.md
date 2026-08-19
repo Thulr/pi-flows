@@ -192,7 +192,7 @@ Add `"verify": { "agent": "overwatch" }` to `orchestrate` to append a `VERDICT: 
 ```json
 {
   "task": "Document login, refresh, and session storage",
-  "returnContract": "Give one evidence-backed section for each auth surface.",
+  "returnRequirements": "Give one evidence-backed section for each auth surface.",
   "orchestrate": {
     "review": { "agent": "overwatch" },
     "reviewMaxIterations": 2,

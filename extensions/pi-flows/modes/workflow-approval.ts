@@ -151,6 +151,16 @@ export function workflowApprovalProfileRefusal(params: any, environment: AgentPr
 	return null;
 }
 
+/**
+ * The persisted binding entry for prose return requirements. The key predates
+ * the returnRequirements rename and is digest input: renaming it would stale
+ * every issued receipt and break historical-binding reconstruction, so every
+ * binding record spells it here, once, as returnContract.
+ */
+function persistedReturnRequirements(value: unknown): { returnContract: unknown } {
+	return { returnContract: value ?? null };
+}
+
 /** Authored and inherited phase terms shared by current and historical bindings. */
 function gatedPhaseTerms(phase: any, params: any): Record<string, unknown> {
 	return {
@@ -160,7 +170,7 @@ function gatedPhaseTerms(phase: any, params: any): Record<string, unknown> {
 		tier: phase.tier ?? params.tier ?? null,
 		checkCommand: phase.checkCommand ?? null,
 		contract: phase.contract ?? null,
-		returnContract: phase.returnContract ?? params.returnContract ?? null,
+		...persistedReturnRequirements(phase.returnRequirements ?? params.returnRequirements),
 		requireEvidence: phase.requireEvidence ?? params.requireEvidence ?? false,
 	};
 }
@@ -173,8 +183,8 @@ function workflowBoundRequestedThinking(ref: any): ThinkingLevel | undefined {
 /**
  * A gated phase's EFFECTIVE definition — what it resolves to once flow-level
  * fallbacks and the model roster are applied. The workflow digest sees
- * `phase.returnContract`; only this sees that an omitted one falls back to
- * `params.returnContract`, so changing the fallback after approval is caught
+ * `phase.returnRequirements`; only this sees that an omitted one falls back to
+ * `params.returnRequirements`, so changing the fallback after approval is caught
  * rather than inherited.
  */
 export function normalizeGatedPhase(phase: any, params: any, deps: ModeDeps): Record<string, unknown> {
@@ -210,7 +220,7 @@ function normalizeGatedDebrief(params: any, deps: ModeDeps): Record<string, unkn
 		cwd: profile.resolvedCwd,
 		cwdIdentity: profile.cwdIdentity,
 		contract: debrief.contract ?? params.contract ?? null,
-		returnContract: params.returnContract ?? null,
+		...persistedReturnRequirements(params.returnRequirements),
 		requireEvidence: params.requireEvidence ?? false,
 		tier: debrief.tier ?? params.tier ?? null,
 		model: profile.model,
@@ -302,7 +312,7 @@ export function historicalApprovalSearchForV3(phases: any[], index: number, deps
 	const historicalDebrief = gatesDebrief
 		? {
 				contract: deps.params.contract ?? null,
-				returnContract: deps.params.returnContract ?? null,
+				...persistedReturnRequirements(deps.params.returnRequirements),
 				requireEvidence: deps.params.requireEvidence ?? false,
 				tier: debrief.tier ?? deps.params.tier ?? null,
 				model: debriefProfile?.modelChoice.model ?? null,

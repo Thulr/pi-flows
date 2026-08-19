@@ -240,7 +240,7 @@ function taskText(args) {
 		if (typeof critic?.task === "string") pieces.push(critic.task);
 	}
 	if (typeof args?.orchestrate?.task === "string") pieces.push(args.orchestrate.task);
-	if (typeof args?.orchestrate?.returnContract === "string") pieces.push(args.orchestrate.returnContract);
+	if (typeof args?.orchestrate?.returnRequirements === "string") pieces.push(args.orchestrate.returnRequirements);
 	for (const node of asArray(args?.graph?.nodes)) {
 		if (typeof node?.task === "string") pieces.push(node.task);
 	}

@@ -184,7 +184,7 @@ the parent context.
 | `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, failed writes, or an export that is complete but does not read back as a span tree fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates. Ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
 | `handoffPolicy` | `warn` | Call-level injection handling at inter-agent boundaries: `warn` preserves the flagged payload with a warning, `quarantine` substitutes a payload-free marker, and `fail` returns `HANDOFF_POLICY_VIOLATION` before the recipient spawns. |
 | `modeHandoffPolicy` | (none) | Per-mode minimums, for example `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`. A call cannot downgrade a high-consequence mode. |
-| `returnContract` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. |
+| `returnRequirements` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
 | `contract` | (none) | Optional machine-checked delegation contract. It can replace `task` in single/evaluate or be a documented `resolved`-role fallback. Every task/role contract resolves before that Child spawns and requires a validated `pi-flows.return-envelope.v1`. Supplying one proves contract attribution, declared artifact integrity, and return-schema conformance — never that the Return's claims are true or that `acceptanceChecks` were satisfied. Without one, the child returns an ordinary Result. Role contracts override fallbacks. |
 | `incompleteHandoffPolicy` | `fail` | Integration modes reject `partial`/`blocked` return envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
@@ -352,13 +352,13 @@ claims are true or that prose `acceptanceChecks` were satisfied. **Verified
 outcome success** exists only when an independent verifier assessed the
 outcome (see the trace report above).
 
-`returnContract` and `requireEvidence` supply prose **return requirements** that
+`returnRequirements` and `requireEvidence` supply prose **return requirements** that
 prevent summary loss at handoff boundaries. They are appended to child tasks in `single`, `parallel`, `chain`,
 `evaluate`, `vote`, `route`, and to `orchestrate` workers/synthesis. Workflow
 phases, worktree tasks, and dossier sections accept task-level return requirements.
 Those override the top-level return requirements. Dossier sections and worktree tasks require
-evidence by default. `orchestrate.workerReturnContract` can set a worker-specific
-set of return requirements while the top-level `returnContract` still applies to synthesis.
+evidence by default. `orchestrate.workerReturnRequirements` can set a worker-specific
+set of return requirements while the top-level `returnRequirements` still applies to synthesis.
 
 For durable machine-checked handoffs, a delegation `contract` is the structured alternative.
 It contains `objective`, `constraints`, `nonGoals`, `dependencies`, `authority`
@@ -450,7 +450,7 @@ envelope, retained on `details.results[].envelope`. For downstream validators,
 the public schema `FlowReturnCandidate` matches the candidate shape and
 `FlowReturnEnvelope` matches only the validated form.
 
-Existing `task`, `returnContract`, and `requireEvidence` calls remain prose-based
+Existing `task`, `returnRequirements`, and `requireEvidence` calls remain prose-based
 and behave as before.
 
 Parallel fan-out is read-optimized by default. If a call asks two write-capable
@@ -664,8 +664,8 @@ Top-level `task` is preferred. `orchestrate.task` is its fallback. Each worker s
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict. `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`. `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
 | `orchestrate.replan` | `true` | Allow one mid-flow replan. It fires when a failure strands the remaining subtasks, or when the between-wave headroom projection refuses them. The `commander` returns one full replacement for the work that has not run. Set `false` to strand and report without a replan. |
-| `orchestrate.workerReturnContract` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
-| `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`. When top-level `task` is also omitted, this text can serve as the goal fallback for model-generated calls. |
+| `orchestrate.workerReturnRequirements` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
+| `orchestrate.returnRequirements` | (none) | Alias for top-level `returnRequirements`. When top-level `task` is also omitted, this text can serve as the goal fallback for model-generated calls. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Integer `1..16`. Cap on the total subtasks, dependent ones included. A flat subtask list is cut to this cap. A structured Decomposition above the cap is refused `DECOMPOSITION_INVALID`, because a cut can sever declared edges. |
 
 If the `commander` returns no usable subtask array, the call fails with `ORCHESTRATE_NO_SUBTASKS`.
@@ -716,7 +716,7 @@ The **structured shape** is an array of subtask objects. It can also declare dep
 | `scope` | No | Prose bounds on the subtask. |
 | `nonGoals` | No | What the subtask must not do. |
 | `inputs` | No | Starting material for the worker. |
-| `expectedReturn` | No | Return requirements for this subtask alone. The flow adds them under `orchestrate.workerReturnContract`. |
+| `expectedReturn` | No | Return requirements for this subtask alone. The flow adds them under `orchestrate.workerReturnRequirements`. |
 | `acceptanceEvidence` | No | The evidence that makes this subtask's return acceptable. |
 
 Each prose field accepts one string, or an array of strings. The flow joins an array into lines. Each optional prose field becomes its own labeled section of the worker prompt. A subtask never names an agent. Every subtask of one Decomposition runs the single worker role that `orchestrate.recon` sets. For a different agent per unit, use [graph mode](#graph-mode-static-dag).
@@ -847,7 +847,7 @@ Composed with Decomposition review, Return requirements, and a revising outcome 
 ```json
 {
   "task": "Document how auth works across the codebase",
-  "returnContract": "Return sections for login, token refresh, session storage, and gaps.",
+  "returnRequirements": "Return sections for login, token refresh, session storage, and gaps.",
   "requireEvidence": true,
   "orchestrate": {
     "review": { "agent": "overwatch" },
@@ -1008,7 +1008,7 @@ digest that does not depend on object key order (see `workflow.stateFile`).
 | `phase.task` | required for work | Supports `{task}`, `{previous}`, and `{phase.<id>}` output placeholders. |
 | `phase.checkCommand` | (none) | Deterministic gate run in the phase `cwd`. Non-zero stops with `WORKFLOW_GATE_FAILED`. |
 | `phase.cwd` / `model` / `tier` / `thinking` / `tools` | inherited | Per-phase process and gate overrides. Approval binds their effective values after Agent and flow fallbacks. |
-| `phase.returnContract` / `requireEvidence` | top-level values | Per-phase handoff requirements. |
+| `phase.returnRequirements` / `requireEvidence` | top-level values | Per-phase handoff requirements. |
 
 Interactive approval nodes call the Pi confirmation UI. In headless contexts
 they fail closed with `WORKFLOW_APPROVAL_REQUIRED` after they persist completed

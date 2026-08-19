@@ -30,7 +30,7 @@ export async function handleSingle(deps: ModeDeps): Promise<ModeOutput> {
 	const { params, policy } = deps;
 	const planned = integrationRunPlan(deps, { agent: params.agent, cwd: params.cwd, tools: params.tools }, params.task, {
 		fallbackContract: params.contract,
-		returnContract: params.returnContract,
+		returnRequirements: params.returnRequirements,
 		requireEvidence: params.requireEvidence,
 		scope: { key: "single" },
 	});

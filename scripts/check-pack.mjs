@@ -402,5 +402,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // and the explanation page's mid-flow replan section replacing its stale
 // out-of-scope note. The file set stays 117 and none from tests/, scripts/,
 // or evals/; measured 1_442_596.
-assert.ok(pack.unpackedSize < 1_443_500, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_455_500 for the domain-model audit: ten new glossary terms and
+// twelve corrected entries in CONTEXT.md, the returnRequirements rename with
+// its PARAM_RENAMED tombstone (validate.ts, flow.ts, the troubleshooting
+// catalog entry), and the breaking-change and bug-fix changelog entries. The
+// file set stays 117 and none from tests/, scripts/, or evals/; measured
+// 1_453_803.
+assert.ok(pack.unpackedSize < 1_455_500, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
