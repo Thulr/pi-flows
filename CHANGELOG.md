@@ -22,7 +22,7 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   refused replacement strands and reports; there is no replan of a replan.
   `orchestrate.replan:false` restores the strand-and-report path. Worker spans
   carry `flow.plan_revision` (1 initial, 2 revision; plan-2 unit keys are
-  `worker-2.<id>`), and the replan records an `orchestrate.replan_decomposition`
+  `worker2-<id>`), and the replan records an `orchestrate.replan_decomposition`
   retry event beside `orchestrate.revise_decomposition`.
 
 - Orchestrate now gates an admitted Decomposition on budget headroom (#164).

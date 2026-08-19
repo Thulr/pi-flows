@@ -30,12 +30,15 @@ const workerKey = (index: number) => `worker-${index + 1}`;
  */
 const structuredWorkerKey = (id: string) => `worker-${encodeAuthorKey(id)}`;
 /**
- * A plan-2 worker's unit key. The literal dot after the revision number cannot
- * appear in an encoded author id (encodeAuthorKey escapes the author's dots),
- * so a revision key can never collide with a plan-1 key — not even when a
- * failed id legitimately reappears in the replacement.
+ * A plan-2 worker's unit key. The `worker2-` prefix diverges from `worker-`
+ * before any author-controlled byte, so no plan-1 key can equal it — not even
+ * when a failed id legitimately reappears in the replacement. And the key
+ * carries no dot (encodeAuthorKey escapes the author's), so it can never read
+ * as a framework-derived `<unit>.<slot>` key either — a literal dot here would
+ * let a plan-1 worker named "2" plus a revision id "handoff" forge
+ * `worker-2.handoff`, the very slot key the id charset exists to protect.
  */
-const revisionWorkerKey = (id: string) => `worker-2.${encodeAuthorKey(id)}`;
+const revisionWorkerKey = (id: string) => `worker2-${encodeAuthorKey(id)}`;
 
 /**
  * The dispatchable units of one admitted Decomposition. A flat initial

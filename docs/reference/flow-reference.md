@@ -830,7 +830,7 @@ The `commander` receives the remainder, the reason, the succeeded subtasks, and 
 
 There is exactly one replan per flow. If the replacement fails any check, the flow strands the remainder and reports, with the refusal as the stranding reason. There is no replan of a replan. The same budgets apply throughout: a revision cannot escape a ceiling, and the projection runs again as the revision's own workers settle.
 
-A flat replacement list gets fresh positional ids (`r2-1`, `r2-2`, …), so it cannot collide with a flat initial plan's ids. In the trace, the replan commander runs under the unit key `decompose-replan`. A `retry` event named `orchestrate.replan_decomposition` records the trigger. Plan-2 worker spans use the unit key `worker-2.<id>`.
+A flat replacement list gets fresh positional ids (`r2-1`, `r2-2`, …), so it cannot collide with a flat initial plan's ids. In the trace, the replan commander runs under the unit key `decompose-replan`. A `retry` event named `orchestrate.replan_decomposition` records the trigger. Plan-2 worker spans use the unit key `worker2-<id>`.
 
 The header reports a fired replan:
 

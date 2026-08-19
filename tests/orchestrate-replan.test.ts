@@ -90,7 +90,7 @@ test("a stranding failure triggers one replan whose revision consumes a succeede
 	const revisionOf = (key: string) => spans.find((span) => span.scope?.key === key)?.scope?.attributes?.["flow.plan_revision"];
 	assert.equal(revisionOf("worker-a"), 1);
 	assert.equal(revisionOf("worker-c"), 1);
-	assert.equal(revisionOf("worker-2.b2"), 2, "a plan-2 worker carries the revision key and stamp");
+	assert.equal(revisionOf("worker2-b2"), 2, "a plan-2 worker carries the revision key and stamp");
 
 	const text = settled.content[0].text;
 	assert.match(text, /Decomposition replanned once mid-flow\. 3 subtasks, 2 succeeded, 1 failed, synthesized by debrief/);
@@ -225,7 +225,7 @@ test("a flat revision's positional ids are remapped, so replacing a flat plan's 
 
 	assert.match(settled.content[0].text, /Decomposition replanned once mid-flow\. 2 subtasks, 1 succeeded, 1 failed, synthesized by debrief/);
 	assert.ok(reconTasks(adapter).some((task) => task.includes("Recover with one independent pass")));
-	assert.equal(spans.find((span) => span.scope?.key === "worker-2.r2-1")?.scope?.attributes?.["flow.plan_revision"], 2);
+	assert.equal(spans.find((span) => span.scope?.key === "worker2-r2-1")?.scope?.attributes?.["flow.plan_revision"], 2);
 });
 
 // ---------------------------------------------------------------------------
