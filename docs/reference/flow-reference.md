@@ -784,7 +784,7 @@ For each ceiling: projected spend = current spend + remaining effort weight × t
 
 A projection above a ceiling refuses the flow with `BUDGET_HEADROOM_EXCEEDED`. The error names the ceiling and its budget authority. No worker spawns. A projection that exactly meets a ceiling is admitted.
 
-With `orchestrate.review` set, the refusal first routes back to the `commander` as a "replan smaller" critique. That revision spends one `reviewMaxIterations` attempt, and the reviewer never judges a Decomposition that cannot be paid for. The flow returns the headroom error only when no admitted replacement fits inside the attempt bound.
+With `orchestrate.review` set, the refusal first routes back to the `commander` as a "replan smaller" critique. That revision spends one `reviewMaxIterations` attempt, and the reviewer never judges a Decomposition that cannot be paid for. The projection runs before each review attempt, and again after a PASS: the reviewer's own run spends against the same ceilings it reads. The flow returns the headroom error only when no admitted replacement fits inside the attempt bound.
 
 The headroom check answers one question: does the remaining work fit in what remains. A budget that is already spent returns `BUDGET_EXCEEDED` from the spawn gate instead.
 
@@ -806,7 +806,7 @@ Flow orchestrate: 5 subtasks, 3 succeeded, 1 failed, 1 stranded, synthesized by 
 
 The `failed` and `stranded` counts appear only when they are above zero.
 
-A **terminal subtask** is a subtask that no other subtask depends on. If no terminal subtask succeeds, the flow does not run `debrief`. It returns the counts, and reports that there is nothing to synthesize.
+A **terminal subtask** is a subtask that no other subtask depends on. If no terminal subtask succeeds, the flow does not run `debrief`. It returns the counts and the "Subtasks not completed" manifest, so a budget refusal that stranded the remainder stays visible.
 
 In the trace, each subtask has its own worker span. The unit key of that span is `worker-<id>`. Each `dependsOn` edge becomes a dependency link. A flat Decomposition keeps positional keys (`worker-1`, `worker-2`). The prefix keeps the ids of the `commander` apart from the keys of the flow itself, such as `decompose` and `synthesis-1`.
 

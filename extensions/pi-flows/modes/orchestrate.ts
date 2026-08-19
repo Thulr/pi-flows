@@ -289,14 +289,18 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const strandedCount = units.filter((unit) => stateOf(unit.subtask.id) === "stranded").length;
 	const dependedOn = new Set(units.flatMap((unit) => [...unit.subtask.dependsOn]));
 	const terminalUnits = units.filter((unit) => !dependedOn.has(unit.subtask.id));
+	const notCompleted = notCompletedManifest(units, outcomes, policy);
 	if (!terminalUnits.some((unit) => stateOf(unit.subtask.id) === "succeeded")) {
+		// The manifest rides along so the caller reads *why* nothing survived —
+		// in particular a budget refusal that stranded the remainder, which would
+		// otherwise vanish into a generic completion.
 		if (reviewRef) return settle.complete(sanitizeText(succeededCount === 0 && strandedCount === 0
-			? `Flow orchestrate: ${reviewSummary}All ${units.length} workers failed. Nothing to synthesize.`
-			: `Flow orchestrate: ${reviewSummary}${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.`, policy));
+			? `Flow orchestrate: ${reviewSummary}All ${units.length} workers failed. Nothing to synthesize.${notCompleted}`
+			: `Flow orchestrate: ${reviewSummary}${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.${notCompleted}`, policy));
 		return settle.complete(sanitizeText(
 			succeededCount === 0 && strandedCount === 0
-				? `Flow orchestrate: all ${units.length} workers failed; nothing to synthesize.`
-				: `Flow orchestrate: ${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.`,
+				? `Flow orchestrate: all ${units.length} workers failed; nothing to synthesize.${notCompleted}`
+				: `Flow orchestrate: ${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.${notCompleted}`,
 			policy,
 		));
 	}
@@ -307,7 +311,6 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	// names the boundary that produced that text rather than the run behind it.
 	const findings = findingSections.join("\n\n---\n\n");
 	const subtaskSummary = subtaskSummaryText(units, stateOf);
-	const notCompleted = notCompletedManifest(units, outcomes, policy);
 	const makeSynthesisTask = (previousAnswer?: string, verifierCritique?: string) =>
 		[
 			"## Goal / delegation contract",

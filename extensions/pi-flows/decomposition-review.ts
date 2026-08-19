@@ -136,7 +136,9 @@ export interface ReviewDecompositionOptions {
 	 * draw down (Budget.headroomRefusal). Null admits. A refusal never reaches
 	 * the reviewer: it routes straight back to the commander as a "replan
 	 * smaller" critique, spending one of the same review attempts, and refuses
-	 * the flow with the projection's own error once the attempts are gone.
+	 * the flow with the projection's own error once the attempts are gone. The
+	 * projection runs before each review attempt and again after a PASS — the
+	 * reviewer's own run spends against the same ceilings it reads.
 	 */
 	headroom?: (decomposition: Decomposition) => FlowError | null;
 }
@@ -230,27 +232,38 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 		return null;
 	};
 
+	/**
+	 * One headroom refusal, resolved inside the attempt bound: the flow's own
+	 * refusal once no attempt remains, otherwise a "replan smaller" critique to
+	 * the commander directly. Returns the refusing output, or null when the
+	 * loop continues with a revised Decomposition. Spending the same attempts as
+	 * the reviewer keeps headroom revisions and reviewer revisions drawing down
+	 * one bound together.
+	 */
+	const replanSmaller = async (attempt: number, headroomError: FlowError): Promise<ModeOutput | null> => {
+		if (attempt >= options.maxIterations) return settle.refuse(headroomError);
+		deps.recordEvent?.({
+			kind: "retry",
+			name: "orchestrate.revise_decomposition",
+			scope: { key: `${revisionKey(attempt + 1)}.retry`, dependsOn: [commanderDependencyKey] },
+			attributes: { "flow.retry.attempt": attempt + 1, "flow.retry.max_attempts": options.maxIterations, "flow.retry.reason": "budget_headroom" },
+		});
+		return revise(
+			attempt,
+			headroomCritique(headroomError),
+			[commanderDependencyKey],
+			`Commander revision ${attempt + 1} failed after the budget headroom gate asked for a smaller Decomposition.`,
+		);
+	};
+
 	for (let attempt = 1; attempt <= options.maxIterations; attempt += 1) {
 		// The budget headroom gate runs beside the reviewer, first: a
 		// Decomposition that cannot be paid for is never worth a reviewer's
 		// judgment, so the refusal becomes a "replan smaller" critique to the
-		// commander directly. It spends one of the same attempts, so headroom
-		// revisions and reviewer revisions draw down one bound together.
+		// commander directly.
 		const headroomError = options.headroom?.(decomposition) ?? null;
 		if (headroomError) {
-			if (attempt >= options.maxIterations) return { status: "refused", output: settle.refuse(headroomError) };
-			deps.recordEvent?.({
-				kind: "retry",
-				name: "orchestrate.revise_decomposition",
-				scope: { key: `${revisionKey(attempt + 1)}.retry`, dependsOn: [commanderDependencyKey] },
-				attributes: { "flow.retry.attempt": attempt + 1, "flow.retry.max_attempts": options.maxIterations, "flow.retry.reason": "budget_headroom" },
-			});
-			const refused = await revise(
-				attempt,
-				headroomCritique(headroomError),
-				[commanderDependencyKey],
-				`Commander revision ${attempt + 1} failed after the budget headroom gate asked for a smaller Decomposition.`,
-			);
+			const refused = await replanSmaller(attempt, headroomError);
 			if (refused) return { status: "refused", output: refused };
 			continue;
 		}
@@ -293,7 +306,17 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 			attributes: { "flow.verdict.value": verdict, "flow.verdict.attempt": attempt, "flow.verdict.max_attempts": options.maxIterations },
 		});
 		if (verdict === "pass") {
-			return { status: "passed", decomposition, attempts: attempt, dependencyKeys: [commanderDependencyKey, verdictKey] };
+			// The reviewer's own run charged the same budgets the projection
+			// reads, so a PASS is projected once more before the Decomposition is
+			// exposed for dispatch — otherwise the reviewer's spend could tip the
+			// workers past a ceiling the gate promised to catch pre-spawn.
+			const postReviewHeadroom = options.headroom?.(decomposition) ?? null;
+			if (!postReviewHeadroom) {
+				return { status: "passed", decomposition, attempts: attempt, dependencyKeys: [commanderDependencyKey, verdictKey] };
+			}
+			const refused = await replanSmaller(attempt, postReviewHeadroom);
+			if (refused) return { status: "refused", output: refused };
+			continue;
 		}
 
 		const latestCritique = dispatched.handoff.text;

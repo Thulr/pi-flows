@@ -250,13 +250,19 @@ export class Budget {
 	 * dispatched, and the spawn gate takes over once its spend lands.
 	 */
 	private projected(remainingWeight: number, perWeight: UsageStats): { ceiling: BudgetCeilings; spend: string } | undefined {
+		// "Strictly above" with a hair of tolerance on the ceiling: cost arrives
+		// as binary-decimal telemetry, where 0.1 + 2 × 0.1 lands 4e-17 past an
+		// exact $0.30 fit — an artifact of the encoding, not an unaffordable
+		// projection. The relative tolerance is far below any real spend
+		// increment, and token counts, being integers, are unaffected.
+		const exceeds = (projection: number, ceiling: number) => projection > ceiling + 1e-9 * Math.max(1, ceiling);
 		const { maxCostUsd, maxTokens, maxGeneratedTokens } = this;
 		const cost = this.spentCost + remainingWeight * (perWeight.cost || 0);
 		const generated = this.spentGeneratedTokens + remainingWeight * (perWeight.output || 0);
 		const total = this.spentTokens + remainingWeight * ((perWeight.input || 0) + (perWeight.output || 0));
-		if (maxCostUsd !== undefined && cost > maxCostUsd) return { ceiling: { maxCostUsd }, spend: `projected $${cost.toFixed(4)} of $${maxCostUsd.toFixed(4)}` };
-		if (maxGeneratedTokens !== undefined && generated > maxGeneratedTokens) return { ceiling: { maxGeneratedTokens }, spend: `projected ${Math.ceil(generated)} of ${maxGeneratedTokens} generated tokens` };
-		if (maxTokens !== undefined && total > maxTokens) return { ceiling: { maxTokens }, spend: `projected ${Math.ceil(total)} of ${maxTokens} total tokens` };
+		if (maxCostUsd !== undefined && exceeds(cost, maxCostUsd)) return { ceiling: { maxCostUsd }, spend: `projected $${cost.toFixed(4)} of $${maxCostUsd.toFixed(4)}` };
+		if (maxGeneratedTokens !== undefined && exceeds(generated, maxGeneratedTokens)) return { ceiling: { maxGeneratedTokens }, spend: `projected ${Math.ceil(generated)} of ${maxGeneratedTokens} generated tokens` };
+		if (maxTokens !== undefined && exceeds(total, maxTokens)) return { ceiling: { maxTokens }, spend: `projected ${Math.ceil(total)} of ${maxTokens} total tokens` };
 		return undefined;
 	}
 

@@ -41,6 +41,15 @@ test("headroom refuses a projection strictly above a ceiling and admits one that
 	assert.deepEqual(refusal?.budgetCeiling, { authority: "flow", maxCostUsd: 1 });
 });
 
+test("an exact cost fit survives binary-decimal arithmetic", () => {
+	// 0.1 + 2 × 0.1 evaluates a hair past 0.3 in floating point; that encoding
+	// artifact must not read as an unaffordable projection.
+	const budget = Budget.forFlow({ maxCostUsd: 0.3 })!;
+	budget.charge(usage({ cost: 0.1 }));
+	assert.equal(budget.headroomRefusal(2, usage({ cost: 0.1 })), null);
+	assert.equal(budget.headroomRefusal(3, usage({ cost: 0.1 }))?.code, "BUDGET_HEADROOM_EXCEEDED", "a real overrun is still refused");
+});
+
 test("each ceiling projects its own dimension: total tokens count input plus output, generated tokens count output only", () => {
 	const total = Budget.forFlow({ maxTokens: 1000 })!;
 	total.charge(usage({ input: 100, output: 100 }));
@@ -204,6 +213,72 @@ test("with a reviewer, a Decomposition that does not fit routes back to the comm
 	const retry = adapter.ledger.events.find((event) => event.kind === "retry" && event.attributes["flow.retry.reason"] === "budget_headroom");
 	assert.ok(retry, "the headroom replan is recorded as a retry event");
 	assert.match(output.content[0].text, /Decomposition review PASS after 2 attempts/);
+});
+
+test("a reviewer PASS is re-projected: the reviewer's own spend can send the Decomposition back for a smaller replacement", async () => {
+	const wide = breakdown(["survey", "trace", "audit", "report"]);
+	const narrow = breakdown(["survey the auth routes"]);
+	const adapter = makeFaultAdapter({
+		replies: { commander: [wide, narrow], overwatch: "VERDICT: PASS\nCovers the goal.", recon: "FINDING", debrief: "MERGED_DOC" },
+		usage: CHILD_USAGE,
+	});
+	// Ceiling 1100: the four-subtask Decomposition projects 200 + 4×200 = 1000
+	// and is admitted, the reviewer's own run lifts spend to 400 so the same
+	// Decomposition re-projects to 1200 after its PASS, and only the one-subtask
+	// replacement (600 + 200 = 800 at its own review) reaches the workers.
+	const deps = faultDeps(
+		{
+			task: "document how auth works",
+			orchestrate: {
+				commander: { agent: "commander" }, review: { agent: "overwatch" }, reviewMaxIterations: 2,
+				recon: { agent: "recon" }, debrief: { agent: "debrief" },
+			},
+		},
+		adapter,
+		workspace(),
+		{ budget: Budget.forFlow({ maxTokens: 1100 }) },
+	);
+	const output = await handleOrchestrate(deps);
+
+	assert.equal(output.details.error, undefined);
+	assert.deepEqual(
+		adapter.ledger.dispatches.map((dispatch) => dispatch.agent),
+		["commander", "overwatch", "commander", "overwatch", "recon", "debrief"],
+		"the PASS on the wide Decomposition does not dispatch it; the commander replans and the replacement is reviewed",
+	);
+	assert.match(adapter.ledger.dispatches[2].task, /does not fit what remains of the budget/);
+	const workerTask = adapter.ledger.dispatches[4].task;
+	assert.match(workerTask, /survey the auth routes/, "only the replacement's subtask runs");
+});
+
+test("a budget that strands every terminal subtask keeps its reason in the completion", async () => {
+	const chain = breakdown([
+		{ id: "survey", objective: "Survey the routes" },
+		{ id: "trace", objective: "Trace the refresh", dependsOn: ["survey"] },
+		{ id: "writeup", objective: "Write the summary", dependsOn: ["trace"] },
+	]);
+	const adapter = makeFaultAdapter({
+		replies: { commander: chain, recon: { reply: "SURVEY_FINDING", turns: 3 }, debrief: "MUST NOT RUN" },
+		usage: CHILD_USAGE,
+	});
+	// The projection admits 200 + 3×200 = 800 exactly; the three-turn worker
+	// then spends the whole ceiling, stranding the chain behind it — including
+	// the only terminal subtask, so nothing can be synthesized.
+	const deps = faultDeps(
+		{ task: "document how auth works", orchestrate: { commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" } } },
+		adapter,
+		workspace(),
+		{ budget: Budget.forFlow({ maxTokens: 800 }) },
+	);
+	const output = await handleOrchestrate(deps);
+
+	assert.equal(output.details.error, undefined);
+	assert.equal(adapter.ledger.reached("debrief"), false);
+	const text = output.content[0].text;
+	assert.match(text, /1 succeeded, 0 failed, 2 stranded; no final subtask succeeded/);
+	assert.match(text, /## Subtasks not completed \(2\)/, "the manifest reaches the caller when nothing synthesizes");
+	assert.match(text, /- trace: Trace the refresh — stranded: Flow budget exhausted/);
+	assert.match(text, /- writeup: Write the summary — stranded: Flow budget exhausted/);
 });
 
 test("when every attempt stays unaffordable, the flow refuses with the headroom error itself", async () => {
