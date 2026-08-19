@@ -86,6 +86,10 @@ _Avoid_: cost estimate, token estimate, size, effort (bare — that word belongs
 A subtask that never ran — cut off when a dependency failed, a replacement was refused, or a budget refused the remainder — the third terminal outcome beside succeeded and failed. Stranding is containment, not repair: the work is named and reported, never silently dropped and never retried on the flow's own initiative. Only a subtask strands; a run that started always **settles**.
 _Avoid_: skipped (that reads as a choice), blocked (a stranded subtask will never run in this flow), cancelled
 
+**Outcome board**:
+How one Decomposition stands under dispatch: every subtask, which of them have not yet run, how each settled, and what the settled ones hand to the synthesizer. The board answers as a whole rather than field by field, so a subtask's outcome always arrives with the evidence for it, one wave settles as a single change, and the mid-flow replan — retire the remainder, supersede a reappearing failed id, admit the replacement — is never observed half-applied. The board is what changes as a flow runs; what a dispatchable subtask and a settled outcome *are* is a separate question.
+_Avoid_: scoreboard, progress (a board reports outcomes, not a completion percentage), plan (that names a mode's declared pre-spawn waves)
+
 **Run**:
 One child executing one task. A flow contains zero or more runs: a refused flow has none, and a `single` flow has exactly one without the two becoming the same thing. The run object owns its result's lifecycle: an envelope candidate is retained and consumed exactly once, and an envelope or handoff attaches to a result only through the run's own transitions.
 _Avoid_: execution, invocation

@@ -10,6 +10,24 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Orchestrate's Decomposition dispatch state is now one **outcome board**
+  (`modes/orchestrate-board.ts`) instead of five collections the handler and the
+  mid-flow replanner mutated in place through shared references. The board owns
+  every transition — the ready-set walk, recording a settled wave, both
+  strandings, and the replan swap — so a subtask's outcome can no longer be
+  recorded without the evidence that belongs to it, and the replacement swap
+  that retires the remainder, supersedes a reappearing failed id, and admits the
+  revision can no longer be observed half-done. `UnitOutcome` is now a
+  discriminated union rather than a bag of optional fields, so each arm carries
+  exactly the evidence its state implies — a succeeded subtask its output, a
+  failed one its failure text, a stranded one either the subtask that blocked it
+  (explicitly null when none names itself) or the ceiling message that refused
+  it. The two stranded arms stay separate because those are different evidence. No behaviour change and no public
+  contract change: `flow` params, returned prose, span keys, and plan-revision
+  stamping are unchanged. Scheduling, stranding, the terminal-synthesis gate,
+  and the replan swap are now assertable without spawning a child, which is what
+  `tests/orchestrate-board.test.ts` does.
+
 - **Breaking:** the prose return-requirements params are renamed to match the
   domain glossary. `returnContract` is now `returnRequirements` at every level
   (top-level, `tasks[]`, graph nodes, workflow phases, worktree workers, chain
