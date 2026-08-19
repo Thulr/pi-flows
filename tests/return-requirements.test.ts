@@ -24,6 +24,13 @@ test("a retired returnContract key is refused, not silently ignored", () => {
 	assert.match(error?.fix ?? "", /returnRequirements/, "the fix names the replacement key");
 });
 
+test("the tombstone path masks ancestor keys it cannot vouch for", () => {
+	const error = renamedParamError({ "not a plain token!": { returnContract: "x" } });
+	assert.equal(error?.code, "PARAM_RENAMED");
+	assert.doesNotMatch(error?.message ?? "", /not a plain token/, "an arbitrary ancestor key never reaches returned content");
+	assert.match(error?.message ?? "", /\(unrecognized key\)\.returnContract/, "the retired key itself stays named");
+});
+
 test("a contract's returnSchema may declare data fields by any name", () => {
 	const params = { agent: "recon", task: "x", contract: { returnSchema: { properties: { returnContract: { type: "string" } } } } };
 	assert.equal(renamedParamError(params), null, "contract subtrees are never scanned for retired keys");

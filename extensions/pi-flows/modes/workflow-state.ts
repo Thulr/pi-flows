@@ -30,8 +30,21 @@ export interface WorkflowState {
 }
 
 /** The fields that define what a workflow IS: the top-level task, the phases in order, and the debrief. One literal, so both identity algorithms always look at the same content. */
+/**
+ * Identity content spells a phase's prose return requirements under the
+ * pre-rename key (returnContract), position-preserved, so a workflow
+ * re-authored with returnRequirements reproduces the digest its pre-rename
+ * spec persisted state and receipts under (docs/adr/0001). The tombstone
+ * refuses the old key at admission, so no spec reaches this walk with both
+ * spellings.
+ */
+function identityPhase(phase: unknown): unknown {
+	if (!phase || typeof phase !== "object" || Array.isArray(phase) || !Object.hasOwn(phase, "returnRequirements")) return phase;
+	return Object.fromEntries(Object.entries(phase).map(([key, value]) => [key === "returnRequirements" ? "returnContract" : key, value]));
+}
+
 function workflowIdentityContent(task: string | undefined, spec: any): Record<string, unknown> {
-	return { task: task ?? "", phases: spec.phases ?? [], debrief: spec.debrief ?? null };
+	return { task: task ?? "", phases: Array.isArray(spec.phases) ? spec.phases.map(identityPhase) : spec.phases ?? [], debrief: spec.debrief ?? null };
 }
 
 /**

@@ -104,7 +104,7 @@
         "at": "2026-08-19",
         "declared": "5de7c7e878db7b19",
         "surfaces": {
-          "subdomain:Core": "7abe9f5d0cf35931",
+          "subdomain:Core": "6d939ad9dd21af9b",
           "CONTEXT.md": "fe0b73a65559c7fe"
         }
       }
@@ -130,7 +130,7 @@
           "extensions/pi-flows/budget.ts": "d70575e0af79683c",
           "extensions/pi-flows/run.ts": "52321721a19ea929",
           "extensions/pi-flows/settle.ts": "216279d4eeeec231",
-          "extensions/pi-flows/modes/*.ts": "450a28e8c11bb608",
+          "extensions/pi-flows/modes/*.ts": "cfa4d5cf854e457c",
           "tests/flow-lifecycle.test.ts": "1384fe2663de7b73",
           "tests/flow-budget.test.ts": "700c3e37f43040d7"
         }
@@ -151,7 +151,7 @@
         "declared": "9b6b8633e640c2e6",
         "surfaces": {
           "CONTEXT.md": "fe0b73a65559c7fe",
-          "subdomain:Core": "7abe9f5d0cf35931",
+          "subdomain:Core": "6d939ad9dd21af9b",
           "subdomain:Shared kernel": "2b5daf5135a7ecd2",
           "docs/reference/architecture.md": "e40a4540019099e0"
         }

@@ -4,5 +4,5 @@ The public param for prose return requirements was named `returnContract`, which
 
 ## Consequences
 
-- A workflow spec is hashed verbatim into the workflow digest, so a spec re-authored with the new spelling is new work: its state file and approvals start fresh. A spec replayed with the old spelling is refused by the tombstone rather than resumed.
+- Workflow identity content spells a phase's prose return requirements under the pre-rename key, so a spec re-authored with the new spelling reproduces its old digest: persisted state files and approval receipts stay reachable. A spec replayed with the old spelling is refused by the tombstone rather than resumed.
 - Any future param rename should reuse `PARAM_RENAMED` and the `RENAMED_PARAMS` map in `validate.ts`.

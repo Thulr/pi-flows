@@ -10,6 +10,15 @@ import { approvalBindingDigest, approvalReceiptDigest, type ApprovalBinding, typ
 import { legacyWorkflowDigest, workflowDigest } from "../extensions/pi-flows/modes/workflow-state.ts";
 import { byAgent, freshDir, runFlow } from "./stub-harness.ts";
 
+test("a phase's returnRequirements digests under the pre-rename identity key", () => {
+	const preRename = { phases: [{ id: "scan", agent: "recon", task: "Scan", returnContract: "Name the paths." }] };
+	const renamed = { phases: [{ id: "scan", agent: "recon", task: "Scan", returnRequirements: "Name the paths." }] };
+	assert.equal(workflowDigest("t", renamed), workflowDigest("t", preRename), "state persisted before the rename stays reachable");
+	assert.equal(legacyWorkflowDigest("t", renamed), legacyWorkflowDigest("t", preRename), "the order-sensitive legacy digest agrees");
+	const different = { phases: [{ id: "scan", agent: "recon", task: "Scan", returnRequirements: "Other." }] };
+	assert.notEqual(workflowDigest("t", renamed), workflowDigest("t", different), "the value still counts toward identity");
+});
+
 // A spec whose objects carry nested structure at every level the digest walks:
 // phase fields, an approval object, a contract, and a debrief.
 const contract = {

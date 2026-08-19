@@ -22,7 +22,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   removed; use `appendReturnRequirements`. Durable workflow approval receipts
   are unaffected: the persisted binding record keeps its pre-rename
   `returnContract` key, so existing receipts still verify and legacy
-  reconstruction still reproduces historical digests.
+  reconstruction still reproduces historical digests. Workflow identity is
+  unaffected the same way: the digest spells the field under its pre-rename
+  key, so a spec re-authored with the new spelling keeps its state file and
+  receipts.
 
 ### Fixed
 

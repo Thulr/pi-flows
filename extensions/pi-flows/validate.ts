@@ -40,6 +40,15 @@ const RENAMED_PARAMS: Record<string, string> = {
 };
 
 /**
+ * A path segment safe to echo into returned content: a short plain-token key
+ * name. Params accept unknown keys, so an ancestor key can carry anything —
+ * secret-shaped text and home paths included — and the redaction invariant
+ * covers refusal messages too. The retired keys themselves are constants and
+ * always pass.
+ */
+const safeKeySegment = (key: string): string => (/^[A-Za-z0-9_.$-]{1,64}$/.test(key) ? key : "(unrecognized key)");
+
+/**
  * Find a retired key anywhere in the call's params. Skips `contract` subtrees:
  * a delegation contract's returnSchema may legitimately declare a data field
  * by any name, and the retired keys never lived inside a contract.
@@ -55,7 +64,7 @@ export function renamedParamError(value: unknown, path = ""): FlowError | null {
 	}
 	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
 		if (key === "contract") continue;
-		const where = path ? `${path}.${key}` : key;
+		const where = path ? `${path}.${safeKeySegment(key)}` : safeKeySegment(key);
 		const renamed = RENAMED_PARAMS[key];
 		if (renamed) {
 			return flowError(

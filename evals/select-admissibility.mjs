@@ -9,7 +9,7 @@
 // a bare-node script such as eval:review or eval:pareto.
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentFlowDepth, nonSpawningFlowCall, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
+import { currentFlowDepth, nonSpawningFlowCall, renamedParamError, spawnJustificationMissing, validateConcurrency } from "../extensions/pi-flows/validate.ts";
 import { firstSpawnPlan, modePreSpawnRefusalForParams, preSpawnSharedWriteRefusal } from "../extensions/pi-flows/modes/contract.ts";
 import { plannedContract } from "../extensions/pi-flows/modes/plan.ts";
 import { MAX_FLOW_DEPTH, THINKING_LEVELS } from "../extensions/pi-flows/types.ts";
@@ -174,6 +174,12 @@ export function callAdmissibilityFailure(args, { knownSubjectModels = [] } = {})
 	const detected = detectRunMode(effective ?? {});
 	if ("error" in detected) return { code: detected.error.code, reason: "exactly one mode must be active" };
 	const mode = detected.mode;
+	// The renamed-param tombstone runs in the aggregate right after mode
+	// detection (flow.ts). The schema deliberately accepts unknown keys, so
+	// SCHEMA_INVALID cannot catch a retired key: without this predicate the
+	// scorer would credit a call the tool always refuses.
+	const renamed = renamedParamError(effective ?? {});
+	if (renamed) return { code: renamed.code, reason: renamed.message.replace(/\.$/, "") };
 	if (spawnJustificationMissing(effective?.why)) return { code: "WHY_REQUIRED", reason: "why is missing or empty" };
 	// The subject inherits PI_FLOWS_DEPTH; at the cap it refuses every
 	// spawning call, so an eval launched from inside a flow child must score
