@@ -95,6 +95,6 @@ export const SPELLED_ONCE = [
     // that names the field before a comment, evades — a tripwire catches the
     // honest regression, not an adversary.
     pattern: /\{\s*state:\s*"(?:succeeded|failed|stranded)"/g,
-    allowed: { "modes/orchestrate-board.ts": 5 },
+    allowed: { "modes/orchestrate-board.ts": 4 },
   },
 ];

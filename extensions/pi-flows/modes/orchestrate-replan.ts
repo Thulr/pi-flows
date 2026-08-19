@@ -69,8 +69,6 @@ export interface MidFlowReplanner {
 	recordSettled(subtask: DecompositionSubtask, usage: UsageStats): void;
 	/** The between-wave projection over the current remainder. Null while no worker has settled — admission already projected the commander proxy. Not Budget.headroomRefusal: this asks every worker budget about the remainder, at this moment's observation. */
 	remainderHeadroomRefusal(): FlowError | null;
-	/** Mark the whole remainder stranded with one reason, and clear it. */
-	strandRemaining(reason: string): void;
 	/** Run the one replan. "stranded" means the remainder was stranded here with the refusal as the reason. */
 	replan(trigger: ReplanTrigger, reason: string): Promise<ReplanOutcome>;
 }
@@ -105,6 +103,7 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 
 	const strandRemaining = (reason: string) => board.strandRemaining(reason);
 
+
 	/**
 	 * The one bounded mid-flow replan: ask the commander for a full replacement
 	 * of the remainder, admit it, then swap it in. A replacement that fails any
@@ -119,14 +118,13 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 			scope: { key: `${REPLAN_KEY}.retry`, dependsOn: [...dependencyKeys] },
 			attributes: { "flow.retry.attempt": 1, "flow.retry.max_attempts": 1, "flow.retry.reason": trigger },
 		});
-		const byState = (state: Parameters<OrchestrateBoard["settledByState"]>[0]) => board.settledByState(state);
 		const replanTask = decompositionRevisionTask({
 			goal: context.goal,
 			returnRequirements: context.returnRequirements,
 			workerReturnRequirements: context.workerReturnRequirements,
 			requireEvidence: context.requireEvidence,
 			decomposition: { shape: context.dispatchShape, subtasks: board.remainderSubtasks() },
-			critique: midFlowReplanCritique({ reason, succeeded: byState("succeeded"), failed: byState("failed") }),
+			critique: midFlowReplanCritique({ reason, succeeded: board.settledByState("succeeded"), failed: board.settledByState("failed") }),
 			maxSubtasks: context.maxSubtasks,
 			contracted: Boolean(context.commanderRef.contract),
 		});
@@ -188,7 +186,6 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 		remainderHeadroomRefusal: () => settledWeight > 0
 			? projectionRefusal(decompositionEffortWeight(board.remainderSubtasks()))
 			: null,
-		strandRemaining,
 		replan,
 	};
 }

@@ -80,8 +80,8 @@ export type UnitOutcome =
 	| { readonly state: "succeeded"; readonly outputText: string; readonly outputKey?: string }
 	/** Why a failed subtask failed, as the manifest reports it. */
 	| { readonly state: "failed"; readonly failureText: string }
-	/** The subtask a stranded one was waiting on. Absent when no single blocker names itself, which the manifest reports as an unnamed incomplete subtask. */
-	| { readonly state: "stranded"; readonly strandedOn?: string }
+	/** The subtask a stranded one was waiting on — explicitly null when no single blocker names itself, which the manifest reports as an unnamed incomplete subtask. Required rather than optional so a stranding cannot be recorded carrying no evidence at all, and so this arm stays disjoint from the one below. */
+	| { readonly state: "stranded"; readonly strandedOn: string | null }
 	/** Why a subtask never spawned when the blocker is a ceiling or a refused replacement rather than a subtask. */
 	| { readonly state: "stranded"; readonly strandedReason: string };
 
@@ -111,18 +111,24 @@ export function makeWorkerTask(goal: string, unit: OrchestrateUnit, outputTextOf
 	return sections.join("\n");
 }
 
+/** How many subtasks reached each terminal state. Counted once, by the outcome board, and formatted here. */
+export interface SettledCounts {
+	readonly succeeded: number;
+	readonly failed: number;
+	readonly stranded: number;
+}
+
 /**
  * One statement of how the Decomposition settled, so the header and every
  * refusal footer count the same subtasks. A run with no failures and no
  * stranded work reads exactly as it did before edges existed.
  */
-export function subtaskSummaryText(units: readonly OrchestrateUnit[], stateOf: (id: string) => UnitOutcome["state"] | undefined): string {
-	const count = (state: UnitOutcome["state"]) => units.filter((unit) => stateOf(unit.subtask.id) === state).length;
+export function subtaskSummaryText(total: number, counts: SettledCounts): string {
 	return [
-		`${units.length} subtask${units.length === 1 ? "" : "s"}`,
-		`${count("succeeded")} succeeded`,
-		...(count("failed") > 0 ? [`${count("failed")} failed`] : []),
-		...(count("stranded") > 0 ? [`${count("stranded")} stranded`] : []),
+		`${total} subtask${total === 1 ? "" : "s"}`,
+		`${counts.succeeded} succeeded`,
+		...(counts.failed > 0 ? [`${counts.failed} failed`] : []),
+		...(counts.stranded > 0 ? [`${counts.stranded} stranded`] : []),
 	].join(", ");
 }
 
@@ -148,8 +154,8 @@ export function notCompletedManifest(units: readonly OrchestrateUnit[], outcomes
 			if (outcome?.state === "stranded" && "strandedReason" in outcome) {
 				return `- ${unit.label}: ${objective} — stranded: ${sanitizeText(oneLine(outcome.strandedReason), policy, 1024)}`;
 			}
-			// A stranded subtask names its blocker; an id with no outcome at all
-			// never reached a wave, so no single blocker names itself.
+			// A stranded subtask names its blocker, or explicitly null when none
+			// names itself; an id with no outcome at all never reached a wave.
 			const blocker = outcome?.state === "stranded" ? outcome.strandedOn : undefined;
 			return `- ${unit.label}: ${objective} — stranded on ${blocker ? `subtask ${blocker}` : "an incomplete subtask"}`;
 		}),

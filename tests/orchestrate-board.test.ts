@@ -212,9 +212,8 @@ test("replacing the remainder retires the undispatched units and keeps the succe
 	const board = open(structured(subtask("a"), subtask("b", ["a"]), subtask("c", ["a"])));
 	board.recordWave([{ unit: board.ready()[0]!, handoffText: "a output", handoffKey: "worker-a.handoff" }]);
 
-	const revisionUnits = board.replaceRemainder(structured(subtask("r1"), subtask("r2")));
+	board.replaceRemainder(structured(subtask("r1"), subtask("r2")));
 
-	assert.deepEqual(ids(revisionUnits), ["r1", "r2"]);
 	assert.deepEqual(ids(board.units), ["a", "r1", "r2"], "b and c are gone; a survives with its outcome");
 	assert.equal(board.stateOf("a"), "succeeded");
 	assert.equal(board.outputTextOf("a"), "a output", "a succeeded subtask keeps its output across a replan");
@@ -226,11 +225,12 @@ test("every revision unit carries plan revision 2, so no replacement answers to 
 	const original = board.units.map((unit) => unit.key);
 	board.recordWave([{ unit: board.ready()[0]!, failureText: "failed" }, { unit: board.ready()[1]!, failureText: "failed" }]);
 
-	const revisionUnits = board.replaceRemainder(structured(subtask("r1")));
+	board.replaceRemainder(structured(subtask("r1")));
 
-	assert.equal(revisionUnits[0]!.planRevision, 2);
-	assert.match(revisionUnits[0]!.key, /^worker2-/);
-	assert.equal(original.some((key) => key === revisionUnits[0]!.key), false);
+	const revision = board.units.find((unit) => unit.subtask.id === "r1")!;
+	assert.equal(revision.planRevision, 2);
+	assert.match(revision.key, /^worker2-/);
+	assert.equal(original.some((key) => key === revision.key), false);
 });
 
 test("a failed id reappearing in the replacement supersedes its failed attempt", () => {

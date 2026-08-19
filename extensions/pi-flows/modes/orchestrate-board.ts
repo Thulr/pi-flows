@@ -1,7 +1,7 @@
 import type { Decomposition, DecompositionSubtask } from "../decomposition.ts";
 import { sanitizeText } from "../sanitize.ts";
 import type { CapturePolicy } from "../types.ts";
-import { makeOrchestrateUnits, notCompletedManifest, subtaskSummaryText, type OrchestrateUnit, type UnitOutcome } from "./orchestrate-outcomes.ts";
+import { makeOrchestrateUnits, notCompletedManifest, subtaskSummaryText, type OrchestrateUnit, type SettledCounts, type UnitOutcome } from "./orchestrate-outcomes.ts";
 
 /**
  * Orchestrate's outcome board: the live state of one Decomposition under
@@ -19,16 +19,17 @@ import { makeOrchestrateUnits, notCompletedManifest, subtaskSummaryText, type Or
  * orchestrate-outcomes.ts; this module owns how the set of them changes.
  */
 
-/** One settled subtask as a wave reports it. Exactly one of `failureText` / `handoffText` is meaningful: a failed run has no handoff to carry. */
-export interface SettledSubtask {
-	readonly unit: OrchestrateUnit;
-	/** Present when the run failed — the text the manifest reports. */
-	readonly failureText?: string;
-	/** The validated handoff text a succeeded subtask produced. */
-	readonly handoffText?: string;
-	/** That handoff's dependency key, when it has one. */
-	readonly handoffKey?: string;
-}
+/**
+ * One settled subtask as a wave reports it. A union rather than one bag of
+ * optional fields, for the same reason `UnitOutcome` is: a failed run has no
+ * handoff to carry, so "exactly one of these is meaningful" is a rule the type
+ * holds rather than a sentence a comment asks a caller to remember.
+ */
+export type SettledSubtask =
+	/** The run failed — the text the manifest reports. */
+	| { readonly unit: OrchestrateUnit; readonly failureText: string }
+	/** The run succeeded, with the validated handoff text it produced and that handoff's dependency key when it has one. */
+	| { readonly unit: OrchestrateUnit; readonly handoffText: string; readonly handoffKey?: string };
 
 /** The settled-subtask identities a replan critique reports back to the commander. */
 export interface SettledIdentity {
@@ -113,17 +114,18 @@ export class OrchestrateBoard {
 	 * the loop that used to own them.
 	 */
 	recordWave(settled: readonly SettledSubtask[]): void {
-		for (const { unit, failureText, handoffText, handoffKey } of settled) {
+		for (const entry of settled) {
+			const { unit } = entry;
 			const id = unit.subtask.id;
 			this.#remaining.delete(id);
-			if (failureText !== undefined) {
-				this.#outcomes.set(id, { state: "failed", failureText });
+			if ("failureText" in entry) {
+				this.#outcomes.set(id, { state: "failed", failureText: entry.failureText });
 				continue;
 			}
-			const outputText = handoffText ?? "";
-			this.#outcomes.set(id, { state: "succeeded", outputText, ...(handoffKey ? { outputKey: handoffKey } : {}) });
+			const { handoffText, handoffKey } = entry;
+			this.#outcomes.set(id, { state: "succeeded", outputText: handoffText, ...(handoffKey ? { outputKey: handoffKey } : {}) });
 			if (handoffKey) this.#consumedKeys.push(handoffKey);
-			this.#findingSections.push(`### Subtask ${unit.label}: ${sanitizeText(unit.subtask.objective, this.#policy, 2 * 1024)}\n\n${outputText}`);
+			this.#findingSections.push(`### Subtask ${unit.label}: ${sanitizeText(unit.subtask.objective, this.#policy, 2 * 1024)}\n\n${handoffText}`);
 		}
 	}
 
@@ -135,10 +137,11 @@ export class OrchestrateBoard {
 	strandBlocked(): void {
 		for (const unit of this.#remaining.values()) {
 			// `find` is undefined only if every dependency succeeded, which cannot
-			// hold for a remaining unit while the ready set is empty. The optional
-			// field keeps that unreachable case rendering as the unnamed blocker the
-			// manifest has always reported, rather than inventing a reason for it.
-			this.#outcomes.set(unit.subtask.id, { state: "stranded", strandedOn: unit.subtask.dependsOn.find((dependency) => this.stateOf(dependency) !== "succeeded") });
+			// hold for a remaining unit while the ready set is empty. Recording that
+			// unreachable case as an explicit null keeps it rendering as the unnamed
+			// blocker the manifest has always reported, rather than inventing a
+			// reason for it — and says so in the record rather than by omission.
+			this.#outcomes.set(unit.subtask.id, { state: "stranded", strandedOn: unit.subtask.dependsOn.find((dependency) => this.stateOf(dependency) !== "succeeded") ?? null });
 		}
 		this.#remaining.clear();
 	}
@@ -158,7 +161,7 @@ export class OrchestrateBoard {
 	 * this retires leaves `units` in the same statement that adds the
 	 * replacement, so no caller can observe the board between the two.
 	 */
-	replaceRemainder(replacement: Decomposition): readonly OrchestrateUnit[] {
+	replaceRemainder(replacement: Decomposition): void {
 		const retired = new Set(this.#remaining.keys());
 		this.#remaining.clear();
 		for (const subtask of replacement.subtasks) {
@@ -173,7 +176,6 @@ export class OrchestrateBoard {
 		const revisionUnits = makeOrchestrateUnits(replacement, 2);
 		this.#units.push(...revisionUnits);
 		for (const unit of revisionUnits) this.#remaining.set(unit.subtask.id, unit);
-		return revisionUnits;
 	}
 
 	/** The ids a replacement may declare as already satisfied dependencies. */
@@ -189,7 +191,7 @@ export class OrchestrateBoard {
 	}
 
 	/** How the Decomposition settled, counted once for every surface that reports it. */
-	counts(): { succeeded: number; failed: number; stranded: number } {
+	counts(): SettledCounts {
 		const count = (state: UnitOutcome["state"]) => this.#units.filter((unit) => this.stateOf(unit.subtask.id) === state).length;
 		return { succeeded: count("succeeded"), failed: count("failed"), stranded: count("stranded") };
 	}
@@ -211,12 +213,12 @@ export class OrchestrateBoard {
 
 	/** The handoff keys the synthesis span depends on — only the workers whose findings reached it. */
 	consumedKeys(): readonly string[] {
-		return this.#consumedKeys;
+		return [...this.#consumedKeys];
 	}
 
 	/** The settled-counts summary every header and refusal footer reads. */
 	summaryText(): string {
-		return subtaskSummaryText(this.#units, (id) => this.stateOf(id));
+		return subtaskSummaryText(this.#units.length, this.counts());
 	}
 
 	/** The manifest naming work that did not complete, so a merged answer cannot quietly omit it. */

@@ -214,7 +214,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		// reports one reason once, and no refused-spawn churn reaches the trace.
 		const spentBudget = workerBudgets.find((budget) => budget.refusesSpawn());
 		if (spentBudget) {
-			replanner.strandRemaining(spentBudget.exhaustedError().message);
+			board.strandRemaining(spentBudget.exhaustedError().message);
 			break;
 		}
 		// The between-wave headroom re-projection (#165): settled workers' spend
@@ -225,7 +225,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			const unaffordable = replanner.remainderHeadroomRefusal();
 			if (unaffordable) {
 				if (replanner.spent()) {
-					replanner.strandRemaining(unaffordable.message);
+					board.strandRemaining(unaffordable.message);
 					break;
 				}
 				const replanned = await replanner.replan("budget_headroom", headroomCritique(unaffordable));

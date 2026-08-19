@@ -417,7 +417,7 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // Raised to 1_467_000 for #169: orchestrate's outcome board
 // (modes/orchestrate-board.ts) takes the five dispatch collections the handler
 // and the replanner shared, plus the glossary entry naming it. This is the
-// first raise that adds a packaged module, so the file set moves 117 -> 118;
-// still none from tests/, scripts/, or evals/. Measured 1_465_809.
+// file set moves 117 -> 118, as it did for the module-adding raises above;
+// still none from tests/, scripts/, or evals/. Measured 1_466_298.
 assert.ok(pack.unpackedSize < 1_467_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
