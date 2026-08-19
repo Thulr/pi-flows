@@ -75,7 +75,7 @@ An optional pre-dispatch judgment that a Decomposition covers its goal with suit
 _Avoid_: plan review, validation (that names deterministic structural admission), verification (that judges the synthesized outcome)
 
 **Plan revision**:
-Which Decomposition governed a worker — 1 for the initial plan, 2 for the one bounded mid-flow replacement. The replan fires when a failure strands the remaining subtasks, or the between-wave Budget headroom projection refuses them, and replaces the remainder in full: succeeded subtasks keep their ids and hand their outputs off, and are never redefined; failed work may reappear as new subtasks. Exactly one replan per flow, and a refused revision strands and reports rather than replanning again.
+Which Decomposition governed a worker — 1 for the initial plan, 2 for the one bounded mid-flow replacement of the work that has not run. Succeeded subtasks keep their ids and hand their outputs off; they are never redefined. Exactly one replan per flow, and a refused revision strands and reports rather than replanning again.
 _Avoid_: replanning loop (there is no loop — one revision, hard-bounded), plan (that names a mode's declared pre-spawn waves), re-decomposition, Decomposition review (that judges quality before dispatch, not recovery mid-flow)
 
 **Effort weight**:

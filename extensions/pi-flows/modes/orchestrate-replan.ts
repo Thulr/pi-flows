@@ -4,7 +4,7 @@ import { integrationControl } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import type { Settle } from "../settle.ts";
 import { emptyUsage, type Budget, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type UsageStats } from "../types.ts";
-import type { OrchestrateUnit, UnitOutcome } from "./orchestrate-outcomes.ts";
+import { makeOrchestrateUnits, type OrchestrateUnit, type UnitOutcome } from "./orchestrate-outcomes.ts";
 
 /**
  * Orchestrate's bounded mid-flow replan (#165): the one revision a flow may
@@ -54,7 +54,6 @@ export interface MidFlowReplanContext {
 	units: OrchestrateUnit[];
 	remaining: Map<string, OrchestrateUnit>;
 	outcomes: Map<string, UnitOutcome>;
-	makeUnits: (decomposition: Decomposition, planRevision: 2) => OrchestrateUnit[];
 }
 
 export type ReplanTrigger = "stranded_dependents" | "budget_headroom";
@@ -70,8 +69,8 @@ export interface MidFlowReplanner {
 	dependencyKeys(): readonly string[];
 	/** Feed one settled worker into the empirical observation — failed included: its spend was real, and its weight was the estimate that spend is judged against. */
 	recordSettled(subtask: DecompositionSubtask, usage: UsageStats): void;
-	/** The between-wave projection over the current remainder. Null while no worker has settled — admission already projected the commander proxy. */
-	headroomRefusal(): FlowError | null;
+	/** The between-wave projection over the current remainder. Null while no worker has settled — admission already projected the commander proxy. Not Budget.headroomRefusal: this asks every worker budget about the remainder, at this moment's observation. */
+	remainderHeadroomRefusal(): FlowError | null;
 	/** Mark the whole remainder stranded with one reason, and clear it. */
 	strandRemaining(reason: string): void;
 	/** Run the one replan. "stranded" means the remainder was stranded here with the refusal as the reason. */
@@ -184,7 +183,7 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 		for (let index = units.length - 1; index >= 0; index -= 1) {
 			if (replaced.has(units[index].subtask.id)) units.splice(index, 1);
 		}
-		const revisionUnits = context.makeUnits(prepared, 2);
+		const revisionUnits = makeOrchestrateUnits(prepared, 2);
 		units.push(...revisionUnits);
 		for (const unit of revisionUnits) remaining.set(unit.subtask.id, unit);
 		dependencyKeys = [dispatched.handoff.dependencyKey];
@@ -203,7 +202,7 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 			settledSpend.cost += usage.cost;
 			settledWeight += subtask.effortWeight ?? 1;
 		},
-		headroomRefusal: () => settledWeight > 0
+		remainderHeadroomRefusal: () => settledWeight > 0
 			? projectionRefusal(decompositionEffortWeight([...remaining.values()].map((unit) => unit.subtask)))
 			: null,
 		strandRemaining,

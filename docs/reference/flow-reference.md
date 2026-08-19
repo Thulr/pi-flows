@@ -663,7 +663,7 @@ Top-level `task` is preferred. `orchestrate.task` is its fallback. Each worker s
 | `orchestrate.verify` | (none) | Optional critic. Without its own contract, it returns PASS/REVISE prose. With one, validated `data.verdict` controls the decision. |
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict. `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`. `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
-| `orchestrate.replan` | `true` | Allow one mid-flow replan. When a failure strands the remaining subtasks, or the between-wave headroom projection refuses them, the `commander` returns one full replacement for the work that has not run. Set `false` to strand and report without a replan. |
+| `orchestrate.replan` | `true` | Allow one mid-flow replan. It fires when a failure strands the remaining subtasks, or when the between-wave headroom projection refuses them. The `commander` returns one full replacement for the work that has not run. Set `false` to strand and report without a replan. |
 | `orchestrate.workerReturnContract` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
 | `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`. When top-level `task` is also omitted, this text can serve as the goal fallback for model-generated calls. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Integer `1..16`. Cap on the total subtasks, dependent ones included. A flat subtask list is cut to this cap. A structured Decomposition above the cap is refused `DECOMPOSITION_INVALID`, because a cut can sever declared edges. |
@@ -830,7 +830,7 @@ The `commander` receives the remainder, the reason, the succeeded subtasks, and 
 
 There is exactly one replan per flow. If the replacement fails any check, the flow strands the remainder and reports, with the refusal as the stranding reason. There is no replan of a replan. The same budgets apply throughout: a revision cannot escape a ceiling, and the projection runs again as the revision's own workers settle.
 
-A flat replacement list gets fresh positional ids (`r2-1`, `r2-2`, …), so it cannot collide with a flat initial plan's ids. In the trace, the replan commander runs under the unit key `decompose-replan`, a `retry` event named `orchestrate.replan_decomposition` records the trigger, and plan-2 worker spans use the unit key `worker-2.<id>`.
+A flat replacement list gets fresh positional ids (`r2-1`, `r2-2`, …), so it cannot collide with a flat initial plan's ids. In the trace, the replan commander runs under the unit key `decompose-replan`. A `retry` event named `orchestrate.replan_decomposition` records the trigger. Plan-2 worker spans use the unit key `worker-2.<id>`.
 
 The header reports a fired replan:
 

@@ -210,7 +210,6 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		units,
 		remaining,
 		outcomes,
-		makeUnits: makeOrchestrateUnits,
 	});
 
 	let waveNumber = 0;
@@ -229,7 +228,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		// a ceiling it cannot fit. A refusal routes to the commander while the
 		// one replan remains, and strands afterwards; replan:false skips this.
 		if (replanner.enabled) {
-			const unaffordable = replanner.headroomRefusal();
+			const unaffordable = replanner.remainderHeadroomRefusal();
 			if (unaffordable) {
 				if (replanner.spent()) {
 					replanner.strandRemaining(unaffordable.message);
