@@ -181,8 +181,9 @@ function midFlowExhaustionScenario(): FaultScenario {
 		suite: FAULT_SUITE,
 		portfolio: "adversarial",
 		// The fault is the spend itself: workers cost three turns where the
-		// commander cost one, so the plan passes the headroom projection and the
-		// flow's total-token ceiling is only crossed after the first wave settles.
+		// commander cost one, so the Decomposition passes the headroom projection
+		// and the flow's total-token ceiling is only crossed after the first wave
+		// settles.
 		faults: [],
 		faultKind: "none",
 		description: "The flow budget exhausts between waves; the remainder is stranded once, with the refusal as the reason, instead of each child being refused one by one.",

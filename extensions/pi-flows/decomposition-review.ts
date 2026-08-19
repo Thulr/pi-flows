@@ -169,9 +169,9 @@ function reviewFailure(options: ReviewDecompositionOptions, decomposition: Decom
 /** The "replan smaller" critique a budget headroom refusal becomes when it routes back to the commander. */
 function headroomCritique(error: FlowError): string {
 	return [
-		`The Decomposition does not fit the remaining budget. ${error.message}`,
+		`The Decomposition does not fit what remains of the budget. ${error.message}`,
 		error.cause,
-		"Return a smaller replacement: fewer subtasks, or lower effortWeight values that honestly rank the work, so the remaining plan fits the remaining budget. Keep the goal's material parts covered; cut depth before coverage.",
+		"Return a smaller replacement: fewer subtasks, or lower effortWeight values that honestly rank the work, so the whole Decomposition fits inside the ceilings. Keep the goal's material parts covered; cut depth before coverage.",
 	].join("\n");
 }
 

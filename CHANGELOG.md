@@ -17,8 +17,8 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
   normalized JSON. After the commander settles, the flow projects the remaining
   effort weight times the observed spend per unit of weight — the commander's
   own settled spend before any worker settles — against the flow budget and the
-  worker contract budget, and refuses an unaffordable plan with the new
-  `BUDGET_HEADROOM_EXCEEDED` before any worker spawns. With
+  worker contract budget, and refuses a Decomposition that does not fit with
+  the new `BUDGET_HEADROOM_EXCEEDED` before any worker spawns. With
   `orchestrate.review` set, the refusal first routes back to the commander as a
   "replan smaller" critique inside the same `reviewMaxIterations` bound. The
   wave loop also consults the budget spawn gate before it builds each wave:

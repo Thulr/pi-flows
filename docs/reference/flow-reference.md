@@ -265,7 +265,7 @@ uses `warn < quarantine < fail`, so
 `fail`. Workflow approval receipts bind that resolution. A resume with a changed
 call or mode policy requires fresh approval.
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution. The iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children. The legacy total-token ceiling preserves the completed response and refuses subsequent children. If a provider omits cost telemetry, a cost-bounded child stops with `BUDGET_UNOBSERVABLE` — unknown spend is never treated as zero. A delegation contract can independently impose a **contract budget**, including a tighter timeout. Orchestrate also asks a forward question of the same ceilings: it projects an admitted Decomposition against them before workers spawn, and refuses an unaffordable plan with `BUDGET_HEADROOM_EXCEEDED` (see [Budget headroom](#budget-headroom)).
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution. The iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children. The legacy total-token ceiling preserves the completed response and refuses subsequent children. If a provider omits cost telemetry, a cost-bounded child stops with `BUDGET_UNOBSERVABLE` — unknown spend is never treated as zero. A delegation contract can independently impose a **contract budget**, including a tighter timeout. Orchestrate also asks a forward question of the same ceilings. It projects an admitted Decomposition against them before workers spawn. A Decomposition that does not fit is refused `BUDGET_HEADROOM_EXCEEDED` (see [Budget headroom](#budget-headroom)).
 
 The dimensions are independent: `maxCostUsd` is cost, `maxTokens` cumulative
 input+output, and `maxGeneratedTokens` output only — not total/input, context,
@@ -784,9 +784,9 @@ For each ceiling: projected spend = current spend + remaining effort weight × t
 
 A projection above a ceiling refuses the flow with `BUDGET_HEADROOM_EXCEEDED`. The error names the ceiling and its budget authority. No worker spawns. A projection that exactly meets a ceiling is admitted.
 
-With `orchestrate.review` set, the refusal first routes back to the `commander` as a "replan smaller" critique. That revision spends one `reviewMaxIterations` attempt, and the reviewer never judges an unaffordable plan. The flow returns the headroom error only when no admitted replacement fits inside the attempt bound.
+With `orchestrate.review` set, the refusal first routes back to the `commander` as a "replan smaller" critique. That revision spends one `reviewMaxIterations` attempt, and the reviewer never judges a Decomposition that cannot be paid for. The flow returns the headroom error only when no admitted replacement fits inside the attempt bound.
 
-The headroom check answers one question: does the remaining plan fit in what remains. A budget that is already spent returns `BUDGET_EXCEEDED` from the spawn gate instead.
+The headroom check answers one question: does the remaining work fit in what remains. A budget that is already spent returns `BUDGET_EXCEEDED` from the spawn gate instead.
 
 The wave loop consults the same budgets before it builds each wave. When a budget refuses further spawns, the flow strands every remaining subtask at once, with the refusal as the stranding reason. It does not dispatch children into a spent budget one by one.
 

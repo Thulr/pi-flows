@@ -1,4 +1,4 @@
-// The budget headroom gate (issue #164): a projection of the planned remaining
+// The budget headroom gate (issue #164): a projection of the remaining
 // work against each configured ceiling, refused before any worker spawns.
 //
 // Two layers are pinned. Budget.headroomRefusal owns the arithmetic and the
@@ -35,7 +35,7 @@ test("headroom refuses a projection strictly above a ceiling and admits one that
 	assert.equal(refusal?.code, "BUDGET_HEADROOM_EXCEEDED");
 	assert.match(refusal?.message ?? "", /^Flow budget headroom exceeded \(projected \$1\.1000 of \$1\.0000\)/);
 	assert.match(refusal?.cause ?? "", /effort weight 7/);
-	assert.match(refusal?.cause ?? "", /Nothing was spawned/);
+	assert.match(refusal?.cause ?? "", /Nothing spawned/);
 	assert.match(refusal?.fix ?? "", /Replan smaller/);
 	assert.equal(refusal?.retryable, false);
 	assert.deepEqual(refusal?.budgetCeiling, { authority: "flow", maxCostUsd: 1 });
@@ -64,7 +64,7 @@ test("a contract budget refuses under its own authority label", () => {
 
 test("headroom never speaks for the spawn gate, for zero weight, or for an unobserved spend", () => {
 	// An already-spent budget is BUDGET_EXCEEDED at the spawn gate; a projection
-	// claiming it would imply a smaller plan could fit when none can.
+	// claiming it would imply smaller remaining work could fit when none can.
 	const spent = Budget.forFlow({ maxTokens: 100 })!;
 	spent.charge(usage({ input: 100, output: 100 }));
 	assert.equal(spent.refusesSpawn(), true);
@@ -84,12 +84,12 @@ test("headroom never speaks for the spawn gate, for zero weight, or for an unobs
 // before any worker settles — is 200 total tokens per unit of weight.
 const CHILD_USAGE = { input: 100, output: 100, cost: 0 };
 
-const plan = (entries: unknown[]) => `\`\`\`json\n${JSON.stringify(entries)}\n\`\`\``;
+const breakdown = (entries: unknown[]) => `\`\`\`json\n${JSON.stringify(entries)}\n\`\`\``;
 const workspace = () => mkdtempSync(path.join(tmpdir(), "pi-flow-headroom-"));
 
 test("orchestrate refuses an unaffordable initial Decomposition before any worker spawns", async () => {
 	const adapter = makeFaultAdapter({
-		replies: { commander: plan(["survey the routes", "trace refresh", "read the tests"]), recon: "MUST NOT RUN" },
+		replies: { commander: breakdown(["survey the routes", "trace refresh", "read the tests"]), recon: "MUST NOT RUN" },
 		usage: CHILD_USAGE,
 	});
 	// Commander spends 200; three plain subtasks project 200 + 3×200 = 800 > 500.
@@ -108,7 +108,7 @@ test("orchestrate refuses an unaffordable initial Decomposition before any worke
 });
 
 test("effortWeight scales the projection: two heavy subtasks can be refused where three plain ones fit", async () => {
-	const heavy = plan([
+	const heavy = breakdown([
 		{ id: "survey", objective: "Survey the routes", effortWeight: 5 },
 		{ id: "audit", objective: "Audit each route", effortWeight: 5 },
 	]);
@@ -138,7 +138,7 @@ test("the worker contract budget is projected too, and refuses under the contrac
 		returnSchema: { type: "object", required: ["answer"], properties: { answer: { type: "string" } }, additionalProperties: false },
 		owner: "parent",
 	};
-	const adapter = makeFaultAdapter({ replies: { commander: plan(["survey", "trace"]), recon: "MUST NOT RUN" }, usage: CHILD_USAGE });
+	const adapter = makeFaultAdapter({ replies: { commander: breakdown(["survey", "trace"]), recon: "MUST NOT RUN" }, usage: CHILD_USAGE });
 	// The flow has no budget of its own; the contract's 300-token ceiling cannot
 	// pay for the projected 2×200, and the refusal must say so as the contract's.
 	const deps = faultDeps(
@@ -154,13 +154,13 @@ test("the worker contract budget is projected too, and refuses under the contrac
 	assert.equal(adapter.ledger.reached("recon"), false);
 });
 
-test("with a reviewer, an unaffordable plan routes back to the commander as a replan-smaller critique", async () => {
-	const heavy = plan([
+test("with a reviewer, a Decomposition that does not fit routes back to the commander as a replan-smaller critique", async () => {
+	const heavy = breakdown([
 		{ id: "survey", objective: "Survey everything", effortWeight: 5 },
 		{ id: "audit", objective: "Audit everything", effortWeight: 5 },
 		{ id: "report", objective: "Write it all up", effortWeight: 5 },
 	]);
-	const smaller = plan([
+	const smaller = breakdown([
 		{ id: "survey", objective: "Survey the auth routes" },
 		{ id: "audit", objective: "Audit the auth routes", dependsOn: ["survey"] },
 	]);
@@ -173,7 +173,7 @@ test("with a reviewer, an unaffordable plan routes back to the commander as a re
 		},
 		usage: CHILD_USAGE,
 	});
-	// Ceiling 1600: the heavy plan projects 200 + 15×200 = 3200 and is refused;
+	// Ceiling 1600: the heavy Decomposition projects 200 + 15×200 = 3200 and is refused;
 	// the replacement projects 400 + 2×200 = 800 after the revision commander's
 	// own spend, passes headroom, and only then reaches the reviewer.
 	const deps = faultDeps(
@@ -194,10 +194,10 @@ test("with a reviewer, an unaffordable plan routes back to the commander as a re
 	assert.deepEqual(
 		adapter.ledger.dispatches.map((dispatch) => dispatch.agent),
 		["commander", "commander", "overwatch", "recon", "recon", "debrief"],
-		"the reviewer never judges the unaffordable plan; the critique goes straight to the commander",
+		"the reviewer never judges the Decomposition that does not fit; the critique goes straight to the commander",
 	);
 	const revision = adapter.ledger.dispatches[1].task;
-	assert.match(revision, /does not fit the remaining budget/);
+	assert.match(revision, /does not fit what remains of the budget/);
 	assert.match(revision, /Flow budget headroom exceeded/);
 	assert.match(revision, /"effortWeight": 5/, "the reviewer-facing normalized JSON carries the weights the commander declared");
 	assert.match(revision, /Replace the complete Decomposition/);
@@ -207,7 +207,7 @@ test("with a reviewer, an unaffordable plan routes back to the commander as a re
 });
 
 test("when every attempt stays unaffordable, the flow refuses with the headroom error itself", async () => {
-	const heavy = plan([{ id: "audit", objective: "Audit everything", effortWeight: 5 }]);
+	const heavy = breakdown([{ id: "audit", objective: "Audit everything", effortWeight: 5 }]);
 	const adapter = makeFaultAdapter({
 		replies: { commander: heavy, overwatch: "MUST NOT RUN", recon: "MUST NOT RUN" },
 		usage: CHILD_USAGE,

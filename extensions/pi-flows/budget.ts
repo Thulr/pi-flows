@@ -114,23 +114,24 @@ export class Budget {
 	}
 
 	/**
-	 * Refuse planned work whose projection does not fit this budget's ceilings,
-	 * before any of it spawns. For each configured ceiling: projected spend =
-	 * current spend + remaining effort weight × the observed spend per unit of
-	 * weight. The caller supplies the observation — settled workers when any have
-	 * settled, otherwise the commander's own settled spend as the proxy — because
-	 * only the caller knows which runs the projection is about; the budget owns
-	 * the arithmetic and the refusal so the sentence names the ceiling and
-	 * authority that actually cannot pay.
+	 * Refuse remaining work whose projection does not fit this budget's
+	 * ceilings, before any of it spawns. For each configured ceiling: projected
+	 * spend = current spend + remaining effort weight × the observed spend per
+	 * unit of weight. The caller supplies the observation — settled workers when
+	 * any have settled, otherwise the commander's own settled spend as the proxy
+	 * — because only the caller knows which runs the projection is about; the
+	 * budget owns the arithmetic and the refusal so the sentence names the
+	 * ceiling and authority that actually cannot pay.
 	 *
-	 * A projection that exactly meets a ceiling is not refused: the last planned
-	 * run would settle at the ceiling, and `refusesSpawn` gates anything after
-	 * it. An observation of zero spend projects nothing and never refuses — the
-	 * floor is empirical, and no observation is not evidence of unaffordability.
+	 * A projection that exactly meets a ceiling is not refused: the last
+	 * projected run would settle at the ceiling, and `refusesSpawn` gates
+	 * anything after it. An observation of zero spend projects nothing and never
+	 * refuses — the floor is empirical, and no observation is not evidence of
+	 * unaffordability.
 	 *
 	 * A budget that already refuses to spawn is not refused *here* either: that
 	 * is the spawn gate's established BUDGET_EXCEEDED, and reporting it as a
-	 * projection would claim a smaller plan could fit when none can.
+	 * projection would claim smaller remaining work could fit when none can.
 	 */
 	headroomRefusal(remainingWeight: number, observedSpendPerWeight: UsageStats): FlowError | null {
 		if (remainingWeight <= 0 || this.refusesSpawn()) return null;
@@ -139,7 +140,7 @@ export class Budget {
 		return {
 			code: "BUDGET_HEADROOM_EXCEEDED",
 			message: `${this.authorityLabel} budget headroom exceeded (${projected.spend}).`,
-			cause: `The remaining planned work carries effort weight ${remainingWeight}, and at the observed spend per unit of weight its projection crosses a configured ${this.authorityLabel.toLowerCase()}-budget ceiling before the work could finish. Nothing was spawned against this projection.`,
+			cause: `The remaining work carries effort weight ${remainingWeight}, and at the observed spend per unit of weight its projection crosses a configured ${this.authorityLabel.toLowerCase()}-budget ceiling before the work could finish. Nothing spawned against this projection.`,
 			fix: "Replan smaller: fewer or lighter subtasks that fit the remaining ceiling, or narrow the goal. Do not raise or remove the ceiling unless the user explicitly approves it.",
 			retryable: false,
 			budgetCeiling: { authority: this.authority, ...projected.ceiling },
@@ -245,7 +246,7 @@ export class Budget {
 	 * describing it — the projection's counterpart to `crossed`, in the same
 	 * ceiling order and with the same single-cascade rule: the reported ceiling
 	 * and the reported spend can never name different ceilings. Strictly above
-	 * the ceiling, where `crossed` fires at it: a plan that exactly fits is
+	 * the ceiling, where `crossed` fires at it: work that exactly fits is
 	 * dispatched, and the spawn gate takes over once its spend lands.
 	 */
 	private projected(remainingWeight: number, perWeight: UsageStats): { ceiling: BudgetCeilings; spend: string } | undefined {
