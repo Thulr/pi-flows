@@ -396,6 +396,6 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // scope vocabulary carries unit facts onto spans, and the schema, glossary,
 // reference, README, and changelog expose the contract. The file set grows to
 // 117 for the new module. No file from tests/, scripts/, or evals/ ships. The
-// measured size is 1_441_368.
+// measured size is 1_441_360.
 assert.ok(pack.unpackedSize < 1_442_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
