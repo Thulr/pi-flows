@@ -19,7 +19,7 @@ export const DECOMPOSITION_REVIEW_RUBRIC = [
 
 /** JSON shown to the reviewer and revision commander. It contains the exact normalized fields that worker dispatch can use. */
 export function normalizedDecompositionJson(decomposition: Decomposition): string {
-	const subtasks = decomposition.subtasks.map(({ id, objective, dependsOn, scope, nonGoals, inputs, expectedReturn, acceptanceEvidence }) => ({
+	const subtasks = decomposition.subtasks.map(({ id, objective, dependsOn, scope, nonGoals, inputs, expectedReturn, acceptanceEvidence, effortWeight }) => ({
 		id,
 		objective,
 		dependsOn,
@@ -28,6 +28,7 @@ export function normalizedDecompositionJson(decomposition: Decomposition): strin
 		...(inputs ? { inputs } : {}),
 		...(expectedReturn ? { expectedReturn } : {}),
 		...(acceptanceEvidence ? { acceptanceEvidence } : {}),
+		...(effortWeight !== undefined ? { effortWeight } : {}),
 	}));
 	return JSON.stringify({ shape: decomposition.shape, subtasks }, null, 2);
 }
@@ -130,6 +131,16 @@ export interface ReviewDecompositionOptions {
 	admission: DecompositionAdmission;
 	initial: Decomposition;
 	initialDependencyKey: string;
+	/**
+	 * Project an admitted Decomposition against the budgets its workers would
+	 * draw down (Budget.headroomRefusal). Null admits. A refusal never reaches
+	 * the reviewer: it routes straight back to the commander as a "replan
+	 * smaller" critique, spending one of the same review attempts, and refuses
+	 * the flow with the projection's own error once the attempts are gone. The
+	 * projection runs before each review attempt and again after a PASS — the
+	 * reviewer's own run spends against the same ceilings it reads.
+	 */
+	headroom?: (decomposition: Decomposition) => FlowError | null;
 }
 
 export type ReviewedDecomposition =
@@ -157,6 +168,15 @@ function reviewFailure(options: ReviewDecompositionOptions, decomposition: Decom
 	});
 }
 
+/** The "replan smaller" critique a budget headroom refusal becomes when it routes back to the commander. */
+function headroomCritique(error: FlowError): string {
+	return [
+		`The Decomposition does not fit what remains of the budget. ${error.message}`,
+		error.cause,
+		"Return a smaller replacement: fewer subtasks, or lower effortWeight values that honestly rank the work, so the whole Decomposition fits inside the ceilings. Keep the goal's material parts covered; cut depth before coverage.",
+	].join("\n");
+}
+
 function bindingFailure(options: ReviewDecompositionOptions, result: FlowRunResult): ModeOutput | undefined {
 	const error = result.error;
 	if (!error || !["BUDGET_EXCEEDED", "BUDGET_UNOBSERVABLE", "HANDOFF_POLICY_VIOLATION"].includes(error.code)) return undefined;
@@ -174,7 +194,79 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 	let decomposition = prepareDecomposition(deps, options.initial);
 	let commanderDependencyKey = options.initialDependencyKey;
 
+	/**
+	 * One commander revision: request a complete replacement for the loop's
+	 * current Decomposition, admit what comes back through the same parser and
+	 * validator as the initial one, and advance the loop's state. Returns the
+	 * refusing output, or null when the loop may continue. Shared by the two
+	 * routes that ask for a replacement — a reviewer's REVISE critique and a
+	 * budget headroom refusal — so neither can drift from the other's admission.
+	 */
+	const revise = async (attempt: number, critique: string, dependsOn: string[], failureCause: string): Promise<ModeOutput | null> => {
+		const commanderTask = decompositionRevisionTask({
+			goal: options.goal,
+			returnRequirements: options.returnRequirements,
+			workerReturnRequirements: options.workerReturnRequirements,
+			requireEvidence: options.requireEvidence,
+			decomposition,
+			critique,
+			maxSubtasks: options.maxSubtasks,
+			contracted: Boolean(options.commanderRef.contract),
+		});
+		const commanderPlan = integrationRunPlan(deps, options.commanderRef, commanderTask, {
+			scope: { key: revisionKey(attempt + 1), dependsOn },
+		});
+		if (commanderPlan.error) return settle.refuse(commanderPlan.error);
+		const commander = await dispatchIntegrationPlan(deps, commanderPlan.plan!, settle);
+		if (commander.status === "refused") return commander.output;
+		if (commander.status === "failed") {
+			return bindingFailure(options, commander.result)
+				?? reviewFailure(options, decomposition, `Decomposition commander "${options.commanderRef.agent}" failed during revision.`, failureCause, critique);
+		}
+		const replacement = parseDecomposition(integrationControl(commander.result), options.maxSubtasks);
+		if (!replacement) return settle.refuse(unusableDecompositionError("replacement"));
+		const inadmissible = validateDecomposition(replacement, options.admission);
+		if (inadmissible) return settle.refuse(inadmissible);
+		decomposition = prepareDecomposition(deps, replacement);
+		commanderDependencyKey = commander.handoff.dependencyKey;
+		return null;
+	};
+
+	/**
+	 * One headroom refusal, resolved inside the attempt bound: the flow's own
+	 * refusal once no attempt remains, otherwise a "replan smaller" critique to
+	 * the commander directly. Returns the refusing output, or null when the
+	 * loop continues with a revised Decomposition. Spending the same attempts as
+	 * the reviewer keeps headroom revisions and reviewer revisions drawing down
+	 * one bound together.
+	 */
+	const replanSmaller = async (attempt: number, headroomError: FlowError): Promise<ModeOutput | null> => {
+		if (attempt >= options.maxIterations) return settle.refuse(headroomError);
+		deps.recordEvent?.({
+			kind: "retry",
+			name: "orchestrate.revise_decomposition",
+			scope: { key: `${revisionKey(attempt + 1)}.retry`, dependsOn: [commanderDependencyKey] },
+			attributes: { "flow.retry.attempt": attempt + 1, "flow.retry.max_attempts": options.maxIterations, "flow.retry.reason": "budget_headroom" },
+		});
+		return revise(
+			attempt,
+			headroomCritique(headroomError),
+			[commanderDependencyKey],
+			`Commander revision ${attempt + 1} failed after the budget headroom gate asked for a smaller Decomposition.`,
+		);
+	};
+
 	for (let attempt = 1; attempt <= options.maxIterations; attempt += 1) {
+		// The budget headroom gate runs beside the reviewer, first: a
+		// Decomposition that cannot be paid for is never worth a reviewer's
+		// judgment, so the refusal becomes a "replan smaller" critique to the
+		// commander directly.
+		const headroomError = options.headroom?.(decomposition) ?? null;
+		if (headroomError) {
+			const refused = await replanSmaller(attempt, headroomError);
+			if (refused) return { status: "refused", output: refused };
+			continue;
+		}
 		const key = reviewKey(attempt);
 		const task = decompositionReviewTask({
 			goal: options.goal,
@@ -214,7 +306,17 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 			attributes: { "flow.verdict.value": verdict, "flow.verdict.attempt": attempt, "flow.verdict.max_attempts": options.maxIterations },
 		});
 		if (verdict === "pass") {
-			return { status: "passed", decomposition, attempts: attempt, dependencyKeys: [commanderDependencyKey, verdictKey] };
+			// The reviewer's own run charged the same budgets the projection
+			// reads, so a PASS is projected once more before the Decomposition is
+			// exposed for dispatch — otherwise the reviewer's spend could tip the
+			// workers past a ceiling the gate promised to catch pre-spawn.
+			const postReviewHeadroom = options.headroom?.(decomposition) ?? null;
+			if (!postReviewHeadroom) {
+				return { status: "passed", decomposition, attempts: attempt, dependencyKeys: [commanderDependencyKey, verdictKey] };
+			}
+			const refused = await replanSmaller(attempt, postReviewHeadroom);
+			if (refused) return { status: "refused", output: refused };
+			continue;
 		}
 
 		const latestCritique = dispatched.handoff.text;
@@ -240,44 +342,13 @@ export async function reviewDecomposition(options: ReviewDecompositionOptions): 
 			attributes: { "flow.retry.attempt": attempt + 1, "flow.retry.max_attempts": options.maxIterations, "flow.retry.reason": "decomposition_revise" },
 		});
 
-		const nextAttempt = attempt + 1;
-		const commanderTask = decompositionRevisionTask({
-			goal: options.goal,
-			returnRequirements: options.returnRequirements,
-			workerReturnRequirements: options.workerReturnRequirements,
-			requireEvidence: options.requireEvidence,
-			decomposition,
-			critique: critique.text,
-			maxSubtasks: options.maxSubtasks,
-			contracted: Boolean(options.commanderRef.contract),
-		});
-		const commanderPlan = integrationRunPlan(deps, options.commanderRef, commanderTask, {
-			scope: { key: revisionKey(nextAttempt), dependsOn: [commanderDependencyKey, verdictKey, critique.dependencyKey!] },
-		});
-		if (commanderPlan.error) return { status: "refused", output: settle.refuse(commanderPlan.error) };
-		const commander = await dispatchIntegrationPlan(deps, commanderPlan.plan!, settle);
-		if (commander.status === "refused") return { status: "refused", output: commander.output };
-		if (commander.status === "failed") {
-			const bindingOutput = bindingFailure(options, commander.result);
-			if (bindingOutput) return { status: "refused", output: bindingOutput };
-			return {
-				status: "refused",
-				output: reviewFailure(
-					options,
-					decomposition,
-					`Decomposition commander "${options.commanderRef.agent}" failed during revision.`,
-					`Commander revision ${nextAttempt} failed after the reviewer requested a replacement Decomposition.`,
-					critique.text,
-				),
-			};
-		}
-
-		const replacement = parseDecomposition(integrationControl(commander.result), options.maxSubtasks);
-		if (!replacement) return { status: "refused", output: settle.refuse(unusableDecompositionError("replacement")) };
-		const inadmissible = validateDecomposition(replacement, options.admission);
-		if (inadmissible) return { status: "refused", output: settle.refuse(inadmissible) };
-		decomposition = prepareDecomposition(deps, replacement);
-		commanderDependencyKey = commander.handoff.dependencyKey;
+		const refused = await revise(
+			attempt,
+			critique.text,
+			[commanderDependencyKey, verdictKey, critique.dependencyKey!],
+			`Commander revision ${attempt + 1} failed after the reviewer requested a replacement Decomposition.`,
+		);
+		if (refused) return { status: "refused", output: refused };
 	}
 
 	throw new Error("Decomposition review loop exceeded its declared attempt bound.");

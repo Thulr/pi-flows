@@ -131,6 +131,30 @@ test("a structured Decomposition over the ceiling is refused where the flat list
 	assert.equal(validateDecomposition(flat, await admission({ maxSubtasks: 2 })), null, "so there is nothing left for the validator to refuse");
 });
 
+test("a malformed effortWeight is refused, and the accepted range is admitted", async () => {
+	// The weight scales the budget headroom projection, so a shape outside the
+	// declared range is refused like a malformed dependsOn — never rounded or
+	// clamped into a projection the commander did not state.
+	const admitted = await admission();
+	for (const effortWeight of [0, 6, 2.5, -1, "3", [3], {}]) {
+		const refusal = validateDecomposition(decompose([{ id: "survey", objective: "List entry points", effortWeight }]), admitted);
+		assert.equal(refusal?.code, "DECOMPOSITION_INVALID", `${JSON.stringify(effortWeight)} must be refused`);
+		assert.match(refusal?.message ?? "", /malformed "effortWeight"/);
+		assert.match(refusal?.fix ?? "", /integer from 1 to 5/);
+	}
+
+	// The whole accepted range is admitted, and null reads as unweighted like a
+	// null dependsOn reads as independent.
+	assert.equal(
+		validateDecomposition(decompose([
+			{ id: "light", objective: "Skim the config", effortWeight: 1 },
+			{ id: "heavy", objective: "Trace every call site", effortWeight: 5 },
+			{ id: "plain", objective: "List the routes", effortWeight: null },
+		]), admitted),
+		null,
+	);
+});
+
 // ---------------------------------------------------------------------------
 // Topologies the validator admits
 // ---------------------------------------------------------------------------

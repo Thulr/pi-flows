@@ -265,7 +265,7 @@ uses `warn < quarantine < fail`, so
 `fail`. Workflow approval receipts bind that resolution. A resume with a changed
 call or mode policy requires fresh approval.
 
-`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution. The iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children. The legacy total-token ceiling preserves the completed response and refuses subsequent children. If a provider omits cost telemetry, a cost-bounded child stops with `BUDGET_UNOBSERVABLE` — unknown spend is never treated as zero. A delegation contract can independently impose a **contract budget**, including a tighter timeout.
+`maxCostUsd` / `maxTokens` / `maxGeneratedTokens` form the **flow budget** and close the cost dimension of bounded execution. The iteration, fan-out, and time caps bound how *many* children run and how *long* each runs, but not total spend. Usage is known only after a model response completes, so a response can cross a ceiling. At that accounting boundary, cost and generated-output ceilings stop the active child and refuse subsequent children. The legacy total-token ceiling preserves the completed response and refuses subsequent children. If a provider omits cost telemetry, a cost-bounded child stops with `BUDGET_UNOBSERVABLE` — unknown spend is never treated as zero. A delegation contract can independently impose a **contract budget**, including a tighter timeout. Orchestrate also asks a forward question of the same ceilings. It projects an admitted Decomposition against them before workers spawn. A Decomposition that does not fit is refused `BUDGET_HEADROOM_EXCEEDED` (see [Budget headroom](#budget-headroom)).
 
 The dimensions are independent: `maxCostUsd` is cost, `maxTokens` cumulative
 input+output, and `maxGeneratedTokens` output only — not total/input, context,
@@ -711,6 +711,7 @@ The **structured shape** is an array of subtask objects. It can also declare dep
 | `id` | Yes | Unique in the Decomposition. `dependsOn` and the trace span key use this id. Start it with a letter or a digit. Then use letters, digits, `_`, `.` and `-` only, to a maximum of 64 characters. |
 | `objective` | Yes | What the subtask must achieve. The worker prompt carries it as the assigned subtask. `task` is accepted as an alias. |
 | `dependsOn` | No | The ids of the subtasks whose output this subtask needs. Omit it for independent work. |
+| `effortWeight` | No | Relative effort of this subtask against its siblings. Integer `1..5`. Omitted means `1`. The budget headroom projection scales the observed spend per unit of weight by it. It is not a token or cost figure. |
 | `scope` | No | Prose bounds on the subtask. |
 | `nonGoals` | No | What the subtask must not do. |
 | `inputs` | No | Starting material for the worker. |
@@ -728,6 +729,7 @@ The flow validates the Decomposition after the `commander` settles, and before t
 - two subtasks that use one `id`
 - a `dependsOn` entry that names a subtask outside this Decomposition
 - a `dependsOn` that is not an array of id strings
+- an `effortWeight` that is not an integer from 1 to 5
 - a subtask that names its own `agent`
 - a subtask string mixed into an array of subtask objects
 - a structured Decomposition with more subtasks than `orchestrate.maxSubtasks` permits
@@ -774,13 +776,27 @@ The final REVISE returns `DECOMPOSITION_REVIEW_FAILED`. A failed reviewer or rev
 
 Return validation, Handoff policy, budget, parsing, and structural errors keep their existing codes. No worker starts after a review-loop failure.
 
+### Budget headroom
+
+When the flow carries a budget, or the worker role carries a contract budget, the flow projects the admitted Decomposition against each configured ceiling. The projection runs beside the structural validator, after the `commander` settles and before the first worker starts.
+
+For each ceiling: projected spend = current spend + remaining effort weight × the observed spend per unit of weight. Before any worker settles, the observation is the commander's own settled spend. The floor is empirical. A uniform underestimate self-corrects, and only relative misranking survives.
+
+A projection above a ceiling refuses the flow with `BUDGET_HEADROOM_EXCEEDED`. The error names the ceiling and its budget authority. No worker spawns. A projection that exactly meets a ceiling is admitted.
+
+With `orchestrate.review` set, the refusal first routes back to the `commander` as a "replan smaller" critique. That revision spends one `reviewMaxIterations` attempt, and the reviewer never judges a Decomposition that cannot be paid for. The projection runs before each review attempt, and again after a PASS: the reviewer's own run spends against the same ceilings it reads. The flow returns the headroom error only when no admitted replacement fits inside the attempt bound.
+
+The headroom check answers one question: does the remaining work fit in what remains. A budget that is already spent returns `BUDGET_EXCEEDED` from the spawn gate instead.
+
+The wave loop consults the same budgets before it builds each wave. When a budget refuses further spawns, the flow strands every remaining subtask at once, with the refusal as the stranding reason. It does not dispatch children into a spent budget one by one.
+
 ### Waves, dependency output, and stranded subtasks
 
 The workers run wave by wave. Each wave holds the subtasks whose dependencies have all succeeded. `concurrency` limits how many workers of one wave run at the same time. A Decomposition with no edges is a single wave.
 
 The flow puts each dependency's validated handoff text into the dependent worker's prompt. The section heading names the source subtask, and marks the text as untrusted data. The `commander` writes no placeholder for that text. The flow inserts the text itself.
 
-If a subtask fails, every subtask that depends on it is **stranded**. A stranded subtask never starts, and it spends no budget. The `debrief` prompt then carries a "Subtasks not completed" manifest. The manifest names each subtask that did not succeed. For a failed subtask it gives a sanitized failure summary. For a stranded subtask it gives the id of the subtask it waits on.
+If a subtask fails, every subtask that depends on it is **stranded**. A stranded subtask never starts, and it spends no budget. A spent budget also strands: once a budget refuses further spawns, the whole remainder is stranded before the next wave (see [Budget headroom](#budget-headroom)). The `debrief` prompt then carries a "Subtasks not completed" manifest. The manifest names each subtask that did not succeed. For a failed subtask it gives a sanitized failure summary. For a stranded subtask it gives the id of the subtask it waits on, or the budget refusal that stopped the remainder.
 
 The flow header counts the outcome:
 
@@ -790,7 +806,7 @@ Flow orchestrate: 5 subtasks, 3 succeeded, 1 failed, 1 stranded, synthesized by 
 
 The `failed` and `stranded` counts appear only when they are above zero.
 
-A **terminal subtask** is a subtask that no other subtask depends on. If no terminal subtask succeeds, the flow does not run `debrief`. It returns the counts, and reports that there is nothing to synthesize.
+A **terminal subtask** is a subtask that no other subtask depends on. If no terminal subtask succeeds, the flow does not run `debrief`. It returns the counts and the "Subtasks not completed" manifest, so a budget refusal that stranded the remainder stays visible.
 
 In the trace, each subtask has its own worker span. The unit key of that span is `worker-<id>`. Each `dependsOn` edge becomes a dependency link. A flat Decomposition keeps positional keys (`worker-1`, `worker-2`). The prefix keeps the ids of the `commander` apart from the keys of the flow itself, such as `decompose` and `synthesis-1`.
 

@@ -130,8 +130,9 @@ export function subtasksJsonProtocolInstruction(maxSubtasks: number, contracted 
 	const shapes = [
 		`Use one of two shapes for the JSON array, never both in one array (max ${maxSubtasks} subtasks).`,
 		'Shape 1 (independent work): an array of subtask strings, e.g. ["Investigate X", "Investigate Y"]. Use this when no subtask needs another subtask\'s output.',
-		'Shape 2 (dependent work): an array of subtask objects. Each object requires "id" and "objective". Each object accepts optional "dependsOn" (the ids of the subtasks whose output this subtask needs), "scope", "nonGoals", "inputs", "expectedReturn", and "acceptanceEvidence".',
+		'Shape 2 (dependent work): an array of subtask objects. Each object requires "id" and "objective". Each object accepts optional "dependsOn" (the ids of the subtasks whose output this subtask needs), "effortWeight", "scope", "nonGoals", "inputs", "expectedReturn", and "acceptanceEvidence".',
 		'Write each "id" as one short token: start it with a letter or a digit, then use letters, digits, "_", "." and "-" only. An id with a space or a line break in it is refused.',
+		'Set "effortWeight" (integer 1..5) when a subtask is clearly heavier than its siblings: 1 is an ordinary subtask and the default, 5 is the heaviest. It ranks relative effort for the budget headroom projection — it is not a token or cost figure. Any other shape is refused.',
 		"Add a dependsOn edge only when the subtask cannot start without the named subtask's output. Independent subtasks run in parallel; dependent subtasks run in sequence, so an unnecessary edge makes the work slower.",
 		"Do not name an agent for a subtask: every subtask runs the same worker role. Do not write a placeholder for another subtask's output: the orchestrator inserts it.",
 	];

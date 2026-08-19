@@ -85,6 +85,22 @@ function contractBudget(deps: ModeDeps, contract: ResolvedDelegationContract): B
 	return budgets.get(contract.id);
 }
 
+/**
+ * The shared contract Budget the runs fulfilling `ref`'s delegation contract
+ * will draw down — the same object the flow-scoped ledger hands every plan for
+ * that contract, so a projection against it and the later enforcement cannot
+ * hold different spend. Undefined when the ref carries no contract, the
+ * contract sets no ceilings, or the contract does not resolve; an unresolvable
+ * contract is refused with its own error at plan time, not here.
+ */
+export function integrationContractBudget(deps: ModeDeps, ref: FlowAgentRefInput, fallback?: DelegationContract): Budget | undefined {
+	const raw = resolveDelegationContract(ref, fallback);
+	if (!raw) return undefined;
+	const resolution = ResolvedDelegationContract.resolve(raw, deps.policy);
+	if (resolution.error) return undefined;
+	return contractBudget(deps, resolution.resolved!);
+}
+
 function runLimits(deps: ModeDeps, contract: ResolvedDelegationContract | undefined, shareContractBudget: boolean): AgentRunLimits | undefined {
 	if (!contract) return undefined;
 	return {

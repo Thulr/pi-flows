@@ -106,15 +106,22 @@ test("an unreadable review verdict fails safe to REVISE", async () => {
 });
 
 test("review and revision runs preserve binding budget errors", async () => {
+	// Ceilings sit exactly at the headroom projection (the stub charges 8
+	// generated tokens per turn, so a commander spend of 8 projects 8 more per
+	// unit of remaining weight): the Decomposition is admitted as fitting, and
+	// the budget error then comes from the held-open run actually crossing the
+	// ceiling mid-run — the binding error this test exists to preserve. A
+	// Decomposition that does not fit is the headroom gate's own path, pinned
+	// in tests/budget-headroom.test.ts.
 	const cases = [
 		{
-			params: { maxGeneratedTokens: 12 },
-			plan: { commander: JSON.stringify(first), overwatch: { reply: "VERDICT: PASS", holdOpenMs: 5_000 } },
+			params: { maxGeneratedTokens: 16 },
+			plan: { commander: JSON.stringify(["Map the login path"]), overwatch: { reply: "VERDICT: PASS", holdOpenMs: 5_000 } },
 			code: "BUDGET_EXCEEDED",
 			agents: ["commander", "overwatch"],
 		},
 		{
-			params: { maxGeneratedTokens: 20 },
+			params: { maxGeneratedTokens: 24 },
 			plan: {
 				commander: [JSON.stringify(first), { reply: JSON.stringify(replacement), holdOpenMs: 5_000 }],
 				overwatch: "VERDICT: REVISE\nAdd the missing path.",

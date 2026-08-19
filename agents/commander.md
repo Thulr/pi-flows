@@ -24,12 +24,13 @@ Output protocol:
 ["Find where authentication is configured", "List the API routes and their handlers"]
 ```
 
-- Dependent work — an array of subtask objects. Each needs `id` (one short token: a letter or digit first, then letters, digits, `_`, `.`, `-`) and `objective`; `dependsOn` lists the ids whose output the subtask needs. Optional fields: `scope`, `nonGoals`, `inputs`, `expectedReturn`, `acceptanceEvidence`.
+- Dependent work — an array of subtask objects. Each needs `id` (one short token: a letter or digit first, then letters, digits, `_`, `.`, `-`) and `objective`; `dependsOn` lists the ids whose output the subtask needs. Optional fields: `effortWeight`, `scope`, `nonGoals`, `inputs`, `expectedReturn`, `acceptanceEvidence`.
+- Set `effortWeight` (integer 1..5) when a subtask is clearly heavier than its siblings. 1 is an ordinary subtask and the default; 5 is the heaviest. The weight ranks relative effort for the budget headroom projection. It is not a token or cost figure.
 
 ```json
 [
   {"id": "inventory", "objective": "List the API routes and their handlers"},
-  {"id": "audit", "objective": "Check each route for missing auth", "dependsOn": ["inventory"]}
+  {"id": "audit", "objective": "Check each route for missing auth", "dependsOn": ["inventory"], "effortWeight": 3}
 ]
 ```
 

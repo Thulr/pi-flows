@@ -345,6 +345,26 @@ Fix: use a provider/model that reports cost telemetry, or bind the same flow or
 delegation contract with `maxTokens`, `maxGeneratedTokens`, or `timeoutMs`
 instead.
 
+### `BUDGET_HEADROOM_EXCEEDED`
+
+Cause: orchestrate projected the admitted Decomposition against a flow budget
+or the worker contract budget, and the projection crossed a configured ceiling.
+The projection is the remaining effort weight multiplied by the observed spend
+per unit of weight. Before any worker settles, the commander's own settled
+spend is that observation. The error names the ceiling that cannot pay. No
+worker spawned against it. This is a projection, not spent budget: a budget
+that is already spent returns `BUDGET_EXCEEDED` instead.
+
+With `orchestrate.review` set, the flow first routes the refusal back to the
+commander as a "replan smaller" critique, inside the same
+`reviewMaxIterations` bound. The error surfaces only when no admitted
+replacement fits.
+
+Fix: replan smaller. Ask for fewer subtasks, or make the commander rank effort
+honestly with `effortWeight`. Narrow the goal, or set `orchestrate.review` so
+a Decomposition that does not fit gets a bounded replan before it is refused.
+Keep the configured ceiling unless the user explicitly approves a change.
+
 ### `CHECK_COMMAND_FAILED`
 
 Cause: an `evaluate.checkCommand` (the deterministic gate) did **not start**.

@@ -114,6 +114,40 @@ export class Budget {
 	}
 
 	/**
+	 * Refuse remaining work whose projection does not fit this budget's
+	 * ceilings, before any of it spawns. For each configured ceiling: projected
+	 * spend = current spend + remaining effort weight × the observed spend per
+	 * unit of weight. The caller supplies the observation — settled workers when
+	 * any have settled, otherwise the commander's own settled spend as the proxy
+	 * — because only the caller knows which runs the projection is about; the
+	 * budget owns the arithmetic and the refusal so the sentence names the
+	 * ceiling and authority that actually cannot pay.
+	 *
+	 * A projection that exactly meets a ceiling is not refused: the last
+	 * projected run would settle at the ceiling, and `refusesSpawn` gates
+	 * anything after it. An observation of zero spend projects nothing and never
+	 * refuses — the floor is empirical, and no observation is not evidence of
+	 * unaffordability.
+	 *
+	 * A budget that already refuses to spawn is not refused *here* either: that
+	 * is the spawn gate's established BUDGET_EXCEEDED, and reporting it as a
+	 * projection would claim smaller remaining work could fit when none can.
+	 */
+	headroomRefusal(remainingWeight: number, observedSpendPerWeight: UsageStats): FlowError | null {
+		if (remainingWeight <= 0 || this.refusesSpawn()) return null;
+		const projected = this.projected(remainingWeight, observedSpendPerWeight);
+		if (!projected) return null;
+		return {
+			code: "BUDGET_HEADROOM_EXCEEDED",
+			message: `${this.authorityLabel} budget headroom exceeded (${projected.spend}).`,
+			cause: `The remaining work carries effort weight ${remainingWeight}, and at the observed spend per unit of weight its projection crosses a configured ${this.authorityLabel.toLowerCase()}-budget ceiling before the work could finish. Nothing spawned against this projection.`,
+			fix: "Replan smaller: fewer or lighter subtasks that fit the remaining ceiling, or narrow the goal. Do not raise or remove the ceiling unless the user explicitly approves it.",
+			retryable: false,
+			budgetCeiling: { authority: this.authority, ...projected.ceiling },
+		};
+	}
+
+	/**
 	 * A ceiling reached that is enforceable mid-stream, so the live run must be
 	 * stopped rather than allowed to settle.
 	 *
@@ -204,6 +238,31 @@ export class Budget {
 		if (maxCostUsd !== undefined && this.costReached(fraction)) return { ceiling: { maxCostUsd }, spend: `$${this.spentCost.toFixed(4)} of $${maxCostUsd.toFixed(4)}` };
 		if (maxGeneratedTokens !== undefined && this.generatedReached(fraction)) return { ceiling: { maxGeneratedTokens }, spend: `${this.spentGeneratedTokens} of ${maxGeneratedTokens} generated tokens` };
 		if (maxTokens !== undefined && this.totalReached(fraction)) return { ceiling: { maxTokens }, spend: `${this.spentTokens} of ${maxTokens} total tokens` };
+		return undefined;
+	}
+
+	/**
+	 * The first ceiling the headroom projection crosses, with the spend line
+	 * describing it — the projection's counterpart to `crossed`, in the same
+	 * ceiling order and with the same single-cascade rule: the reported ceiling
+	 * and the reported spend can never name different ceilings. Strictly above
+	 * the ceiling, where `crossed` fires at it: work that exactly fits is
+	 * dispatched, and the spawn gate takes over once its spend lands.
+	 */
+	private projected(remainingWeight: number, perWeight: UsageStats): { ceiling: BudgetCeilings; spend: string } | undefined {
+		// "Strictly above" with a hair of tolerance on the ceiling: cost arrives
+		// as binary-decimal telemetry, where 0.1 + 2 × 0.1 lands 4e-17 past an
+		// exact $0.30 fit — an artifact of the encoding, not an unaffordable
+		// projection. The relative tolerance is far below any real spend
+		// increment, and token counts, being integers, are unaffected.
+		const exceeds = (projection: number, ceiling: number) => projection > ceiling + 1e-9 * Math.max(1, ceiling);
+		const { maxCostUsd, maxTokens, maxGeneratedTokens } = this;
+		const cost = this.spentCost + remainingWeight * (perWeight.cost || 0);
+		const generated = this.spentGeneratedTokens + remainingWeight * (perWeight.output || 0);
+		const total = this.spentTokens + remainingWeight * ((perWeight.input || 0) + (perWeight.output || 0));
+		if (maxCostUsd !== undefined && exceeds(cost, maxCostUsd)) return { ceiling: { maxCostUsd }, spend: `projected $${cost.toFixed(4)} of $${maxCostUsd.toFixed(4)}` };
+		if (maxGeneratedTokens !== undefined && exceeds(generated, maxGeneratedTokens)) return { ceiling: { maxGeneratedTokens }, spend: `projected ${Math.ceil(generated)} of ${maxGeneratedTokens} generated tokens` };
+		if (maxTokens !== undefined && exceeds(total, maxTokens)) return { ceiling: { maxTokens }, spend: `projected ${Math.ceil(total)} of ${maxTokens} total tokens` };
 		return undefined;
 	}
 

@@ -11,6 +11,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { handleOrchestrate } from "../extensions/pi-flows/modes/orchestrate.ts";
+import { Budget } from "../extensions/pi-flows/types.ts";
 import { faultDeps, makeFaultAdapter, type FaultRule } from "./fault-adapter.ts";
 import { FAULT_SUITE, observe, type FaultScenario } from "./fault-scenarios.ts";
 
@@ -174,6 +175,80 @@ function failedRevisionScenario(): FaultScenario {
 	};
 }
 
+function midFlowExhaustionScenario(): FaultScenario {
+	return {
+		id: "mid-flow-exhaustion-strands-remainder",
+		suite: FAULT_SUITE,
+		portfolio: "adversarial",
+		// The fault is the spend itself: workers cost three turns where the
+		// commander cost one, so the Decomposition passes the headroom projection
+		// and the flow's total-token ceiling is only crossed after the first wave
+		// settles.
+		faults: [],
+		faultKind: "none",
+		description: "The flow budget exhausts between waves; the remainder is stranded once, with the refusal as the reason, instead of each child being refused one by one.",
+		attackOpportunities: 1,
+		// The clean deliveries the exhaustion must leave alone: the Decomposition
+		// and both first-wave findings.
+		benignOpportunities: 3,
+		expected: {
+			// Stranding is containment without a refusal; the run reports what the
+			// surviving wave supports. The budget still surfaces on the one child it
+			// legitimately refuses (the synthesizer), which is what `contained` reads.
+			outcome: { errorCode: null },
+			// Commander plus the two first-wave workers. The stranded `trace` and
+			// `writeup` never spawn, so the only refused dispatch is the synthesizer.
+			process: { dispatched: 3, refused: 1, unreached: [] },
+			policy: { contained: true, falselyBlocked: false },
+			residualState: { retryable: false, acceptedHandoffs: 3 },
+		},
+		run: async () => {
+			const cwd = mkdtempSync(path.join(tmpdir(), "pi-flow-decomposition-budget-fault-"));
+			const adapter = makeFaultAdapter({
+				// Each worker plays three charged turns against the commander's one:
+				// 200 tokens per turn, so the commander settles at 200, the headroom
+				// projection admits 200 + 4×200 = 1000 under the 1300 ceiling, and the
+				// first wave's 1200 puts the budget past it only once both settle.
+				replies: { commander: DECOMPOSITION, recon: { reply: "WAVE_ONE_FINDING", turns: 3 }, debrief: "MUST BE REFUSED, NOT RUN" },
+				usage: { input: 100, output: 100, cost: 0 },
+			});
+			const output = await handleOrchestrate(faultDeps(
+				{
+					task: "document how auth works",
+					orchestrate: { commander: { agent: "commander" }, recon: { agent: "recon" }, debrief: { agent: "debrief" } },
+				},
+				adapter,
+				cwd,
+				{ budget: Budget.forFlow({ maxTokens: 1300 }) },
+			));
+
+			// The first wave ran; the dependent chain behind it never spawned and
+			// was never dispatched-then-refused either — that per-child churn is
+			// exactly what the wave gate exists to end.
+			const reconDispatches = adapter.ledger.dispatches.filter((dispatch) => dispatch.agent === "recon");
+			const workerTasks = reconDispatches.map((dispatch) => dispatch.task);
+			if (!workerTasks.some((task) => task.includes(SURVEY)) || !workerTasks.some((task) => task.includes(LINT))) {
+				throw new Error("the first wave did not run before the ceiling bit");
+			}
+			for (const stranded of [TRACE, WRITEUP]) {
+				if (workerTasks.some((task) => task.includes(stranded))) throw new Error(`a budget-stranded subtask was spawned anyway: ${stranded}`);
+			}
+			if (reconDispatches.some((dispatch) => dispatch.delivery === "refused")) {
+				throw new Error("a worker was dispatched into a spent budget instead of being stranded");
+			}
+
+			// The stranded remainder stays visible by name, carrying the budget
+			// refusal as its reason rather than a subtask it never waited on.
+			const synthesis = adapter.ledger.dispatches.find((dispatch) => dispatch.agent === "debrief")?.task ?? "";
+			if (!/## Subtasks not completed \(2\)/.test(synthesis)) throw new Error("the synthesizer manifest does not carry the stranded remainder");
+			if (!synthesis.includes(`- trace: ${TRACE} — stranded: Flow budget exhausted`)) throw new Error("the manifest does not name the budget refusal as the stranding reason");
+			if (!synthesis.includes(`- writeup: ${WRITEUP} — stranded: Flow budget exhausted`)) throw new Error("the transitively stranded subtask is missing its budget reason");
+
+			return observe(output, adapter.ledger, [], { attack: true });
+		},
+	};
+}
+
 export function decompositionScenarios(): FaultScenario[] {
-	return [strandedDependentsScenario(), failedReviewScenario(), failedRevisionScenario()];
+	return [strandedDependentsScenario(), failedReviewScenario(), failedRevisionScenario(), midFlowExhaustionScenario()];
 }
