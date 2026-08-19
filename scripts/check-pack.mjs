@@ -389,5 +389,18 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // per-wave budget stranding. The file set grows to 116 for the two size splits
 // (decomposition-graph.ts, modes/orchestrate-outcomes.ts). No file from
 // tests/, scripts/, or evals/ ships. The measured size is 1_415_957.
-assert.ok(pack.unpackedSize < 1_425_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_442_000 for #165 (bounded mid-flow Decomposition replanning):
+// the packaged Supporting module modes/orchestrate-replan.ts owns the one
+// replan and the between-wave headroom re-projection; the validator gains the
+// satisfied-ids rules, the unit vocabulary gains the plan-revision keys, the
+// scope vocabulary carries unit facts onto spans, and the schema, glossary,
+// reference, README, and changelog expose the contract. The file set grows to
+// 117 for the new module. No file from tests/, scripts/, or evals/ ships. The
+// measured size is 1_441_360.
+// Raised to 1_443_500 for the #165 review rounds: the unforgeable worker2-
+// revision keys, the strand-and-report path for a policy-refused replacement,
+// and the explanation page's mid-flow replan section replacing its stale
+// out-of-scope note. The file set stays 117 and none from tests/, scripts/,
+// or evals/; measured 1_442_596.
+assert.ok(pack.unpackedSize < 1_443_500, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

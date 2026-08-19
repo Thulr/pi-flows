@@ -104,6 +104,43 @@ export function decompositionRevisionTask(input: DecompositionRevisionTaskInput)
 		.join("\n");
 }
 
+export interface MidFlowReplanInput {
+	/** Why the remainder cannot proceed under the current Decomposition: the stranding failure, or the headroom refusal routed through {@link headroomCritique}. */
+	reason: string;
+	/** Succeeded subtasks the revision may depend on but must not redefine. */
+	succeeded: ReadonlyArray<{ id: string; objective: string }>;
+	/** Failed subtasks whose work may reappear under new subtasks. */
+	failed: ReadonlyArray<{ id: string; objective: string }>;
+}
+
+/**
+ * The critique a mid-flow replan puts in front of {@link decompositionRevisionTask}.
+ * The "current normalized Decomposition" the task shows is the remainder alone,
+ * so "replace the complete Decomposition" reads as: replace the work that has
+ * not run, in full. This critique carries the two facts that section cannot:
+ * which finished work is available as a dependency, and which failed work may
+ * be re-attempted.
+ */
+export function midFlowReplanCritique(input: MidFlowReplanInput): string {
+	const lines = [
+		`The dispatched Decomposition cannot proceed. ${input.reason}`,
+		"Return one complete replacement for the remaining work shown above. The replacement is the whole remainder: subtasks you omit will not run.",
+	];
+	if (input.succeeded.length > 0) {
+		lines.push(
+			"These subtasks already succeeded. Do not redefine their ids. To build on their output, declare dependsOn with the succeeded id:",
+			...input.succeeded.map((subtask) => `- ${subtask.id}: ${subtask.objective}`),
+		);
+	}
+	if (input.failed.length > 0) {
+		lines.push(
+			"These subtasks failed. Their ids are free again; re-attempt the work under new subtasks only if the goal still needs it:",
+			...input.failed.map((subtask) => `- ${subtask.id}: ${subtask.objective}`),
+		);
+	}
+	return lines.join("\n");
+}
+
 /** Refuse review-only options when the caller did not select a review role. */
 export function decompositionReviewOptionsRefusal(spec: any): FlowError | null {
 	const hasOptions = spec.reviewMaxIterations !== undefined || spec.reviewCriteria !== undefined;
@@ -168,8 +205,8 @@ function reviewFailure(options: ReviewDecompositionOptions, decomposition: Decom
 	});
 }
 
-/** The "replan smaller" critique a budget headroom refusal becomes when it routes back to the commander. */
-function headroomCritique(error: FlowError): string {
+/** The "replan smaller" critique a budget headroom refusal becomes when it routes back to the commander. Shared with orchestrate's mid-flow replan, whose headroom trigger asks for the same smaller replacement. */
+export function headroomCritique(error: FlowError): string {
 	return [
 		`The Decomposition does not fit what remains of the budget. ${error.message}`,
 		error.cause,

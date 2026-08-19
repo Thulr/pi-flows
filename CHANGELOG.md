@@ -10,6 +10,21 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Added
 
+- Orchestrate can now replan the Decomposition once, mid-flow, for the work
+  that has not run (#165). Two triggers fire it: a failure that leaves every
+  remaining subtask unreachable, and the new between-wave budget headroom
+  re-projection, which scales the settled workers' own spend per unit of
+  effort weight instead of the admission-time commander proxy. The commander
+  returns one full replacement for the remainder through the same parser,
+  validator, and headroom projection as the initial Decomposition: a revision
+  subtask may depend on a succeeded id (the output hands off), may not
+  redefine one (`DECOMPOSITION_INVALID`), and may re-attempt failed work. A
+  refused replacement strands and reports; there is no replan of a replan.
+  `orchestrate.replan:false` restores the strand-and-report path. Worker spans
+  carry `flow.plan_revision` (1 initial, 2 revision; plan-2 unit keys are
+  `worker2-<id>`), and the replan records an `orchestrate.replan_decomposition`
+  retry event beside `orchestrate.revise_decomposition`.
+
 - Orchestrate now gates an admitted Decomposition on budget headroom (#164).
   Each subtask can carry an optional `effortWeight` (integer 1..5, absent means
   1, malformed refused `DECOMPOSITION_INVALID`) through the parser, the

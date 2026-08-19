@@ -74,6 +74,10 @@ _Avoid_: plan, work breakdown, task graph (that reads as graph mode's author-sup
 An optional pre-dispatch judgment that a Decomposition covers its goal with suitably bounded, non-overlapping subtasks and necessary dependency edges. If the caller requests Decomposition review, the review must pass before workers can run.
 _Avoid_: plan review, validation (that names deterministic structural admission), verification (that judges the synthesized outcome)
 
+**Plan revision**:
+Which Decomposition governed a worker — 1 for the initial plan, 2 for the one bounded mid-flow replacement of the work that has not run. Succeeded subtasks keep their ids and hand their outputs off; they are never redefined. Exactly one replan per flow, and a refused revision strands and reports rather than replanning again.
+_Avoid_: replanning loop (there is no loop — one revision, hard-bounded), plan (that names a mode's declared pre-spawn waves), re-decomposition, Decomposition review (that judges quality before dispatch, not recovery mid-flow)
+
 **Effort weight**:
 A subtask's declared relative effort against its siblings, an integer 1–5 with absent meaning 1. A ranking the Budget headroom projection scales observed spend by — never a token, cost, or time figure, and never the Thinking level a child runs at.
 _Avoid_: cost estimate, token estimate, size, effort (bare — that word belongs to the Thinking-level Avoid list)

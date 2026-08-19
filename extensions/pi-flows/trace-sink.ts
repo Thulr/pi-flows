@@ -185,7 +185,7 @@ export function makeTraceSink(traceFile: string, mode: FlowMode, policy: Capture
 		observeInterval(startMs, endMs);
 		const parentSpanId = scope?.stage ? ensureStage(scope.stage, startMs, endMs) : rootSpanId;
 		const dependsOn = scope?.dependsOn ?? [];
-		const attributes: Record<string, unknown> = {};
+		const attributes: Record<string, unknown> = { ...(scope?.attributes ?? {}) }; // scope's own unit facts first — the placement facts below win on any shared key
 		if (dependsOn.length) {
 			// The authoritative count. A reader must not have to infer it from a
 			// string that any cap or transform could have shortened.

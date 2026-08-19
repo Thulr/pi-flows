@@ -198,11 +198,12 @@ export const FlowOrchestrate = Type.Object({
 		}),
 	),
 	verifyMaxIterations: Type.Optional(Type.Number({ description: "Max synthesize->verify rounds when verifyPolicy is revise. Integer 1..4. Default 2.", minimum: 1, maximum: 4, default: 2 })),
+	replan: Type.Optional(Type.Boolean({ description: "Allow one mid-flow Decomposition replan (default true). When a failure strands remaining subtasks, or the between-wave budget headroom projection refuses the remainder, the commander returns one full replacement for the work that has not run; a refused replacement strands and reports. Exactly one replan per flow. Set false to strand and report without replanning.", default: true })),
 	workerReturnContract: Type.Optional(Type.String({ description: `Prose return requirements appended to every worker subtask before fan-out. ${PromptOnlyNote}` })),
 	returnContract: Type.Optional(Type.String({ description: "Optional alias for top-level returnContract. If top-level task is omitted, this text is also accepted as the orchestrate goal for model-generated calls." })),
 	maxSubtasks: Type.Optional(Type.Number({ description: `Cap on the total subtasks in the commander's decomposition, dependent ones included. Integer 1..${MAX_SUBTASKS}. Default ${MAX_PARALLEL_TASKS}. A flat subtask list is silently cut to this cap; a decomposition with dependency edges is refused DECOMPOSITION_INVALID when it exceeds it, because cutting it would sever edges.`, minimum: 1, maximum: MAX_SUBTASKS })),
 }, {
-	description: "Orchestrator-workers mode. The commander decomposes the task. An optional review role judges the normalized Decomposition. Recon workers run by dependency wave. The debrief role merges results. A REVISE review starts a bounded commander revision. commander.contract carries the Decomposition in validated envelope data. review.contract and verify.contract use validated data.verdict instead of legacy prose.",
+	description: "Orchestrator-workers mode. The commander decomposes the task. An optional review role judges the normalized Decomposition. Recon workers run by dependency wave. The debrief role merges results. A REVISE review starts a bounded commander revision, and one mid-flow replan can replace remaining work that a failure stranded or the budget headroom projection refused. commander.contract carries the Decomposition in validated envelope data. review.contract and verify.contract use validated data.verdict instead of legacy prose.",
 });
 
 export const FlowGraphNode = Type.Object({

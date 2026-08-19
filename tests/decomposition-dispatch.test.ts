@@ -191,8 +191,10 @@ test("a subtask with two dependencies carries both handoffs, each labeled as unt
 // ---------------------------------------------------------------------------
 
 test("a failed subtask strands its transitive dependents, which never spawn, while independent work still finishes", async () => {
+	// replan:false pins the flat strand-and-report path; the default replan
+	// behavior is tests/orchestrate-replan.test.ts.
 	const { calls, text, result } = await runFlow(
-		{ task: "document how auth works", orchestrate: orchestrate() },
+		{ task: "document how auth works", orchestrate: orchestrate({ replan: false }) },
 		{
 			commander: JSON.stringify([
 				{ id: "survey", objective: "List the auth entry points" },
@@ -258,7 +260,7 @@ test("a failed subtask's summary reaches the manifest on one capped line", async
 
 test("when no terminal subtask succeeds the flow completes with nothing to synthesize and never spawns the synthesizer", async () => {
 	const { calls, text, result } = await runFlow(
-		{ task: "document how auth works", orchestrate: orchestrate() },
+		{ task: "document how auth works", orchestrate: orchestrate({ replan: false }) },
 		{
 			commander: JSON.stringify([
 				{ id: "survey", objective: "List the auth entry points" },

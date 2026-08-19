@@ -79,12 +79,12 @@
       ],
       "note": "Handoff is a real transfer object: validated, redacted, policy-checked, provenance-bearing, and refused rather than silently degraded. CoordinationEvent is an immutable past-tense fact vocabulary over seven kinds. Events are export-only by design — coordination here is synchronous because a flow settles. The seams that perform a coordination action mint their own events (Minted event, #128): the handoff consumer's sites were already framework-minted, and the deterministic gate runner and approval-receipt issuance now join them, each taking a required EventAttribution so a caller without a sink states the absence instead of the evidence being forgettable. The hand-placed remainder — a mode's own state transitions, retries, and parsed verdicts — is bounded by the mode's Owed event kinds declaration (#133): every seam event states minted: true (flow.event_minted on the row), the root carries the mode's declared kinds, and the read-back refuses an unminted event of an undeclared kind, so a handler recording outside its declaration is caught the way forged surplus is, and the verdicts loop, debate, vote, and search parse are recorded rather than discarded. Minting is a capability rather than a field: the seam records through RecordMintedEvent, which requires the mark, while a mode's RecordEvent cannot express it and is not a port the minting recorder can be wired to, and the sink states every gated fact after the caller's attributes so none of them can be forged from an attributes map.",
       "reviewed": {
-        "at": "2026-08-15",
+        "at": "2026-08-18",
         "declared": "d9441724955fff70",
         "surfaces": {
           "extensions/pi-flows/delegation.ts": "68f0d1ef5bdfb5f3",
           "extensions/pi-flows/handoff-consumption.ts": "c924e46cada107b1",
-          "extensions/pi-flows/trace-scope.ts": "0927756c9ab78d7e",
+          "extensions/pi-flows/trace-scope.ts": "b8637819738857d1",
           "extensions/pi-flows/modes/contract.ts": "fdcafe11cfc213a4",
           "tests/coordination-evidence.test.ts": "73c05327405c9fd5",
           "tests/coordination-control.test.ts": "f8aa320bd363ac15",
@@ -104,8 +104,8 @@
         "at": "2026-08-18",
         "declared": "5de7c7e878db7b19",
         "surfaces": {
-          "subdomain:Core": "bfed6de622f56af8",
-          "CONTEXT.md": "1262190c649d7da7"
+          "subdomain:Core": "03a3a2da01f03732",
+          "CONTEXT.md": "825754eaa5baeecf"
         }
       }
     },
@@ -130,7 +130,7 @@
           "extensions/pi-flows/budget.ts": "d70575e0af79683c",
           "extensions/pi-flows/run.ts": "52321721a19ea929",
           "extensions/pi-flows/settle.ts": "216279d4eeeec231",
-          "extensions/pi-flows/modes/*.ts": "f119f2e273774711",
+          "extensions/pi-flows/modes/*.ts": "d374aae5fd497cc5",
           "tests/flow-lifecycle.test.ts": "1384fe2663de7b73",
           "tests/flow-budget.test.ts": "700c3e37f43040d7"
         }
@@ -150,8 +150,8 @@
         "at": "2026-08-18",
         "declared": "9b6b8633e640c2e6",
         "surfaces": {
-          "CONTEXT.md": "1262190c649d7da7",
-          "subdomain:Core": "bfed6de622f56af8",
+          "CONTEXT.md": "825754eaa5baeecf",
+          "subdomain:Core": "03a3a2da01f03732",
           "subdomain:Shared kernel": "923ac76125252e15",
           "docs/reference/architecture.md": "e40a4540019099e0"
         }
@@ -177,5 +177,6 @@
       "inspector.ts"
     ],
     "debt": []
-  }
+  },
+  "replanAmendment": "#165 re-record (2026-08-18): re-derived the four rows the mid-flow replan staled. domain-events: ChildSpanScope gains an `attributes` member so the mode that places a unit can state facts about it (the worker's plan revision) beside its placement; the sink's own placement facts still win on shared keys, the event vocabulary is unchanged, and the replan records a mode-owned retry event (orchestrate.replan_decomposition) inside orchestrate's already-declared owed kinds. depth-rich-core: the revision's admission is Core vocabulary, not handler branches - DecompositionAdmission gains satisfiedIds (a succeeded id may be depended on, never redefined; the unknown-dep rule widens to the satisfied set), and CONTEXT.md gains the Plan revision term with its Avoid list. depth-invariants-in-aggregates: the one-replan bound is the replanner object's own spent flag (modes/orchestrate-replan.ts), the revision passes the same parser/validator/headroom projection as the initial Decomposition, ceilings are consulted only through Budget.headroomRefusal/refusesSpawn, and dispatch stays behind opaque integration plans - the handler decides when, the module owns what. depth-language-consistency: Plan revision is spelled once (planRevision on the unit, flow.plan_revision on the span, worker2-<id> keys, the glossary entry) and the docs, schema description, and tests use the same sentence for the one-replan bound."
 }

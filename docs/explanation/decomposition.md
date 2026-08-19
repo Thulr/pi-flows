@@ -93,8 +93,10 @@ Orchestrate and graph both run units wave by wave, and both refuse cycles. They 
 
 The dependency edge means the same thing in both: the dependent unit runs later, and receives the output of the units it names. In graph mode you place that output yourself with a `{node.id}` placeholder. In orchestrate mode the flow inserts it, because the `commander` cannot know how the flow renders its subtask output.
 
-## What this version does not do
+## The one mid-flow replan
 
-Post-dispatch replanning remains out of scope. A failed subtask does not send the goal back for a new Decomposition ([issue #161](https://github.com/Thulr/pi-flows/issues/161)).
+Post-dispatch replanning exists, and it is bounded ([issue #165](https://github.com/Thulr/pi-flows/issues/165)). The flow can revise the Decomposition once, for the work that has not run. Two conditions trigger it. A failure leaves every remaining subtask unreachable. Or the between-wave budget projection refuses the remainder. The `commander` returns one complete replacement for the remainder. The replacement passes the same validation as the initial Decomposition. See [Mid-flow replan](../reference/flow-reference.md#mid-flow-replan) for the rules.
 
-Decomposition review occurs only before worker dispatch. It cannot replace a failed subtask or change the Decomposition after workers start.
+The bound is deliberate. One replan can rescue a stranded remainder. A replanning loop would spend the budget on planning instead of work. So a replacement that fails any check strands and reports, as before. There is no replan of a replan.
+
+Decomposition review is a different mechanism. It judges quality before worker dispatch. It cannot replace a failed subtask after workers start; only the one replan can.

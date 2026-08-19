@@ -1,9 +1,10 @@
-import { MAX_PARALLEL_TASKS, MAX_SUBTASKS, encodeAuthorKey, flowError, modeSettle, type Budget, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
+import { MAX_PARALLEL_TASKS, MAX_SUBTASKS, flowError, modeSettle, type Budget, type DelegationContract, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type VerifyPolicy } from "../types.ts";
 import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sanitize.ts";
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { decompositionEffortWeight, mapDecompositionProse, parseDecomposition, unusableDecompositionError, validateDecomposition, type Decomposition, type DecompositionSubtask } from "../decomposition.ts";
-import { decompositionReviewOptionsRefusal, reviewDecomposition } from "../decomposition-review.ts";
-import { makeWorkerTask, notCompletedManifest, subtaskSummaryText, type UnitOutcome } from "./orchestrate-outcomes.ts";
+import { decompositionReviewOptionsRefusal, headroomCritique, reviewDecomposition } from "../decomposition-review.ts";
+import { DECOMPOSE_KEY, makeOrchestrateUnits, makeWorkerTask, notCompletedManifest, subtaskSummaryText, synthesisKey, verifyKey, type UnitOutcome } from "./orchestrate-outcomes.ts";
+import { createMidFlowReplanner } from "./orchestrate-replan.ts";
 import { incompleteHandoffSummary, integrationControl } from "../delegation.ts";
 import { consumeIntegrationResult, dispatchIntegrationPlan, dispatchIntegrationWave, integrationContractBudget, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
 import { plannedRefs, type ModePlan } from "./plan.ts";
@@ -42,24 +43,6 @@ export function planOrchestrate(params: any): ModePlan {
 export function criticalPathOrchestrate(): number | undefined {
 	return undefined;
 }
-
-/** One place each orchestrate unit key is derived, so a dependency link cannot name a unit that was never registered. */
-const DECOMPOSE_KEY = "decompose";
-const workerKey = (index: number) => `worker-${index + 1}`;
-/**
- * A structured subtask's unit key: the commander's own id, escaped the way
- * graph escapes an author-supplied id, under the same `worker-` prefix worktree
- * mode uses for its author-supplied task ids.
- *
- * The prefix is what makes the key safe rather than merely tidy. The other keys
- * on this list are fixed words, and a commander is free to name a subtask
- * `decompose` or `synthesis-1`. Prefixed, a subtask key cannot be one of them,
- * so a dependency link resolves to the unit the flow registered rather than to
- * whichever span claimed the name first.
- */
-const structuredWorkerKey = (id: string) => `worker-${encodeAuthorKey(id)}`;
-const synthesisKey = (round: number) => `synthesis-${round}`;
-const verifyKey = (round: number) => `verify-${round}`;
 
 /**
  * Orchestrate's pre-spawn refusal (modes/contract.ts): no goal to decompose is
@@ -189,20 +172,13 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const dispatchDecomposition = reviewRef
 		? admittedDecomposition
 		: mapDecompositionProse(admittedDecomposition, (text) => deps.handoffs.prepareText(text).text);
-	const units = dispatchDecomposition.subtasks.map((subtask, position) => ({
-		subtask,
-		// A flat Decomposition keeps its positional keys and headings; a
-		// structured one is addressed by the id the commander chose.
-		key: dispatchDecomposition.shape === "flat" ? workerKey(position) : structuredWorkerKey(subtask.id),
-		label: dispatchDecomposition.shape === "flat" ? String(position + 1) : subtask.id,
-	}));
+	const units = makeOrchestrateUnits(dispatchDecomposition, 1);
 
 	// 2. Fan out workers wave by wave. A subtask runs only once every subtask it
 	// depends on has succeeded, so a Decomposition with no edges is one wave,
 	// exactly as before. The shared-write gate fires inside each wave dispatch,
 	// over that wave's own refs, before any worker spawns. What a settled
-	// subtask *is* — the outcome record and the manifest that keeps incomplete
-	// work visible — lives in orchestrate-outcomes.ts.
+	// subtask *is* lives in orchestrate-outcomes.ts.
 	const outcomes = new Map<string, UnitOutcome>();
 	const stateOf = (id: string) => outcomes.get(id)?.state;
 	const consumedWorkerKeys: string[] = [];
@@ -213,6 +189,29 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		[spec.workerReturnContract, subtask.expectedReturn].filter((part): part is string => Boolean(part?.trim())).join("\n") || undefined;
 
 	const remaining = new Map(units.map((unit) => [unit.subtask.id, unit]));
+
+	// The bounded mid-flow replan (#165) lives in orchestrate-replan.ts; the
+	// loop below decides when it and its re-projection are consulted.
+	const replanner = createMidFlowReplanner({
+		deps,
+		settle,
+		goal,
+		returnRequirements: returnContract,
+		workerReturnRequirements: typeof spec.workerReturnContract === "string" ? spec.workerReturnContract : undefined,
+		requireEvidence: params.requireEvidence,
+		commanderRef: decomposerRef,
+		commanderUsage: decomposerDispatch.result.usage,
+		dispatchShape: dispatchDecomposition.shape,
+		maxSubtasks,
+		admission: decompositionAdmission,
+		workerBudgets,
+		enabled: spec.replan !== false,
+		initialDependencyKeys: decompositionDependencyKeys,
+		units,
+		remaining,
+		outcomes,
+	});
+
 	let waveNumber = 0;
 	while (remaining.size > 0) {
 		// The budget spawn gate, consulted once for the whole remainder before a
@@ -221,17 +220,39 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		// reports one reason once, and no refused-spawn churn reaches the trace.
 		const spentBudget = workerBudgets.find((budget) => budget.refusesSpawn());
 		if (spentBudget) {
-			const refusal = spentBudget.exhaustedError();
-			for (const unit of remaining.values()) {
-				outcomes.set(unit.subtask.id, { state: "stranded", strandedReason: refusal.message });
-			}
+			replanner.strandRemaining(spentBudget.exhaustedError().message);
 			break;
+		}
+		// The between-wave headroom re-projection (#165): settled workers' spend
+		// per weight re-projects the remainder before the next wave spawns into
+		// a ceiling it cannot fit. A refusal routes to the commander while the
+		// one replan remains, and strands afterwards; replan:false skips this.
+		if (replanner.enabled) {
+			const unaffordable = replanner.remainderHeadroomRefusal();
+			if (unaffordable) {
+				if (replanner.spent()) {
+					replanner.strandRemaining(unaffordable.message);
+					break;
+				}
+				const replanned = await replanner.replan("budget_headroom", headroomCritique(unaffordable));
+				if (replanned.status === "refused") return replanned.output;
+				if (replanned.status === "stranded") break;
+				continue;
+			}
 		}
 		const ready = [...remaining.values()].filter((unit) => unit.subtask.dependsOn.every((dependency) => stateOf(dependency) === "succeeded"));
 		if (ready.length === 0) {
 			// Cycles are refused before dispatch, so nothing runnable left means
-			// every remaining subtask waits on one that failed or was itself
-			// stranded. They never spawn; the synthesizer is told they did not.
+			// every remaining subtask waits on one that failed. While the one
+			// replan remains, that is the would-strand trigger: the commander
+			// replaces the unreachable remainder instead of the flow abandoning
+			// it. Otherwise they never spawn; the synthesizer is told they did not.
+			if (replanner.enabled && !replanner.spent()) {
+				const replanned = await replanner.replan("stranded_dependents", "A failure left every remaining subtask waiting on a subtask that did not succeed, so none of the remaining work can start.");
+				if (replanned.status === "refused") return replanned.output;
+				if (replanned.status === "stranded") break;
+				continue;
+			}
 			for (const unit of remaining.values()) {
 				outcomes.set(unit.subtask.id, {
 					state: "stranded",
@@ -248,11 +269,13 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				returnContract: workerReturnContract(unit.subtask),
 				placeholderTask: unit.subtask.objective,
 				// A dependency is a link, not parentage: the subtask consumed its
-				// output but was scheduled by the wave, not spawned by it.
+				// output but was scheduled by the wave, not spawned by it. The span
+				// states which plan revision governed the subtask.
 				scope: {
 					key: unit.key,
+					attributes: { "flow.plan_revision": unit.planRevision },
 					dependsOn: [
-						...decompositionDependencyKeys,
+						...replanner.dependencyKeys(),
 						...unit.subtask.dependsOn.flatMap((dependency) => {
 							const key = outcomes.get(dependency)?.outputKey;
 							return key ? [key] : [];
@@ -273,6 +296,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			const id = unit.subtask.id;
 			remaining.delete(id);
 			const result = wave.results[index];
+			replanner.recordSettled(unit.subtask, result.usage);
 			if (isFailed(result)) {
 				outcomes.set(id, { state: "failed", failureText: resultText(result) });
 				continue;
@@ -284,6 +308,9 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		}
 	}
 
+	// Every header and refusal footer below reads the same two plan facts: the
+	// review verdict and whether the mid-flow replan fired.
+	const planSummary = `${reviewSummary}${replanner.note()}`;
 	const succeededCount = units.filter((unit) => stateOf(unit.subtask.id) === "succeeded").length;
 	const failedCount = units.filter((unit) => stateOf(unit.subtask.id) === "failed").length;
 	const strandedCount = units.filter((unit) => stateOf(unit.subtask.id) === "stranded").length;
@@ -295,12 +322,12 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		// in particular a budget refusal that stranded the remainder, which would
 		// otherwise vanish into a generic completion.
 		if (reviewRef) return settle.complete(sanitizeText(succeededCount === 0 && strandedCount === 0
-			? `Flow orchestrate: ${reviewSummary}All ${units.length} workers failed. Nothing to synthesize.${notCompleted}`
-			: `Flow orchestrate: ${reviewSummary}${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.${notCompleted}`, policy));
+			? `Flow orchestrate: ${planSummary}All ${units.length} workers failed. Nothing to synthesize.${notCompleted}`
+			: `Flow orchestrate: ${planSummary}${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.${notCompleted}`, policy));
 		return settle.complete(sanitizeText(
 			succeededCount === 0 && strandedCount === 0
-				? `Flow orchestrate: all ${units.length} workers failed; nothing to synthesize.${notCompleted}`
-				: `Flow orchestrate: ${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.${notCompleted}`,
+				? `Flow orchestrate: ${replanner.note()}all ${units.length} workers failed; nothing to synthesize.${notCompleted}`
+				: `Flow orchestrate: ${replanner.note()}${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.${notCompleted}`,
 			policy,
 		));
 	}
@@ -355,7 +382,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	if (synthesisPlan.error) return settle.refuse(synthesisPlan.error);
 	const synthesisDispatch = await dispatchIntegrationPlan(deps, synthesisPlan.plan!, settle, { completion: verifyRef ? "integrate" : "terminal", enforceCompletion: true });
 	if (synthesisDispatch.status === "failed") {
-		return settle.complete(sanitizeText(`Flow orchestrate: ${reviewSummary}${reviewRef ? "Synthesizer" : "synthesizer"} "${synthesizerRef.agent}" failed.\n\n${resultText(synthesisDispatch.result)}`, policy));
+		return settle.complete(sanitizeText(`Flow orchestrate: ${planSummary}${reviewRef ? "Synthesizer" : "synthesizer"} "${synthesizerRef.agent}" failed.\n\n${resultText(synthesisDispatch.result)}`, policy));
 	}
 	if (synthesisDispatch.status === "refused") return synthesisDispatch.output;
 	let synthesized = synthesisDispatch.result;
@@ -404,7 +431,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					`Orchestrate verifier "${verifyRef.agent}" failed.`,
 					`The verifier child run failed or returned no usable verdict, so the ${verifyPolicy} policy cannot prove the synthesized answer passed.`,
 				);
-				return verificationRefusal(error, `Flow orchestrate: ${reviewSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification failed.`);
+				return verificationRefusal(error, `Flow orchestrate: ${planSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification failed.`);
 			}
 			if (verifyDispatch.status === "refused") return verifyDispatch.output;
 			const verified = verifyDispatch.result;
@@ -426,7 +453,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					"Orchestrate verification returned REVISE.",
 					`Verifier "${verifyRef.agent}" returned REVISE after ${round} verification round${round === 1 ? "" : "s"} under verifyPolicy "${verifyPolicy}".`,
 				);
-				return verificationRefusal(error, `Flow orchestrate: ${reviewSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`);
+				return verificationRefusal(error, `Flow orchestrate: ${planSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}; verification returned REVISE.`);
 			}
 
 			// The verdict crossed as a terminal report above; the critique crossing
@@ -450,7 +477,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			if (synthesisPlan.error) return settle.refuse(synthesisPlan.error);
 			const revised = await dispatchIntegrationPlan(deps, synthesisPlan.plan!, settle);
 			if (revised.status === "failed") {
-				return settle.complete(sanitizeText(`Flow orchestrate: ${reviewSummary}${reviewRef ? "Synthesizer" : "synthesizer"} "${synthesizerRef.agent}" failed while revising after verifier feedback.\n\n${resultText(revised.result)}`, policy));
+				return settle.complete(sanitizeText(`Flow orchestrate: ${planSummary}${reviewRef ? "Synthesizer" : "synthesizer"} "${synthesizerRef.agent}" failed while revising after verifier feedback.\n\n${resultText(revised.result)}`, policy));
 			}
 			if (revised.status === "refused") return revised.output;
 			synthesized = revised.result;
@@ -466,6 +493,6 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				? ` Verification REVISE noted by ${verifyRef.agent}.`
 				: ` Verification not completed by ${verifyRef.agent}.`
 		: "";
-	const header = `Flow orchestrate: ${reviewSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}.${verificationSummary}${incompleteHandoffSummary([...settle.results])}`;
+	const header = `Flow orchestrate: ${planSummary}${subtaskSummary}, synthesized by ${synthesizerRef.agent}.${verificationSummary}${incompleteHandoffSummary([...settle.results])}`;
 	return settle.complete(capModelVisibleText(`${header}${warningNote}\n\n${sanitizeText(resultText(synthesized), policy)}${verifyNote}`));
 }

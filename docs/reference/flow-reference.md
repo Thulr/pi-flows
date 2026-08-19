@@ -663,6 +663,7 @@ Top-level `task` is preferred. `orchestrate.task` is its fallback. Each worker s
 | `orchestrate.verify` | (none) | Optional critic. Without its own contract, it returns PASS/REVISE prose. With one, validated `data.verdict` controls the decision. |
 | `orchestrate.verifyPolicy` | `note` | `note` appends the verifier verdict. `fail` returns `ORCHESTRATE_VERIFY_FAILED` on `REVISE`. `revise` reruns `debrief` with the critique and re-verifies until pass or cap. |
 | `orchestrate.verifyMaxIterations` | `2` | Integer `1..4`. Maximum synthesize→verify rounds when `verifyPolicy:"revise"`. |
+| `orchestrate.replan` | `true` | Allow one mid-flow replan. It fires when a failure strands the remaining subtasks, or when the between-wave headroom projection refuses them. The `commander` returns one full replacement for the work that has not run. Set `false` to strand and report without a replan. |
 | `orchestrate.workerReturnContract` | (none) | Prose return requirements appended to every worker subtask before fan-out. |
 | `orchestrate.returnContract` | (none) | Alias for top-level `returnContract`. When top-level `task` is also omitted, this text can serve as the goal fallback for model-generated calls. |
 | `orchestrate.maxSubtasks` | `maxParallelTasks` | Integer `1..16`. Cap on the total subtasks, dependent ones included. A flat subtask list is cut to this cap. A structured Decomposition above the cap is refused `DECOMPOSITION_INVALID`, because a cut can sever declared edges. |
@@ -790,13 +791,15 @@ The headroom check answers one question: does the remaining work fit in what rem
 
 The wave loop consults the same budgets before it builds each wave. When a budget refuses further spawns, the flow strands every remaining subtask at once, with the refusal as the stranding reason. It does not dispatch children into a spent budget one by one.
 
+The projection also runs again between waves, unless `orchestrate.replan:false`. Once workers settle, their spend per unit of weight replaces the commander proxy as the observation. A refusal between waves does not strand at once: it triggers the one mid-flow replan (see [Mid-flow replan](#mid-flow-replan)). After that replan is spent, a refusal strands the remainder with the projection as the reason.
+
 ### Waves, dependency output, and stranded subtasks
 
 The workers run wave by wave. Each wave holds the subtasks whose dependencies have all succeeded. `concurrency` limits how many workers of one wave run at the same time. A Decomposition with no edges is a single wave.
 
 The flow puts each dependency's validated handoff text into the dependent worker's prompt. The section heading names the source subtask, and marks the text as untrusted data. The `commander` writes no placeholder for that text. The flow inserts the text itself.
 
-If a subtask fails, every subtask that depends on it is **stranded**. A stranded subtask never starts, and it spends no budget. A spent budget also strands: once a budget refuses further spawns, the whole remainder is stranded before the next wave (see [Budget headroom](#budget-headroom)). The `debrief` prompt then carries a "Subtasks not completed" manifest. The manifest names each subtask that did not succeed. For a failed subtask it gives a sanitized failure summary. For a stranded subtask it gives the id of the subtask it waits on, or the budget refusal that stopped the remainder.
+If a subtask fails, every subtask that depends on it is **stranded**. A stranded subtask never starts, and it spends no budget. A spent budget also strands: once a budget refuses further spawns, the whole remainder is stranded before the next wave (see [Budget headroom](#budget-headroom)). Before the flow strands a remainder that a failure made unreachable, it can replan once (see [Mid-flow replan](#mid-flow-replan)). The `debrief` prompt then carries a "Subtasks not completed" manifest. The manifest names each subtask that did not succeed. For a failed subtask it gives a sanitized failure summary. For a stranded subtask it gives the id of the subtask it waits on, or the budget or replan refusal that stopped the remainder.
 
 The flow header counts the outcome:
 
@@ -808,7 +811,32 @@ The `failed` and `stranded` counts appear only when they are above zero.
 
 A **terminal subtask** is a subtask that no other subtask depends on. If no terminal subtask succeeds, the flow does not run `debrief`. It returns the counts and the "Subtasks not completed" manifest, so a budget refusal that stranded the remainder stays visible.
 
-In the trace, each subtask has its own worker span. The unit key of that span is `worker-<id>`. Each `dependsOn` edge becomes a dependency link. A flat Decomposition keeps positional keys (`worker-1`, `worker-2`). The prefix keeps the ids of the `commander` apart from the keys of the flow itself, such as `decompose` and `synthesis-1`.
+In the trace, each subtask has its own worker span. The unit key of that span is `worker-<id>`. Each `dependsOn` edge becomes a dependency link. A flat Decomposition keeps positional keys (`worker-1`, `worker-2`). The prefix keeps the ids of the `commander` apart from the keys of the flow itself, such as `decompose` and `synthesis-1`. Every worker span carries `flow.plan_revision`: `1` for the initial Decomposition, `2` for the mid-flow replacement.
+
+### Mid-flow replan
+
+The flow can revise the Decomposition once, mid-flow, for the work that has not run. `orchestrate.replan` controls it, and the default is `true`. Two conditions trigger the replan:
+
+- A failure leaves every remaining subtask waiting on a subtask that did not succeed. Without the replan, this is the strand-and-report path above.
+- The between-wave headroom projection refuses the remainder (see [Budget headroom](#budget-headroom)).
+
+A failure that strands nobody does not trigger a replan. The flow reports it as before.
+
+The `commander` receives the remainder, the reason, the succeeded subtasks, and the failed subtasks. It returns one complete replacement for the remainder. The replacement passes the same parser, the same structural validator, and the same headroom projection as the initial Decomposition, with three revision rules:
+
+- A revision subtask can declare `dependsOn` on a succeeded id. The dependency resolves as satisfied, and the succeeded output hands off into the worker prompt.
+- A revision subtask cannot redefine a succeeded id. The validator refuses the collision with `DECOMPOSITION_INVALID`.
+- Failed work can reappear as new subtasks. A reused failed id supersedes the failed attempt.
+
+There is exactly one replan per flow. If the replacement fails any check, the flow strands the remainder and reports, with the refusal as the stranding reason. There is no replan of a replan. The same budgets apply throughout: a revision cannot escape a ceiling, and the projection runs again as the revision's own workers settle.
+
+A flat replacement list gets fresh positional ids (`r2-1`, `r2-2`, …), so it cannot collide with a flat initial plan's ids. In the trace, the replan commander runs under the unit key `decompose-replan`. A `retry` event named `orchestrate.replan_decomposition` records the trigger. Plan-2 worker spans use the unit key `worker2-<id>`.
+
+The header reports a fired replan:
+
+```
+Flow orchestrate: Decomposition replanned once mid-flow. 3 subtasks, 2 succeeded, 1 failed, synthesized by debrief.
+```
 
 ### Contracted commanders
 
