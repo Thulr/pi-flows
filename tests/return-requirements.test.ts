@@ -29,6 +29,13 @@ test("the tombstone path masks ancestor keys it cannot vouch for", () => {
 	assert.equal(error?.code, "PARAM_RENAMED");
 	assert.doesNotMatch(error?.message ?? "", /not a plain token/, "an arbitrary ancestor key never reaches returned content");
 	assert.match(error?.message ?? "", /\(unrecognized key\)\.returnContract/, "the retired key itself stays named");
+
+	// A secret can be a plain token, so the charset test alone is not enough:
+	// the same redactor that guards returned content vets the segment.
+	const secretShaped = `sk-${"a".repeat(30)}`;
+	const shaped = renamedParamError({ [secretShaped]: { returnContract: "x" } });
+	assert.equal(shaped?.code, "PARAM_RENAMED");
+	assert.doesNotMatch(shaped?.message ?? "", new RegExp(secretShaped), "a secret-shaped plain ancestor key is masked too");
 });
 
 test("a contract's returnSchema may declare data fields by any name", () => {

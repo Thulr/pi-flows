@@ -1,7 +1,7 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_CONCURRENCY, DEFAULT_EVALUATE_ITERATIONS, DEFAULT_LOOP_ITERATIONS, DEFAULT_TIMEOUT_MS, MAX_EVALUATE_ITERATIONS, MAX_GRAPH_NODES, MAX_LOOP_ITERATIONS, MAX_PARALLEL_TASKS, flowError, type FlowDiscovery, type FlowError } from "./types.ts";
-import { safePath } from "./sanitize.ts";
+import { redactText, safePath } from "./sanitize.ts";
 
 // The workflow phase predicates live in validate-workflow.ts; re-exported here
 // so this module stays the one seam callers validate a call through.
@@ -41,12 +41,13 @@ const RENAMED_PARAMS: Record<string, string> = {
 
 /**
  * A path segment safe to echo into returned content: a short plain-token key
- * name. Params accept unknown keys, so an ancestor key can carry anything —
- * secret-shaped text and home paths included — and the redaction invariant
- * covers refusal messages too. The retired keys themselves are constants and
- * always pass.
+ * name the standard redactor leaves unchanged. Params accept unknown keys, so
+ * an ancestor key can carry anything — and a secret can be a plain token
+ * (`sk-…`), which is why the charset test alone is not enough and the same
+ * redactText that guards returned content vets the segment. The retired keys
+ * themselves are constants and always pass.
  */
-const safeKeySegment = (key: string): string => (/^[A-Za-z0-9_.$-]{1,64}$/.test(key) ? key : "(unrecognized key)");
+const safeKeySegment = (key: string): string => (/^[A-Za-z0-9_.$-]{1,64}$/.test(key) && redactText(key) === key ? key : "(unrecognized key)");
 
 /**
  * Find a retired key anywhere in the call's params. Skips `contract` subtrees:

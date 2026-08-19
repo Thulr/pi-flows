@@ -104,7 +104,7 @@
         "at": "2026-08-19",
         "declared": "5de7c7e878db7b19",
         "surfaces": {
-          "subdomain:Core": "6d939ad9dd21af9b",
+          "subdomain:Core": "d68ecc617c487a95",
           "CONTEXT.md": "fe0b73a65559c7fe"
         }
       }
@@ -151,7 +151,7 @@
         "declared": "9b6b8633e640c2e6",
         "surfaces": {
           "CONTEXT.md": "fe0b73a65559c7fe",
-          "subdomain:Core": "6d939ad9dd21af9b",
+          "subdomain:Core": "d68ecc617c487a95",
           "subdomain:Shared kernel": "2b5daf5135a7ecd2",
           "docs/reference/architecture.md": "e40a4540019099e0"
         }
