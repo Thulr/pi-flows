@@ -4,7 +4,7 @@ import { integrationControl } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import type { Settle } from "../settle.ts";
 import { emptyUsage, type Budget, type FlowAgentRefInput, type FlowError, type ModeDeps, type ModeOutput, type UsageStats } from "../types.ts";
-import { makeOrchestrateUnits, type OrchestrateUnit, type UnitOutcome } from "./orchestrate-outcomes.ts";
+import type { OrchestrateBoard } from "./orchestrate-board.ts";
 
 /**
  * Orchestrate's bounded mid-flow replan (#165): the one revision a flow may
@@ -50,10 +50,8 @@ export interface MidFlowReplanContext {
 	enabled: boolean;
 	/** The commander handoff key(s) every worker span depends on, replaced by the revision's on a successful replan. */
 	initialDependencyKeys: readonly string[];
-	/** The handler's live board, mutated in place: every unit, the undispatched remainder, and how each settled. */
-	units: OrchestrateUnit[];
-	remaining: Map<string, OrchestrateUnit>;
-	outcomes: Map<string, UnitOutcome>;
+	/** The flow's outcome board. The replanner reaches every collection through it rather than holding the collections themselves. */
+	board: OrchestrateBoard;
 }
 
 export type ReplanTrigger = "stranded_dependents" | "budget_headroom";
@@ -78,8 +76,7 @@ export interface MidFlowReplanner {
 }
 
 export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowReplanner {
-	const { deps, settle, units, remaining, outcomes } = context;
-	const stateOf = (id: string) => outcomes.get(id)?.state;
+	const { deps, settle, board } = context;
 	let dependencyKeys = [...context.initialDependencyKeys];
 	let replanSpent = false;
 	let note = "";
@@ -106,12 +103,7 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 		return null;
 	};
 
-	const strandRemaining = (reason: string) => {
-		for (const unit of remaining.values()) {
-			outcomes.set(unit.subtask.id, { state: "stranded", strandedReason: reason });
-		}
-		remaining.clear();
-	};
+	const strandRemaining = (reason: string) => board.strandRemaining(reason);
 
 	/**
 	 * The one bounded mid-flow replan: ask the commander for a full replacement
@@ -127,15 +119,13 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 			scope: { key: `${REPLAN_KEY}.retry`, dependsOn: [...dependencyKeys] },
 			attributes: { "flow.retry.attempt": 1, "flow.retry.max_attempts": 1, "flow.retry.reason": trigger },
 		});
-		const settledUnits = units.filter((unit) => !remaining.has(unit.subtask.id));
-		const byState = (state: UnitOutcome["state"]) =>
-			settledUnits.filter((unit) => stateOf(unit.subtask.id) === state).map((unit) => ({ id: unit.subtask.id, objective: unit.subtask.objective }));
+		const byState = (state: Parameters<OrchestrateBoard["settledByState"]>[0]) => board.settledByState(state);
 		const replanTask = decompositionRevisionTask({
 			goal: context.goal,
 			returnRequirements: context.returnRequirements,
 			workerReturnRequirements: context.workerReturnRequirements,
 			requireEvidence: context.requireEvidence,
-			decomposition: { shape: context.dispatchShape, subtasks: [...remaining.values()].map((unit) => unit.subtask) },
+			decomposition: { shape: context.dispatchShape, subtasks: board.remainderSubtasks() },
 			critique: midFlowReplanCritique({ reason, succeeded: byState("succeeded"), failed: byState("failed") }),
 			maxSubtasks: context.maxSubtasks,
 			contracted: Boolean(context.commanderRef.contract),
@@ -161,8 +151,7 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 			return { status: "stranded" };
 		}
 		const remapped = remapFlatRevisionIds(replacement);
-		const succeededIds = new Set(units.filter((unit) => stateOf(unit.subtask.id) === "succeeded").map((unit) => unit.subtask.id));
-		const inadmissible = validateDecomposition(remapped, { ...context.admission, satisfiedIds: succeededIds });
+		const inadmissible = validateDecomposition(remapped, { ...context.admission, satisfiedIds: board.succeededIds() });
 		if (inadmissible) {
 			strandRemaining(`Decomposition replan refused: ${inadmissible.message}`);
 			return { status: "stranded" };
@@ -179,20 +168,7 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 		// The revision replaces the remainder in full, and a failed id that
 		// reappears supersedes the failed attempt — its fresh outcome stands, and
 		// the trace keeps the failed plan-1 span as the record of the first try.
-		const replaced = new Set(remaining.keys());
-		remaining.clear();
-		for (const subtask of prepared.subtasks) {
-			if (outcomes.get(subtask.id)?.state === "failed") {
-				outcomes.delete(subtask.id);
-				replaced.add(subtask.id);
-			}
-		}
-		for (let index = units.length - 1; index >= 0; index -= 1) {
-			if (replaced.has(units[index].subtask.id)) units.splice(index, 1);
-		}
-		const revisionUnits = makeOrchestrateUnits(prepared, 2);
-		units.push(...revisionUnits);
-		for (const unit of revisionUnits) remaining.set(unit.subtask.id, unit);
+		board.replaceRemainder(prepared);
 		dependencyKeys = [dispatched.handoff.dependencyKey];
 		note = "Decomposition replanned once mid-flow. ";
 		return { status: "replanned" };
@@ -210,7 +186,7 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 			settledWeight += subtask.effortWeight ?? 1;
 		},
 		remainderHeadroomRefusal: () => settledWeight > 0
-			? projectionRefusal(decompositionEffortWeight([...remaining.values()].map((unit) => unit.subtask)))
+			? projectionRefusal(decompositionEffortWeight(board.remainderSubtasks()))
 			: null,
 		strandRemaining,
 		replan,

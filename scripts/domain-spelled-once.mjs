@@ -81,4 +81,20 @@ export const SPELLED_ONCE = [
     pattern: /Integration branch: \\`/g,
     allowed: { "modes/worktree.ts": 1 },
   },
+  {
+    concept: "subtask outcome construction",
+    home: "OrchestrateBoard (modes/orchestrate-board.ts)",
+    // #169: how a subtask settled is recorded only by the board, so a state can
+    // never be set without the evidence that belongs to it. Before the board,
+    // the handler and the replanner each constructed outcomes into a shared
+    // Map — the shape that let a stranding carry neither a blocker nor a
+    // reason. The brace anchor keeps this to object-literal construction: the
+    // discriminated union's own arms are written `{ readonly state: "..." }`
+    // and stay silent, as do the `stateOf(id) === "succeeded"` comparisons
+    // every surface makes. A construction spread across a variable, or one
+    // that names the field before a comment, evades — a tripwire catches the
+    // honest regression, not an adversary.
+    pattern: /\{\s*state:\s*"(?:succeeded|failed|stranded)"/g,
+    allowed: { "modes/orchestrate-board.ts": 5 },
+  },
 ];

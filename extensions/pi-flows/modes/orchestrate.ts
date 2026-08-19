@@ -3,7 +3,8 @@ import { capModelVisibleText, isFailed, resultText, sanitizeText } from "../sani
 import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstruction } from "../protocol.ts";
 import { decompositionEffortWeight, mapDecompositionProse, parseDecomposition, unusableDecompositionError, validateDecomposition, type Decomposition, type DecompositionSubtask } from "../decomposition.ts";
 import { decompositionReviewOptionsRefusal, headroomCritique, reviewDecomposition } from "../decomposition-review.ts";
-import { DECOMPOSE_KEY, makeOrchestrateUnits, makeWorkerTask, notCompletedManifest, subtaskSummaryText, synthesisKey, verifyKey, type UnitOutcome } from "./orchestrate-outcomes.ts";
+import { OrchestrateBoard } from "./orchestrate-board.ts";
+import { DECOMPOSE_KEY, makeWorkerTask, synthesisKey, verifyKey } from "./orchestrate-outcomes.ts";
 import { createMidFlowReplanner } from "./orchestrate-replan.ts";
 import { incompleteHandoffSummary, integrationControl } from "../delegation.ts";
 import { consumeIntegrationResult, dispatchIntegrationPlan, dispatchIntegrationWave, integrationContractBudget, integrationRunPlan, type IntegrationRunPlan } from "../integration.ts";
@@ -172,23 +173,18 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const dispatchDecomposition = reviewRef
 		? admittedDecomposition
 		: mapDecompositionProse(admittedDecomposition, (text) => deps.handoffs.prepareText(text).text);
-	const units = makeOrchestrateUnits(dispatchDecomposition, 1);
+	const board = OrchestrateBoard.open(dispatchDecomposition, policy);
 
 	// 2. Fan out workers wave by wave. A subtask runs only once every subtask it
 	// depends on has succeeded, so a Decomposition with no edges is one wave,
 	// exactly as before. The shared-write gate fires inside each wave dispatch,
 	// over that wave's own refs, before any worker spawns. What a settled
-	// subtask *is* lives in orchestrate-outcomes.ts.
-	const outcomes = new Map<string, UnitOutcome>();
-	const stateOf = (id: string) => outcomes.get(id)?.state;
-	const consumedWorkerKeys: string[] = [];
-	const findingSections: string[] = [];
+	// subtask *is* lives in orchestrate-outcomes.ts, and the live board that
+	// holds every unit, the remainder, and how each settled is orchestrate-board.ts.
 	// The subtask's own return requirements sit under the flow-wide ones: both
 	// reach the worker, and the mode-wide requirements stay the general case.
 	const workerReturnRequirements = (subtask: DecompositionSubtask) =>
 		[spec.workerReturnRequirements, subtask.expectedReturn].filter((part): part is string => Boolean(part?.trim())).join("\n") || undefined;
-
-	const remaining = new Map(units.map((unit) => [unit.subtask.id, unit]));
 
 	// The bounded mid-flow replan (#165) lives in orchestrate-replan.ts; the
 	// loop below decides when it and its re-projection are consulted.
@@ -207,13 +203,11 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 		workerBudgets,
 		enabled: spec.replan !== false,
 		initialDependencyKeys: decompositionDependencyKeys,
-		units,
-		remaining,
-		outcomes,
+		board,
 	});
 
 	let waveNumber = 0;
-	while (remaining.size > 0) {
+	while (board.hasRemainingWork) {
 		// The budget spawn gate, consulted once for the whole remainder before a
 		// wave is built. A spent budget would refuse every planned child one by
 		// one inside the wave dispatch; stranding the remainder here instead
@@ -240,7 +234,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				continue;
 			}
 		}
-		const ready = [...remaining.values()].filter((unit) => unit.subtask.dependsOn.every((dependency) => stateOf(dependency) === "succeeded"));
+		const ready = board.ready();
 		if (ready.length === 0) {
 			// Cycles are refused before dispatch, so nothing runnable left means
 			// every remaining subtask waits on one that failed. While the one
@@ -253,19 +247,14 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				if (replanned.status === "stranded") break;
 				continue;
 			}
-			for (const unit of remaining.values()) {
-				outcomes.set(unit.subtask.id, {
-					state: "stranded",
-					strandedOn: unit.subtask.dependsOn.find((dependency) => stateOf(dependency) !== "succeeded"),
-				});
-			}
+			board.strandBlocked();
 			break;
 		}
 		waveNumber += 1;
-		const settledBefore = outcomes.size;
+		const settledBefore = board.settledCount;
 		const workerPlans: IntegrationRunPlan[] = [];
 		for (const unit of ready) {
-			const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(contractedGoal, unit, (id) => outcomes.get(id)?.outputText), {
+			const planned = integrationRunPlan(deps, workerRef, makeWorkerTask(contractedGoal, unit, (id) => board.outputTextOf(id)), {
 				returnRequirements: workerReturnRequirements(unit.subtask),
 				placeholderTask: unit.subtask.objective,
 				// A dependency is a link, not parentage: the subtask consumed its
@@ -277,7 +266,7 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 					dependsOn: [
 						...replanner.dependencyKeys(),
 						...unit.subtask.dependsOn.flatMap((dependency) => {
-							const key = outcomes.get(dependency)?.outputKey;
+							const key = board.outputKeyOf(dependency);
 							return key ? [key] : [];
 						}),
 					],
@@ -287,46 +276,35 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 			workerPlans.push(planned.plan!);
 		}
 		const wave = await dispatchIntegrationWave(deps, settle, workerPlans, {
-			statusText: (settled) => `Flow orchestrate: ${settledBefore + settled}/${units.length} workers settled`,
+			statusText: (settled) => `Flow orchestrate: ${settledBefore + settled}/${board.units.length} workers settled`,
 			stage: waveNumber === 1 ? { key: "workers", name: "workers" } : { key: `workers-${waveNumber}`, name: `workers wave ${waveNumber}` },
 			consume: { completion: "integrate" },
 		});
 		if (wave.status === "refused") return wave.output;
-		for (const [index, unit] of ready.entries()) {
-			const id = unit.subtask.id;
-			remaining.delete(id);
-			const result = wave.results[index];
+		board.recordWave(ready.map((unit, index) => {
+			const result = wave.results[index]!;
 			replanner.recordSettled(unit.subtask, result.usage);
-			if (isFailed(result)) {
-				outcomes.set(id, { state: "failed", failureText: resultText(result) });
-				continue;
-			}
+			if (isFailed(result)) return { unit, failureText: resultText(result) };
 			const handoff = wave.consumptions[index];
-			outcomes.set(id, { state: "succeeded", outputText: handoff?.text ?? "", outputKey: handoff?.dependencyKey });
-			if (handoff?.dependencyKey) consumedWorkerKeys.push(handoff.dependencyKey);
-			findingSections.push(`### Subtask ${unit.label}: ${sanitizeText(unit.subtask.objective, policy, 2 * 1024)}\n\n${handoff?.text ?? ""}`);
-		}
+			return { unit, handoffText: handoff?.text ?? "", ...(handoff?.dependencyKey ? { handoffKey: handoff.dependencyKey } : {}) };
+		}));
 	}
 
 	// Every header and refusal footer below reads the same two plan facts: the
 	// review verdict and whether the mid-flow replan fired.
 	const planSummary = `${reviewSummary}${replanner.note()}`;
-	const succeededCount = units.filter((unit) => stateOf(unit.subtask.id) === "succeeded").length;
-	const failedCount = units.filter((unit) => stateOf(unit.subtask.id) === "failed").length;
-	const strandedCount = units.filter((unit) => stateOf(unit.subtask.id) === "stranded").length;
-	const dependedOn = new Set(units.flatMap((unit) => [...unit.subtask.dependsOn]));
-	const terminalUnits = units.filter((unit) => !dependedOn.has(unit.subtask.id));
-	const notCompleted = notCompletedManifest(units, outcomes, policy);
-	if (!terminalUnits.some((unit) => stateOf(unit.subtask.id) === "succeeded")) {
+	const { succeeded: succeededCount, failed: failedCount, stranded: strandedCount } = board.counts();
+	const notCompleted = board.notCompleted();
+	if (!board.anyTerminalSucceeded()) {
 		// The manifest rides along so the caller reads *why* nothing survived —
 		// in particular a budget refusal that stranded the remainder, which would
 		// otherwise vanish into a generic completion.
 		if (reviewRef) return settle.complete(sanitizeText(succeededCount === 0 && strandedCount === 0
-			? `Flow orchestrate: ${planSummary}All ${units.length} workers failed. Nothing to synthesize.${notCompleted}`
+			? `Flow orchestrate: ${planSummary}All ${board.units.length} workers failed. Nothing to synthesize.${notCompleted}`
 			: `Flow orchestrate: ${planSummary}${succeededCount} succeeded, ${failedCount} failed, and ${strandedCount} stranded. No final subtask succeeded, so there is nothing to synthesize.${notCompleted}`, policy));
 		return settle.complete(sanitizeText(
 			succeededCount === 0 && strandedCount === 0
-				? `Flow orchestrate: ${replanner.note()}all ${units.length} workers failed; nothing to synthesize.${notCompleted}`
+				? `Flow orchestrate: ${replanner.note()}all ${board.units.length} workers failed; nothing to synthesize.${notCompleted}`
 				: `Flow orchestrate: ${replanner.note()}${succeededCount} succeeded, ${failedCount} failed, ${strandedCount} stranded; no final subtask succeeded, so there is nothing to synthesize.${notCompleted}`,
 			policy,
 		));
@@ -336,8 +314,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	// synthesizer prompt — another trust boundary, so clean + scan each.
 	// The synthesis prompt carries each worker's validated handoff, so the link
 	// names the boundary that produced that text rather than the run behind it.
-	const findings = findingSections.join("\n\n---\n\n");
-	const subtaskSummary = subtaskSummaryText(units, stateOf);
+	const findings = board.findings();
+	const subtaskSummary = board.summaryText();
 	const makeSynthesisTask = (previousAnswer?: string, verifierCritique?: string) =>
 		[
 			"## Goal / delegation contract",
@@ -373,8 +351,8 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 				// never saw. A revision still carries those same findings, plus the
 				// prior answer it revises and the critique that sent it back.
 				dependsOn: synthesisRound === 1
-					? consumedWorkerKeys
-					: [...consumedWorkerKeys, ...revisionDependencies],
+					? [...board.consumedKeys()]
+					: [...board.consumedKeys(), ...revisionDependencies],
 			},
 		});
 	};

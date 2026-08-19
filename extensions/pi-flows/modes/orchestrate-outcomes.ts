@@ -64,22 +64,26 @@ export interface OrchestrateUnit {
 }
 
 /**
- * How one subtask settled, in one record per id: the id has to be right once,
- * and a state can never be set without the evidence that goes with it.
+ * How one subtask settled, in one record per id. A discriminated union rather
+ * than one optional-field bag, so a state cannot be set without the evidence
+ * that goes with it — the property the previous shape's comment claimed and
+ * the type did not hold. Constructed only by the outcome board
+ * (orchestrate-board.ts), which is why no caller needs to assemble one.
+ *
+ * The two stranded arms carry genuinely different evidence and are deliberately
+ * not merged: a subtask cut off by a dependency names that dependency, while
+ * one the budget refused names the ceiling's own message. Collapsing them would
+ * lose what the not-completed manifest exists to report.
  */
-export interface UnitOutcome {
-	state: "succeeded" | "failed" | "stranded";
-	/** The validated handoff text a succeeded subtask produced, for its dependents' prompts. */
-	outputText?: string;
-	/** The dependency key of that same handoff, for its dependents' span links. */
-	outputKey?: string;
+export type UnitOutcome =
+	/** The validated handoff a succeeded subtask produced: the text for its dependents' prompts, and that handoff's key for their span links. */
+	| { readonly state: "succeeded"; readonly outputText: string; readonly outputKey?: string }
 	/** Why a failed subtask failed, as the manifest reports it. */
-	failureText?: string;
-	/** The subtask a stranded one waits on. Absent when no single blocker names itself. */
-	strandedOn?: string;
-	/** Why a budget-stranded subtask never spawned — the budget refusal's own message, when the blocker is a ceiling rather than a subtask. */
-	strandedReason?: string;
-}
+	| { readonly state: "failed"; readonly failureText: string }
+	/** The subtask a stranded one was waiting on. */
+	| { readonly state: "stranded"; readonly strandedOn: string }
+	/** Why a subtask never spawned when the blocker is a ceiling or a refused replacement rather than a subtask. */
+	| { readonly state: "stranded"; readonly strandedReason: string };
 
 /** Build one worker's task: the goal, the assigned subtask's own sections, and each dependency's validated output as labeled untrusted data. */
 export function makeWorkerTask(goal: string, unit: OrchestrateUnit, outputTextOf: (id: string) => string | undefined): string {
@@ -139,12 +143,14 @@ export function notCompletedManifest(units: readonly OrchestrateUnit[], outcomes
 			const outcome = outcomes.get(unit.subtask.id);
 			const objective = sanitizeText(oneLine(unit.subtask.objective), policy, 1024);
 			if (outcome?.state === "failed") {
-				return `- ${unit.label}: ${objective} — failed: ${sanitizeText(oneLine(outcome.failureText ?? ""), policy, 1024)}`;
+				return `- ${unit.label}: ${objective} — failed: ${sanitizeText(oneLine(outcome.failureText), policy, 1024)}`;
 			}
-			if (outcome?.strandedReason) {
+			if (outcome?.state === "stranded" && "strandedReason" in outcome) {
 				return `- ${unit.label}: ${objective} — stranded: ${sanitizeText(oneLine(outcome.strandedReason), policy, 1024)}`;
 			}
-			const blocker = outcome?.strandedOn;
+			// A stranded subtask names its blocker; an id with no outcome at all
+			// never reached a wave, so no single blocker names itself.
+			const blocker = outcome?.state === "stranded" ? outcome.strandedOn : undefined;
 			return `- ${unit.label}: ${objective} — stranded on ${blocker ? `subtask ${blocker}` : "an incomplete subtask"}`;
 		}),
 	].join("\n");
