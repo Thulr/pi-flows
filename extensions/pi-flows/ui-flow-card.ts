@@ -137,7 +137,7 @@ export function flowCardLines(data: FlowRunEntryData, theme: Theme, expanded: bo
 	});
 
 	if (data.trace) {
-		const healthColor = data.trace.health === "complete" ? "success" : "warning";
+		const healthColor = data.trace.health === "recorded" ? "success" : "warning";
 		// The displayed path stays home-redacted; a path that is absolute in
 		// either form — `/…`, or the `~/…` shape the trace sink persists —
 		// additionally becomes an OSC 8 file:// hyperlink, which supporting
