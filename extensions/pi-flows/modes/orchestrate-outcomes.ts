@@ -80,8 +80,8 @@ export type UnitOutcome =
 	| { readonly state: "succeeded"; readonly outputText: string; readonly outputKey?: string }
 	/** Why a failed subtask failed, as the manifest reports it. */
 	| { readonly state: "failed"; readonly failureText: string }
-	/** The subtask a stranded one was waiting on. */
-	| { readonly state: "stranded"; readonly strandedOn: string }
+	/** The subtask a stranded one was waiting on. Absent when no single blocker names itself, which the manifest reports as an unnamed incomplete subtask. */
+	| { readonly state: "stranded"; readonly strandedOn?: string }
 	/** Why a subtask never spawned when the blocker is a ceiling or a refused replacement rather than a subtask. */
 	| { readonly state: "stranded"; readonly strandedReason: string };
 

@@ -134,8 +134,11 @@ export class OrchestrateBoard {
 	 */
 	strandBlocked(): void {
 		for (const unit of this.#remaining.values()) {
-			const blocker = unit.subtask.dependsOn.find((dependency) => this.stateOf(dependency) !== "succeeded");
-			this.#outcomes.set(unit.subtask.id, blocker ? { state: "stranded", strandedOn: blocker } : { state: "stranded", strandedReason: "No dependency of this subtask succeeded." });
+			// `find` is undefined only if every dependency succeeded, which cannot
+			// hold for a remaining unit while the ready set is empty. The optional
+			// field keeps that unreachable case rendering as the unnamed blocker the
+			// manifest has always reported, rather than inventing a reason for it.
+			this.#outcomes.set(unit.subtask.id, { state: "stranded", strandedOn: unit.subtask.dependsOn.find((dependency) => this.stateOf(dependency) !== "succeeded") });
 		}
 		this.#remaining.clear();
 	}
