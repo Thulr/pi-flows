@@ -130,7 +130,7 @@
           "extensions/pi-flows/budget.ts": "d70575e0af79683c",
           "extensions/pi-flows/run.ts": "52321721a19ea929",
           "extensions/pi-flows/settle.ts": "216279d4eeeec231",
-          "extensions/pi-flows/modes/*.ts": "3f8b6e52d504e5c2",
+          "extensions/pi-flows/modes/*.ts": "d374aae5fd497cc5",
           "tests/flow-lifecycle.test.ts": "1384fe2663de7b73",
           "tests/flow-budget.test.ts": "700c3e37f43040d7"
         }

@@ -397,5 +397,10 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // reference, README, and changelog expose the contract. The file set grows to
 // 117 for the new module. No file from tests/, scripts/, or evals/ ships. The
 // measured size is 1_441_360.
-assert.ok(pack.unpackedSize < 1_442_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_443_500 for the #165 review rounds: the unforgeable worker2-
+// revision keys, the strand-and-report path for a policy-refused replacement,
+// and the explanation page's mid-flow replan section replacing its stale
+// out-of-scope note. The file set stays 117 and none from tests/, scripts/,
+// or evals/; measured 1_442_596.
+assert.ok(pack.unpackedSize < 1_443_500, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

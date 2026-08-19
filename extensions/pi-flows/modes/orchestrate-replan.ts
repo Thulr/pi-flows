@@ -143,7 +143,14 @@ export function createMidFlowReplanner(context: MidFlowReplanContext): MidFlowRe
 		const replanPlan = integrationRunPlan(deps, context.commanderRef, replanTask, { scope: { key: REPLAN_KEY, dependsOn: [...dependencyKeys] } });
 		if (replanPlan.error) return { status: "refused", output: settle.refuse(replanPlan.error) };
 		const dispatched = await dispatchIntegrationPlan(deps, replanPlan.plan!, settle);
-		if (dispatched.status === "refused") return { status: "refused", output: dispatched.output };
+		if (dispatched.status === "refused") {
+			// A refused consumption (a rejected Return, a handoff-policy stop) is
+			// the replacement failing a check, and the contract for that is
+			// strand-and-report: the withheld payload never crosses, and the work
+			// already paid for still reaches synthesis with the refusal named.
+			strandRemaining(`Decomposition replan refused: ${dispatched.error.message}`);
+			return { status: "stranded" };
+		}
 		if (dispatched.status === "failed") {
 			strandRemaining(`Decomposition replan failed: commander "${context.commanderRef.agent}" did not settle with a replacement.`);
 			return { status: "stranded" };
