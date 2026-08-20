@@ -104,15 +104,24 @@ jobs:
             fi
             echo "npm already has $ver from this commit; skipping publish."
           else
-            # semver, not sort -V: version sort ranks 1.0.0-beta.1 above 1.0.0,
-            # which would let a recovered prerelease reset latest.
+            # A prerelease never takes latest, newer or not. Otherwise compare
+            # with semver, not sort -V: version sort ranks 1.0.0-beta.1 above
+            # 1.0.0, which would let a recovered prerelease reset latest.
             latest="$(npm view pi-flows dist-tags.latest 2> /dev/null || true)"
-            if [ -n "$latest" ] && [ "$(npx --yes semver@7.7.2 "$latest" "$ver" | tail -n 1)" != "$ver" ]; then
-              echo "$ver is older than the published latest ($latest); publishing under the recovered dist-tag."
-              npm publish --tag recovered
-            else
-              npm publish # auth via OIDC trusted publisher; provenance is automatic
-            fi
+            case "$ver" in
+              *-*)
+                echo "$ver is a prerelease; publishing under the next dist-tag."
+                npm publish --tag next
+                ;;
+              *)
+                if [ -n "$latest" ] && [ "$(npx --yes semver@7.7.2 "$latest" "$ver" | tail -n 1)" != "$ver" ]; then
+                  echo "$ver is older than the published latest ($latest); publishing under the recovered dist-tag."
+                  npm publish --tag recovered
+                else
+                  npm publish # auth via OIDC trusted publisher; provenance is automatic
+                fi
+                ;;
+            esac
           fi
       - name: Tag the release commit
         if: steps.decide.outputs.release == 'true' && github.ref_type == 'branch'
