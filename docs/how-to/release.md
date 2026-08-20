@@ -3,11 +3,15 @@
 Releases publish to npm from CI. `main` is the release snapshot: day-to-day
 work merges into `develop`, and a `develop` → `main` PR is the release. Merging
 it runs [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml).
-When `package.json` names a version with no `v<version>` tag yet, the workflow
-runs `npm run check`, runs `npm publish` (with provenance), pushes the release
-tag, and creates a GitHub Release from the version's `CHANGELOG.md` section.
-The workflow fails when `CHANGELOG.md` has no `## <version>` section. A push to
-`main` that does not bump the version releases nothing.
+When the `package.json` version is not fully released yet — the npm version,
+the `v<version>` tag, or the GitHub Release is missing — the workflow runs
+`npm run check`, then creates whichever of the three is missing: it runs
+`npm publish` (with provenance), pushes the release tag, and creates a GitHub
+Release from the version's `CHANGELOG.md` section. Rerunning a partially
+failed run is therefore safe and completes the release. The workflow fails
+when `CHANGELOG.md` has no `## <version>` section. A push to `main` whose
+version is fully released does nothing. Releases serialize: a run queued
+behind another performs its checks only after the first finishes.
 
 A manually pushed `vX.Y.Z` tag still triggers the same workflow and must match
 `package.json`. Use it only to re-cut a release whose merge-triggered run was

@@ -11,6 +11,16 @@ on:
     tags: ["v*.*.*"]
     branches: [main]
 
+# One release at a time: a second push must run its tag check only after the
+# preceding publish finishes, or both could see their tag as absent and race
+# npm's latest dist-tag. Not canceling: an in-flight publish must complete.
+# GitHub keeps one pending run per group, so of several queued pushes only the
+# newest runs; a version skipped that way is completed by rerunning its run or
+# pushing its tag.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 permissions:
   contents: write # push the release tag and create the GitHub Release
   id-token: write # OIDC token for npm trusted publishing (also signs provenance)
@@ -27,22 +37,31 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm install -g npm@latest # trusted publishing (OIDC) needs npm >= 11.5.1
       - run: npm ci --ignore-scripts
-      - name: Decide whether this push cuts a release
+      - name: Decide whether this push cuts or completes a release
         id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A release is three artifacts: the npm version, the tag, and the
+        # GitHub Release. Any one missing means run; each later step skips the
+        # artifacts that already exist. So a rerun after a partial release
+        # completes whatever is missing instead of no-opping on the tag alone.
         run: |
           tag="v$(node -p "require('./package.json').version")"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            if [ "$tag" != "$GITHUB_REF_NAME" ]; then
-              echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($tag). Bump package.json and PI_FLOWS_VERSION before tagging."
-              exit 1
-            fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$tag" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($tag). Bump package.json and PI_FLOWS_VERSION before tagging."
+            exit 1
+          fi
+          missing=""
+          npm view "pi-flows@${tag#v}" version > /dev/null 2>&1 || missing="$missing npm"
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null || missing="$missing tag"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || missing="$missing release"
+          if [ -n "$missing" ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
-          elif git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "$tag is already tagged. This push does not bump the version, so there is nothing to release."
+            echo "Releasing $tag; missing:$missing"
           else
-            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is fully released (npm version, tag, and GitHub Release all exist); nothing to do."
           fi
       - run: npm run check
         if: steps.decide.outputs.release == 'true'
@@ -68,8 +87,12 @@ jobs:
         # naming a version the registry never got. A tag pushed with the
         # workflow token does not retrigger this workflow.
         run: |
-          git tag "$TAG" "$GITHUB_SHA"
-          git push origin "$TAG"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "$TAG already exists; skipping."
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          fi
       - name: Create GitHub Release from the CHANGELOG section
         if: steps.decide.outputs.release == 'true'
         env:
