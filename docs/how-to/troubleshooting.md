@@ -88,7 +88,9 @@ warnings affect one file each:
 
 Two codes are errors. `AGENT_FILE_UNREADABLE` skips the one unreadable file.
 `AGENT_DIR_UNREADABLE` means that source directory contributes no agents at
-all. A matching `PRESET_*` family covers presets.
+all. The `PRESET_*` family mirrors these effects for presets, but every preset
+issue reports as a warning. An unreadable preset directory still drops that
+whole source.
 
 Valid minimal agent:
 
