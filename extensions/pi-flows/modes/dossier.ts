@@ -7,7 +7,7 @@ import { fanoutThenTailCriticalPath, plannedRefs, withinFanoutCap, type ModePlan
 /**
  * Dossier's debrief, resolved once (CONTEXT.md: Mirror). The declaration below and the handler both read it here, so which agent writes the dossier — and the default when the caller names none — is stated once rather than in two places kept in agreement by hand.
  */
-export const DOSSIER_DEBRIEF_DEFAULT: FlowAgentRefInput = { agent: "debrief" };
+export const DOSSIER_DEBRIEF_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "debrief" });
 
 /** Dossier's roles for one call: the caller's debrief where it names an agent, else the shared default. */
 export function dossierRoles(params: any): { debrief: FlowAgentRefInput } {

@@ -26,6 +26,7 @@ import { planDossier, dossierRoles, DOSSIER_DEBRIEF_DEFAULT } from "../extension
 import { planDebate, debateRoles, DEBATE_ADJUDICATOR_DEFAULT } from "../extensions/pi-flows/modes/debate.ts";
 import { planMonitor, monitorRoles, MONITOR_REACTOR_DEFAULT } from "../extensions/pi-flows/modes/monitor.ts";
 import { planWorktree, worktreeRoles, WORKTREE_INTEGRATOR_DEFAULT } from "../extensions/pi-flows/modes/worktree.ts";
+import { renderRunModeLabel } from "../extensions/pi-flows/modes/contract.ts";
 
 /** Every agent name the declared plan lists, in wave order. */
 const plannedAgents = (plan: { waves: { refs: { agent: string }[] }[] }) => plan.waves.flatMap((wave) => wave.refs.map((ref) => ref.agent));
@@ -163,4 +164,49 @@ test("a malformed ref never yields a role with no agent name", () => {
 	assert.equal(typeof searchRoles({ search: { generator: {} } }).generator, "object");
 	assert.equal(dossierRoles({ dossier: { debrief: {} } }).debrief.agent, DOSSIER_DEBRIEF_DEFAULT.agent, "an agent-less ref falls back to the default under the ?.agent idiom");
 	assert.equal(debateRoles({ debate: { adjudicator: { agent: "" } } }).adjudicator.agent, DEBATE_ADJUDICATOR_DEFAULT.agent, "an empty agent name is not a named role");
+});
+
+// ---------------------------------------------------------------------------
+// The defaults are shared objects, so they are frozen
+// ---------------------------------------------------------------------------
+
+test("every role default is frozen, so a shared constant cannot be mutated in place", () => {
+	// The resolvers hand the same object to every caller, and evaluate pushes
+	// EVALUATE_ROLE_DEFAULTS.critic itself into a dispatched array. Nothing
+	// mutates a ref today; freezing makes that hazard non-existent rather than
+	// merely absent, since the resolvers' return type is mutable and TypeScript
+	// would not catch it.
+	const defaults = [
+		...Object.values(SEARCH_ROLE_DEFAULTS),
+		...Object.values(ORCHESTRATE_ROLE_DEFAULTS),
+		...Object.values(EVALUATE_ROLE_DEFAULTS),
+		ROUTE_CONTROLLER_DEFAULT,
+		DOSSIER_DEBRIEF_DEFAULT,
+		DEBATE_ADJUDICATOR_DEFAULT,
+		MONITOR_REACTOR_DEFAULT,
+		WORKTREE_INTEGRATOR_DEFAULT,
+	];
+	for (const ref of defaults) {
+		assert.equal(Object.isFrozen(ref), true, `${ref.agent} default is not frozen`);
+		assert.throws(() => { (ref as { agent: string }).agent = "hijacked"; }, TypeError, `${ref.agent} default accepted an in-place write`);
+	}
+});
+
+// ---------------------------------------------------------------------------
+// The mode table's label is a third reader, and reads the same resolver
+// ---------------------------------------------------------------------------
+
+test("a mode's rendered label names the role the flow would actually dispatch", () => {
+	// renderLabel used to spell these defaults as bare strings — a third
+	// derivation beside the plan and the handler, and route's label even used a
+	// different idiom from route's dispatch.
+	assert.equal(renderRunModeLabel({ task: "t", route: {} }), `route via ${ROUTE_CONTROLLER_DEFAULT.agent}`);
+	assert.equal(renderRunModeLabel({ task: "t", route: { controller: { agent: "picker" } } }), "route via picker");
+
+	assert.equal(renderRunModeLabel({ task: "t", orchestrate: {} }), `orchestrate ->${ORCHESTRATE_ROLE_DEFAULTS.recon.agent}`);
+	assert.equal(renderRunModeLabel({ task: "t", orchestrate: { recon: { agent: "scout" } } }), "orchestrate ->scout");
+
+	assert.equal(renderRunModeLabel({ task: "t", evaluate: {} }), `evaluate ${EVALUATE_ROLE_DEFAULTS.operator.agent}->${EVALUATE_ROLE_DEFAULTS.critic.agent}`);
+	assert.equal(renderRunModeLabel({ task: "t", evaluate: { operator: { agent: "maker" }, redteam: { agent: "judge" } } }), "evaluate maker->judge");
+	assert.equal(renderRunModeLabel({ task: "t", evaluate: { redteam: [{ agent: "a" }, { agent: "b" }] } }), `evaluate ${EVALUATE_ROLE_DEFAULTS.operator.agent}->2 critics`, "a panel is counted, not named");
 });

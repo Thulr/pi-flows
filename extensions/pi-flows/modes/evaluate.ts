@@ -20,8 +20,8 @@ import { plannedRefs, sumRunDurations, withinFanoutCap, type ModePlan } from "./
  * substitutes the default so a call always has someone to judge it.
  */
 export const EVALUATE_ROLE_DEFAULTS = {
-	operator: { agent: "operator" },
-	critic: { agent: "redteam" },
+	operator: Object.freeze({ agent: "operator" }),
+	critic: Object.freeze({ agent: "redteam" }),
 } as const satisfies Record<string, FlowAgentRefInput>;
 
 /** Evaluate's roles for one call: the generator, and the critic panel normalized to a list. */

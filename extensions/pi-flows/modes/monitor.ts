@@ -8,7 +8,7 @@ import { plannedRefs, type ModePlan } from "./plan.ts";
 /**
  * Monitor's reactor, resolved once (CONTEXT.md: Mirror). The declaration below and the handler both read it here, so which agent reacts to a tripped probe — and the default when the caller names none — is stated once rather than in two places kept in agreement by hand.
  */
-export const MONITOR_REACTOR_DEFAULT: FlowAgentRefInput = { agent: "analyst" };
+export const MONITOR_REACTOR_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "analyst" });
 
 /** Monitor's roles for one call: the caller's reactor where it names an agent, else the shared default. */
 export function monitorRoles(params: any): { reactor: FlowAgentRefInput } {

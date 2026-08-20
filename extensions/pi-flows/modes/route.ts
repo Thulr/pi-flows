@@ -12,7 +12,7 @@ import { plannedRefs, sumRunDurations, type ModePlan, type PlannedWave } from ".
  * when the caller names none — is stated once rather than in two places kept in
  * agreement by hand.
  */
-export const ROUTE_CONTROLLER_DEFAULT: FlowAgentRefInput = { agent: "controller" };
+export const ROUTE_CONTROLLER_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "controller" });
 
 /** Route's roles for one call: the caller's controller where given, else the shared default. */
 export function routeRoles(params: any): { controller: FlowAgentRefInput } {

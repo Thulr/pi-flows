@@ -19,12 +19,11 @@ import { plannedRefs, type ModePlan } from "./plan.ts";
  */
 export function planOrchestrate(params: any): ModePlan {
 	if (!params.orchestrate) return { waves: [], opening: [] };
-	const spec = params.orchestrate ?? {};
 	const roles = orchestrateRoles(params);
 	const commander = plannedRefs([roles.commander]);
 	const recon = plannedRefs([roles.recon]);
-	const review = plannedRefs([spec.review]);
-	const verify = plannedRefs([spec.verify]);
+	const review = plannedRefs([roles.review]);
+	const verify = plannedRefs([roles.verify]);
 	const debrief = plannedRefs([roles.debrief]);
 	return {
 		waves: [

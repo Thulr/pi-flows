@@ -24,9 +24,9 @@ import type { FlowAgentRefInput } from "../types.ts";
  * agent-less ref as absent rather than substituting anything.
  */
 export const ORCHESTRATE_ROLE_DEFAULTS = {
-	commander: { agent: "commander" },
-	recon: { agent: "recon" },
-	debrief: { agent: "debrief" },
+	commander: Object.freeze({ agent: "commander" }),
+	recon: Object.freeze({ agent: "recon" }),
+	debrief: Object.freeze({ agent: "debrief" }),
 } as const satisfies Record<string, FlowAgentRefInput>;
 
 /** Orchestrate's roles for one call: the caller's ref where given, else the shared default; the two optional roles only where the caller named an agent. */

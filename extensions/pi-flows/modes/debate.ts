@@ -8,7 +8,7 @@ import { maxRunDuration, plannedRefs, runDuration, withinFanoutCap, type ModePla
 /**
  * Debate's adjudicator, resolved once (CONTEXT.md: Mirror). The declaration below and the handler both read it here, so which agent adjudicates — and the default when the caller names none — is stated once rather than in two places kept in agreement by hand.
  */
-export const DEBATE_ADJUDICATOR_DEFAULT: FlowAgentRefInput = { agent: "analyst" };
+export const DEBATE_ADJUDICATOR_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "analyst" });
 
 /** Debate's roles for one call: the caller's adjudicator where it names an agent, else the shared default. */
 export function debateRoles(params: any): { adjudicator: FlowAgentRefInput } {

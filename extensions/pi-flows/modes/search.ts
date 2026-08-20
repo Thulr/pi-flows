@@ -22,9 +22,9 @@ import { maxRunDuration, plannedRefs, runDuration, type ModePlan } from "./plan.
  * disagreeing about the topology.
  */
 export const SEARCH_ROLE_DEFAULTS = {
-	generator: { agent: "strategist" },
-	scorer: { agent: "redteam", tools: "none" },
-	debrief: { agent: "debrief" },
+	generator: Object.freeze({ agent: "strategist" }),
+	scorer: Object.freeze({ agent: "redteam", tools: "none" }),
+	debrief: Object.freeze({ agent: "debrief" }),
 } as const satisfies Record<string, FlowAgentRefInput>;
 
 /** Search's roles for one call: the caller's ref where given, else the shared default. */

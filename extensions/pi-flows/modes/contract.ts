@@ -4,10 +4,11 @@ import type { ModeCriticalPathFn, ModePlan, ModePlanFn, ModePreSpawnRefusalFn, P
 import { criticalPathSingle, handleSingle, planSingle } from "./single.ts";
 import { criticalPathParallel, handleParallel, planParallel, preSpawnRefusalParallel } from "./parallel.ts";
 import { criticalPathChain, handleChain, planChain } from "./chain.ts";
-import { criticalPathEvaluate, handleEvaluate, planEvaluate, preSpawnRefusalEvaluate } from "./evaluate.ts";
+import { criticalPathEvaluate, evaluateRoles, EVALUATE_ROLE_DEFAULTS, handleEvaluate, planEvaluate, preSpawnRefusalEvaluate } from "./evaluate.ts";
 import { criticalPathVote, handleVote, planVote, preSpawnRefusalVote } from "./vote.ts";
-import { criticalPathRoute, handleRoute, planRoute, preSpawnRefusalRoute } from "./route.ts";
+import { criticalPathRoute, handleRoute, planRoute, preSpawnRefusalRoute, routeRoles, ROUTE_CONTROLLER_DEFAULT } from "./route.ts";
 import { criticalPathOrchestrate, handleOrchestrate, planOrchestrate, preSpawnRefusalOrchestrate } from "./orchestrate.ts";
+import { orchestrateRoles, ORCHESTRATE_ROLE_DEFAULTS } from "./orchestrate-call.ts";
 import { criticalPathGraph, handleGraph, planGraph, preSpawnRefusalGraph } from "./graph.ts";
 import { criticalPathLoop, handleLoop, planLoop, preSpawnRefusalLoop } from "./loop.ts";
 import { criticalPathSearch, handleSearch, planSearch, preSpawnRefusalSearch } from "./search.ts";
@@ -113,9 +114,12 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		preSpawnRefusal: preSpawnRefusalEvaluate,
 		owedEventKinds: ["retry", "validation"],
 		renderLabel: (params) => {
-			const generator = params.evaluate?.operator?.agent ?? "operator";
+			const generator = evaluateRoles(params).operator.agent ?? EVALUATE_ROLE_DEFAULTS.operator.agent;
 			const redteam = params.evaluate?.redteam;
-			const evaluator = Array.isArray(redteam) ? `${redteam.length} critics` : redteam?.agent ?? "redteam";
+			// A panel is counted; a single critic is named. Which agent that is
+			// comes from the resolver the plan and the handler read, so a label
+			// cannot name a role the flow would not dispatch.
+			const evaluator = Array.isArray(redteam) ? `${redteam.length} critics` : evaluateRoles(params).critics[0]?.agent ?? EVALUATE_ROLE_DEFAULTS.critic.agent;
 			const gate = params.evaluate?.checkCommand ? " +check" : "";
 			return `evaluate ${generator}->${evaluator}${gate}`;
 		},
@@ -142,7 +146,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		criticalPath: criticalPathRoute,
 		preSpawnRefusal: preSpawnRefusalRoute,
 		owedEventKinds: ["state"],
-		renderLabel: (params) => `route via ${params.route?.controller?.agent ?? "controller"}`,
+		renderLabel: (params) => `route via ${routeRoles(params).controller.agent ?? ROUTE_CONTROLLER_DEFAULT.agent}`,
 		handler: handleRoute,
 	},
 	orchestrate: {
@@ -152,7 +156,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		criticalPath: criticalPathOrchestrate,
 		preSpawnRefusal: preSpawnRefusalOrchestrate,
 		owedEventKinds: ["retry", "validation"],
-		renderLabel: (params) => `orchestrate ->${params.orchestrate?.recon?.agent ?? "recon"}`,
+		renderLabel: (params) => `orchestrate ->${orchestrateRoles(params).recon.agent ?? ORCHESTRATE_ROLE_DEFAULTS.recon.agent}`,
 		handler: handleOrchestrate,
 	},
 	graph: {

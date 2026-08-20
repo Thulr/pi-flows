@@ -18,7 +18,7 @@ import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.t
  * integration checkout's cwd, which is a dispatch fact the declaration has no
  * business knowing: the worktree does not exist until the flow creates it.
  */
-export const WORKTREE_INTEGRATOR_DEFAULT: FlowAgentRefInput = { agent: "operator" };
+export const WORKTREE_INTEGRATOR_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "operator" });
 
 /** Worktree's roles for one call: the caller's integrator where it names an agent, else the shared default. */
 export function worktreeRoles(params: any): { integrator: FlowAgentRefInput } {
