@@ -897,7 +897,10 @@ Each node has `id`, `agent`, `task`, optional `dependsOn`, its own
 `returnRequirements`/`requireEvidence`, and the usual
 `model`/`tier`/`thinking`/`tools`/`cwd` overrides. Node tasks can use `{task}` and dependency
 output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
-A malformed graph is refused `GRAPH_INVALID` before any node starts. A cycle
+A graph defect the params schema cannot see — a duplicate node id, or a
+`dependsOn` naming an unknown node — is refused `GRAPH_INVALID` before any
+node starts (a node missing a required field never reaches the handler; the
+schema rejects it). A cycle
 with no runnable root is refused `GRAPH_CYCLE` the same way. A cycle behind
 runnable nodes is refused `GRAPH_CYCLE` only when the wave loop finds nothing
 left runnable — the nodes before it have already run and spent.
@@ -925,7 +928,7 @@ Anything but the exact `LOOP: DONE` marker — `LOOP: COMPLETE`, a negated
 |---|---|---|
 | `loop.body` | (required) | Iteration agent. Accepts its own `contract`. Without a judge, contracted `data.loop` controls DONE/CONTINUE. |
 | `loop.judge` | (none) | Optional critic with its own `contract`. Contracted `data.verdict` controls PASS/REVISE. |
-| `loop.maxIterations` | `3` | Bounded iteration cap. Integer `1..8`. |
+| `loop.maxIterations` | `3` | Bounded iteration cap, clamped into `1..8`. A fractional value is floored. |
 
 If the loop reaches `maxIterations` without a stop signal, pi-flows returns
 `LOOP_DID_NOT_CONVERGE` with the last output/critique.

@@ -6,7 +6,7 @@ This page explains what a Decomposition is, what the flow checks in one, and wha
 
 A **Decomposition** is the breakdown a `commander` returns for a goal: the subtasks, plus any dependency edges between them. A flat list of subtask strings is a Decomposition with no edges. An array of subtask objects is the structured shape, which can declare edges. This page does not call either shape a "plan". In pi-flows a plan is the set of waves a mode declares before it spawns anything, and the `commander` writes no plan.
 
-The `commander` writes the Decomposition, so it arrives as model output. That output then decides how many children spawn, in what order, and in which working directory. The flow therefore treats it the same way it treats any other untrusted input to a spawn decision. It validates every Decomposition a `commander` returns — the initial one, each review-loop replacement, and the mid-flow replacement — after that `commander` Run settles and before any worker it names starts.
+The `commander` writes the Decomposition, so it arrives as model output. That output then decides how many children spawn, in what order, and in which working directory. The flow therefore treats it the same way it treats any other untrusted input to a spawn decision. It validates every Decomposition a `commander` returns: the initial one, each review-loop replacement, and the mid-flow replacement. Validation runs after that `commander` Run settles and before any worker it names starts.
 
 ## Why the check is deterministic only
 
