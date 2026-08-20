@@ -4,6 +4,7 @@ import { parseVerdict, subtasksJsonProtocolInstruction, verdictProtocolInstructi
 import { decompositionEffortWeight, mapDecompositionProse, parseDecomposition, unusableDecompositionError, validateDecomposition, type Decomposition, type DecompositionSubtask } from "../decomposition.ts";
 import { decompositionReviewOptionsRefusal, headroomCritique, reviewDecomposition } from "../decomposition-review.ts";
 import { OrchestrateBoard } from "./orchestrate-board.ts";
+import { orchestrateGoal, orchestrateRoles } from "./orchestrate-call.ts";
 import { DECOMPOSE_KEY, makeWorkerTask, synthesisKey, verifyKey } from "./orchestrate-outcomes.ts";
 import { createMidFlowReplanner } from "./orchestrate-replan.ts";
 import { incompleteHandoffSummary, integrationControl } from "../delegation.ts";
@@ -19,11 +20,12 @@ import { plannedRefs, type ModePlan } from "./plan.ts";
 export function planOrchestrate(params: any): ModePlan {
 	if (!params.orchestrate) return { waves: [], opening: [] };
 	const spec = params.orchestrate ?? {};
-	const commander = plannedRefs([spec.commander ?? { agent: "commander" }]);
-	const recon = plannedRefs([spec.recon ?? { agent: "recon" }]);
+	const roles = orchestrateRoles(params);
+	const commander = plannedRefs([roles.commander]);
+	const recon = plannedRefs([roles.recon]);
 	const review = plannedRefs([spec.review]);
 	const verify = plannedRefs([spec.verify]);
-	const debrief = plannedRefs([spec.debrief ?? { agent: "debrief" }]);
+	const debrief = plannedRefs([roles.debrief]);
 	return {
 		waves: [
 			{ refs: commander, guarded: false, contracts: "own" },
@@ -53,12 +55,9 @@ export function criticalPathOrchestrate(): number | undefined {
  */
 export function preSpawnRefusalOrchestrate(params: any): FlowError | null {
 	if (params?.orchestrate === undefined) return null;
-	const spec = params.orchestrate ?? {};
-	const reviewRefusal = decompositionReviewOptionsRefusal(spec);
+	const reviewRefusal = decompositionReviewOptionsRefusal(params.orchestrate ?? {});
 	if (reviewRefusal) return reviewRefusal;
-	const nestedTask = typeof spec.task === "string" ? spec.task : undefined;
-	const nestedReturnRequirements = typeof spec.returnRequirements === "string" ? spec.returnRequirements : undefined;
-	const goal = params.task ?? nestedTask ?? nestedReturnRequirements;
+	const { goal } = orchestrateGoal(params);
 	if (typeof goal === "string" && goal.trim()) return null;
 	return flowError(
 		"INVALID_MODE",
@@ -72,20 +71,13 @@ export async function handleOrchestrate(deps: ModeDeps): Promise<ModeOutput> {
 	const settle = modeSettle(deps);
 	const { params, policy } = deps;
 	const spec = params.orchestrate ?? {};
-	const orchestrateAliases = spec as typeof spec & { task?: unknown; returnRequirements?: unknown };
-	const nestedTask = typeof orchestrateAliases.task === "string" ? orchestrateAliases.task : undefined;
-	const nestedReturnRequirements = typeof orchestrateAliases.returnRequirements === "string" ? orchestrateAliases.returnRequirements : undefined;
 	const entryRefusal = preSpawnRefusalOrchestrate(params);
 	if (entryRefusal) return settle.refuse(entryRefusal);
-	const goal = (params.task ?? nestedTask ?? nestedReturnRequirements) as string;
-	const returnRequirements = params.returnRequirements ?? (params.task || nestedTask ? nestedReturnRequirements : undefined);
+	const { goal: resolvedGoal, returnRequirements } = orchestrateGoal(params);
+	const goal = resolvedGoal as string;
 	const contractedGoal = goal;
 
-	const decomposerRef: FlowAgentRefInput = spec.commander ?? { agent: "commander" };
-	const workerRef: FlowAgentRefInput = spec.recon ?? { agent: "recon" };
-	const synthesizerRef: FlowAgentRefInput = spec.debrief ?? { agent: "debrief" };
-	const reviewRef: FlowAgentRefInput | undefined = spec.review && typeof spec.review.agent === "string" ? spec.review : undefined;
-	const verifyRef: FlowAgentRefInput | undefined = spec.verify && typeof spec.verify.agent === "string" ? spec.verify : undefined;
+	const { commander: decomposerRef, recon: workerRef, debrief: synthesizerRef, review: reviewRef, verify: verifyRef } = orchestrateRoles(params);
 	const maxSubtasks = Number.isFinite(spec.maxSubtasks) ? Math.max(1, Math.min(MAX_SUBTASKS, Math.floor(spec.maxSubtasks))) : MAX_PARALLEL_TASKS;
 	const reviewMaxIterations = Number.isFinite(spec.reviewMaxIterations) ? Math.max(1, Math.min(4, Math.floor(spec.reviewMaxIterations))) : 2;
 	const verifyPolicy: VerifyPolicy = ["fail", "revise"].includes(spec.verifyPolicy) ? spec.verifyPolicy : "note";

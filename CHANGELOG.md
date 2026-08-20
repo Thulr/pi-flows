@@ -10,6 +10,20 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- Each mode's role defaults are now declared once and read by both its `plan`
+  declaration and its handler. Which agent fills a role when the caller names
+  none was previously written twice per mode — inside the plan and again inside
+  the handler, 50+ lines apart in the same file, with nothing comparing them
+  (`search` had three such pairs, `orchestrate` three, `evaluate` two, and
+  `route`, `dossier`, `debate`, `monitor` and `worktree` one each). That is the
+  Mirror the glossary names: the declared topology and the dispatched one
+  deriving one rule separately, while the shared-write guard, the
+  requested-agent scan, the first-spawn roster rule and budget disclosure all
+  answer from the declaration. Orchestrate's roles and the three keys its goal
+  may arrive under move to a new `modes/orchestrate-call.ts`. No behaviour
+  change: every default, and each reader's own tolerance for a malformed ref,
+  is unchanged.
+
 - Orchestrate's Decomposition dispatch state is now one **outcome board**
   (`modes/orchestrate-board.ts`) instead of five collections the handler and the
   mid-flow replanner mutated in place through shared references. The board owns

@@ -8,6 +8,32 @@ import { consumeIntegrationResult, dispatchIntegrationPlan, dispatchIntegrationW
 import { plannedRefs, sumRunDurations, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
+ * Evaluate's roles, resolved once (CONTEXT.md: Mirror). The declaration below
+ * and the handler both read their refs here, so which agent generates and which
+ * critics judge — and the defaults when the caller names none — are stated once
+ * rather than in two places kept in agreement by hand.
+ *
+ * The critic list normalizes a single ref and a panel to one array, because
+ * both readers then apply the same fan-out cap to it. What they do with a list
+ * that names no usable critic still differs by design: the declaration answers
+ * for arbitrary params and declares the wave it would guard, while the handler
+ * substitutes the default so a call always has someone to judge it.
+ */
+export const EVALUATE_ROLE_DEFAULTS = {
+	operator: { agent: "operator" },
+	critic: { agent: "redteam" },
+} as const satisfies Record<string, FlowAgentRefInput>;
+
+/** Evaluate's roles for one call: the generator, and the critic panel normalized to a list. */
+export function evaluateRoles(params: any): { operator: FlowAgentRefInput; critics: FlowAgentRefInput[] } {
+	const spec = params?.evaluate ?? {};
+	return {
+		operator: spec.operator ?? EVALUATE_ROLE_DEFAULTS.operator,
+		critics: Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? EVALUATE_ROLE_DEFAULTS.critic],
+	};
+}
+
+/**
  * Evaluate's plan: the generator wave first (it spawns before any critic and
  * is never guard-checked), then the critic panel — normalized exactly as the
  * handler normalizes it, including the one-redteam default when the panel is
@@ -17,11 +43,11 @@ import { plannedRefs, sumRunDurations, withinFanoutCap, type ModePlan } from "./
 export function planEvaluate(params: any): ModePlan {
 	if (!params.evaluate) return { waves: [], opening: [] };
 	const spec = params.evaluate ?? {};
-	const operator = plannedRefs([spec.operator ?? { agent: "operator" }]);
-	const criticList = Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }];
+	const roles = evaluateRoles(params);
+	const operator = plannedRefs([roles.operator]);
 	const guarded = withinFanoutCap(spec.redteam);
-	const panel = plannedRefs(criticList).slice(0, MAX_PARALLEL_TASKS);
-	const critics = guarded ? (panel.length > 0 ? panel : [{ agent: "redteam" }]) : plannedRefs(criticList);
+	const panel = plannedRefs(roles.critics).slice(0, MAX_PARALLEL_TASKS);
+	const critics = guarded ? (panel.length > 0 ? panel : [EVALUATE_ROLE_DEFAULTS.critic]) : plannedRefs(roles.critics);
 	return {
 		waves: [
 			{ refs: operator, guarded: false, contracts: "resolved" },
@@ -95,13 +121,13 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 		? contract.reviewContext(appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence))
 		: appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence);
 
-	const generatorRef: FlowAgentRefInput = spec.operator ?? { agent: "operator" };
+	const generatorRef: FlowAgentRefInput = evaluateRoles(params).operator;
 	// The critic may be a single agent or a panel (god-metric → decomposed evaluators:
 	// one critic per dimension, PASS only when every critic passes). Normalize to a list.
-	const evaluatorRefs: FlowAgentRefInput[] = (Array.isArray(spec.redteam) ? spec.redteam : [spec.redteam ?? { agent: "redteam" }])
+	const evaluatorRefs: FlowAgentRefInput[] = evaluateRoles(params).critics
 		.filter((ref: any): ref is FlowAgentRefInput => ref && typeof ref.agent === "string")
 		.slice(0, MAX_PARALLEL_TASKS);
-	if (evaluatorRefs.length === 0) evaluatorRefs.push({ agent: "redteam" });
+	if (evaluatorRefs.length === 0) evaluatorRefs.push(EVALUATE_ROLE_DEFAULTS.critic);
 	const maxIterations = clampIterations(spec.maxIterations);
 	const passContract: string | undefined = spec.passContract;
 	const checkCommand: string | undefined = typeof spec.checkCommand === "string" && spec.checkCommand.trim() ? spec.checkCommand.trim() : undefined;

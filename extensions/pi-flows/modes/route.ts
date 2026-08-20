@@ -6,11 +6,25 @@ import { integrationControl } from "../delegation.ts";
 import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { plannedRefs, sumRunDurations, type ModePlan, type PlannedWave } from "./plan.ts";
 
+/**
+ * Route's controller, resolved once (CONTEXT.md: Mirror). The declaration below
+ * and the handler both read it here, so which agent routes — and the default
+ * when the caller names none — is stated once rather than in two places kept in
+ * agreement by hand.
+ */
+export const ROUTE_CONTROLLER_DEFAULT: FlowAgentRefInput = { agent: "controller" };
+
+/** Route's roles for one call: the caller's controller where given, else the shared default. */
+export function routeRoles(params: any): { controller: FlowAgentRefInput } {
+	const spec = params?.route ?? {};
+	return { controller: spec.controller ?? ROUTE_CONTROLLER_DEFAULT };
+}
+
 /** Contracted controller, every selectable candidate, then optional fallback. */
 export function planRoute(params: any): ModePlan {
 	if (!params.route) return { waves: [], opening: [] };
 	const spec = params.route ?? {};
-	const controller = plannedRefs([spec.controller ?? { agent: "controller" }]);
+	const controller = plannedRefs([routeRoles(params).controller]);
 	const candidates = (Array.isArray(spec.candidates) ? spec.candidates : [])
 		.filter((name: unknown): name is string => typeof name === "string")
 		.map((name: string) => ({ agent: name }));
@@ -64,7 +78,7 @@ export async function handleRoute(deps: ModeDeps): Promise<ModeOutput> {
 	const candidates: string[] = spec.candidates.filter((name: any) => typeof name === "string" && name.trim());
 	const contractedGoal = appendReturnRequirements(goal, params.returnRequirements, params.requireEvidence);
 
-	const routerRef: FlowAgentRefInput = spec.controller ?? { agent: "controller" };
+	const routerRef: FlowAgentRefInput = routeRoles(params).controller;
 	const routerTask = [
 		"## Task to route",
 		goal,

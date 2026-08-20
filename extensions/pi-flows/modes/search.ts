@@ -7,13 +7,44 @@ import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, t
 import { searchTopology, successfulRuns } from "../topology.ts";
 import { maxRunDuration, plannedRefs, runDuration, type ModePlan } from "./plan.ts";
 
+/**
+ * Search's three roles, resolved once (CONTEXT.md: Mirror). The declaration
+ * below and the handler both read their refs from here, so which agent fills a
+ * role — and the toolset the scorer default carries — is stated once rather
+ * than in two places kept in agreement by hand.
+ *
+ * The two readers still differ in how they tolerate a malformed ref, and that
+ * difference is deliberate rather than drift: the declaration must answer for
+ * arbitrary model-emitted params, so it projects these through `plannedRefs`
+ * and falls back to the same default when a ref names no agent, while the
+ * handler passes the caller's ref on to `integrationRunPlan` to be refused by
+ * name. Only the defaults are shared, because only the defaults can drift into
+ * disagreeing about the topology.
+ */
+export const SEARCH_ROLE_DEFAULTS = {
+	generator: { agent: "strategist" },
+	scorer: { agent: "redteam", tools: "none" },
+	debrief: { agent: "debrief" },
+} as const satisfies Record<string, FlowAgentRefInput>;
+
+/** Search's roles for one call: the caller's ref where given, else the shared default. */
+export function searchRoles(params: any): { generator: FlowAgentRefInput; scorer: FlowAgentRefInput; debrief: FlowAgentRefInput } {
+	const spec = params?.search ?? {};
+	return {
+		generator: spec.generator ?? SEARCH_ROLE_DEFAULTS.generator,
+		scorer: spec.scorer ?? SEARCH_ROLE_DEFAULTS.scorer,
+		debrief: spec.debrief ?? SEARCH_ROLE_DEFAULTS.debrief,
+	};
+}
+
 /** Generator wave, scorer wave, then debrief; every role enforces its own contract. */
 export function planSearch(params: any): ModePlan {
 	if (!params.search) return { waves: [], opening: [] };
 	const spec = params.search ?? {};
-	const generator = plannedRefs([spec.generator])[0] ?? { agent: "strategist" };
-	const scorer = plannedRefs([spec.scorer])[0] ?? { agent: "redteam", tools: "none" };
-	const debrief = plannedRefs([spec.debrief])[0] ?? { agent: "debrief" };
+	const roles = searchRoles(params);
+	const generator = plannedRefs([roles.generator])[0] ?? SEARCH_ROLE_DEFAULTS.generator;
+	const scorer = plannedRefs([roles.scorer])[0] ?? SEARCH_ROLE_DEFAULTS.scorer;
+	const debrief = plannedRefs([roles.debrief])[0] ?? SEARCH_ROLE_DEFAULTS.debrief;
 	const { candidateCount } = searchTopology(spec);
 	const generators = Array.from({ length: candidateCount }, () => generator);
 	return {
@@ -65,9 +96,7 @@ export async function handleSearch(deps: ModeDeps): Promise<ModeOutput> {
 	const entryRefusal = preSpawnRefusalSearch(params);
 	if (entryRefusal) return settle.refuse(entryRefusal);
 	const goal = params.task as string;
-	const generatorRef: FlowAgentRefInput = spec.generator ?? { agent: "strategist" };
-	const scorerRef: FlowAgentRefInput = spec.scorer ?? { agent: "redteam", tools: "none" };
-	const debriefRef: FlowAgentRefInput = spec.debrief ?? { agent: "debrief" };
+	const { generator: generatorRef, scorer: scorerRef, debrief: debriefRef } = searchRoles(params);
 	const { candidateCount, rounds } = searchTopology(spec);
 	const beamWidth = Number.isFinite(spec.beamWidth) ? Math.max(1, Math.min(candidateCount, Math.floor(spec.beamWidth))) : DEFAULT_SEARCH_BEAM_WIDTH;
 	const { concurrency } = deps;

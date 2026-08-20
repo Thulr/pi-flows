@@ -419,5 +419,13 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // and the replanner shared, plus the glossary entry naming it. This is the
 // file set moves 117 -> 118, as it did for the module-adding raises above;
 // still none from tests/, scripts/, or evals/. Measured 1_466_298.
-assert.ok(pack.unpackedSize < 1_467_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_484_000 for #170: each mode's role defaults are now named once
+// and read by both its plan declaration and its handler, and orchestrate's
+// share of that (plus where its goal comes from) is a new packaged module,
+// modes/orchestrate-call.ts, because orchestrate.ts was already at its line
+// cap. File set 118 -> 119; still none from tests/, scripts/, or evals/.
+// Measured 1_475_997 including this change's changelog and agent-instruction
+// entries; the first figure taken left three bytes of headroom, which the same
+// change's own docs would have tripped.
+assert.ok(pack.unpackedSize < 1_484_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

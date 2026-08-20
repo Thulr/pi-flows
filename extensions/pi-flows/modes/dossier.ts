@@ -5,6 +5,17 @@ import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, t
 import { fanoutThenTailCriticalPath, plannedRefs, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
+ * Dossier's debrief, resolved once (CONTEXT.md: Mirror). The declaration below and the handler both read it here, so which agent writes the dossier — and the default when the caller names none — is stated once rather than in two places kept in agreement by hand.
+ */
+export const DOSSIER_DEBRIEF_DEFAULT: FlowAgentRefInput = { agent: "debrief" };
+
+/** Dossier's roles for one call: the caller's debrief where it names an agent, else the shared default. */
+export function dossierRoles(params: any): { debrief: FlowAgentRefInput } {
+	const spec = params?.dossier ?? {};
+	return { debrief: spec.debrief?.agent ? spec.debrief : DOSSIER_DEBRIEF_DEFAULT };
+}
+
+/**
  * Dossier's plan: the concurrent evidence-section wave, then the synthesizer
  * with the handler's debrief default. The section wave is guarded unless it
  * is over the cap, where the schema refuses before the guard. Sections carry
@@ -15,7 +26,7 @@ export function planDossier(params: any): ModePlan {
 	const spec = params.dossier ?? {};
 	const sections = plannedRefs(spec.sections);
 	const guarded = withinFanoutCap(spec.sections);
-	const debrief = plannedRefs([spec.debrief?.agent ? spec.debrief : { agent: "debrief" }]);
+	const debrief = plannedRefs([dossierRoles(params).debrief]);
 	return {
 		waves: [
 			{ refs: sections, guarded, contracts: "own" },
@@ -88,7 +99,7 @@ export async function handleDossier(deps: ModeDeps): Promise<ModeOutput> {
 	const evidence = sectionEntries
 		.map(({ index }, consumedIndex) => `### Evidence section ${index + 1}: ${sanitizeText(sections[index]?.task ?? "", policy, 1024)}\n\n${sectionHandoffs[consumedIndex]?.text ?? ""}`)
 		.join("\n\n---\n\n");
-	const debriefRef: FlowAgentRefInput = spec.debrief?.agent ? spec.debrief : { agent: "debrief" };
+	const debriefRef: FlowAgentRefInput = dossierRoles(params).debrief;
 	const synthesisTask = [
 		"## Dossier question",
 		params.task ?? "Build an evidence dossier from the supplied evidence.",
