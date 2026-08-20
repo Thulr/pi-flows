@@ -19,6 +19,14 @@ Use flow with {"showConfig":true}
 
 Expected: output lists all nine bundled agents (`recon`, `strategist`, `overwatch`, `operator`, `analyst`, `redteam`, `controller`, `commander`, `debrief`).
 
+## Preset example
+
+```json
+{ "preset": "code-review", "task": "Review HEAD against main and issue #25", "why": "the branch needs one author-independent review" }
+```
+
+Expected: the preset expands into two `overwatch` runs in named `standards` and `spec` roles before ordinary mode validation. The result reports typed file coverage and a harness-derived `CLEAN`, `FINDINGS`, or `PARTIAL` outcome. The other bundled presets are `scout` and `map-codebase`.
+
 ## Single-agent example
 
 Plain English: *"scout the repo for the extension entrypoint and summarize what it registers."* The call pi builds:
@@ -215,12 +223,60 @@ If the final review returns REVISE, the flow returns `DECOMPOSITION_REVIEW_FAILE
 ```json
 {
   "task": "Explain how a request is authenticated, from the entry point to the session store",
-  "orchestrate": { "recon": { "agent": "recon" }, "maxSubtasks": 6 },
+  "orchestrate": { "recon": { "agent": "recon" }, "maxSubtasks": 6, "replan": false },
   "why": "the later reading only makes sense after the entry points are known"
 }
 ```
 
-Expected: the `commander` can return subtask objects instead of subtask strings. For example, it returns a `survey` subtask, plus `login` and `refresh` subtasks that both declare `"dependsOn": ["survey"]`. The `survey` worker runs first. The two dependent workers then run together, and each prompt carries the survey output as untrusted data. If `survey` fails, both dependents are stranded, and the flow header reports `1 failed, 2 stranded`. A defective decomposition returns `DECOMPOSITION_INVALID` or `DECOMPOSITION_CYCLE` before any worker starts.
+Expected: the `commander` can return subtask objects instead of subtask strings. For example, it returns a `survey` subtask, plus `login` and `refresh` subtasks that both declare `"dependsOn": ["survey"]`. The `survey` worker runs first. The two dependent workers then run together, and each prompt carries the survey output as untrusted data. If `survey` fails, both dependents are stranded, and the flow header reports `0 succeeded, 1 failed, and 2 stranded`. A defective decomposition returns `DECOMPOSITION_INVALID` or `DECOMPOSITION_CYCLE` before any worker starts.
+
+This example sets `"replan": false` to make the stranding visible. By default (`replan` omitted or `true`), a failure that strands every remaining subtask routes to the `commander` for one mid-flow replan first. The flow strands and reports only when the replan is spent or its replacement fails validation.
+
+## Graph example (static DAG)
+
+```json
+{
+  "task": "Plan a session-expiry fix",
+  "graph": {
+    "nodes": [
+      { "id": "routes", "agent": "recon", "task": "Find the auth routes", "tier": "fast" },
+      { "id": "store", "agent": "recon", "task": "Find the session store", "tier": "fast" },
+      { "id": "plan", "agent": "strategist", "task": "Plan a session-expiry fix from this context:\n\n{node.routes}\n\n{node.store}", "dependsOn": ["routes", "store"] }
+    ]
+  },
+  "why": "the plan depends on two independent readings joined by explicit edges"
+}
+```
+
+Expected: `routes` and `store` run together in the first wave. `plan` runs in the second wave, with both outputs inserted at the `{node.<id>}` placeholders after capping and redaction. You write the DAG, so you also choose each node's agent and task text. The `commander` writes the units in orchestrate mode instead.
+
+## Loop example (generic bounded loop)
+
+```json
+{
+  "task": "Make tests/retry.test.ts pass three consecutive runs",
+  "loop": {
+    "body": { "agent": "operator" },
+    "judge": { "agent": "redteam" },
+    "maxIterations": 3
+  },
+  "why": "repeat-until-done work needs a bounded loop with an independent judge"
+}
+```
+
+Expected: the body runs once per iteration. With a judge, `VERDICT: PASS` stops the loop. Without one, the body must emit `LOOP: DONE` on its first non-empty line. Otherwise the loop stops at `maxIterations` (default 3, maximum 8) and returns the last attempt.
+
+## Search example (bounded beam search)
+
+```json
+{
+  "task": "Draft a one-paragraph release announcement for the next version",
+  "search": { "candidates": 3, "beamWidth": 1, "maxRounds": 2 },
+  "why": "three scored drafts beat one draft revised blind"
+}
+```
+
+Expected: each round, the generator (`strategist` by default) produces 3 candidates, and the scorer (`redteam` by default, no tools) gives each one `SCORE: 0..100`. The beam keeps the best candidate between rounds. After 2 rounds, `debrief` presents the winner. A score that does not parse counts as `0`, so that candidate loses to any positively scored one but is not discarded.
 
 ## Workflow example
 
@@ -314,9 +370,12 @@ Expected: the `commander` can return subtask objects instead of subtask strings.
 
 Expected: when cumulative cost reaches `$0.25` or generated output reaches 4,000
 tokens at a completed model-response boundary, the active child stops and no
-further child is spawned (`BUDGET_EXCEEDED`). `flow-trace.jsonl` gains one
-OpenInference-shaped span per child plus a root `flow.orchestrate` span. Examine
-it with `jq` — for example, the total cost:
+further child is spawned (`BUDGET_EXCEEDED`). Before any worker spawns,
+orchestrate also projects the admitted Decomposition against the remaining
+ceilings and refuses one that cannot fit (`BUDGET_HEADROOM_EXCEEDED`).
+`flow-trace.jsonl` gains one OpenInference-shaped span per child, one per stage
+(wave, round, or phase), one per coordination event, plus a root
+`flow.orchestrate` span. Examine it with `jq` — for example, the total cost:
 `jq -s 'map(.attributes["flow.cost_usd"] // 0) | add' flow-trace.jsonl`.
 
 ## User custom-agent example
@@ -376,6 +435,14 @@ Missing delegation justification:
 ```
 
 Expected error code: `WHY_REQUIRED` (every spawning call needs a one-sentence `why`, and `list`/`showConfig` are exempt).
+
+Renamed parameter:
+
+```json
+{ "agent": "recon", "task": "Find the API routes", "returnContract": "One cited section per route.", "why": "error-path demo" }
+```
+
+Expected error code: `PARAM_RENAMED` (`returnContract` is now `returnRequirements`; the retired key is refused loudly so old calls cannot silently drop their requirements).
 
 Unknown agent:
 
