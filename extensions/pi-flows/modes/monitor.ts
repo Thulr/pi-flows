@@ -6,6 +6,17 @@ import { dispatchIntegrationPlan, integrationRunPlan } from "../integration.ts";
 import { plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
+ * Monitor's reactor, resolved once (CONTEXT.md: Mirror). The declaration below and the handler both read it here, so which agent reacts to a tripped probe — and the default when the caller names none — is stated once rather than in two places kept in agreement by hand.
+ */
+export const MONITOR_REACTOR_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "analyst" });
+
+/** Monitor's roles for one call: the caller's reactor where it names an agent, else the shared default. */
+export function monitorRoles(params: any): { reactor: FlowAgentRefInput } {
+	const spec = params?.monitor ?? {};
+	return { reactor: spec.reactor?.agent ? spec.reactor : MONITOR_REACTOR_DEFAULT };
+}
+
+/**
  * Monitor's plan: the reactor role with the handler's analyst default, never
  * guarded and never an opening — the reactor spawns only if the probe ever
  * trips the trigger, so no spawn is statically certain and a completed watch
@@ -14,7 +25,7 @@ import { plannedRefs, type ModePlan } from "./plan.ts";
 export function planMonitor(params: any): ModePlan {
 	if (!params.monitor) return { waves: [], opening: [] };
 	const spec = params.monitor ?? {};
-	const reactor = plannedRefs([spec.reactor?.agent ? spec.reactor : { agent: "analyst" }]);
+	const reactor = plannedRefs([monitorRoles(params).reactor]);
 	return { waves: [{ refs: reactor, guarded: false, contracts: "own" }], opening: [] };
 }
 
@@ -142,7 +153,7 @@ export async function handleMonitor(deps: ModeDeps): Promise<ModeOutput> {
 		scope: { key: TRIGGER_KEY },
 	});
 	if (prepared.error) return settle.refuse(prepared.error);
-	const reactor: FlowAgentRefInput = spec.reactor?.agent ? spec.reactor : { agent: "analyst" };
+	const reactor: FlowAgentRefInput = monitorRoles(params).reactor;
 	const reactTask = [
 		"## Monitor goal",
 		params.task ?? "Diagnose and respond to the triggered event.",

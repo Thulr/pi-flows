@@ -6,6 +6,17 @@ import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, t
 import { maxRunDuration, plannedRefs, runDuration, withinFanoutCap, type ModePlan } from "./plan.ts";
 
 /**
+ * Debate's adjudicator, resolved once (CONTEXT.md: Mirror). The declaration below and the handler both read it here, so which agent adjudicates — and the default when the caller names none — is stated once rather than in two places kept in agreement by hand.
+ */
+export const DEBATE_ADJUDICATOR_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "analyst" });
+
+/** Debate's roles for one call: the caller's adjudicator where it names an agent, else the shared default. */
+export function debateRoles(params: any): { adjudicator: FlowAgentRefInput } {
+	const spec = params?.debate ?? {};
+	return { adjudicator: spec.adjudicator?.agent ? spec.adjudicator : DEBATE_ADJUDICATOR_DEFAULT };
+}
+
+/**
  * Debate's plan: the advocate wave (repeated per round at runtime; the roles
  * are declared once), then the adjudicator with the handler's analyst
  * default. The advocate wave is guarded unless the panel is over the cap,
@@ -17,7 +28,7 @@ export function planDebate(params: any): ModePlan {
 	const spec = params.debate ?? {};
 	const participants = plannedRefs(spec.participants);
 	const guarded = withinFanoutCap(spec.participants);
-	const adjudicator = plannedRefs([spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" }]);
+	const adjudicator = plannedRefs([debateRoles(params).adjudicator]);
 	return {
 		waves: [
 			{ refs: participants, guarded, contracts: "resolved" },
@@ -122,7 +133,7 @@ export async function handleDebate(deps: ModeDeps): Promise<ModeOutput> {
 		consumedAdvocateKeys = roundWave.consumptions.flatMap((handoff) => handoff?.dependencyKey ? [handoff.dependencyKey] : []);
 	}
 
-	const adjudicator: FlowAgentRefInput = spec.adjudicator?.agent ? spec.adjudicator : { agent: "analyst" };
+	const adjudicator: FlowAgentRefInput = debateRoles(params).adjudicator;
 	const finalTranscript = priorArguments.map((argument, index) => `### Advocate ${index + 1}\n\n${argument}`).join("\n\n---\n\n");
 	const adjudicationTask = [
 		"## Decision question and constraints",

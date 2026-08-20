@@ -97,4 +97,33 @@ export const SPELLED_ONCE = [
     pattern: /\{\s*state:\s*"(?:succeeded|failed|stranded)"/g,
     allowed: { "modes/orchestrate-board.ts": 4 },
   },
+  {
+    concept: "mode role default ref",
+    home: "each mode's role-defaults constant, read by its plan and its handler",
+    // #170: which agent fills a role when the caller names none was written
+    // twice per mode — once in the plan declaration and once in the handler,
+    // 50+ lines apart (search.ts had three such pairs, orchestrate three,
+    // evaluate two). That is CONTEXT.md's Mirror: the declared topology and
+    // the dispatched one deriving one rule separately. Each mode now names its
+    // defaults once and both readers resolve through that constant, so the
+    // allowance is exactly the number of roles each mode defaults. The literal
+    // is anchored to a quoted agent name, so a ref built from a variable
+    // (vote replicating `{ agent: spec.agent }`) is a different concept and
+    // stays silent; a default spelled with a computed name would evade, as
+    // would one naming an agent outside `[a-z]+` — a hyphenated, capitalised,
+    // or digit-bearing name. Every bundled agent is a lowercase word, so the
+    // charset holds today; a mode defaulting to `code-review` would need it
+    // widened. A tripwire catches the honest regression, not an adversary.
+    pattern: /\{\s*agent:\s*"[a-z]+"/g,
+    allowed: {
+      "modes/search.ts": 3,
+      "modes/orchestrate-call.ts": 3,
+      "modes/evaluate.ts": 2,
+      "modes/route.ts": 1,
+      "modes/dossier.ts": 1,
+      "modes/debate.ts": 1,
+      "modes/monitor.ts": 1,
+      "modes/worktree.ts": 1,
+    },
+  },
 ];

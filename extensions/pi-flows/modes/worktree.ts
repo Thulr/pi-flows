@@ -11,6 +11,22 @@ import { dispatchIntegrationPlan, dispatchIntegrationWave, integrationRunPlan, t
 import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.ts";
 
 /**
+ * Worktree's integrator, resolved once (CONTEXT.md: Mirror). The declaration
+ * below and the handler both read it here, so which agent merges the worker
+ * branches — and the default when the caller names none — is stated once
+ * rather than in two places kept in agreement by hand. The handler adds the
+ * integration checkout's cwd, which is a dispatch fact the declaration has no
+ * business knowing: the worktree does not exist until the flow creates it.
+ */
+export const WORKTREE_INTEGRATOR_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "operator" });
+
+/** Worktree's roles for one call: the caller's integrator where it names an agent, else the shared default. */
+export function worktreeRoles(params: any): { integrator: FlowAgentRefInput } {
+	const spec = params?.worktree ?? {};
+	return { integrator: spec.integrator?.agent ? spec.integrator : WORKTREE_INTEGRATOR_DEFAULT };
+}
+
+/**
  * Worktree's plan: the concurrent writer wave — never guarded, because each
  * writer gets its own worktree by construction — then the integrator. No
  * opening is statically certain: a dirty source repository is refused with
@@ -20,7 +36,7 @@ import { fanoutThenTailCriticalPath, plannedRefs, type ModePlan } from "./plan.t
 export function planWorktree(params: any): ModePlan {
 	if (!params.worktree) return { waves: [], opening: [] };
 	const spec = params.worktree ?? {};
-	const integrator = plannedRefs([spec.integrator?.agent ? spec.integrator : { agent: "operator" }]);
+	const integrator = plannedRefs([worktreeRoles(params).integrator]);
 	return {
 		waves: [
 			{ refs: plannedRefs(spec.tasks), guarded: false, contracts: "own" },
@@ -256,7 +272,7 @@ export async function handleWorktree(deps: ModeDeps): Promise<ModeOutput> {
 		// registered once so a refusal added later cannot lose the pointer.
 		settle.decorateFooter(() => `\n\nIntegration branch: \`${integrationBranch}\``);
 
-		const integrator: FlowAgentRefInput = { ...(spec.integrator?.agent ? spec.integrator : { agent: "operator" }), cwd: integrationCwd };
+		const integrator: FlowAgentRefInput = { ...worktreeRoles(params).integrator, cwd: integrationCwd };
 		const integratedWorkers: WorkerWorktree[] = [];
 		// The resolver edits the merge state of everything already integrated, not
 		// only the branch coming in — and its prompt carries every one of those
