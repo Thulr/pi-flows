@@ -109,15 +109,35 @@ jobs:
             fi
             echo "npm already has $ver from this commit; skipping publish."
           else
+            # A dist-tag lookup that fails for any reason other than the
+            # package not existing (E404, the first release ever) refuses the
+            # publish: treating a transient registry error as "no latest"
+            # would publish unqualified and move latest backwards.
+            if latest="$(npm view pi-flows dist-tags.latest 2>&1)"; then :; else
+              if printf '%s\n' "$latest" | grep -q 'E404'; then
+                latest=""
+              else
+                echo "::error::Could not read dist-tags.latest from npm: $latest"
+                exit 1
+              fi
+            fi
             # A prerelease never takes latest, newer or not. Otherwise compare
             # with semver, not sort -V: version sort ranks 1.0.0-beta.1 above
             # 1.0.0, which would let a recovered prerelease reset latest.
-            latest="$(npm view pi-flows dist-tags.latest 2> /dev/null || true)"
             case "$ver" in
               *-*)
                 # An older recovered prerelease must not move next backwards
                 # either; it lands on recovered like an older stable would.
-                nexttag="$(npm view pi-flows dist-tags.next 2> /dev/null || true)"
+                # An absent next tag is exit 0 with empty output; a failed
+                # lookup refuses like the latest lookup above.
+                if nexttag="$(npm view pi-flows dist-tags.next 2>&1)"; then :; else
+                  if printf '%s\n' "$nexttag" | grep -q 'E404'; then
+                    nexttag=""
+                  else
+                    echo "::error::Could not read dist-tags.next from npm: $nexttag"
+                    exit 1
+                  fi
+                fi
                 if [ -n "$nexttag" ] && [ "$(npx --yes semver@7.7.2 "$nexttag" "$ver" | tail -n 1)" != "$ver" ]; then
                   echo "$ver is older than the published next ($nexttag); publishing under the recovered dist-tag."
                   npm publish --tag recovered
