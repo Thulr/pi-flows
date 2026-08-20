@@ -77,7 +77,12 @@ follows the normal pi docs. Then retry a small single-agent task.
 ### Invalid agent files
 
 `/flows status` and `flow showConfig:true` report invalid frontmatter. The same
-surfaces report invalid preset frontmatter and non-JSON preset bodies.
+surfaces report invalid preset frontmatter and non-JSON preset bodies. Discovery
+warnings carry their own codes, separate from the error catalog below:
+`AGENT_FRONTMATTER_INVALID`, `AGENT_THINKING_INVALID`, `AGENT_NAME_SHADOWED`,
+`AGENT_DIR_UNREADABLE`, `AGENT_FILE_UNREADABLE`, and a matching `PRESET_*`
+family. A discovery warning skips the one bad file and never blocks the
+other agents.
 
 Valid minimal agent:
 
@@ -92,8 +97,9 @@ Prompt body.
 
 ## Error codes
 
-The codes are listed in source order and match the `FlowErrorCode` union in
-`extensions/pi-flows/index.ts`. CI makes sure that this list stays in sync.
+The codes match the `FlowErrorCode` union in `extensions/pi-flows/types.ts`,
+grouped here by theme. CI makes sure that this list stays complete in both
+directions.
 
 ### `UNKNOWN_AGENT`
 
@@ -203,9 +209,9 @@ Update any preset template or script that still uses the retired key.
 Cause: an agent scope other than `user`, `project`, or `all` was requested.
 
 Fix: use one of `user`, `project`, or `all`. Both the `/flows <scope>` argument
-parser and the `flow` tool's `agentScope` schema reject unknown scopes. Thus
-this error usually shows as a direct "Unknown scope" message before a typed
-error is produced.
+parser and the `flow` tool's `agentScope` schema reject unknown scopes first.
+Thus in practice you see a direct message such as `Unknown /flows status scope
+"x". Valid scopes: user, project, all.` before this typed error is produced.
 
 ### `INVALID_CONCURRENCY`
 

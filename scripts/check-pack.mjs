@@ -426,5 +426,12 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // lines against the 500-line cap, so it could not absorb them. File set
 // 118 -> 119; still none from tests/, scripts/, or evals/. Measured 1_477_215
 // (`npm run pack:dry-run` on this tree).
-assert.ok(pack.unpackedSize < 1_484_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_495_000 for the user-docs accuracy pass: the examples cookbook
+// now covers every mode (new preset, graph, loop, and search examples plus a
+// PARAM_RENAMED error case), and the flow reference gains the facts an audit
+// found missing (FLOW_DEPTH_EXCEEDED, /flows models, the role param, details
+// fields, per-mode ranges). File set stays 119; still none from tests/,
+// scripts/, or evals/. Measured 1_488_640 (`npm run pack:dry-run` on this
+// tree).
+assert.ok(pack.unpackedSize < 1_495_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

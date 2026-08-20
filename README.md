@@ -109,7 +109,7 @@ pi runs this as an [evaluate loop](./docs/reference/flow-reference.md#evaluate-m
 ## What it adds
 
 - The `flow` tool: fifteen delegation modes behind one interface, from `single` through `monitor`. Every task and agent-reference role accepts an optional machine-checked [delegation contract](./docs/reference/flow-reference.md#return-requirements-delegation-contracts-and-write-isolation). With a contract, the child's Return must validate — contract attribution, artifact digests, and return-schema conformance — before coordination can act on it. Without one, the child returns an ordinary Result: the child's own account, with no machine contract assurance.
-- The `/flows` command and [live TUI monitoring](./docs/reference/flow-reference.md#live-tui-monitoring): a live tool row, `/flows inspect`, and a durable flow card. Every configured cost or token ceiling is disclosed, with its authority, before work starts.
+- The `/flows` command and [live TUI monitoring](./docs/reference/flow-reference.md#live-tui-monitoring): a live tool row, `/flows inspect`, `/flows models` (what each tier resolves to on your install), and a durable flow card. Every configured cost or token ceiling is disclosed, with its authority, before work starts.
 - Nine bundled agents in [`agents/`](./agents/) and three workflow presets in [`presets/`](./presets/).
 - Your own agents and presets, with no code required: one markdown file each, user-scoped or project-scoped. Project files are trust-gated, and shadowing shows visible diagnostics. See [Custom agents](./docs/how-to/custom-agents.md).
 
@@ -117,7 +117,7 @@ pi runs this as an [evaluate loop](./docs/reference/flow-reference.md#evaluate-m
 
 Each call uses exactly one mode. `{"list": true}` and `{"showConfig": true}` answer without spawning a child. Every spawning call also requires `"why"`: one sentence that names the reason delegation beats direct execution.
 
-Raw parallel fan-out also requires deliberate model sizing before spend. Set `tier` or `model` on every task, or set one flow-wide `tier` or `model` to state that uniform sizing is deliberate. If the work has mixed complexity, use per-task `fast`, `capable`, or `deep` tiers.
+Raw parallel fan-out also requires deliberate model sizing before spend. Set `tier` or `model` on every task, or set one flow-wide `tier` or `model` to state that uniform sizing is deliberate. If the work has mixed complexity, use per-task `fast`, `capable`, or `deep` tiers. `thinking` is a separate dial (`off` through `max`): it sets how hard a child thinks, independent of which model it runs.
 
 | Mode | What it runs |
 |---|---|
@@ -127,7 +127,7 @@ Raw parallel fan-out also requires deliberate model sizing before spend. Set `ti
 | [Vote](./docs/reference/flow-reference.md#vote-mode-parallelization--voting) | The same task across independent voters, merged by an optional aggregator. |
 | [Route](./docs/reference/flow-reference.md#route-mode-classify--dispatch) | A classifier picks one candidate agent — or falls back instead of forcing a guess. |
 | [Orchestrate](./docs/reference/flow-reference.md#orchestrate-mode-decompose--review--fan-out--synthesize) | Decompose → optional Decomposition review → workers → synthesis, with an optional outcome verifier and one bounded mid-flow replan for stranded or unaffordable remaining work. |
-| [Graph](./docs/reference/flow-reference.md#graph-mode-static-dag) | A bounded static DAG run wave by wave with `{node.id}` handoffs. |
+| [Graph](./docs/reference/flow-reference.md#graph-mode-static-dag) | A bounded static DAG run wave by wave with `{node.<id>}` handoffs. |
 | [Loop](./docs/reference/flow-reference.md#loop-mode-generic-bounded-loop) | Repeat a body agent until `LOOP: DONE`, a judge's `VERDICT: PASS`, or the iteration cap. |
 | [Search](./docs/reference/flow-reference.md#search-mode-bounded-beam-search) | Bounded beam search: generate candidates, score `0..100`, keep the beam, debrief the winner. |
 | [Workflow](./docs/reference/flow-reference.md#workflow-mode-gated-resumable-phases) | Gated, resumable phases with persisted state and single-use [approval receipts](./docs/reference/flow-reference.md#approval-receipts). |
@@ -173,7 +173,7 @@ To hack on pi-flows or try unreleased `main`, work from a checkout:
 git clone https://github.com/Thulr/pi-flows
 cd pi-flows
 npm ci
-npm run check       # build + test this package (does not require pi)
+npm run check       # typecheck, test, and validate this package (does not require pi)
 npm run preflight   # make sure that the pi CLI is on PATH and meets the version floor
 ```
 

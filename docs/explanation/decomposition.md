@@ -6,7 +6,7 @@ This page explains what a Decomposition is, what the flow checks in one, and wha
 
 A **Decomposition** is the breakdown a `commander` returns for a goal: the subtasks, plus any dependency edges between them. A flat list of subtask strings is a Decomposition with no edges. An array of subtask objects is the structured shape, which can declare edges. This page does not call either shape a "plan". In pi-flows a plan is the set of waves a mode declares before it spawns anything, and the `commander` writes no plan.
 
-The `commander` writes the Decomposition, so it arrives as model output. That output then decides how many children spawn, in what order, and in which working directory. The flow therefore treats it the same way it treats any other untrusted input to a spawn decision. It validates the Decomposition once, after the `commander` settles and before the first worker starts.
+The `commander` writes the Decomposition, so it arrives as model output. That output then decides how many children spawn, in what order, and in which working directory. The flow therefore treats it the same way it treats any other untrusted input to a spawn decision. It validates every Decomposition a `commander` returns — the initial one, each review-loop replacement, and the mid-flow replacement — after that `commander` Run settles and before any worker it names starts.
 
 ## Why the check is deterministic only
 
@@ -19,8 +19,11 @@ The price is a narrow set of defects. The check finds only the defects that make
 - a missing id or objective, and a duplicate id
 - an id outside the permitted characters
 - an edge to a subtask that does not exist, and a dependency loop
+- a malformed `dependsOn` or `effortWeight`
+- a subtask that names its own `agent`
 - a size above the cap
 - a shared-write topology that no wave schedule could admit
+- a mid-flow replacement that redefines a subtask that already succeeded
 
 Each of these defects has one correct answer. A reader does not need the goal to find that answer.
 
@@ -38,7 +41,15 @@ A Decomposition can be structurally perfect and still be a bad breakdown of the 
 
 The flow does not refuse any of these. To decide whether a Decomposition covers a goal, a reader must understand the goal. That is a judgment, not a rule, and a deterministic gate that guesses at it would refuse good decompositions. A false refusal here is expensive: it discards a settled `commander` run and returns nothing.
 
-The deterministic validator therefore leaves these judgments open. Calls without `orchestrate.review` keep the original behavior and start workers after structural admission.
+The deterministic validator therefore leaves these judgments open. Calls without `orchestrate.review` start workers after two deterministic gates: structural admission, then the budget headroom projection below.
+
+## Why the budget projection can refuse an admitted Decomposition
+
+A structurally admitted Decomposition still has to fit the remaining budget. Each subtask can carry an `effortWeight`, an integer from 1 to 5. An absent weight counts as 1. The `commander` writes the weight, so it is a relative claim about effort, not a price.
+
+The flow projects the total spend: the spend so far, plus the remaining weight times the observed spend per unit of weight. Before any worker settles, the observation is the `commander`'s own settled spend. Between waves, it is the settled workers' spend. The projection runs against every configured ceiling — the flow budget and the worker role's contract budget. A Decomposition whose projection crosses a ceiling is refused (`BUDGET_HEADROOM_EXCEEDED`) before any worker spends against it. Work that exactly fits is admitted.
+
+The refusal timing is the point. A ceiling hit in the middle of a fan-out spends the remaining budget on workers whose merged answer can never complete. A refusal before the first worker returns the same decision to the caller — raise the ceiling or narrow the goal — while the budget is still intact. When review is enabled, this projection runs before the reviewer on every attempt, so a reviewer never spends a Run judging work the budget already rules out. When the one mid-flow replan remains, a between-wave refusal routes to the `commander` instead of refusing the flow.
 
 ## Why Decomposition review is optional
 
@@ -48,7 +59,7 @@ This judgment costs another child Run and can vary between model calls. The call
 
 The reviewer sees the normalized Decomposition, not raw commander prose. Thus it judges the same fields that worker dispatch can use.
 
-A REVISE verdict starts a new commander Run when another attempt remains. The commander returns one complete replacement Decomposition.
+A REVISE verdict starts a new commander Run when another attempt remains. The commander returns one complete replacement Decomposition. An unparseable reviewer verdict counts as REVISE, so a flaky reviewer cannot false-pass.
 
 The flow does not patch a replacement. A patch can invent ids or edges that neither child returned.
 
@@ -78,6 +89,8 @@ This asymmetry follows from the edges. A flat list states no relations, so the f
 
 A subtask runs after every subtask it depends on has succeeded. If a dependency fails, its dependents are **stranded**: they never start.
 
+A dependency failure is not the only cause. A spent budget strands the whole remainder before the next wave starts, and a failed replan strands the remainder it could not replace. The manifest names the blocking subtask in the first case and the reason in the other two.
+
 Stranding is a containment rule, not a repair. The flow does not retry the failed subtask, and it does not run the dependents without the input they declared they need. Findings built on missing evidence are worse than absent findings. They read the same as complete ones.
 
 That is also why the `debrief` prompt receives the "Subtasks not completed" manifest by name. A merged answer that quietly omits a failed subtask looks like a full answer to the goal. The manifest makes the missing work visible to the synthesizer, and the flow header repeats the counts to the caller. Read a synthesized answer with the header beside it: a run with stranded subtasks answers less of the goal than its text suggests.
@@ -95,7 +108,7 @@ The dependency edge means the same thing in both: the dependent unit runs later,
 
 ## The one mid-flow replan
 
-Post-dispatch replanning exists, and it is bounded ([issue #165](https://github.com/Thulr/pi-flows/issues/165)). The flow can revise the Decomposition once, for the work that has not run. Two conditions trigger it. A failure leaves every remaining subtask unreachable. Or the between-wave budget projection refuses the remainder. The `commander` returns one complete replacement for the remainder. The replacement passes the same validation as the initial Decomposition. See [Mid-flow replan](../reference/flow-reference.md#mid-flow-replan) for the rules.
+Post-dispatch replanning exists, and it is bounded ([issue #165](https://github.com/Thulr/pi-flows/issues/165)). The flow can revise the Decomposition once, for the work that has not run. Two conditions trigger it. A failure leaves every remaining subtask unreachable. Or the between-wave budget projection refuses the remainder. The `commander` returns one complete replacement for the remainder. The replacement passes the same validation as the initial Decomposition, plus two revision rules: it may depend on a succeeded id but must not redefine one, and it must fit the projected headroom. `orchestrate.replan:false` disables the replan and restores strand-and-report. See [Mid-flow replan](../reference/flow-reference.md#mid-flow-replan) for the rules.
 
 The bound is deliberate. One replan can rescue a stranded remainder. A replanning loop would spend the budget on planning instead of work. So a replacement that fails any check strands and reports, as before. There is no replan of a replan.
 

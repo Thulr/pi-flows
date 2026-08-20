@@ -171,7 +171,7 @@ the parent context.
 | `why` | (required to spawn) | One sentence that justifies delegation over direct parent execution. Required for every spawning mode. `list`/`showConfig` never need it. Missing/empty ⇒ `WHY_REQUIRED`. |
 | `agentScope` | `user` | Applies to both presets and agents: `user` = package + user, `project` = package + project, `all` = all three sources. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project presets/agents unless this is explicitly `false` after review. |
-| `concurrency` | `4` | Concurrent fan-out, including parallel, vote, orchestrate, worktree, debate, and dossier. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
+| `concurrency` | `4` | Concurrent fan-out. Every mode's wave dispatch shares one pool: parallel tasks, voters, orchestrate and graph waves, evaluate critic panels, search candidates and scorers, worktree writers, debate participants, and dossier sections. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
 | `timeoutMs` | `36000000` | Per child process timeout (10 hours). Independently of it, a child that reports a terminal provider error and then stalls is terminated after a short grace (`PI_FLOWS_ERROR_GRACE_MS`, default 30000ms) with `CHILD_PROVIDER_ERROR`. |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
@@ -184,18 +184,19 @@ the parent context.
 | `traceStrict` | `false` | Require complete trace evidence. A missing `traceFile`, dropped spans, failed writes, or an export that is complete but does not read back as a span tree fail the call with `TRACE_INCOMPLETE`. For evaluation/release gates. Ordinary flows keep best-effort tracing. Also settable via `PI_FLOWS_TRACE_STRICT`. |
 | `handoffPolicy` | `warn` | Call-level injection handling at inter-agent boundaries: `warn` preserves the flagged payload with a warning, `quarantine` substitutes a payload-free marker, and `fail` returns `HANDOFF_POLICY_VIOLATION` before the recipient spawns. |
 | `modeHandoffPolicy` | (none) | Per-mode minimums, for example `{"workflow":"fail"}`. The effective policy is the stricter of this mode requirement and `handoffPolicy`. A call cannot downgrade a high-consequence mode. |
-| `returnRequirements` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. |
+| `returnRequirements` | (none) | Prose return requirements appended to delegated worker/generator/synthesis tasks. Use it to require a shape, fields, max length, or evidence format. It is prompt-enforced, not a machine-checked delegation contract. The retired `returnContract` and `workerReturnContract` spellings are refused with `PARAM_RENAMED` anywhere in the params tree. |
 | `requireEvidence` | `false` | Appends an evidence requirement to delegated prompts: load-bearing claims need file:line refs, command output, citations, or explicit gaps. |
 | `contract` | (none) | Optional machine-checked delegation contract. It can replace `task` in single/evaluate or be a documented `resolved`-role fallback. Every task/role contract resolves before that Child spawns and requires a validated `pi-flows.return-envelope.v1`. Supplying one proves contract attribution, declared artifact integrity, and return-schema conformance — never that the Return's claims are true or that `acceptanceChecks` were satisfied. Without one, the child returns an ordinary Result. Role contracts override fallbacks. |
 | `incompleteHandoffPolicy` | `fail` | Integration modes reject `partial`/`blocked` return envelopes by default. Set `"include"` only as an explicit decision to synthesize while preserving incomplete status and provenance in the returned handoffs/header. |
 | `allowSharedWriteCwd` | `false` | By default, concurrent write-capable agents must not share one `cwd`. Set `true` only when shared writes are intentional. |
 | `checkpoint` | (none) | Optional human checkpoint. `checkpoint.before:"spawn"` asks before any child runs. `"finalize"` asks after child work, before the final answer returns. Headless contexts fail closed. |
-| `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. |
+| `reflexion` | disabled | Optional local cross-run lessons. `reflexion.enabled:true` reads/appends recent lessons from `.pi/flow-reflections.jsonl` by default. `reflexion.file` overrides the path. `reflexion.maxEntries` caps the lessons read (default `5`, max `20`). |
 | `model` | agent/default | Flow-wide exact-model fallback. A task, phase, participant, or role-level `model` overrides it. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Prefer `tier` unless the user named a concrete model. |
-| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves and forces the default model, even on a `fast`/`deep` agent. A `fast`/`deep` tier the roster cannot resolve falls through to the agent's own pin. |
+| `tier` | agent/default | Flow-wide capability-tier fallback (`fast`, `capable`, `deep`), overridable per task/phase/role. On raw multi-task parallel calls, setting it explicitly acknowledges intentional uniform sizing. Resolves against the [model roster](#the-model-roster) derived from the models this install can run, so it works with no configuration. A call-level `tier:"capable"` always resolves and forces the session's model, even on a `fast`/`deep` agent. A `fast`/`deep` tier the roster cannot resolve falls through to the agent's own pin. |
 | `thinking` | agent/tier | Flow-wide thinking-level fallback (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`), overridable per task/phase/role. Independent of `tier`: sets effort without changing which model runs. Lowered automatically to what the resolved model supports, and a child with no level named anywhere leaves pi's own default alone. |
 | `tools` | agent/default | Comma-separated tools, `none`, or `default`. `bash-ro` grants bash under a child-enforced read-only allowlist (see [write isolation](#return-requirements-delegation-contracts-and-write-isolation)). A toolset carrying both `bash` and `bash-ro` resolves to plain `bash`. |
 | `cwd` | parent cwd | Child process working directory. |
+| `role` | (none) | On a task or role reference: the human-readable topology slot this agent fills, such as `standards` or `spec` in the `code-review` preset. Displayed and traced separately from the agent profile. |
 
 ### The model roster
 
@@ -232,10 +233,15 @@ outer ceiling never sees a nested flow's spend. That nested flow is bounded only
 by the ceilings its own call sets — with none set, it runs uncapped, which is
 the default.
 
+Nesting itself is depth-capped. Each child spawns with an incremented
+`PI_FLOWS_DEPTH`, and a flow call at or beyond `MAX_FLOW_DEPTH` (`2`) is refused
+with `FLOW_DEPTH_EXCEEDED`.
+
 The fan-out ceiling `maxParallelTasks` (`8`) is a fixed internal cap on `tasks`,
-voters, subtasks, worktree writers, debate participants, and dossier sections.
+voters, worktree writers, debate participants, and dossier sections.
 It is not a per-call input. The runtime enforces it and surfaces it read-only in
-`details.config`.
+`details.config`. Orchestrate subtasks are capped separately by
+`orchestrate.maxSubtasks`, a per-call input of `1..16` that defaults to `8`.
 
 ### Handoff injection policy
 
@@ -287,7 +293,7 @@ Expansion keeps redacted/capped detail, or withholds prose under `recordContent:
 
 ### Trace export (observability)
 
-Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`. Root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. `flow.thinking_level` is the level passed to the child, after clamping to its model. Its pair `flow.thinking_level_verified` states whether the clamp was applied. It is `false` for a child that names no model: pi-flows cannot read that child's configured default, and pi can lower the level internally, so treat the value as requested rather than effective. When `traceContext` is supplied, redacted `flow.run_id`, `flow.case_id`, `flow.trial_id`, `flow.trial_index`, and `flow.arm` values are copied to every span. `details.trace` reports health and the exact trace/root identifiers, and redacts and bounds the displayed trace path, context, and write error. The trace and root-span ids are derived stably from `traceContext` and the mode — that derivation is the eval linkage. Two calls that share both, such as a traced pre-spawn refusal and the retry after it, share the same ids. Every row therefore also carries `flow.invocation_id`, a random per-call discriminator returned as `details.trace.invocationId`. Both the strict read-back and the trace report judge each invocation only on its own rows. Export is best-effort and never fails a flow.
+Set `traceFile` (or `PI_FLOWS_TRACE_FILE`) to write one append-only JSON span per delegated child, plus a root span for the whole flow call. Child spans carry per-run `flow.duration_ms`. Root spans carry distinct `flow.elapsed_time_ms` (end-to-end wall clock), `flow.worker_time_ms` (sum of completed child runtimes), and, when the mode topology is known, `flow.critical_path_ms`. `flow.critical_path_available:false` means the runtime did not have enough dependency data and did not fabricate a value. Other OpenInference-style attributes include `flow.mode`, `flow.agent`, `llm.model_name`, `llm.token_count.*`, `flow.cost_usd`, status, and (when `recordContent` is on) redacted `input.value` / `output.value`. `flow.thinking_level` is the level passed to the child, after clamping to its model. Its pair `flow.thinking_level_verified` states whether the clamp was applied. It is `false` for a child that names no model: pi-flows cannot read that child's configured default, and pi can lower the level internally, so treat the value as requested rather than effective. When `traceContext` is supplied, redacted `flow.run_id`, `flow.case_id`, `flow.trial_id`, `flow.trial_index`, `flow.arm`, and `flow.attempt` values are copied to every span. `details.trace` reports health and the exact trace/root identifiers, and redacts and bounds the displayed trace path, context, and write error. The trace and root-span ids are derived stably from `traceContext` and the mode — that derivation is the eval linkage. Two calls that share both, such as a traced pre-spawn refusal and the retry after it, share the same ids. Every row therefore also carries `flow.invocation_id`, a random per-call discriminator returned as `details.trace.invocationId`. Both the strict read-back and the trace report judge each invocation only on its own rows. Export is best-effort and never fails a flow.
 
 #### Span topology
 
@@ -353,9 +359,11 @@ outcome success** exists only when an independent verifier assessed the
 outcome (see the trace report above).
 
 `returnRequirements` and `requireEvidence` supply prose **return requirements** that
-prevent summary loss at handoff boundaries. They are appended to child tasks in `single`, `parallel`, `chain`,
-`evaluate`, `vote`, `route`, and to `orchestrate` workers/synthesis. Workflow
-phases, worktree tasks, and dossier sections accept task-level return requirements.
+prevent summary loss at handoff boundaries. Every mode appends them to its delegated
+tasks: `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `loop`, `search`,
+`debate` participants and adjudicator, `orchestrate` workers/synthesis, and each
+mode's debrief. Workflow phases, worktree tasks, graph nodes, and dossier sections
+accept task-level return requirements.
 Those override the top-level return requirements. Dossier sections and worktree tasks require
 evidence by default. `orchestrate.workerReturnRequirements` can set a worker-specific
 set of return requirements while the top-level `returnRequirements` still applies to synthesis.
@@ -583,7 +591,7 @@ Two reliability levers beyond the single LLM critic:
 |---|---|---|
 | `evaluate.operator` | `{ agent: "operator" }` | Builds the artifact. Its optional `contract` overrides the top-level contract. `task` can supply the goal when top-level `task` is omitted. |
 | `evaluate.redteam` | `{ agent: "redteam" }` | One critic or an array. Each accepts its own `contract` (no top-level fallback). Contracted verdicts come from `data.verdict`. With a panel, `PASS` needs every critic to pass. |
-| `evaluate.checkCommand` | (none) | Deterministic gate: a shell command that must exit `0` each round. Non-zero → forced `REVISE`. Non-runnable → `CHECK_COMMAND_FAILED`. |
+| `evaluate.checkCommand` | (none) | Deterministic gate: a shell command that must exit `0` each round. Non-zero → forced `REVISE`. Non-runnable → `CHECK_COMMAND_FAILED`. Its wall clock is capped at the flow `timeoutMs` or 5 minutes, whichever is smaller. |
 | `evaluate.maxIterations` | `3` | Integer `1..8`. Hard cap on generate→evaluate rounds. |
 | `evaluate.passContract` | (none) | Explicit acceptance criteria appended to the critic's rubric. Concrete criteria make the verdict reliable. |
 
@@ -656,8 +664,8 @@ Top-level `task` is preferred. `orchestrate.task` is its fallback. Each worker s
 | `orchestrate.task` | (none) | Goal fallback when top-level `task` is omitted. Prefer top-level `task` for new calls. |
 | `orchestrate.commander` | `{ agent: "commander" }` | Returns a JSON subtask array without a contract. Its own contract carries that array as validated envelope `data`. The array holds subtask strings, or subtask objects with `id`, `objective`, and optional `dependsOn` edges. |
 | `orchestrate.review` | (none) | Optional Decomposition-review role. It judges the normalized Decomposition before workers start. Its contract uses validated `data.verdict`. |
-| `orchestrate.reviewMaxIterations` | `2` | Integer `1..4`. Maximum Decomposition-review attempts. Each REVISE starts a new commander Run when another attempt remains. |
-| `orchestrate.reviewCriteria` | (none) | Additional review criteria. These criteria add to the fixed rubric and cannot replace or weaken it. |
+| `orchestrate.reviewMaxIterations` | `2` | Integer `1..4`. Maximum Decomposition-review attempts. Each REVISE starts a new commander Run when another attempt remains. Supplying it without `orchestrate.review` is refused `INVALID_MODE` before any child spawns. |
+| `orchestrate.reviewCriteria` | (none) | Additional review criteria. These criteria add to the fixed rubric and cannot replace or weaken it. Supplying it without `orchestrate.review` is refused `INVALID_MODE` before any child spawns. |
 | `orchestrate.recon` | `{ agent: "recon" }` | Runs one subtask each, with the overall goal or delegation contract included for context. Independent subtasks run in parallel. A subtask with `dependsOn` runs after the subtasks it names succeed, and receives their output. Use `analyst` for deeper per-subtask investigation. |
 | `orchestrate.debrief` | `{ agent: "debrief" }` | Merges the subtask findings into one answer. |
 | `orchestrate.verify` | (none) | Optional critic. Without its own contract, it returns PASS/REVISE prose. With one, validated `data.verdict` controls the decision. |
@@ -884,9 +892,12 @@ complete. Ready nodes in the same dependency wave can run in parallel.
 }
 ```
 
-Each node has `id`, `agent`, `task`, optional `dependsOn`, and the usual
-`model`/`tools`/`cwd` overrides. Node tasks can use `{task}` and dependency
+Each node has `id`, `agent`, `task`, optional `dependsOn`, its own
+`returnRequirements`/`requireEvidence`, and the usual
+`model`/`tier`/`thinking`/`tools`/`cwd` overrides. Node tasks can use `{task}` and dependency
 output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
+A malformed graph is refused `GRAPH_INVALID`; a dependency loop is refused
+`GRAPH_CYCLE`. No node starts.
 
 ## Loop mode (generic bounded loop)
 
@@ -911,7 +922,7 @@ Anything but the exact `LOOP: DONE` marker — `LOOP: COMPLETE`, a negated
 |---|---|---|
 | `loop.body` | (required) | Iteration agent. Accepts its own `contract`. Without a judge, contracted `data.loop` controls DONE/CONTINUE. |
 | `loop.judge` | (none) | Optional critic with its own `contract`. Contracted `data.verdict` controls PASS/REVISE. |
-| `loop.maxIterations` | `3` | Bounded iteration cap. |
+| `loop.maxIterations` | `3` | Bounded iteration cap. Integer `1..8`. |
 
 If the loop reaches `maxIterations` without a stop signal, pi-flows returns
 `LOOP_DID_NOT_CONVERGE` with the last output/critique.
@@ -943,11 +954,13 @@ the winner. An out-of-range or unparseable score leaves the candidate unscored
 | `search.generator` | `{ agent: "strategist" }` | Accepts its own `contract`. Every successful Return validates before it reaches a scorer. |
 | `search.scorer` | `{ agent: "redteam", tools: "none" }` | Accepts its own `contract`. Contracted scores come from validated `data.score`. |
 | `search.debrief` | `{ agent: "debrief" }` | Finalizer with its own contract. Its terminal Return validates before the mode reports success. |
-| `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation, retained beam, and refinement rounds. |
+| `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation (`1..8`), retained beam (`1..8`), and refinement rounds (`1..4`). |
 
 Use `search` when several plausible plans or artifacts must be explored and
 ranked before synthesis. It is intentionally bounded by candidate count, beam
-width, rounds, concurrency, timeout, and cost/token ceilings.
+width, rounds, concurrency, timeout, and cost/token ceilings. When every
+generator fails, or scoring keeps no usable candidate, the call fails with
+`SEARCH_NO_CANDIDATES`.
 
 If `scorer` is omitted, it defaults to `redteam` with `tools:"none"` so
 parallel scoring cannot mutate the workspace.
@@ -1101,7 +1114,9 @@ root span (`flow.approval_receipt_ids`, `flow.approval_receipt_count`,
 `flow.approval_consumed_count`, `flow.approval_blocked`) as identifiers and
 status only. The effective conditions, including the prompt digest, participate
 in the binding digest but are not persisted as receipt fields. Raw prompt text
-is never placed in workflow state. Set
+is never placed in workflow state. Inside the binding record, prose return
+requirements keep the pre-rename `returnContract` key: the key is
+canonical-digest input, so renaming it would stale every issued receipt. Set
 `PI_FLOWS_APPROVAL_ACTOR` to label the approving actor. It is an audit
 attribution, not an authenticated identity.
 
@@ -1325,6 +1340,10 @@ lesson-augmented.
 - `agents`: discovered agent summaries.
 - `discoveryIssues`: invalid frontmatter, unreadable files, or shadowed names.
 - `results`: redacted child summaries with usage, duration, stderr, optional validated `envelope`, and structured error. A result another role consumed also carries its provenance-bearing `handoff`. A terminal result does not. Provider errors add sanitized classification/diagnostic, termination path, known context window, and thinking-level verification. Prior runs retain usage/cost.
+- `budgetCeilings`: the static configured ceilings, delegation-contract budgets included, as disclosed before work started. The durable card persists them.
+- `trace`: trace health plus the exact trace/root-span identifiers and `invocationId` when `traceFile` is set.
+- `approvals`: approval receipts this run issued or spent — identifiers and status only, never the approved parameter values.
+- `error`: the structured error (below) when the flow failed.
 
 ## Structured errors
 
@@ -1356,6 +1375,8 @@ covers every code the tool can return, so it never drifts from the source.
 /flows user
 /flows project
 /flows all
+/flows list [user|project|all]
+/flows models
 /flows help
 /flows version
 /flows status
