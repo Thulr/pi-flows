@@ -1,8 +1,9 @@
 # Release checklist
 
 Releases publish to npm from CI. `main` is the release snapshot: day-to-day
-work merges into `develop`, and a `develop` → `main` PR is the release. Merging
-it runs [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml).
+work merges into `develop`, and a `develop` → `main` PR is the release. It
+lands as a fast-forward push of the evaluated commit (step 8 below), which
+runs [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml).
 A release is three artifacts: the npm version, the `v<version>` tag, and the
 GitHub Release. When any of the three is missing for the `package.json`
 version, the workflow releases. It runs `npm run check` first. It then creates
@@ -88,8 +89,7 @@ creates.
    `develop` → `main`.
 7. Check out the release PR's head commit. Run the release evaluation and
    decision against that exact commit in one command. An `approved` decision is
-   required before you merge. Because only release PRs reach `main`, the PR
-   head's tree is the tree the merge publishes:
+   required before the release lands:
 
    ```bash
    npm run eval:release -- --run --run-id="release-<version>" --attest-hard-blockers
@@ -103,11 +103,20 @@ creates.
    below are attested. Without the flag, the decision blocks as `not-attested`.
    See [Release evidence and manifest](#release-evidence-and-manifest) for the
    artifact-based mode and the full list of what the gate checks.
-8. Merge the release PR with a merge commit (not a squash), so `develop` stays
-   contained in `main`. The merge triggers the **Publish** workflow: it
-   publishes to npm, pushes the `v<version>` tag, and creates the GitHub
-   Release. Merging is the release act — do not merge before the decision in
-   step 7 is `approved`.
+8. Land the release PR by fast-forwarding `main` to the evaluated commit. Do
+   not use the merge button. A merge or squash commit is a new SHA, and the
+   release gate compares the evaluated commit with the release checkout. The
+   fast-forward publishes the exact commit the decision approved, and GitHub
+   marks the PR merged:
+
+   ```bash
+   git fetch origin
+   git push origin <evaluated-sha>:main
+   ```
+
+   The push triggers the **Publish** workflow: it publishes to npm, pushes the
+   `v<version>` tag, and creates the GitHub Release. The push is the release
+   act — do not push before the decision in step 7 is `approved`.
 9. Make sure that the **Publish** workflow is green, that
    `npm view pi-flows version` shows the new version, that the GitHub Release
    exists with the CHANGELOG notes, and that `pi install npm:pi-flows`
