@@ -431,7 +431,7 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // PARAM_RENAMED error case), and the flow reference gains the facts an audit
 // found missing (FLOW_DEPTH_EXCEEDED, /flows models, the role param, details
 // fields, per-mode ranges). File set stays 119; still none from tests/,
-// scripts/, or evals/. Measured 1_488_757 (`npm run pack:dry-run` on this
+// scripts/, or evals/. Measured 1_489_135 (`npm run pack:dry-run` on this
 // tree).
 assert.ok(pack.unpackedSize < 1_495_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);
