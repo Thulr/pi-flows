@@ -228,3 +228,30 @@ test("a mode's rendered label names the role the flow would actually dispatch", 
 	assert.equal(renderRunModeLabel({ task: "t", evaluate: { operator: { agent: "maker" }, redteam: { agent: "judge" } } }), "evaluate maker->judge");
 	assert.equal(renderRunModeLabel({ task: "t", evaluate: { redteam: [{ agent: "a" }, { agent: "b" }] } }), `evaluate ${EVALUATE_ROLE_DEFAULTS.operator.agent}->2 critics`, "a panel is counted, not named");
 });
+
+test("a label falls back to the role default when the resolved ref names no agent", () => {
+	// The `??`-idiom resolvers hand back the caller's ref untouched, so an
+	// agent-less `{}` survives resolution and reaches dispatch to be refused by
+	// name. A label cannot refuse, so it shows the role's default — the one
+	// question roleLabel answers, and the reason those labels carry a fallback
+	// at all. Pinned per idiom so a resolver contract change cannot quietly
+	// blank a label.
+	assert.equal(renderRunModeLabel({ task: "t", route: { controller: {} } }), `route via ${ROUTE_CONTROLLER_DEFAULT.agent}`);
+	assert.equal(renderRunModeLabel({ task: "t", orchestrate: { recon: {} } }), `orchestrate ->${ORCHESTRATE_ROLE_DEFAULTS.recon.agent}`);
+	assert.equal(renderRunModeLabel({ task: "t", evaluate: { operator: {}, redteam: {} } }), `evaluate ${EVALUATE_ROLE_DEFAULTS.operator.agent}->${EVALUATE_ROLE_DEFAULTS.critic.agent}`);
+
+	// The `?.agent ?` modes never reach the fallback: their resolver already
+	// substituted the default before the label saw the ref.
+	assert.equal(dossierRoles({ dossier: { debrief: {} } }).debrief.agent, DOSSIER_DEBRIEF_DEFAULT.agent);
+});
+
+test("an empty agent name renders empty rather than falling back to the default", () => {
+	// roleLabel falls back with `??`, not `||`, so only a missing name reaches
+	// the default. An empty name renders empty, exactly as each label did
+	// before they were consolidated. That is a display defect worth its own
+	// change; this pins it so switching to `||` is a decision someone makes on
+	// purpose rather than a silent rider on a refactor.
+	assert.equal(renderRunModeLabel({ task: "t", route: { controller: { agent: "" } } }), "route via ");
+	assert.equal(renderRunModeLabel({ task: "t", orchestrate: { recon: { agent: "" } } }), "orchestrate ->");
+	assert.equal(renderRunModeLabel({ task: "t", evaluate: { operator: { agent: "" }, redteam: { agent: "" } } }), "evaluate ->");
+});
