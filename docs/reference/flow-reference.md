@@ -897,8 +897,10 @@ Each node has `id`, `agent`, `task`, optional `dependsOn`, its own
 `returnRequirements`/`requireEvidence`, and the usual
 `model`/`tier`/`thinking`/`tools`/`cwd` overrides. Node tasks can use `{task}` and dependency
 output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
-A malformed graph is refused `GRAPH_INVALID`; a dependency loop is refused
-`GRAPH_CYCLE`. No node starts.
+A malformed graph is refused `GRAPH_INVALID` before any node starts. A cycle
+with no runnable root is refused `GRAPH_CYCLE` the same way. A cycle behind
+runnable nodes is refused `GRAPH_CYCLE` only when the wave loop finds nothing
+left runnable — the nodes before it have already run and spent.
 
 ## Loop mode (generic bounded loop)
 
