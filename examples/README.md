@@ -276,7 +276,7 @@ Expected: the body runs once per iteration. With a judge, `VERDICT: PASS` stops 
 }
 ```
 
-Expected: each round, the generator (`strategist` by default) produces 3 candidates, and the scorer (`redteam` by default, no tools) gives each one `SCORE: 0..100`. The beam keeps the best candidate between rounds. After 2 rounds, `debrief` presents the winner. A score that does not parse counts as `0`, so that candidate loses to any scored one but is not discarded.
+Expected: each round, the generator (`strategist` by default) produces 3 candidates, and the scorer (`redteam` by default, no tools) gives each one `SCORE: 0..100`. The beam keeps the best candidate between rounds. After 2 rounds, `debrief` presents the winner. A score that does not parse counts as `0`, so that candidate loses to any positively scored one but is not discarded.
 
 ## Workflow example
 
