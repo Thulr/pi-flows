@@ -52,6 +52,19 @@ jobs:
             echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($tag). Bump package.json and PI_FLOWS_VERSION before tagging."
             exit 1
           fi
+          # On a main push, an existing tag must name this commit, or the npm
+          # package and the tag would name different code. Refused before
+          # publish, not skipped at the tag step. The peeled form covers a
+          # hand-made annotated tag.
+          if [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            peeled="$(git ls-remote origin "refs/tags/$tag^{}" | cut -f1)"
+            plain="$(git ls-remote origin "refs/tags/$tag" | cut -f1)"
+            existing="${peeled:-$plain}"
+            if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $tag exists but points at $existing, not this commit ($GITHUB_SHA). Delete or move the tag, then rerun."
+              exit 1
+            fi
+          fi
           missing=""
           npm view "pi-flows@${tag#v}" version > /dev/null 2>&1 || missing="$missing npm"
           git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null || missing="$missing tag"
