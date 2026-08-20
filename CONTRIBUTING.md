@@ -4,7 +4,8 @@ Thanks for improving pi-flows. The goal is a small, safe, testable delegation ex
 
 ## Branches
 
-- `develop` is the integration branch. Branch from it and open every PR against it.
+- `develop` is the integration branch. Branch from it and open ordinary PRs
+  against it. Only the release PR targets `main`.
 - `main` is the release snapshot: what is on `main` is what npm has.
 - A release is a `develop` → `main` PR carrying the version bump and the
   CHANGELOG section. It lands as a fast-forward push of the evaluated commit

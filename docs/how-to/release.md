@@ -121,8 +121,8 @@ creates.
    A require-pull-request rule on `main` blocks direct pushes. No GitHub
    merge method preserves the evaluated SHA, so the release engineer needs a
    ruleset bypass scoped to this push. The bypass trades one control
-   deliberately: the release PR's checks and threads still gate step 7, and
-   the fast-forward can land only a commit that `develop` already contains.
+   deliberately. The release PR's checks and threads still gate step 7. The
+   fast-forward can land only a commit that `develop` already contains.
 9. Make sure that the **Publish** workflow is green. Check that
    `npm view pi-flows version` shows the new version. Check that the GitHub
    Release exists with the CHANGELOG notes. Check that
