@@ -1,4 +1,4 @@
-import { DEFAULT_CONCURRENCY, DEFAULT_SEARCH_CANDIDATES, RUN_MODE_NAMES, type CoordinationEventKind, type FlowDiscovery, type FlowError, type FlowMode, type FlowRunResult, type ModeHandler, type RunMode } from "../types.ts";
+import { DEFAULT_CONCURRENCY, DEFAULT_SEARCH_CANDIDATES, RUN_MODE_NAMES, type CoordinationEventKind, type FlowAgentRefInput, type FlowDiscovery, type FlowError, type FlowMode, type FlowRunResult, type ModeHandler, type RunMode } from "../types.ts";
 import { validateConcurrency, validateSharedWriteCwd } from "../validate.ts";
 import type { ModeCriticalPathFn, ModePlan, ModePlanFn, ModePreSpawnRefusalFn, PlannedRef, PlannedWave, PreSpawnContext } from "./plan.ts";
 import { criticalPathSingle, handleSingle, planSingle } from "./single.ts";
@@ -67,6 +67,29 @@ export interface RunModeContract {
 }
 
 /**
+ * The agent name a label shows for one role, falling back to that role's
+ * default when the resolved ref names none.
+ *
+ * The fallback is not decoration, and it belongs here rather than at each
+ * label because the role resolvers do not share one contract. The modes that
+ * default on absence (`spec.x ?? DEFAULT` — evaluate, orchestrate, route,
+ * search) hand back the caller's ref untouched, so an agent-less `{}` survives
+ * resolution and reaches dispatch to be refused by name; the modes that
+ * default on a ref naming no agent (`spec.x?.agent ? spec.x : DEFAULT` —
+ * dossier, debate, monitor, worktree) always return a named ref. A label must
+ * render either kind, so "what is shown when the ref names no agent" is
+ * answered once here instead of trailing every renderLabel that reads a
+ * resolver.
+ */
+function roleLabel(ref: { agent?: string } | undefined, fallback: FlowAgentRefInput): string {
+	// `??`, not `||`: this consolidates four call sites without changing what
+	// any of them rendered. An empty agent name still renders empty here, as it
+	// did at each site — a display defect worth its own change, not a rider on
+	// a consolidation.
+	return ref?.agent ?? fallback.agent;
+}
+
+/**
  * The single mode table. Adding a mode = one handler file + one entry here +
  * the name in RUN_MODE_NAMES (types.ts) + a params field (schema.ts). The
  * Record key makes a missing or extra entry a compile error; the handler
@@ -114,12 +137,12 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		preSpawnRefusal: preSpawnRefusalEvaluate,
 		owedEventKinds: ["retry", "validation"],
 		renderLabel: (params) => {
-			const generator = evaluateRoles(params).operator.agent ?? EVALUATE_ROLE_DEFAULTS.operator.agent;
+			const generator = roleLabel(evaluateRoles(params).operator, EVALUATE_ROLE_DEFAULTS.operator);
 			const redteam = params.evaluate?.redteam;
 			// A panel is counted; a single critic is named. Which agent that is
 			// comes from the resolver the plan and the handler read, so a label
 			// cannot name a role the flow would not dispatch.
-			const evaluator = Array.isArray(redteam) ? `${redteam.length} critics` : evaluateRoles(params).critics[0]?.agent ?? EVALUATE_ROLE_DEFAULTS.critic.agent;
+			const evaluator = Array.isArray(redteam) ? `${redteam.length} critics` : roleLabel(evaluateRoles(params).critics[0], EVALUATE_ROLE_DEFAULTS.critic);
 			const gate = params.evaluate?.checkCommand ? " +check" : "";
 			return `evaluate ${generator}->${evaluator}${gate}`;
 		},
@@ -146,7 +169,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		criticalPath: criticalPathRoute,
 		preSpawnRefusal: preSpawnRefusalRoute,
 		owedEventKinds: ["state"],
-		renderLabel: (params) => `route via ${routeRoles(params).controller.agent ?? ROUTE_CONTROLLER_DEFAULT.agent}`,
+		renderLabel: (params) => `route via ${roleLabel(routeRoles(params).controller, ROUTE_CONTROLLER_DEFAULT)}`,
 		handler: handleRoute,
 	},
 	orchestrate: {
@@ -156,7 +179,7 @@ const CONTRACTS: Record<RunMode, Omit<RunModeContract, "mode">> = {
 		criticalPath: criticalPathOrchestrate,
 		preSpawnRefusal: preSpawnRefusalOrchestrate,
 		owedEventKinds: ["retry", "validation"],
-		renderLabel: (params) => `orchestrate ->${orchestrateRoles(params).recon.agent ?? ORCHESTRATE_ROLE_DEFAULTS.recon.agent}`,
+		renderLabel: (params) => `orchestrate ->${roleLabel(orchestrateRoles(params).recon, ORCHESTRATE_ROLE_DEFAULTS.recon)}`,
 		handler: handleOrchestrate,
 	},
 	graph: {
