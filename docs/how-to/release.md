@@ -117,6 +117,12 @@ creates.
    The push triggers the **Publish** workflow: it publishes to npm, pushes the
    `v<version>` tag, and creates the GitHub Release. The push is the release
    act — do not push before the decision in step 7 is `approved`.
+
+   A require-pull-request rule on `main` blocks direct pushes. No GitHub
+   merge method preserves the evaluated SHA, so the release engineer needs a
+   ruleset bypass scoped to this push. The bypass trades one control
+   deliberately: the release PR's checks and threads still gate step 7, and
+   the fast-forward can land only a commit that `develop` already contains.
 9. Make sure that the **Publish** workflow is green. Check that
    `npm view pi-flows version` shows the new version. Check that the GitHub
    Release exists with the CHANGELOG notes. Check that
