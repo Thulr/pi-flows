@@ -56,7 +56,7 @@ jobs:
           missing=""
           npm view "pi-flows@${tag#v}" version > /dev/null 2>&1 || missing="$missing npm"
           git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null || missing="$missing tag"
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 || missing="$missing release"
+          [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null)" = "false" ] || missing="$missing release"
           if [ -z "$missing" ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "$tag is fully released (npm version, tag, and GitHub Release all exist); nothing to do."
@@ -94,10 +94,20 @@ jobs:
         run: |
           ver="${TAG#v}"
           if npm view "pi-flows@$ver" version > /dev/null 2>&1; then
-            echo "npm already has $ver; skipping publish."
+            # The published artifact must come from this commit, or the tag and
+            # Release this run would create describe different code than the
+            # npm tarball. Complete the original commit's run instead.
+            head="$(npm view "pi-flows@$ver" gitHead 2> /dev/null || true)"
+            if [ -n "$head" ] && [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::error::npm already has $ver, published from $head, not this commit ($GITHUB_SHA). Rerun that commit's workflow to complete the release."
+              exit 1
+            fi
+            echo "npm already has $ver from this commit; skipping publish."
           else
+            # semver, not sort -V: version sort ranks 1.0.0-beta.1 above 1.0.0,
+            # which would let a recovered prerelease reset latest.
             latest="$(npm view pi-flows dist-tags.latest 2> /dev/null || true)"
-            if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$ver" | sort -V | tail -n 1)" != "$ver" ]; then
+            if [ -n "$latest" ] && [ "$(npx --yes semver@7.7.2 "$latest" "$ver" | tail -n 1)" != "$ver" ]; then
               echo "$ver is older than the published latest ($latest); publishing under the recovered dist-tag."
               npm publish --tag recovered
             else
@@ -141,8 +151,12 @@ jobs:
             echo "::error::CHANGELOG.md has no section for $ver; smoke should have caught this."
             exit 1
           fi
-          if gh release view "$TAG" > /dev/null 2>&1; then
+          state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null || echo absent)"
+          if [ "$state" = "false" ]; then
             echo "Release $TAG already exists; skipping."
+          elif [ "$state" = "true" ]; then
+            echo "Release $TAG exists as a draft; publishing it."
+            gh release edit "$TAG" --draft=false
           else
             gh release create "$TAG" --verify-tag \
               --title "$TAG" --notes-file /tmp/release-notes.md
