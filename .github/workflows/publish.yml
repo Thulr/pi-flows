@@ -88,12 +88,21 @@ jobs:
         # The registry check makes a rerun after a partial release safe: a
         # version npm already has is not republished, and the rerun continues
         # to the tag and Release steps the failed run may have missed.
+        # A recovered version older than the published latest publishes under
+        # the "recovered" dist-tag, so recovery can never move latest backwards
+        # and regress default installations.
         run: |
           ver="${TAG#v}"
           if npm view "pi-flows@$ver" version > /dev/null 2>&1; then
             echo "npm already has $ver; skipping publish."
           else
-            npm publish # auth via OIDC trusted publisher; provenance is automatic
+            latest="$(npm view pi-flows dist-tags.latest 2> /dev/null || true)"
+            if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$ver" | sort -V | tail -n 1)" != "$ver" ]; then
+              echo "$ver is older than the published latest ($latest); publishing under the recovered dist-tag."
+              npm publish --tag recovered
+            else
+              npm publish # auth via OIDC trusted publisher; provenance is automatic
+            fi
           fi
       - name: Tag the release commit
         if: steps.decide.outputs.release == 'true' && github.ref_type == 'branch'
@@ -101,13 +110,21 @@ jobs:
           TAG: ${{ steps.decide.outputs.tag }}
         # After npm publish on purpose: a failed publish must not leave a tag
         # naming a version the registry never got. A tag pushed with the
-        # workflow token does not retrigger this workflow.
+        # workflow token does not retrigger this workflow. The skip path
+        # re-resolves the tag: one that appeared since the decision gate must
+        # still name this commit, and a concurrent creation fails the push.
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
-            echo "$TAG already exists; skipping."
-          else
+          peeled="$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)"
+          plain="$(git ls-remote origin "refs/tags/$TAG" | cut -f1)"
+          existing="${peeled:-$plain}"
+          if [ -z "$existing" ]; then
             git tag "$TAG" "$GITHUB_SHA"
             git push origin "$TAG"
+          elif [ "$existing" = "$GITHUB_SHA" ]; then
+            echo "$TAG already exists and names this commit; skipping."
+          else
+            echo "::error::Tag $TAG appeared at $existing, which is not this commit ($GITHUB_SHA). Fix the tag by hand before creating the Release."
+            exit 1
           fi
       - name: Create GitHub Release from the CHANGELOG section
         if: steps.decide.outputs.release == 'true'
