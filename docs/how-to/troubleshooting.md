@@ -83,7 +83,8 @@ warnings affect one file each:
 
 - `AGENT_FRONTMATTER_INVALID` skips the file.
 - `AGENT_THINKING_INVALID` ignores the bad level and keeps the agent.
-- `AGENT_NAME_SHADOWED` flags an override and keeps both files.
+- `AGENT_NAME_SHADOWED` reports an override. The higher-precedence agent
+  replaces the shadowed one, and the warning names the shadowed file.
 
 Two codes are errors. `AGENT_FILE_UNREADABLE` skips the one unreadable file.
 `AGENT_DIR_UNREADABLE` means that source directory contributes no agents at
