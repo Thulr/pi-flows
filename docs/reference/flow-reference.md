@@ -927,7 +927,7 @@ Anything but the exact `LOOP: DONE` marker — `LOOP: COMPLETE`, a negated
 |---|---|---|
 | `loop.body` | (required) | Iteration agent. Accepts its own `contract`. Without a judge, contracted `data.loop` controls DONE/CONTINUE. |
 | `loop.judge` | (none) | Optional critic with its own `contract`. Contracted `data.verdict` controls PASS/REVISE. |
-| `loop.maxIterations` | `3` | Bounded iteration cap, clamped into `1..8`. A fractional value is floored. |
+| `loop.maxIterations` | `3` | Bounded iteration cap. The schema rejects a value outside `1..8`. An in-range fractional value is floored. |
 
 If the loop reaches `maxIterations` without a stop signal, pi-flows returns
 `LOOP_DID_NOT_CONVERGE` with the last output/critique.
@@ -959,7 +959,7 @@ the winner. An out-of-range or unparseable score leaves the candidate unscored
 | `search.generator` | `{ agent: "strategist" }` | Accepts its own `contract`. Every successful Return validates before it reaches a scorer. |
 | `search.scorer` | `{ agent: "redteam", tools: "none" }` | Accepts its own `contract`. Contracted scores come from validated `data.score`. |
 | `search.debrief` | `{ agent: "debrief" }` | Finalizer with its own contract. Its terminal Return validates before the mode reports success. |
-| `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation (`1..8`), retained beam (`1..8`), and refinement rounds (`1..4`). Each value is clamped into its range; a fractional value is floored. The effective beam never exceeds `candidates`. |
+| `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation (`1..8`), retained beam (`1..8`), and refinement rounds (`1..4`). The schema rejects out-of-range values. An in-range fractional value is floored. The effective beam never exceeds `candidates`. |
 
 Use `search` when several plausible plans or artifacts must be explored and
 ranked before synthesis. It is intentionally bounded by candidate count, beam
