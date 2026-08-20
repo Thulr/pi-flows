@@ -138,7 +138,16 @@ jobs:
                     exit 1
                   fi
                 fi
-                if [ -n "$nexttag" ] && [ "$(npx --yes semver@7.7.2 "$nexttag" "$ver" | tail -n 1)" != "$ver" ]; then
+                # The comparison fails closed: an empty result from a failed
+                # npx run must not pick a dist-tag.
+                order="$ver"
+                if [ -n "$nexttag" ]; then
+                  if ! order="$(npx --yes semver@7.7.2 "$nexttag" "$ver")"; then
+                    echo "::error::Could not compare $ver with next ($nexttag) using semver."
+                    exit 1
+                  fi
+                fi
+                if [ "$(printf '%s\n' "$order" | tail -n 1)" != "$ver" ]; then
                   echo "$ver is older than the published next ($nexttag); publishing under the recovered dist-tag."
                   npm publish --tag recovered
                 else
@@ -147,7 +156,15 @@ jobs:
                 fi
                 ;;
               *)
-                if [ -n "$latest" ] && [ "$(npx --yes semver@7.7.2 "$latest" "$ver" | tail -n 1)" != "$ver" ]; then
+                # Fails closed like the prerelease branch above.
+                order="$ver"
+                if [ -n "$latest" ]; then
+                  if ! order="$(npx --yes semver@7.7.2 "$latest" "$ver")"; then
+                    echo "::error::Could not compare $ver with latest ($latest) using semver."
+                    exit 1
+                  fi
+                fi
+                if [ "$(printf '%s\n' "$order" | tail -n 1)" != "$ver" ]; then
                   echo "$ver is older than the published latest ($latest); publishing under the recovered dist-tag."
                   npm publish --tag recovered
                 else
