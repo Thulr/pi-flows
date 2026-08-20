@@ -1,8 +1,12 @@
 import type { FlowAgentRefInput } from "../types.ts";
 
 /**
- * What one orchestrate call resolves to before anything spawns: which agent
- * fills each role, and where the goal comes from.
+ * Which agent fills each of orchestrate's roles, and where its goal comes from.
+ *
+ * Deliberately not called a resolved call: CONTEXT.md gives that term to the
+ * post-preset params, capture policy, and preset selection one flow call
+ * carries, and reusing the phrase here for two params questions is the drift
+ * the glossary exists to stop.
  *
  * Both questions have three readers — the mode table's plan declaration, the
  * pre-spawn refusal, and the handler — and each used to answer them for itself

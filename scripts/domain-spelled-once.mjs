@@ -109,8 +109,11 @@ export const SPELLED_ONCE = [
     // allowance is exactly the number of roles each mode defaults. The literal
     // is anchored to a quoted agent name, so a ref built from a variable
     // (vote replicating `{ agent: spec.agent }`) is a different concept and
-    // stays silent; a default spelled with a computed name would evade — a
-    // tripwire catches the honest regression, not an adversary.
+    // stays silent; a default spelled with a computed name would evade, as
+    // would one naming an agent outside `[a-z]+` — a hyphenated, capitalised,
+    // or digit-bearing name. Every bundled agent is a lowercase word, so the
+    // charset holds today; a mode defaulting to `code-review` would need it
+    // widened. A tripwire catches the honest regression, not an adversary.
     pattern: /\{\s*agent:\s*"[a-z]+"/g,
     allowed: {
       "modes/search.ts": 3,

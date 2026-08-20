@@ -86,6 +86,20 @@ test("orchestrate: an optional role only exists once the caller names an agent",
 	assert.equal(agentless.verify, undefined);
 });
 
+test("orchestrate: an optional role reaches the declared plan only through the resolver", () => {
+	const off = plannedAgents(planOrchestrate({ task: "t", orchestrate: {} }));
+	assert.equal(off.includes("critic"), false);
+
+	const on = plannedAgents(planOrchestrate({ task: "t", orchestrate: { review: { agent: "critic" }, verify: { agent: "checker" } } }));
+	assert.equal(on.includes("critic"), true, "naming review declares its wave");
+	assert.equal(on.includes("checker"), true);
+
+	// A ref naming no agent is absent to both readers: the resolver omits it and
+	// the plan declares no wave for it.
+	const agentless = plannedAgents(planOrchestrate({ task: "t", orchestrate: { review: {}, verify: { agent: 7 } } }));
+	assert.deepEqual(agentless, off, "an agent-less optional role declares nothing, exactly as when it is absent");
+});
+
 test("evaluate: the generator default and the critic panel reach the declared plan", () => {
 	const params = { task: "t", evaluate: {} };
 	const roles = evaluateRoles(params);
@@ -135,6 +149,10 @@ for (const [label, plan, roles, roleName, fallback, activate] of [
 
 		const agents = plannedAgents((plan as (p: any) => any)(params));
 		assert.equal(agents.includes(`custom-${roleName}`), true);
+		// Replaces, not joins: a plan that declared the default alongside the
+		// override would satisfy an includes-only check while describing a
+		// topology with one more role than the flow runs.
+		assert.equal(agents.includes(fallback.agent), false, `the ${roleName} default is still declared beside the override`);
 	});
 }
 

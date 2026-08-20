@@ -11,6 +11,12 @@ import { plannedRefs, sumRunDurations, type ModePlan, type PlannedWave } from ".
  * and the handler both read it here, so which agent routes — and the default
  * when the caller names none — is stated once rather than in two places kept in
  * agreement by hand.
+ *
+ * Route defaults on absence (`??`) where dossier, debate, monitor and worktree
+ * default on any ref that names no agent (`?.agent ?`). Both idioms are in the
+ * tree because each mode is preserved as it was written: a controller of `{}`
+ * reaches dispatch here and is refused by name, rather than silently becoming
+ * the default. Changing that is a behaviour change, not a tidy-up.
  */
 export const ROUTE_CONTROLLER_DEFAULT: FlowAgentRefInput = Object.freeze({ agent: "controller" });
 
