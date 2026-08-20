@@ -201,8 +201,13 @@ jobs:
           if [ "$state" = "false" ]; then
             echo "Release $TAG already exists; skipping."
           elif [ "$state" = "true" ]; then
-            echo "Release $TAG exists as a draft; publishing it."
-            gh release edit "$TAG" --draft=false $prerelease_flag
+            # Publishing a draft also normalizes it: the title, the CHANGELOG
+            # notes, and the prerelease state come from this run, not from
+            # whatever the hand-made draft carried.
+            case "$ver" in *-*) edit_prerelease="--prerelease=true" ;; *) edit_prerelease="--prerelease=false" ;; esac
+            echo "Release $TAG exists as a draft; publishing it with this run's metadata."
+            gh release edit "$TAG" --draft=false $edit_prerelease \
+              --title "$TAG" --notes-file /tmp/release-notes.md
           else
             gh release create "$TAG" --verify-tag $prerelease_flag \
               --title "$TAG" --notes-file /tmp/release-notes.md
