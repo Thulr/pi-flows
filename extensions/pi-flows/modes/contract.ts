@@ -71,15 +71,19 @@ export interface RunModeContract {
  * default when the resolved ref names none.
  *
  * The fallback is not decoration, and it belongs here rather than at each
- * label because the role resolvers do not share one contract. The modes that
- * default on absence (`spec.x ?? DEFAULT` — evaluate, orchestrate, route,
- * search) hand back the caller's ref untouched, so an agent-less `{}` survives
- * resolution and reaches dispatch to be refused by name; the modes that
- * default on a ref naming no agent (`spec.x?.agent ? spec.x : DEFAULT` —
- * dossier, debate, monitor, worktree) always return a named ref. A label must
- * render either kind, so "what is shown when the ref names no agent" is
- * answered once here instead of trailing every renderLabel that reads a
- * resolver.
+ * label because the role resolvers do not share one contract — and the split
+ * is per role, not per mode. A role that defaults on absence
+ * (`spec.x ?? DEFAULT` — search's three, evaluate's operator and critic,
+ * orchestrate's commander, recon and debrief, route's controller) hands back
+ * the caller's ref untouched, so an agent-less `{}` survives resolution and
+ * reaches dispatch to be refused by name. A role that defaults on a ref naming
+ * no agent (`spec.x?.agent ? spec.x : DEFAULT` — dossier's debrief, debate's
+ * adjudicator, monitor's reactor, worktree's integrator) always returns a
+ * named ref. Orchestrate's review and verify are a third case again: optional,
+ * with no default, included only when the caller names an agent, so no label
+ * reads them. A label must render whichever kind it is given, so "what is
+ * shown when the ref names no agent" is answered once here instead of trailing
+ * every renderLabel that reads a resolver.
  */
 function roleLabel(ref: { agent?: string } | undefined, fallback: FlowAgentRefInput): string {
 	// `??`, not `||`: this consolidates four call sites without changing what
