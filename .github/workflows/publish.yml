@@ -96,10 +96,15 @@ jobs:
           if npm view "pi-flows@$ver" version > /dev/null 2>&1; then
             # The published artifact must come from this commit, or the tag and
             # Release this run would create describe different code than the
-            # npm tarball. Complete the original commit's run instead.
+            # npm tarball. An unreadable gitHead refuses too: without it this
+            # run cannot prove where the tarball came from.
             head="$(npm view "pi-flows@$ver" gitHead 2> /dev/null || true)"
-            if [ -n "$head" ] && [ "$head" != "$GITHUB_SHA" ]; then
-              echo "::error::npm already has $ver, published from $head, not this commit ($GITHUB_SHA). Rerun that commit's workflow to complete the release."
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              if [ -z "$head" ]; then
+                echo "::error::npm already has $ver but its gitHead is unreadable, so this run cannot prove the tarball came from this commit ($GITHUB_SHA). Complete the release by hand."
+              else
+                echo "::error::npm already has $ver, published from $head, not this commit ($GITHUB_SHA). Rerun that commit's workflow to complete the release."
+              fi
               exit 1
             fi
             echo "npm already has $ver from this commit; skipping publish."
@@ -110,8 +115,16 @@ jobs:
             latest="$(npm view pi-flows dist-tags.latest 2> /dev/null || true)"
             case "$ver" in
               *-*)
-                echo "$ver is a prerelease; publishing under the next dist-tag."
-                npm publish --tag next
+                # An older recovered prerelease must not move next backwards
+                # either; it lands on recovered like an older stable would.
+                nexttag="$(npm view pi-flows dist-tags.next 2> /dev/null || true)"
+                if [ -n "$nexttag" ] && [ "$(npx --yes semver@7.7.2 "$nexttag" "$ver" | tail -n 1)" != "$ver" ]; then
+                  echo "$ver is older than the published next ($nexttag); publishing under the recovered dist-tag."
+                  npm publish --tag recovered
+                else
+                  echo "$ver is a prerelease; publishing under the next dist-tag."
+                  npm publish --tag next
+                fi
                 ;;
               *)
                 if [ -n "$latest" ] && [ "$(npx --yes semver@7.7.2 "$latest" "$ver" | tail -n 1)" != "$ver" ]; then
@@ -160,13 +173,17 @@ jobs:
             echo "::error::CHANGELOG.md has no section for $ver; smoke should have caught this."
             exit 1
           fi
+          # A prerelease version is marked a GitHub prerelease, so GitHub never
+          # selects it as Latest; the draft-publication path preserves that.
+          prerelease_flag=""
+          case "$ver" in *-*) prerelease_flag="--prerelease" ;; esac
           state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null || echo absent)"
           if [ "$state" = "false" ]; then
             echo "Release $TAG already exists; skipping."
           elif [ "$state" = "true" ]; then
             echo "Release $TAG exists as a draft; publishing it."
-            gh release edit "$TAG" --draft=false
+            gh release edit "$TAG" --draft=false $prerelease_flag
           else
-            gh release create "$TAG" --verify-tag \
+            gh release create "$TAG" --verify-tag $prerelease_flag \
               --title "$TAG" --notes-file /tmp/release-notes.md
           fi

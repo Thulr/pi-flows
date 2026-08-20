@@ -117,10 +117,10 @@ creates.
    The push triggers the **Publish** workflow: it publishes to npm, pushes the
    `v<version>` tag, and creates the GitHub Release. The push is the release
    act — do not push before the decision in step 7 is `approved`.
-9. Make sure that the **Publish** workflow is green, that
-   `npm view pi-flows version` shows the new version, that the GitHub Release
-   exists with the CHANGELOG notes, and that `pi install npm:pi-flows`
-   resolves it.
+9. Make sure that the **Publish** workflow is green. Check that
+   `npm view pi-flows version` shows the new version. Check that the GitHub
+   Release exists with the CHANGELOG notes. Check that
+   `pi install npm:pi-flows` resolves the new version.
 
 ## Release evidence and manifest
 
