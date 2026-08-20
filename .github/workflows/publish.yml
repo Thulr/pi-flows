@@ -1,11 +1,29 @@
 name: Publish
 
+# Two triggers cut the same release path:
+# - a push to main (normally the develop -> main release PR landing as a
+#   fast-forward) releases the package.json version, unless it is already
+#   fully released;
+# - a pushed v*.*.* tag is the manual escape hatch and must match package.json.
+# The npm trusted publisher is bound to this workflow's filename, so the
+# publish step must stay in publish.yml.
 on:
   push:
     tags: ["v*.*.*"]
+    branches: [main]
+
+# One release at a time: a second push must run its tag check only after the
+# preceding publish finishes, or both could see their tag as absent and race
+# npm's latest dist-tag. Not canceling: an in-flight publish must complete.
+# GitHub keeps one pending run per group, so of several queued pushes only the
+# newest runs; a version skipped that way is completed by rerunning its run or
+# pushing its tag.
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 permissions:
-  contents: write # create the GitHub Release for the pushed tag
+  contents: write # push the release tag and create the GitHub Release
   id-token: write # OIDC token for npm trusted publishing (also signs provenance)
 
 jobs:
@@ -20,22 +38,170 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm install -g npm@latest # trusted publishing (OIDC) needs npm >= 11.5.1
       - run: npm ci --ignore-scripts
-      - run: npm run check
-      - name: Tag must match package.json version
-        run: |
-          pkg="v$(node -p "require('./package.json').version")"
-          if [ "$pkg" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($pkg). Bump package.json and PI_FLOWS_VERSION before tagging."
-            exit 1
-          fi
-      - run: npm publish # auth via OIDC trusted publisher; provenance is automatic
-      - name: Create GitHub Release from the CHANGELOG section
+      - name: Decide whether this push cuts or completes a release
+        id: decide
         env:
           GH_TOKEN: ${{ github.token }}
-        # After npm publish on purpose: a failed publish must not leave a
-        # Release pointing at a version the registry never got.
+        # A release is three artifacts: the npm version, the tag, and the
+        # GitHub Release. Any one missing means run; each later step skips the
+        # artifacts that already exist. So a rerun after a partial release
+        # completes whatever is missing instead of no-opping on the tag alone.
         run: |
-          ver="${GITHUB_REF_NAME#v}"
+          tag="v$(node -p "require('./package.json').version")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$tag" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($tag). Bump package.json and PI_FLOWS_VERSION before tagging."
+            exit 1
+          fi
+          missing=""
+          npm view "pi-flows@${tag#v}" version > /dev/null 2>&1 || missing="$missing npm"
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null || missing="$missing tag"
+          [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2> /dev/null)" = "false" ] || missing="$missing release"
+          if [ -z "$missing" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is fully released (npm version, tag, and GitHub Release all exist); nothing to do."
+            exit 0
+          fi
+          # A release is happening. On a main push, an existing tag must name
+          # this commit, or the npm package and the tag would name different
+          # code. Refused before publish, not skipped at the tag step. A fully
+          # released version never reaches this check, so a push to main
+          # without a version bump stays a green no-op. The peeled form covers
+          # a hand-made annotated tag.
+          if [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            peeled="$(git ls-remote origin "refs/tags/$tag^{}" | cut -f1)"
+            plain="$(git ls-remote origin "refs/tags/$tag" | cut -f1)"
+            existing="${peeled:-$plain}"
+            if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $tag exists but points at $existing, not this commit ($GITHUB_SHA). Delete or move the tag, then rerun."
+              exit 1
+            fi
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag; missing:$missing"
+      - run: npm run check
+        if: steps.decide.outputs.release == 'true'
+      - name: Publish to npm
+        if: steps.decide.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        # The registry check makes a rerun after a partial release safe: a
+        # version npm already has is not republished, and the rerun continues
+        # to the tag and Release steps the failed run may have missed.
+        # A recovered version older than the published latest publishes under
+        # the "recovered" dist-tag, so recovery can never move latest backwards
+        # and regress default installations.
+        run: |
+          ver="${TAG#v}"
+          if npm view "pi-flows@$ver" version > /dev/null 2>&1; then
+            # The published artifact must come from this commit, or the tag and
+            # Release this run would create describe different code than the
+            # npm tarball. An unreadable gitHead refuses too: without it this
+            # run cannot prove where the tarball came from.
+            head="$(npm view "pi-flows@$ver" gitHead 2> /dev/null || true)"
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              if [ -z "$head" ]; then
+                echo "::error::npm already has $ver but its gitHead is unreadable, so this run cannot prove the tarball came from this commit ($GITHUB_SHA). Complete the release by hand."
+              else
+                echo "::error::npm already has $ver, published from $head, not this commit ($GITHUB_SHA). Rerun that commit's workflow to complete the release."
+              fi
+              exit 1
+            fi
+            echo "npm already has $ver from this commit; skipping publish."
+          else
+            # A dist-tag lookup that fails for any reason other than the
+            # package not existing (E404, the first release ever) refuses the
+            # publish: treating a transient registry error as "no latest"
+            # would publish unqualified and move latest backwards.
+            if latest="$(npm view pi-flows dist-tags.latest 2>&1)"; then :; else
+              if printf '%s\n' "$latest" | grep -q 'E404'; then
+                latest=""
+              else
+                echo "::error::Could not read dist-tags.latest from npm: $latest"
+                exit 1
+              fi
+            fi
+            # A prerelease never takes latest, newer or not. Otherwise compare
+            # with semver, not sort -V: version sort ranks 1.0.0-beta.1 above
+            # 1.0.0, which would let a recovered prerelease reset latest.
+            case "$ver" in
+              *-*)
+                # An older recovered prerelease must not move next backwards
+                # either; it lands on recovered like an older stable would.
+                # An absent next tag is exit 0 with empty output; a failed
+                # lookup refuses like the latest lookup above.
+                if nexttag="$(npm view pi-flows dist-tags.next 2>&1)"; then :; else
+                  if printf '%s\n' "$nexttag" | grep -q 'E404'; then
+                    nexttag=""
+                  else
+                    echo "::error::Could not read dist-tags.next from npm: $nexttag"
+                    exit 1
+                  fi
+                fi
+                # The comparison fails closed: an empty result from a failed
+                # npx run must not pick a dist-tag.
+                order="$ver"
+                if [ -n "$nexttag" ]; then
+                  if ! order="$(npx --yes semver@7.7.2 "$nexttag" "$ver")"; then
+                    echo "::error::Could not compare $ver with next ($nexttag) using semver."
+                    exit 1
+                  fi
+                fi
+                if [ "$(printf '%s\n' "$order" | tail -n 1)" != "$ver" ]; then
+                  echo "$ver is older than the published next ($nexttag); publishing under the recovered dist-tag."
+                  npm publish --tag recovered
+                else
+                  echo "$ver is a prerelease; publishing under the next dist-tag."
+                  npm publish --tag next
+                fi
+                ;;
+              *)
+                # Fails closed like the prerelease branch above.
+                order="$ver"
+                if [ -n "$latest" ]; then
+                  if ! order="$(npx --yes semver@7.7.2 "$latest" "$ver")"; then
+                    echo "::error::Could not compare $ver with latest ($latest) using semver."
+                    exit 1
+                  fi
+                fi
+                if [ "$(printf '%s\n' "$order" | tail -n 1)" != "$ver" ]; then
+                  echo "$ver is older than the published latest ($latest); publishing under the recovered dist-tag."
+                  npm publish --tag recovered
+                else
+                  npm publish # auth via OIDC trusted publisher; provenance is automatic
+                fi
+                ;;
+            esac
+          fi
+      - name: Tag the release commit
+        if: steps.decide.outputs.release == 'true' && github.ref_type == 'branch'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        # After npm publish on purpose: a failed publish must not leave a tag
+        # naming a version the registry never got. A tag pushed with the
+        # workflow token does not retrigger this workflow. The skip path
+        # re-resolves the tag: one that appeared since the decision gate must
+        # still name this commit, and a concurrent creation fails the push.
+        run: |
+          peeled="$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)"
+          plain="$(git ls-remote origin "refs/tags/$TAG" | cut -f1)"
+          existing="${peeled:-$plain}"
+          if [ -z "$existing" ]; then
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          elif [ "$existing" = "$GITHUB_SHA" ]; then
+            echo "$TAG already exists and names this commit; skipping."
+          else
+            echo "::error::Tag $TAG appeared at $existing, which is not this commit ($GITHUB_SHA). Fix the tag by hand before creating the Release."
+            exit 1
+          fi
+      - name: Create GitHub Release from the CHANGELOG section
+        if: steps.decide.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          ver="${TAG#v}"
           awk -v ver="$ver" '
             /^## /{ if (insec) exit; if ($2 == ver) { insec=1; next } }
             insec { print }
@@ -44,5 +210,22 @@ jobs:
             echo "::error::CHANGELOG.md has no section for $ver; smoke should have caught this."
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" --verify-tag \
-            --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
+          # A prerelease version is marked a GitHub prerelease, so GitHub never
+          # selects it as Latest; the draft-publication path preserves that.
+          prerelease_flag=""
+          case "$ver" in *-*) prerelease_flag="--prerelease" ;; esac
+          state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null || echo absent)"
+          if [ "$state" = "false" ]; then
+            echo "Release $TAG already exists; skipping."
+          elif [ "$state" = "true" ]; then
+            # Publishing a draft also normalizes it: the title, the CHANGELOG
+            # notes, and the prerelease state come from this run, not from
+            # whatever the hand-made draft carried.
+            case "$ver" in *-*) edit_prerelease="--prerelease=true" ;; *) edit_prerelease="--prerelease=false" ;; esac
+            echo "Release $TAG exists as a draft; publishing it with this run's metadata."
+            gh release edit "$TAG" --draft=false $edit_prerelease \
+              --title "$TAG" --notes-file /tmp/release-notes.md
+          else
+            gh release create "$TAG" --verify-tag $prerelease_flag \
+              --title "$TAG" --notes-file /tmp/release-notes.md
+          fi

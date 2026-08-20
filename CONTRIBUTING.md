@@ -2,6 +2,19 @@
 
 Thanks for improving pi-flows. The goal is a small, safe, testable delegation extension.
 
+## Branches
+
+- `develop` is the integration branch. Branch from it and open ordinary PRs
+  against it. Only the release PR targets `main`.
+- `main` is the release snapshot: what is on `main` is what npm has.
+- A release is a `develop` → `main` PR carrying the version bump and the
+  CHANGELOG section. It lands as a fast-forward push of the evaluated commit
+  (`git push origin <sha>:main`), never the merge button. That keeps the
+  evaluated, published, and tagged commit one SHA, and keeps `develop`
+  contained in `main`. The push triggers the publish workflow, which publishes
+  to npm, tags `v<version>`, and creates the GitHub Release. See
+  [the release runbook](./docs/how-to/release.md).
+
 ## Setup
 
 ```bash

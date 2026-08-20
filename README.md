@@ -167,10 +167,10 @@ Contributor surfaces: [Contributing](./CONTRIBUTING.md) · [Agent instructions](
 
 ## Development
 
-To hack on pi-flows or try unreleased `main`, work from a checkout:
+To hack on pi-flows or try unreleased work, check out `develop`:
 
 ```bash
-git clone https://github.com/Thulr/pi-flows
+git clone -b develop https://github.com/Thulr/pi-flows
 cd pi-flows
 npm ci
 npm run check       # build + test this package (does not require pi)
