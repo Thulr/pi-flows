@@ -359,10 +359,11 @@ outcome success** exists only when an independent verifier assessed the
 outcome (see the trace report above).
 
 `returnRequirements` and `requireEvidence` supply prose **return requirements** that
-prevent summary loss at handoff boundaries. Every mode appends them to its delegated
-tasks: `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `loop`, `search`,
-`debate` participants and adjudicator, `orchestrate` workers/synthesis, and each
-mode's debrief. Workflow phases, worktree tasks, graph nodes, and dossier sections
+prevent summary loss at handoff boundaries. They are appended to the delegated
+tasks in `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `loop`, `search`,
+`debate` (participants and adjudicator), `orchestrate` workers/synthesis, and each
+mode's debrief. Monitor's reactor receives the typed event only, never return
+requirements. Workflow phases, worktree tasks, graph nodes, and dossier sections
 accept task-level return requirements.
 Those override the top-level return requirements. Dossier sections and worktree tasks require
 evidence by default. `orchestrate.workerReturnRequirements` can set a worker-specific
@@ -959,7 +960,7 @@ the winner. An out-of-range or unparseable score leaves the candidate unscored
 Use `search` when several plausible plans or artifacts must be explored and
 ranked before synthesis. It is intentionally bounded by candidate count, beam
 width, rounds, concurrency, timeout, and cost/token ceilings. When every
-generator fails, or scoring keeps no usable candidate, the call fails with
+candidate generator fails or returns unusable output, the call fails with
 `SEARCH_NO_CANDIDATES`.
 
 If `scorer` is omitted, it defaults to `redteam` with `tools:"none"` so
