@@ -171,7 +171,7 @@ the parent context.
 | `why` | (required to spawn) | One sentence that justifies delegation over direct parent execution. Required for every spawning mode. `list`/`showConfig` never need it. Missing/empty ⇒ `WHY_REQUIRED`. |
 | `agentScope` | `user` | Applies to both presets and agents: `user` = package + user, `project` = package + project, `all` = all three sources. |
 | `confirmProjectAgents` | `true` | Interactive sessions prompt. Headless sessions refuse project presets/agents unless this is explicitly `false` after review. |
-| `concurrency` | `4` | Concurrent fan-out. Every mode's wave dispatch shares one pool: parallel tasks, voters, orchestrate and graph waves, evaluate critic panels, search candidates and scorers, worktree writers, debate participants, and dossier sections. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
+| `concurrency` | `4` | Concurrent fan-out. Every mode's wave dispatch shares one pool. That covers parallel tasks, voters, orchestrate and graph waves, critic panels, search candidates and scorers, worktree writers, debate participants, and dossier sections. Integer `1..8`, validated once at dispatch for every mode — an out-of-range value is refused even in modes that run sequentially. |
 | `timeoutMs` | `36000000` | Per child process timeout (10 hours). Independently of it, a child that reports a terminal provider error and then stalls is terminated after a short grace (`PI_FLOWS_ERROR_GRACE_MS`, default 30000ms) with `CHILD_PROVIDER_ERROR`. |
 | `recordContent` | `true` | Return/store child message content after redaction. Set `false` to retain structural status/usage only. |
 | `redactSecrets` | `true` | Redacts secret-shaped strings, emails, and home paths from content/details. |
@@ -360,10 +360,10 @@ outcome (see the trace report above).
 
 `returnRequirements` and `requireEvidence` supply prose **return requirements** that
 prevent summary loss at handoff boundaries. They are appended to the delegated
-tasks in `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `loop`, `search`,
-`debate` (participants and adjudicator), `orchestrate` workers/synthesis, and each
-mode's debrief. Monitor's reactor receives the typed event only, never return
-requirements. Workflow phases, worktree tasks, graph nodes, and dossier sections
+tasks in `single`, `parallel`, `chain`, `evaluate`, `vote`, `route`, `loop`,
+`search`, and `debate` (participants and adjudicator). They also reach
+`orchestrate` workers/synthesis and each mode's debrief. Monitor's reactor
+receives the typed event only, never return requirements. Workflow phases, worktree tasks, graph nodes, and dossier sections
 accept task-level return requirements.
 Those override the top-level return requirements. Dossier sections and worktree tasks require
 evidence by default. `orchestrate.workerReturnRequirements` can set a worker-specific
@@ -897,13 +897,12 @@ Each node has `id`, `agent`, `task`, optional `dependsOn`, its own
 `returnRequirements`/`requireEvidence`, and the usual
 `model`/`tier`/`thinking`/`tools`/`cwd` overrides. Node tasks can use `{task}` and dependency
 output placeholders like `{node.frontend}`. Graphs are capped at 16 nodes.
-A graph defect the params schema cannot see — a duplicate node id, or a
-`dependsOn` naming an unknown node — is refused `GRAPH_INVALID` before any
-node starts (a node missing a required field never reaches the handler; the
-schema rejects it). A cycle
-with no runnable root is refused `GRAPH_CYCLE` the same way. A cycle behind
-runnable nodes is refused `GRAPH_CYCLE` only when the wave loop finds nothing
-left runnable — the nodes before it have already run and spent.
+The params schema rejects a node missing a required field before the handler
+runs. A defect the schema cannot see — a duplicate node id, or a `dependsOn`
+naming an unknown node — is refused `GRAPH_INVALID` before any node starts.
+A cycle with no runnable root is refused `GRAPH_CYCLE` the same way. A cycle
+behind runnable nodes is refused `GRAPH_CYCLE` when the wave loop finds
+nothing left runnable. The nodes before it have already run and spent.
 
 ## Loop mode (generic bounded loop)
 
@@ -960,7 +959,7 @@ the winner. An out-of-range or unparseable score leaves the candidate unscored
 | `search.generator` | `{ agent: "strategist" }` | Accepts its own `contract`. Every successful Return validates before it reaches a scorer. |
 | `search.scorer` | `{ agent: "redteam", tools: "none" }` | Accepts its own `contract`. Contracted scores come from validated `data.score`. |
 | `search.debrief` | `{ agent: "debrief" }` | Finalizer with its own contract. Its terminal Return validates before the mode reports success. |
-| `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation (`1..8`), retained beam (`1..8`), and refinement rounds (`1..4`). |
+| `search.candidates` / `beamWidth` / `maxRounds` | `3` / `1` / `2` | Bounds generation (`1..8`), retained beam (`1..8`), and refinement rounds (`1..4`). Each value is clamped into its range; a fractional value is floored. The effective beam never exceeds `candidates`. |
 
 Use `search` when several plausible plans or artifacts must be explored and
 ranked before synthesis. It is intentionally bounded by candidate count, beam

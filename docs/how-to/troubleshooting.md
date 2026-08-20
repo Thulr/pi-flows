@@ -79,10 +79,13 @@ follows the normal pi docs. Then retry a small single-agent task.
 `/flows status` and `flow showConfig:true` report invalid frontmatter. The same
 surfaces report invalid preset frontmatter and non-JSON preset bodies. Discovery
 issues carry their own codes, separate from the error catalog below. The
-warnings affect one file each: `AGENT_FRONTMATTER_INVALID` skips the file,
-`AGENT_THINKING_INVALID` ignores the bad level and keeps the agent, and
-`AGENT_NAME_SHADOWED` flags an override and keeps both files. Two codes are
-errors: `AGENT_FILE_UNREADABLE` skips the one unreadable file, and
+warnings affect one file each:
+
+- `AGENT_FRONTMATTER_INVALID` skips the file.
+- `AGENT_THINKING_INVALID` ignores the bad level and keeps the agent.
+- `AGENT_NAME_SHADOWED` flags an override and keeps both files.
+
+Two codes are errors. `AGENT_FILE_UNREADABLE` skips the one unreadable file.
 `AGENT_DIR_UNREADABLE` means that source directory contributes no agents at
 all. A matching `PRESET_*` family covers presets.
 
