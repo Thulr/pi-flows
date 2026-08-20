@@ -1,9 +1,18 @@
 # Release checklist
 
-Releases publish to npm from CI. A pushed `vX.Y.Z` tag runs
-[`.github/workflows/publish.yml`](../../.github/workflows/publish.yml), which runs
-`npm run check` and then `npm publish` (with provenance). The npm publish is
-what lists pi-flows in the [pi.dev gallery](https://pi.dev/packages).
+Releases publish to npm from CI. `main` is the release snapshot: day-to-day
+work merges into `develop`, and a `develop` → `main` PR is the release. Merging
+it runs [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml).
+When `package.json` names a version with no `v<version>` tag yet, the workflow
+runs `npm run check`, runs `npm publish` (with provenance), pushes the release
+tag, and creates a GitHub Release from the version's `CHANGELOG.md` section.
+The workflow fails when `CHANGELOG.md` has no `## <version>` section. A push to
+`main` that does not bump the version releases nothing.
+
+A manually pushed `vX.Y.Z` tag still triggers the same workflow and must match
+`package.json`. Use it only to re-cut a release whose merge-triggered run was
+lost. The npm publish is what lists pi-flows in the
+[pi.dev gallery](https://pi.dev/packages).
 
 **One-time setup:** configure npm [trusted publishing](https://docs.npmjs.com/trusted-publishers)
 for the package. No token or secret is required. On npmjs.com, open the **pi-flows**
@@ -17,14 +26,17 @@ package → **Settings → Trusted Publisher → GitHub Actions**. Then enter:
 | Environment | _(leave blank)_ |
 
 CI then authenticates over OIDC through the workflow's `id-token: write`
-permission, and provenance is generated automatically.
+permission, and provenance is generated automatically. The workflow's
+`contents: write` permission covers the release tag and the GitHub Release it
+creates.
 
 ## Cut a release
 
-1. Move `CHANGELOG.md` notes from `Unreleased` into a dated, versioned section.
-2. Bump the version in **both** `package.json` and `PI_FLOWS_VERSION` in
-   `extensions/pi-flows/types.ts`. If the tag does not match `package.json`,
-   the publish workflow fails.
+1. On a branch off `develop`: move `CHANGELOG.md` notes from `Unreleased` into
+   a dated, versioned section.
+2. On the same branch: bump the version in **both** `package.json` and
+   `PI_FLOWS_VERSION` in `extensions/pi-flows/types.ts`. `npm run smoke`
+   (part of `npm run check`) fails when the three disagree.
 3. Make sure that the checks pass locally:
 
    ```bash
@@ -66,11 +78,13 @@ permission, and provenance is generated automatically.
    Use flow with {"showConfig":true}
    ```
 
-6. Commit with a [Conventional Commit](../../CONTRIBUTING.md#commit-messages), open
-   a PR, and merge to `main`.
-7. Check out the clean merge commit. Run the release evaluation and decision
-   against that exact commit in one command. An `approved` decision is
-   required before you tag:
+6. Commit with a [Conventional Commit](../../CONTRIBUTING.md#commit-messages),
+   open a PR, and merge to `develop`. Then open the release PR:
+   `develop` → `main`.
+7. Check out the release PR's head commit. Run the release evaluation and
+   decision against that exact commit in one command. An `approved` decision is
+   required before you merge. Because only release PRs reach `main`, the PR
+   head's tree is the tree the merge publishes:
 
    ```bash
    npm run eval:release -- --run --run-id="release-<version>" --attest-hard-blockers
@@ -84,17 +98,15 @@ permission, and provenance is generated automatically.
    below are attested. Without the flag, the decision blocks as `not-attested`.
    See [Release evidence and manifest](#release-evidence-and-manifest) for the
    artifact-based mode and the full list of what the gate checks.
-8. Tag the merge commit and push the tag. This push triggers the **Publish**
-   workflow:
-
-   ```bash
-   tag="v$(node -p "require('./package.json').version")"
-   git tag "$tag"
-   git push origin "$tag"
-   ```
-
-9. Make sure that the **Publish** workflow is green, that `npm view pi-flows version`
-   shows the new version, and that `pi install npm:pi-flows` resolves it.
+8. Merge the release PR with a merge commit (not a squash), so `develop` stays
+   contained in `main`. The merge triggers the **Publish** workflow: it
+   publishes to npm, pushes the `v<version>` tag, and creates the GitHub
+   Release. Merging is the release act — do not merge before the decision in
+   step 7 is `approved`.
+9. Make sure that the **Publish** workflow is green, that
+   `npm view pi-flows version` shows the new version, that the GitHub Release
+   exists with the CHANGELOG notes, and that `pi install npm:pi-flows`
+   resolves it.
 
 ## Release evidence and manifest
 
@@ -325,3 +337,7 @@ npm unpublish "pi-flows@<version>"             # only allowed within 72h of publ
 git push origin :refs/tags/v<version>          # delete a bad tag, then fix and re-tag
 pi remove -l ./                                # remove a local install
 ```
+
+To re-cut after a rollback, land the fix on `develop`, bump to a new version,
+and merge a fresh release PR. Do not reuse a version npm has seen: the publish
+workflow skips a version the registry already has.

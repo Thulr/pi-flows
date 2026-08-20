@@ -1,11 +1,18 @@
 name: Publish
 
+# Two triggers cut the same release path:
+# - a push to main (normally the develop -> main release PR merging) releases
+#   the version in package.json, unless that version's tag already exists;
+# - a pushed v*.*.* tag is the manual escape hatch and must match package.json.
+# The npm trusted publisher is bound to this workflow's filename, so the
+# publish step must stay in publish.yml.
 on:
   push:
     tags: ["v*.*.*"]
+    branches: [main]
 
 permissions:
-  contents: write # create the GitHub Release for the pushed tag
+  contents: write # push the release tag and create the GitHub Release
   id-token: write # OIDC token for npm trusted publishing (also signs provenance)
 
 jobs:
@@ -20,22 +27,56 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm install -g npm@latest # trusted publishing (OIDC) needs npm >= 11.5.1
       - run: npm ci --ignore-scripts
-      - run: npm run check
-      - name: Tag must match package.json version
+      - name: Decide whether this push cuts a release
+        id: decide
         run: |
-          pkg="v$(node -p "require('./package.json').version")"
-          if [ "$pkg" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($pkg). Bump package.json and PI_FLOWS_VERSION before tagging."
-            exit 1
+          tag="v$(node -p "require('./package.json').version")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$tag" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::Pushed tag $GITHUB_REF_NAME does not match package.json ($tag). Bump package.json and PI_FLOWS_VERSION before tagging."
+              exit 1
+            fi
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already tagged. This push does not bump the version, so there is nothing to release."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
           fi
-      - run: npm publish # auth via OIDC trusted publisher; provenance is automatic
+      - run: npm run check
+        if: steps.decide.outputs.release == 'true'
+      - name: Publish to npm
+        if: steps.decide.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        # The registry check makes a rerun after a partial release safe: a
+        # version npm already has is not republished, and the rerun continues
+        # to the tag and Release steps the failed run may have missed.
+        run: |
+          ver="${TAG#v}"
+          if npm view "pi-flows@$ver" version > /dev/null 2>&1; then
+            echo "npm already has $ver; skipping publish."
+          else
+            npm publish # auth via OIDC trusted publisher; provenance is automatic
+          fi
+      - name: Tag the release commit
+        if: steps.decide.outputs.release == 'true' && github.ref_type == 'branch'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        # After npm publish on purpose: a failed publish must not leave a tag
+        # naming a version the registry never got. A tag pushed with the
+        # workflow token does not retrigger this workflow.
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
       - name: Create GitHub Release from the CHANGELOG section
+        if: steps.decide.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        # After npm publish on purpose: a failed publish must not leave a
-        # Release pointing at a version the registry never got.
+          TAG: ${{ steps.decide.outputs.tag }}
         run: |
-          ver="${GITHUB_REF_NAME#v}"
+          ver="${TAG#v}"
           awk -v ver="$ver" '
             /^## /{ if (insec) exit; if ($2 == ver) { insec=1; next } }
             insec { print }
@@ -44,5 +85,9 @@ jobs:
             echo "::error::CHANGELOG.md has no section for $ver; smoke should have caught this."
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" --verify-tag \
-            --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+          else
+            gh release create "$TAG" --verify-tag \
+              --title "$TAG" --notes-file /tmp/release-notes.md
+          fi
