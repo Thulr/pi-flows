@@ -433,5 +433,11 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // fields, per-mode ranges). File set stays 119; still none from tests/,
 // scripts/, or evals/. Measured 1_489_473 (`npm run pack:dry-run` on this
 // tree).
-assert.ok(pack.unpackedSize < 1_495_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_500_000 for the dossier evidence-default fix (#172): the
+// sections' own schema, its changelog entry, and one reference clause. Small
+// on its own, but the prior ceiling had 830 bytes left on this tree, which one
+// more changelog paragraph would have tripped. File set stays 119; still none
+// from tests/, scripts/, or evals/. Measured 1_494_170, against a 1_492_886
+// baseline on develop (`npm run pack:dry-run` on each tree).
+assert.ok(pack.unpackedSize < 1_500_000, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

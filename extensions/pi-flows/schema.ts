@@ -315,8 +315,14 @@ export const FlowDebate = Type.Object({
 	description: "Adjudicated debate: independent advocates produce positions, inspect one another's arguments in bounded rebuttal rounds, then a separate adjudicator decides against the original constraints.",
 });
 
+/** A dossier section is an ordinary task that asks for evidence unless the caller opts out: the mode reconciles cited claims across sources, so an uncited section cannot carry its weight in the synthesis. Only that one default differs, so the rest of the task shape stays spelled once in FlowTaskProperties. */
+export const FlowDossierSection = Type.Object({
+	...FlowTaskProperties,
+	requireEvidence: Type.Optional(Type.Boolean({ description: `Ask for concrete evidence (file:line, command output, citations, or explicit gaps) in this section's return. Dossier sections ask by default. ${PromptOnlyNote}`, default: true })),
+});
+
 export const FlowDossier = Type.Object({
-	sections: Type.Array(FlowTask, { minItems: 2, maxItems: MAX_PARALLEL_TASKS, description: "Independent evidence-extraction assignments, normally one per source or claim family." }),
+	sections: Type.Array(FlowDossierSection, { minItems: 2, maxItems: MAX_PARALLEL_TASKS, description: "Independent evidence-extraction assignments, normally one per source or claim family." }),
 	debrief: Type.Optional(FlowAgentRef),
 }, {
 	description: "Evidence dossier/map-reduce mode: extract source-grounded evidence in parallel, then synthesize claims, citations, conflicts, confidence, and unresolved gaps without smoothing disagreements away.",
