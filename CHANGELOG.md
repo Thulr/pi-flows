@@ -61,6 +61,15 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Fixed
 
+- Dossier sections now advertise the `requireEvidence` default they actually
+  run under. The sections used the shared task schema, which says the default
+  is `false`, while the handler has always defaulted them to `true`. The
+  schema is what the parent model reads when it writes a call, so it was
+  telling callers evidence was off in the one mode that reconciles cited
+  claims. Sections get their own schema declaring `default: true`, the way
+  worktree tasks already did. No behavior change: the handler is untouched and
+  an explicit `requireEvidence: false` still wins.
+
 - The flow card colors a fully recorded trace as success again. It compared
   trace health against `"complete"`, a value the sink never writes, so every
   trace — `recorded` included — rendered in the warning color.
