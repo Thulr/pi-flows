@@ -108,10 +108,10 @@ export type RecordMintedEvent = (event: MintedCoordinationEvent) => void;
  * The caller's half of a minted event — a coordination event recorded by the
  * seam that performs the action rather than by the mode that requested it, the
  * way the handoff consumer already records its own handoff/validation/artifact
- * events. The caller owns the attribution: the event's name in its own
+ * events. The caller owns the provenance: the event's name in its own
  * vocabulary, its placement in the span tree, and any facts of its own. What
  * actually happened — the event kind, the outcome — is the seam's statement,
- * merged after the caller's so attribution cannot override it. `record` is
+ * merged after the caller's so provenance cannot override it. `record` is
  * required rather than optional so a caller with no sink says so
  * (`record: undefined`) instead of the evidence being forgettable — a declared
  * answer, never a fall-through. A stated absence is deliberately weaker than
@@ -119,34 +119,34 @@ export type RecordMintedEvent = (event: MintedCoordinationEvent) => void;
  * still decline evidence, but it must write the declination down where a
  * review can see it, where a missing call was invisible.
  */
-export interface EventAttribution {
+export interface EventProvenance {
 	/** The flow's minting recorder, or its stated absence when no trace sink exists. */
 	record: RecordMintedEvent | undefined;
 	/** Dotted event name in the caller's vocabulary, e.g. `workflow.gate`. */
 	name: string;
 	/** Where the outcome sits in the span tree: its unit key, stage, and dependencies. */
 	scope?: ChildSpanScope;
-	/** The caller's own attribution facts. The seam's outcome facts win over these. */
+	/** The caller's own provenance facts. The seam's outcome facts win over these. */
 	attributes?: Record<string, unknown>;
 }
 
 /**
  * The one assembly home of a minted event: the seam's kind, outcome, and facts
- * over the caller's attribution, with the seam's facts merged last so
- * attribution cannot override what happened. Spelled once here rather than per
+ * over the caller's provenance, with the seam's facts merged last so
+ * provenance cannot override what happened. Spelled once here rather than per
  * seam, so a third seam cannot reverse the spread and silently let it.
  */
-export function mintEvent(attribution: EventAttribution, minted: { kind: CoordinationEventKind; ok?: boolean; attributes: Record<string, unknown> }): void {
-	attribution.record?.({
+export function mintEvent(provenance: EventProvenance, minted: { kind: CoordinationEventKind; ok?: boolean; attributes: Record<string, unknown> }): void {
+	provenance.record?.({
 		kind: minted.kind,
-		name: attribution.name,
+		name: provenance.name,
 		ok: minted.ok,
 		// The seam performed the action, so the event is its statement — stated
 		// once here for every event assembled through this home. A seam that
 		// records directly states the same flag at its own call site.
 		minted: true,
-		scope: attribution.scope,
-		attributes: { ...attribution.attributes, ...minted.attributes },
+		scope: provenance.scope,
+		attributes: { ...provenance.attributes, ...minted.attributes },
 	});
 }
 

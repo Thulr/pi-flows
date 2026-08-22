@@ -22,7 +22,7 @@ const ATTRIBUTE_CAP = 1024;
 
 /**
  * Structural keys get their own, larger bound. They are machine identifiers the
- * report parses to check the attribution chain, and a truncated one would read as
+ * report parses to check the dependency chain, and a truncated one would read as
  * a broken chain — a valid run failing the gate because its ids were long.
  *
  * All five share the bound deliberately. A key capped on one side and intact on

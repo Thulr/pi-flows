@@ -439,5 +439,21 @@ for (const file of files.filter((name) => name.startsWith("extensions/") && /\.(
 // more changelog paragraph would have tripped. File set stays 119; still none
 // from tests/, scripts/, or evals/. Measured 1_494_170, against a 1_492_886
 // baseline on develop (`npm run pack:dry-run` on each tree).
-assert.ok(pack.unpackedSize < 1_500_000, `package unpacked size too large: ${pack.unpackedSize}`);
+// Raised to 1_501_400 for the glossary audit: an audit of every CONTEXT.md
+// entry against every module found the Avoid lists clean but four load-bearing
+// nouns undefined, so the glossary gains the three contract checks
+// (Attribution, Integrity, Conformance) and the Check order invariant that
+// delegation.ts and the Unvalidated claims entry both already assert; Event
+// provenance, which EventAttribution is renamed to so "attribution" names the
+// contract check and nothing else (writeCapabilityAttribution ->
+// writeCapabilityReason for the same reason); Worktree and its integrator Role, the
+// declared alternative to the shared-write guard and previously absent from
+// the glossary entirely; and Orchestrate unit and Graph node, the two
+// dispatchable-work nouns several Avoid lists referenced but no entry
+// defined. Prose: CONTEXT.md
+// +5_005 and the changelog +1_831, against a code half that is a rename and
+// nets -71 bytes. No new modules and no new machinery. File set stays 119;
+// still none from tests/, scripts/, or evals/. Measured 1_500_915 against the
+// 1_494_170 develop baseline (`npm run pack:dry-run` on each tree).
+assert.ok(pack.unpackedSize < 1_501_400, `package unpacked size too large: ${pack.unpackedSize}`);
 console.log(`pack ok: ${files.length} files, ${pack.unpackedSize} bytes unpacked`);

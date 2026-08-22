@@ -346,7 +346,7 @@ export async function handleEvaluate(deps: ModeDeps): Promise<ModeOutput> {
 			name: "evaluate.panel_verdict",
 			ok: allPass,
 			// The verdict is the aggregate of these critics; without the links the
-			// revision points at a panel that points at nothing, and the attribution
+			// revision points at a panel that points at nothing, and the dependency
 			// chain from revision back to judgement is broken in the middle.
 			scope: { stage, key: `${stage.key}.panel`, dependsOn: critics.map((_unused, index) => `${stage.key}.critic-${index + 1}`) },
 			attributes: {

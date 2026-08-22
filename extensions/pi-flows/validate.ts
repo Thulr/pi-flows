@@ -102,7 +102,7 @@ export function canMutateWorkspace(discovery: FlowDiscovery, ref: { agent: strin
  * The refusal message must let a reader see that the toolset — not the agent's
  * name or prompt — is what classified it, so a name-only retry is visibly futile.
  */
-export function writeCapabilityAttribution(discovery: FlowDiscovery, ref: { agent: string; tools?: string }): string {
+export function writeCapabilityReason(discovery: FlowDiscovery, ref: { agent: string; tools?: string }): string {
 	const tools = effectiveTools(discovery, ref);
 	// Covers both an omitted tools field and an explicit tools:"default".
 	if (tools === undefined) return `${ref.agent} (effective tools are pi defaults, which include ${MUTATING_TOOLS.join("/")})`;
@@ -187,14 +187,14 @@ export function sharedWriteCwdError(discovery: FlowDiscovery, defaultCwd: string
 	const byCwd = new Map<string, string[]>();
 	for (const ref of refs) {
 		const cwd = resolvedCwd(defaultCwd, ref.cwd);
-		byCwd.set(cwd, [...(byCwd.get(cwd) ?? []), writeCapabilityAttribution(discovery, ref)]);
+		byCwd.set(cwd, [...(byCwd.get(cwd) ?? []), writeCapabilityReason(discovery, ref)]);
 	}
-	for (const [cwd, attributions] of byCwd) {
-		if (attributions.length > 1) {
+	for (const [cwd, roleLabels] of byCwd) {
+		if (roleLabels.length > 1) {
 			return flowError(
 				"SHARED_WRITE_CWD",
 				"Multiple write-capable flow agents would share one working directory.",
-				`These agents would run concurrently in ${safePath(cwd)}, which risks conflicting edits in the same checkout: ${attributions.join("; ")}. The effective toolset is what classifies a role as write-capable, so switching to a different agent name changes nothing unless its tools change too.`,
+				`These agents would run concurrently in ${safePath(cwd)}, which risks conflicting edits in the same checkout: ${roleLabels.join("; ")}. The effective toolset is what classifies a role as write-capable, so switching to a different agent name changes nothing unless its tools change too.`,
 				`Serialize with concurrency:1, use agents whose effective tools exclude ${MUTATING_TOOLS.join("/")} (bash-ro, read-only-allowlisted bash, stays admissible), or give each writer a distinct cwd/worktree. Pass allowSharedWriteCwd:true only as a last resort, when concurrent writes in one shared checkout are actually intended.`,
 			);
 		}

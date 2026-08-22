@@ -17,10 +17,10 @@ import { fileURLToPath } from "node:url";
 import registerPiFlows from "../extensions/pi-flows/index.ts";
 
 import { delegationContractId } from "../extensions/pi-flows/delegation.ts";
-import type { EventAttribution } from "../extensions/pi-flows/types.ts";
+import type { EventProvenance } from "../extensions/pi-flows/types.ts";
 
 /** The stated absence of a trace sink (`record: undefined`), for receipts minted outside any flow — issuance requires the statement rather than letting evidence be forgotten (#128). */
-export const UNRECORDED: EventAttribution = { record: undefined, name: "workflow.approval.issued" };
+export const UNRECORDED: EventProvenance = { record: undefined, name: "workflow.approval.issued" };
 
 // The stub pi writes its calls.jsonl into the child cwd, which the real
 // bash-ro OS sandbox (deny writes under cwd) would block — so every

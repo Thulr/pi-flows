@@ -27,7 +27,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { deepFreeze } from "./contract-resolution.ts";
 import { canonicalSha256, isRecord } from "./delegation.ts";
-import { flowError, mintEvent, type ApprovalReceiptSummary, type EventAttribution, type FlowError } from "./types.ts";
+import { flowError, mintEvent, type ApprovalReceiptSummary, type EventProvenance, type FlowError } from "./types.ts";
 
 export const APPROVAL_RECEIPT_SCHEMA_VERSION = "pi-flows.approval-receipt.v1";
 
@@ -43,7 +43,7 @@ export const MAX_APPROVAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** The step id standing for "the workflow finishes", used when an approval gates the tail of a workflow rather than a following phase. */
 export const WORKFLOW_COMPLETE_STEP = "workflow.complete";
 
-/** Fallback approver label when the host supplies no actor. An audit attribution, not an authenticated identity. */
+/** Fallback approver label when the host supplies no actor. An audit label, not an authenticated identity. */
 export const DEFAULT_APPROVAL_ACTOR = "interactive-ui";
 
 /**
@@ -130,13 +130,13 @@ function sealReceipt(receipt: UnsealedReceipt): ApprovalReceipt {
  * left to the caller's discipline. The event carries receipt identity and
  * status only — the approved parameters stay inside the binding digest, so the
  * trace can name the consent without leaking it. The caller owns the
- * attribution; the receipt-identity attributes are this seam's, assembled
+ * provenance; the receipt-identity attributes are this seam's, assembled
  * through the `mintEvent` home so the merge order is spelled once.
  */
 export function issueApprovalReceipt(
 	binding: ApprovalBinding,
 	{ approvedBy, ttlMs = DEFAULT_APPROVAL_TTL_MS, now = Date.now() }: { approvedBy: string; ttlMs?: number; now?: number },
-	attribution: EventAttribution,
+	provenance: EventProvenance,
 ): ApprovalReceipt {
 	const issuedAt = new Date(now).toISOString();
 	const bindingDigest = approvalBindingDigest(binding);
@@ -155,7 +155,7 @@ export function issueApprovalReceipt(
 		consumedBy: null,
 		validation: "typed",
 	});
-	mintEvent(attribution, {
+	mintEvent(provenance, {
 		kind: "approval",
 		attributes: {
 			"flow.approval.receipt_id": receipt.receiptId,

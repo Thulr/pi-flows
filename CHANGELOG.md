@@ -10,6 +10,31 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ### Changed
 
+- The domain glossary now defines the terms the code was already leaning on.
+  An audit of all 86 `CONTEXT.md` entries against 88 modules found the Avoid
+  lists clean — no module named a domain concept with a banned word — but four
+  load-bearing nouns undefined. The three contract checks now have entries
+  (**Attribution**, **Integrity**, **Conformance**) plus **Check order**, whose
+  ordering `delegation.ts` and the Unvalidated claims entry both already
+  asserted as an invariant over words nothing defined. **Worktree** and its
+  **integrator** Role were absent from the glossary entirely, though the mode
+  ships and is the declared alternative to the shared-write guard rather than
+  an exemption from it. **Orchestrate unit** and **Graph node** name
+  orchestrate's and graph mode's dispatchable work, which several Avoid lists
+  referenced parenthetically and no entry defined; `FlowGraph` in the params is
+  now stated to be the latter and not a Flow tree. The unit term is qualified
+  by its mode because bare "unit" stays the generic word the trace vocabulary
+  already uses for any step a span can name. `RETURN_CONTRACT_MISMATCH` is
+  recorded as a historical wire name beside the `envelope.rejected` carve-out.
+- `EventAttribution` is renamed `EventProvenance`, so "attribution" names the
+  first contract check and nothing else. The word had carried three meanings
+  across Core: the minted event's caller-supplied half, the contract-identity
+  check, and a loose audit-label sense. `writeCapabilityAttribution` is renamed
+  `writeCapabilityReason` for the same reason, and trace prose that meant the
+  dependency-link chain now says so. Both are internal — `EventProvenance` is
+  not re-exported and `writeCapabilityReason` is reached only through the
+  `__test` namespace — so no public API changes.
+
 - Each mode's role defaults are now declared once and read by both its `plan`
   declaration and its handler. Which agent fills a role when the caller names
   none was previously written twice per mode — inside the plan and again inside

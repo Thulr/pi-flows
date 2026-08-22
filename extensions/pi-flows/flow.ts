@@ -67,7 +67,7 @@ export interface FlowPorts {
 	policy: CapturePolicy;
 	cwd: string;
 	hasUI: boolean;
-	/** Audit label recorded as the approving actor on approvals — an attribution for the trail, not an authenticated identity. */
+	/** Audit label recorded as the approving actor on approvals — a label for the trail, not an authenticated identity. */
 	approvalActor: string;
 	agentScope: AgentScope;
 	discovery: FlowDiscovery;

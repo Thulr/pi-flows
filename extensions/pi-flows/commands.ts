@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as fsSync from "node:fs";
 import * as path from "node:path";
-import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, mintEvent, type CapturePolicy, type EventAttribution, type FlowError } from "./types.ts";
+import { CHECK_OUTPUT_CAP, DEFAULT_TIMEOUT_MS, mintEvent, type CapturePolicy, type EventProvenance, type FlowError } from "./types.ts";
 import { capBytes, sanitizeText } from "./sanitize.ts";
 import { splitBashReadonly, type BashReadonlyEnforcement } from "./bash-readonly.ts";
 import { bashReadonlyEnforcerArgs, bashReadonlyEnforcerAvailable } from "./bash-readonly-extension.ts";
@@ -12,7 +12,7 @@ import { resolveBashReadonlyEnforcement } from "./bash-readonly-sandbox.ts";
  * toolset (if any) will be enforced. Kept beside getPiInvocation because it is
  * the same concern — how the child is invoked — and to keep the runner's
  * per-run body under its size budget. Returns the parsed tools (for span
- * attribution), the enforcement layer, and a fail-closed error when a bash-ro
+ * facts), the enforcement layer, and a fail-closed error when a bash-ro
  * child can be enforced by no layer; on error the args are not usable.
  */
 export function buildChildArgs(params: { model?: string; thinking?: string; noExtensions: boolean; effectiveTools?: string[] }): { args: string[]; tools: string[] | undefined; enforcement: BashReadonlyEnforcement | null; error: FlowError | null } {
@@ -112,14 +112,14 @@ function boundedCommand<T>(options: {
  * recorded here, on the one path every check command runs through, the same
  * way a child span is impossible to skip because runner.ts records it — so a
  * mode cannot run a gate without leaving the trace fact that it ran, and the
- * required attribution makes a caller without a sink state that rather than
- * forget it. The caller owns the attribution; `flow.check.passed` and the
+ * required provenance makes a caller without a sink state that rather than
+ * forget it. The caller owns the provenance; `flow.check.passed` and the
  * outcome are this seam's, assembled through the Core `mintEvent` home so the
  * merge order is spelled once. A gate that could not start is recorded too
  * (`flow.check.spawn_failed`) — evaluate's refuse-first path previously left
  * no evidence of that spend.
  */
-export async function runCheckCommand(command: string, cwd: string, timeoutMs: number, policy: CapturePolicy, attribution: EventAttribution, signal?: AbortSignal): Promise<{ ok: boolean; output: string; spawnFailed: boolean }> {
+export async function runCheckCommand(command: string, cwd: string, timeoutMs: number, policy: CapturePolicy, provenance: EventProvenance, signal?: AbortSignal): Promise<{ ok: boolean; output: string; spawnFailed: boolean }> {
 	const result = await boundedCommand<{ ok: boolean; output: string; spawnFailed: boolean }>({
 		command, cwd, timeoutMs, policy, signal, label: "Check output",
 		finishForCode: (code, output) => ({ ok: code === 0, output, spawnFailed: false }),
@@ -127,7 +127,7 @@ export async function runCheckCommand(command: string, cwd: string, timeoutMs: n
 		finishForAbort: (output) => ({ ok: false, output, spawnFailed: false }),
 		finishForSpawnError: (output) => ({ ok: false, output, spawnFailed: true }),
 	});
-	mintEvent(attribution, {
+	mintEvent(provenance, {
 		kind: "validation",
 		ok: result.ok,
 		attributes: {
