@@ -301,7 +301,7 @@ export function traceStructure(traceSpans: TraceSpanRecord[], expectation: { dec
 	const connected = traceSpans.every((span) => span === root || reachesRoot(span, byId, root?.span_id));
 	const byKey = spansByKey(traceSpans);
 	const dependencyVerdicts = traceSpans.map((span) => dependenciesHold(span, knownIds, byKey));
-	const attributionHolds = dependencyVerdicts.every((verdict) => verdict.holds);
+	const linksHold = dependencyVerdicts.every((verdict) => verdict.holds);
 	const danglingLinks = dependencyVerdicts.reduce((sum, verdict) => sum + verdict.dangling, 0);
 	const timesContained = traceSpans.every((span) => timesHold(span, byId));
 	// Surplus counts as loss of a different kind: rows the exporter never claimed
@@ -341,6 +341,6 @@ export function traceStructure(traceSpans: TraceSpanRecord[], expectation: { dec
 		unexpectedSpans,
 		danglingLinks,
 		undeclaredEvents,
-		invalid: expectationUnusable || owedUnusable || !rolesDeclared || !rootWellFormed || !connected || !attributionHolds || !timesContained,
+		invalid: expectationUnusable || owedUnusable || !rolesDeclared || !rootWellFormed || !connected || !linksHold || !timesContained,
 	};
 }

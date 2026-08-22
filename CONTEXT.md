@@ -24,7 +24,7 @@ _Avoid_: expanded params (that names only one field), shared state
 
 **Flow tree**:
 A flow plus any flows its children start. Budget accounting is per flow: every flow in the tree charges only its own budget, so no ceiling spans the tree.
-_Avoid_: flow graph, nested run
+_Avoid_: flow graph (`FlowGraph` in the params is graph mode's DAG of **Graph nodes**, not this), nested run
 
 **Mode**:
 The coordination pattern a flow uses (single, parallel, evaluate, debate, …).
@@ -51,7 +51,7 @@ The selected Agent source plus the execution conditions after Role overrides and
 _Avoid_: authored Agent (that is only the discovered definition), requested profile, executable profile
 
 **Role**:
-The slot in a mode's topology that an agent fills (generator, critic, worker, adjudicator).
+The slot in a mode's topology that an agent fills (generator, critic, worker, adjudicator, integrator).
 _Avoid_: position
 
 **Wave**:
@@ -64,11 +64,19 @@ _Avoid_: prompt, job
 
 **Subtask**:
 A task produced by a Decomposition rather than authored upstream. A subtask is a kind of task, and it may depend on other subtasks of the same Decomposition.
-_Avoid_: node (that names graph mode's author-supplied unit), planned unit
+_Avoid_: node (that names a **Graph node**), planned unit
+
+**Graph node**:
+One step of work in graph mode's author-supplied DAG, named by the caller along with the edges between nodes. The counterpart to a **Subtask**, and the reason several entries here send "node" and "task graph" away: a node arrives in the call itself, where a subtask is returned by a commander mid-flow. Both are validated before any worker spawns; what differs is who authored them. `FlowGraph` in the public params is this DAG and not a **Flow tree**.
+_Avoid_: subtask (that is a commander's, not an author's), orchestrate unit (that is a subtask under dispatch)
+
+**Orchestrate unit**:
+One subtask as orchestrate dispatches it: the subtask itself, the **Unit key** its span carries, the label its headings use, and the **Plan revision** that governs it. A subtask is what the commander returned; an orchestrate unit is that subtask under dispatch, which is why a revision gives the work it replaces fresh units under a revision key, while succeeded subtasks are never redefined and keep theirs. Qualified by its mode on purpose: bare "unit" stays the generic word the trace vocabulary already uses for any step a span can name.
+_Avoid_: subtask (that is what it wraps, not what it is), item, work item, unit key (that is the span name it carries)
 
 **Decomposition**:
 The breakdown a commander returns for a goal — subtasks, plus any dependency edges between them — validated before any worker spawns. A flat subtask list is a Decomposition with no edges. Deliberately not a "plan": that word names a mode's declared pre-spawn waves and the admitted dispatch capability.
-_Avoid_: plan, work breakdown, task graph (that reads as graph mode's author-supplied DAG)
+_Avoid_: plan, work breakdown, task graph (that reads as graph mode's DAG of **Graph nodes**)
 
 **Decomposition review**:
 An optional pre-dispatch judgment that a Decomposition covers its goal with suitably bounded, non-overlapping subtasks and necessary dependency edges. If the caller requests Decomposition review, the review must pass before workers can run.
@@ -141,7 +149,7 @@ The pass-or-revise judgment a judging Role returns to steer coordination, read f
 _Avoid_: score (that is the numeric control), review (the act, not the judgment), approval (a verdict is a child's, never a human's)
 
 **Return requirements**:
-Prompt-enforced instructions that constrain a child's returned shape or evidence without creating a machine-checked delegation contract.
+Prompt-enforced instructions that constrain a child's returned shape or evidence without creating a machine-checked delegation contract. Three recorded places keep the banned spelling on purpose: the error code `RETURN_CONTRACT_MISMATCH` predates this vocabulary and reports a failed **Attribution**, not a return requirement; the retired `returnContract` and `workerReturnContract` param keys are **Tombstones** and are refused; and the workflow approval binding record still spells a phase's requirements under the pre-rename key, because renaming digest input would stale every issued **Approval receipt**.
 _Avoid_: return contract
 
 **Return candidate**:
@@ -152,6 +160,22 @@ _Avoid_: unvalidated envelope, envelope candidate (that is the bounded final-mes
 A child return that passed attribution, integrity, and conformance under a resolved delegation contract. Only the validation transition constructs or attaches one, so it always carries the exact resolved contract identity. What it carries is the Contract-bound Return assurance, no more.
 _Avoid_: response object, result contract, candidate (that is the pre-validation form)
 
+**Attribution**:
+The first of the three contract checks: the Return candidate names the exact resolved delegation contract it was dispatched under. A candidate whose contract identity is missing or stale fails here and is untrustworthy rather than merely unchecked, which is why nothing downstream reads it. Names only this check — a minted coordination event's caller-supplied half is **Event provenance**, and who a failure or an approval is credited to is an audit label.
+_Avoid_: binding (that names the approval receipt's), identity check, provenance (that is the minted event's term)
+
+**Integrity**:
+The second of the three contract checks: every **Artifact** the Return candidate references stays inside the child cwd, and every digest it declared matches the file. Containment and digests are one check because either failing makes the same claim untrustworthy.
+_Avoid_: containment (that names only half of it), digest check
+
+**Conformance**:
+The third of the three contract checks: the Return candidate's `data` satisfies the contract's return schema. The only check whose sole failure still leaves **Unvalidated claims**, because attribution and integrity have already held.
+_Avoid_: schema validation (that names the mechanism, not the check), shape check
+
+**Check order**:
+Attribution, then integrity, then conformance — an invariant, not an implementation detail. Conformance is last because it is the one failure whose claims may still be surfaced; checking it first would report surfaceable claims for a candidate whose digests were never verified, so an escaped artifact reference could ride out on a schema miss. A candidate failing both integrity and conformance is reported as the integrity failure.
+_Avoid_: validation order (validation names one kind of gate), check sequence
+
 **Contract-bound Return**:
 The assurance a validated Return envelope carries: attribution to the exact resolved delegation contract, integrity of the artifacts whose digests it declared, and conformance of its `data` to the Return schema. It proves how the Return was produced and shaped — never that its claims are true or that prose acceptance checks were satisfied. Truth is a separate assurance only Verified outcome success grants.
 _Avoid_: verified Return (verification is an independent verifier's act), machine-checked findings (the shape is checked, the findings are not)
@@ -161,7 +185,7 @@ A Return candidate that failed contract validation — its identity did not bind
 _Avoid_: rejected envelope (asserts the binding the rejection refused), invalid envelope, failed envelope (both read as "discard it")
 
 **Unvalidated claims**:
-The claims a rejected Return candidate still carries, surfaced to the parent labeled as unverified and never counted toward a verdict. Available from exactly one rejection: attribution and integrity held — the candidate binds to the dispatched contract, its artifact references stay inside the child cwd, and any digests it declared match — and only conformance failed. A candidate whose identity was stale, or whose artifacts escaped the cwd or failed a digest it declared, has no unvalidated claims — it is untrustworthy, not merely unchecked — which is why the three checks are ordered attribution, integrity, conformance, and why that order is an invariant rather than an implementation detail.
+The claims a rejected Return candidate still carries, surfaced to the parent labeled as unverified and never counted toward a verdict. Available from exactly one rejection: attribution and integrity held — the candidate binds to the dispatched contract, its artifact references stay inside the child cwd, and any digests it declared match — and only conformance failed. A candidate whose identity was stale, or whose artifacts escaped the cwd or failed a digest it declared, has no unvalidated claims — it is untrustworthy, not merely unchecked — which is why the **Check order** is an invariant rather than an implementation detail.
 _Avoid_: salvaged findings, partial results (that names an envelope status), unverified evidence
 
 **Artifact**:
@@ -195,7 +219,7 @@ A grouping span for work that belongs together — a graph wave, a debate round,
 _Avoid_: group, batch, phase (that names one specific stage kind)
 
 **Unit key**:
-The stable name a child or coordination-event span carries inside one flow, so another span can reference it from `dependsOn`. A stage carries a stage key in a deliberately separate namespace; a reference resolves against unit keys first, then stage keys.
+The stable name a child or coordination-event span carries inside one flow, so another span can reference it from `dependsOn`. A stage carries a stage key in a deliberately separate namespace; a reference resolves against unit keys first, then stage keys. Names a span, so every **Orchestrate unit** carries one, but so does a **Graph node** and a span no dispatchable step produced.
 _Avoid_: id, node name, stage key (that is the separate namespace a stage's name lives in)
 
 **Dependency link**:
@@ -211,8 +235,12 @@ The recorded fact that a human approval point was reached and how it resolved. C
 _Avoid_: gate (a gate is machine-evaluated)
 
 **Minted event**:
-A coordination event recorded by the seam that performs the action instead of by the mode that requested it — the handoff consumer's events, the aggregate's approval decision, the deterministic gate's outcome, receipt issuance. A child span is not one: the runner records it, but it is a run's span, not a coordination event. The caller supplies an attribution — the event's name, placement, and facts — and the seam's kind and outcome merge last, so attribution cannot override what happened. Recording through the seam is a capability a mode handler does not have; a mode's own decisions — its state transitions, retries, and parsed verdicts — stay hand-placed and are the separate remainder the **Owed event kinds** declaration bounds.
+A coordination event recorded by the seam that performs the action instead of by the mode that requested it — the handoff consumer's events, the aggregate's approval decision, the deterministic gate's outcome, receipt issuance. A child span is not one: the runner records it, but it is a run's span, not a coordination event. The caller supplies its **Event provenance** — the event's name, placement, and facts — and the seam's kind and outcome merge last, so provenance cannot override what happened. Recording through the seam is a capability a mode handler does not have; a mode's own decisions — its state transitions, retries, and parsed verdicts — stay hand-placed and are the separate remainder the **Owed event kinds** declaration bounds.
 _Avoid_: framework event, auto-event
+
+**Event provenance**:
+The caller's half of a **Minted event** — the event's name in the caller's own vocabulary, its placement in the span tree, and any facts of its own. What happened, the event kind and the outcome, is the seam's statement and merges last. A caller with no trace sink states that absence rather than omitting it, so declining evidence is written down where a review can see it. Deliberately not "attribution": that word names the first contract check.
+_Avoid_: attribution (that names the first contract check), event metadata, caller context
 
 **Owed event kinds**:
 The coordination-event kinds a mode's handler itself records — state transitions, retries, the verdicts its controllers parse — declared once beside its handler. A declaration cannot promise a count — whether a retry fires is runtime-dependent — but it bounds what a trace of the mode may contain: a mode that records none declares so, and a read-back refuses an unminted event of an undeclared kind. Seam-minted events (**Minted event**) are the seams' own statements and exempt — the declaration bounds the mode's own hand, not the seams'.
@@ -271,6 +299,10 @@ _Avoid_: mutating agent (the toolset classifies, not the agent), trusted/untrust
 **Shared-write guard**:
 The gate that refuses a concurrent wave placing two or more **Write-capable** roles in one working directory (`SHARED_WRITE_CWD`) before any child spawns. Coordination safety, not access control: it prevents conflicting edits in one checkout, and an explicit opt-in can lift it when concurrent writes there are actually intended.
 _Avoid_: write lock (nothing is locked — the guard refuses, it does not serialize), cwd check
+
+**Worktree**:
+A checkout of its own that one write-capable role runs in, so a wave of writers never shares a working directory. The declared alternative to the **Shared-write guard** rather than an exemption from it: the guard refuses concurrent writers in one checkout, and per-writer worktrees remove the condition it refuses, which is why such a wave is planned unguarded rather than opted out of. The mode merges each writer's branch back itself; an **integrator** Role is dispatched only where a merge conflicts, and to review the integrated result. Named after the git mechanism because that is what it is.
+_Avoid_: branch (the checkout is the isolation, not the ref), sandbox (that names the bash-ro security boundary), workspace, cwd override
 
 **Admissibility**:
 Whether the tool itself would admit a call rather than refuse it before any child spawns. Judged with the same predicates the tool enforces, so a scored rule cannot drift from the enforced one.

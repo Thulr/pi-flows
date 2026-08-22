@@ -11,7 +11,7 @@ import type { FlowPreset, FlowPresetSelection } from "./preset-types.ts";
 // The coordination-trace vocabulary lives in trace-scope.ts (dependency-free so
 // it can be re-exported here without a cycle) and is part of this module's
 // public surface: downstream consumers import trace types from types.ts.
-export type { ChildSpanScope, CoordinationEvent, CoordinationEventKind, EventAttribution, FlowTraceContext, FlowTraceHealth, FlowTraceHealthStatus, FlowTraceLink, FlowTraceStructure, MintedCoordinationEvent, RecordEvent, RecordMintedEvent, SpanStage } from "./trace-scope.ts";
+export type { ChildSpanScope, CoordinationEvent, CoordinationEventKind, EventProvenance, FlowTraceContext, FlowTraceHealth, FlowTraceHealthStatus, FlowTraceLink, FlowTraceStructure, MintedCoordinationEvent, RecordEvent, RecordMintedEvent, SpanStage } from "./trace-scope.ts";
 export { encodeAuthorKey, mintEvent } from "./trace-scope.ts";
 export type { ChildMessage, ChildMessageBlock } from "./sanitize.ts";
 export type { HandoffGuard, PreparedHandoff, ResolvedHandoffPolicy } from "./handoff-types.ts";
@@ -481,7 +481,7 @@ export interface ModeDeps {
 	/** Attribute a coordination boundary (artifact, state, retry, approval, budget, validation, handoff) to the trace. */
 	recordEvent?: RecordEvent;
 	requestApproval?: (title: string, message: string) => Promise<"approved" | "required" | "denied">;
-	/** Audit label recorded as the approving actor on an approval receipt. An attribution label for the audit trail, not an authenticated identity. */
+	/** Audit label recorded as the approving actor on an approval receipt. An audit label for the trail, not an authenticated identity. */
 	approvalActor?: string;
 	makeDetails: (mode: FlowMode, agents?: FlowAgent[]) => (results: FlowRunResult[], error?: FlowError) => FlowDetails;
 	/** The mode's settle object (settle.ts): tracked runs and the outputs that carry them. The registry builds it per dispatch from the handler's own table entry (modes/registry.ts), binding mode identity by construction; optional in the type only because the aggregate supplies deps before that binding — every dispatched handler receives one (`modeSettle` is the checked accessor). */

@@ -115,7 +115,7 @@ export function bashReadonlyUnenforceableError(): FlowError {
 	);
 }
 
-/** What bash-ro permits, for refusal reasons and user-facing attribution. */
+/** What bash-ro permits, for refusal reasons and user-facing descriptions. */
 export function bashReadonlySummary(): string {
 	return "git inspection (log/diff/show/blame/status/rev-parse/...), file inspection (ls/cat/grep/find/head/...), and repo verification (npm test, npm run <script>, node --test)";
 }

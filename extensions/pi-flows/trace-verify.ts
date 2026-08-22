@@ -162,7 +162,7 @@ export async function verifyExportedTrace(traceFile: string, identity: { traceId
 		const unclaimedRemainder = unclaimed.length > 0 && !declaresOwnRoot(unclaimed);
 		const structure = traceStructure(own, { declared: attempted, present: true });
 		// Accept by the report's own disjunction (trace-report.ts), not a subset of
-		// it: `invalid` covers connectivity, attribution, and containment, while
+		// it: `invalid` covers connectivity, dependency links, and containment, while
 		// duplicates, id-less rows, and surplus are separate counters there — and a
 		// verifier that ignores any of them certifies evidence the downstream
 		// strict report then rejects. Surplus is the live case: a concurrent

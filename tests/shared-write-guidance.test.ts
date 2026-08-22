@@ -59,38 +59,38 @@ test("write-capability attribution covers override, bundled, defaulted, and read
 	const repo = await makeTempRepo();
 	const discovery = __test.discoverFlowAgents(repo, "user");
 	assert.equal(
-		__test.writeCapabilityAttribution(discovery, { agent: "recon", tools: "read,grep,bash" }),
+		__test.writeCapabilityReason(discovery, { agent: "recon", tools: "read,grep,bash" }),
 		"recon (effective tools include bash)",
 	);
 	assert.equal(
-		__test.writeCapabilityAttribution(discovery, { agent: "overwatch" }),
+		__test.writeCapabilityReason(discovery, { agent: "overwatch" }),
 		"overwatch (effective tools include bash)",
 	);
 	// Both an omitted tools field and an explicit tools:"default" resolve to pi
 	// defaults; the message must not claim omission for the explicit form.
 	assert.equal(
-		__test.writeCapabilityAttribution(discovery, { agent: "operator" }),
+		__test.writeCapabilityReason(discovery, { agent: "operator" }),
 		"operator (effective tools are pi defaults, which include bash/edit/write)",
 	);
 	assert.equal(
-		__test.writeCapabilityAttribution(discovery, { agent: "operator", tools: "default" }),
+		__test.writeCapabilityReason(discovery, { agent: "operator", tools: "default" }),
 		"operator (effective tools are pi defaults, which include bash/edit/write)",
 	);
 	// Unreachable through the guard (non-mutating refs are filtered first), but
 	// the exported helper must still tell the truth for a read-only toolset.
 	assert.equal(
-		__test.writeCapabilityAttribution(discovery, { agent: "recon" }),
+		__test.writeCapabilityReason(discovery, { agent: "recon" }),
 		"recon (not write-capable by its effective tools)",
 	);
 	// bash-ro is bash under a child-enforced allowlist; the attribution must
 	// name the token so a reader sees why a shell-carrying role passed.
 	assert.equal(
-		__test.writeCapabilityAttribution(discovery, { agent: "recon", tools: "read,grep,find,ls,bash-ro" }),
+		__test.writeCapabilityReason(discovery, { agent: "recon", tools: "read,grep,find,ls,bash-ro" }),
 		"recon (not write-capable: bash-ro is bash under a child-enforced read-only allowlist)",
 	);
 	// Carrying plain bash alongside bash-ro is write-capable: bash wins.
 	assert.equal(
-		__test.writeCapabilityAttribution(discovery, { agent: "recon", tools: "bash,bash-ro" }),
+		__test.writeCapabilityReason(discovery, { agent: "recon", tools: "bash,bash-ro" }),
 		"recon (effective tools include bash)",
 	);
 });
