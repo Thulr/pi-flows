@@ -1,182 +1,1236 @@
 {
-  "id": "run-9-unix1781222937558563000",
-  "created_at": "unix:1781222937558563000",
+  "id": "run-unix1787714927532978000-gate",
+  "created_at": "unix:1787714927532978000",
   "source": {
     "tool": "thulr",
-    "trace_digest": "e68af98962a9470e",
-    "n_cases": 9
+    "trace_digest": "f29e7bac1021fd93",
+    "n_cases": 30,
+    "trace_path": "/private/tmp/pi-flows-release-0.9.0/evals/thulr-trace.jsonl",
+    "trace_origin": {
+      "origin": "ingested",
+      "journal": "absent"
+    }
   },
   "repro": {
     "subject_model": "openai-codex/gpt-5.4-mini",
-    "judge_model": "anthropic/claude-haiku-4-5",
+    "judge_model": "openai-codex/gpt-5.5",
     "config_version": "pi-flows-eval:openai-codex/gpt-5.4-mini",
-    "prompt_version": "pi-flows@0.1.1",
+    "prompt_version": "pi-flows@0.9.0",
     "evaluator_set": [
-      "criterion"
+      "criterion",
+      "completeness",
+      "contract_adherence",
+      "correctness",
+      "evidence_quality",
+      "exactness",
+      "groundedness",
+      "reason_quality"
     ],
-    "thulr_version": "0.1.2",
+    "thulr_version": "0.5.0",
     "seed": null,
-    "criteria_digest": "a9e72f7a2f517ca3",
+    "criteria_digest": "1b3d26f474bf0cc0",
     "judge": {
-      "bin": "scripts/thulr-judge-pi.sh",
-      "bin_source": "flag",
-      "model_source": "flag"
+      "bin": "pi",
+      "bin_source": "default",
+      "model_source": "flag",
+      "runtime_version": "0.79.10",
+      "provider": "openai-codex",
+      "provider_source": "flag"
+    },
+    "judge_usage": {
+      "calls": 124,
+      "calls_with_usage": 124,
+      "input_tokens": 89601,
+      "output_tokens": 10873,
+      "total_tokens": 100474,
+      "cost_usd": 0.7741949999999999
     }
   },
   "summary": [
     {
+      "dimension": "contract_adherence",
+      "n": 15,
+      "pass_count": 15,
+      "score_mean": 1.0,
+      "score_stddev": 0.0
+    },
+    {
+      "dimension": "correctness",
+      "n": 20,
+      "pass_count": 20,
+      "score_mean": 1.0,
+      "score_stddev": 0.0
+    },
+    {
       "dimension": "criterion",
-      "n": 9,
-      "pass_count": 9,
-      "score_mean": 0.9722222,
-      "score_stddev": 0.06666666
+      "n": 30,
+      "pass_count": 30,
+      "score_mean": 1.0,
+      "score_stddev": 0.0
+    },
+    {
+      "dimension": "exactness",
+      "n": 10,
+      "pass_count": 10,
+      "score_mean": 1.0,
+      "score_stddev": 0.0
+    },
+    {
+      "dimension": "evidence_quality",
+      "n": 10,
+      "pass_count": 10,
+      "score_mean": 1.0,
+      "score_stddev": 0.0
+    },
+    {
+      "dimension": "reason_quality",
+      "n": 5,
+      "pass_count": 5,
+      "score_mean": 1.0,
+      "score_stddev": 0.0
     }
   ],
   "cases": [
     {
-      "case_id": "evaluate-loop-completes-with-gate",
+      "case_id": "evaluate-loop-completes-with-gate::trial-001",
+      "case_digest": "f09de15ec07a69a3",
+      "output_digest": "405369b08abf0f43",
       "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
       "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows `require('./isPrime.js')` successfully destructures `isPrime`, indicating CommonJS export from `isPrime.js`."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows the verification explicitly passed for 2, 3, 13, 0, 1, 9, and a negative number."
+        },
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 1.0,
+          "rationale": "The evidence shows the CommonJS export was verified and returned the required true/false results for the specified cases."
         }
       },
       "efficiency": {
-        "cost_usd": 0.0615909,
-        "tokens_total": 38515,
+        "cost_usd": 0.02423685,
+        "cost_measured": true,
+        "tokens_total": 39905,
+        "tokens_measured": true,
         "steps": 2,
         "tool_errors": 0
       }
     },
     {
-      "case_id": "recon-retrieves-known-value",
+      "case_id": "evaluate-loop-completes-with-gate::trial-002",
+      "case_digest": "9a53dccdadcf057e",
+      "output_digest": "07bd14b19844c57c",
       "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
       "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows `./isPrime.js` was require-able and provided `{ isPrime }` via CommonJS."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The verification gate explicitly tested and passed true for 2, 3, 13 and false for 0, 1, 9, and a negative number."
+        },
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 1.0,
+          "rationale": "The evidence shows the CommonJS export was required successfully and all specified sample prime/non-prime cases passed."
         }
       },
       "efficiency": {
-        "cost_usd": 0.0047205,
-        "tokens_total": 1565,
+        "cost_usd": 0.05439465,
+        "cost_measured": true,
+        "tokens_total": 60951,
+        "tokens_measured": true,
         "steps": 2,
         "tool_errors": 0
       }
     },
     {
-      "case_id": "return-contract-preserves-evidence",
+      "case_id": "evaluate-loop-completes-with-gate::trial-003",
+      "case_digest": "c1f872729f95e575",
+      "output_digest": "2f6a78695249e865",
       "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
       "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows `require('./isPrime.js')` successfully destructures `isPrime`, indicating CommonJS export from the expected file."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows the required edge cases were tested and passed."
+        },
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 1.0,
+          "rationale": "The evidence shows the CommonJS export and required prime/non-prime cases passed."
         }
       },
       "efficiency": {
-        "cost_usd": 0.0114837,
-        "tokens_total": 12624,
+        "cost_usd": 0.03306165,
+        "cost_measured": true,
+        "tokens_total": 45727,
+        "tokens_measured": true,
         "steps": 2,
         "tool_errors": 0
       }
     },
     {
-      "case_id": "review-finds-all-webhook-defects",
-      "deterministic_label": false,
-      "dims": {
-        "criterion": {
-          "verdict": true,
-          "score": 0.95
-        }
-      },
-      "efficiency": {
-        "cost_usd": 0.16067145,
-        "tokens_total": 37804,
-        "steps": 2,
-        "tool_errors": 0
-      }
-    },
-    {
-      "case_id": "review-finds-session-cache-defects",
-      "deterministic_label": false,
-      "dims": {
-        "criterion": {
-          "verdict": true,
-          "score": 1.0
-        }
-      },
-      "efficiency": {
-        "cost_usd": 0.14053035,
-        "tokens_total": 41365,
-        "steps": 2,
-        "tool_errors": 0
-      }
-    },
-    {
-      "case_id": "route-classifies-bug-to-recon",
+      "case_id": "evaluate-loop-completes-with-gate::trial-004",
+      "case_digest": "4a3e9d5e3a5216a2",
+      "output_digest": "84eea6835175b0aa",
       "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
       "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "Evidence shows `isPrime.js` exists and can be required with destructured `{ isPrime }` via CommonJS."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows the specified prime and composite edge cases passed the verification gate."
+        },
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 1.0,
+          "rationale": "The evidence shows the CommonJS export was required successfully and returned the expected booleans for all specified inputs."
         }
       },
       "efficiency": {
-        "cost_usd": 0.16563,
-        "tokens_total": 22032,
+        "cost_usd": 0.033922049999999995,
+        "cost_measured": true,
+        "tokens_total": 37351,
+        "tokens_measured": true,
         "steps": 2,
         "tool_errors": 0
       }
     },
     {
-      "case_id": "single-answer-quality-judged",
+      "case_id": "evaluate-loop-completes-with-gate::trial-005",
+      "case_digest": "ef8e97b29ea7598b",
+      "output_digest": "b9bcb70801118bbb",
       "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
       "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows `require('./isPrime.js')` successfully provided `{ isPrime }`, satisfying the CommonJS export criterion."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The evidence shows the required edge cases were tested and passed."
+        },
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 1.0,
+          "rationale": "The evidence shows the CommonJS export passed tests for the specified prime and non-prime cases."
         }
       },
       "efficiency": {
-        "cost_usd": 0.009879,
-        "tokens_total": 12132,
+        "cost_usd": 0.043442400000000006,
+        "cost_measured": true,
+        "tokens_total": 50670,
+        "tokens_measured": true,
         "steps": 2,
         "tool_errors": 0
       }
     },
     {
-      "case_id": "vote-reaches-known-consensus",
+      "case_id": "recon-retrieves-known-value::trial-001",
+      "case_digest": "c225034602c2b80c",
+      "output_digest": "d12c1e5c780a4876",
       "deterministic_label": true,
+      "dim_label_sources": {
+        "criterion": "subject",
+        "exactness": "subject"
+      },
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 1.0
+          "score": 1.0,
+          "rationale": "The final output exactly matches the expected SAMPLE_IDENTIFIER value `xyzzy-42`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports exactly `xyzzy-42` with no drift or hedge."
         }
       },
       "efficiency": {
-        "cost_usd": 0.0193473,
-        "tokens_total": 20200,
+        "cost_usd": 0.0015672,
+        "cost_measured": true,
+        "tokens_total": 5291,
+        "tokens_measured": true,
         "steps": 2,
         "tool_errors": 0
       }
     },
     {
-      "case_id": "vote-warns-on-same-model-voters",
+      "case_id": "recon-retrieves-known-value::trial-002",
+      "case_digest": "e03703a61c247bb1",
+      "output_digest": "b382d62d9428e2eb",
       "deterministic_label": true,
+      "dim_label_sources": {
+        "criterion": "subject",
+        "exactness": "subject"
+      },
       "dims": {
         "criterion": {
           "verdict": true,
-          "score": 0.8
+          "score": 1.0,
+          "rationale": "The final output exactly contains the expected SAMPLE_IDENTIFIER value `xyzzy-42`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports exactly `xyzzy-42` with no drift or hedge."
         }
       },
       "efficiency": {
-        "cost_usd": 0.01885125,
-        "tokens_total": 23955,
+        "cost_usd": 0.0030141,
+        "cost_measured": true,
+        "tokens_total": 5347,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "recon-retrieves-known-value::trial-003",
+      "case_digest": "259992e76287bb3a",
+      "output_digest": "ec3d8fc2c2523a3c",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "criterion": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The final output exactly matches the expected SAMPLE_IDENTIFIER value `xyzzy-42`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports exactly `xyzzy-42` with no drift or hedge."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0029481000000000004,
+        "cost_measured": true,
+        "tokens_total": 5289,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "recon-retrieves-known-value::trial-004",
+      "case_digest": "ffd4c2dffd04e1cf",
+      "output_digest": "51046236070e67c1",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "criterion": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The final output exactly matches the expected SAMPLE_IDENTIFIER value `xyzzy-42`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports exactly `xyzzy-42` with no drift or hedge."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0016287,
+        "cost_measured": true,
+        "tokens_total": 5348,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "recon-retrieves-known-value::trial-005",
+      "case_digest": "8a8ff5ca935bdde8",
+      "output_digest": "e29b32a7526e8c42",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "criterion": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The final output exactly matches the expected SAMPLE_IDENTIFIER value `xyzzy-42`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports exactly `xyzzy-42` with no drift or hedge."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0015966,
+        "cost_measured": true,
+        "tokens_total": 5436,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "return-contract-preserves-evidence::trial-001",
+      "case_digest": "65f0d54b59725d0c",
+      "output_digest": "0680da752c12bb64",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "criterion": "subject",
+        "evidence_quality": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output is one sentence and includes both the value `xyzzy-42` and evidence path `settings.txt:3`."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes the value `xyzzy-42` and cites the location `settings.txt:3`."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output names the evidence location as `settings.txt:3`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports the exact value `xyzzy-42`."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00140385,
+        "cost_measured": true,
+        "tokens_total": 5429,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "return-contract-preserves-evidence::trial-002",
+      "case_digest": "daf5531ec659c5a3",
+      "output_digest": "9181b8ec0e15e6d5",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "criterion": "subject",
+        "evidence_quality": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output is one sentence containing both the value and the evidence path."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes the value `xyzzy-42` and cites the evidence location `settings.txt:3`."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output names the evidence location as `settings.txt:3`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports the exact value `xyzzy-42`."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0013866000000000002,
+        "cost_measured": true,
+        "tokens_total": 5426,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "return-contract-preserves-evidence::trial-003",
+      "case_digest": "0b575b96a26ebafa",
+      "output_digest": "4d719b7089fade06",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "criterion": "subject",
+        "evidence_quality": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output is one sentence containing both the value and the evidence path."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes the value `xyzzy-42` and cites the location as `settings.txt:3`."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output names the evidence location as `settings.txt:3`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports the exact value `xyzzy-42`."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00121035,
+        "cost_measured": true,
+        "tokens_total": 5336,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "return-contract-preserves-evidence::trial-004",
+      "case_digest": "27e4471df8cfbe9d",
+      "output_digest": "d19204830d2e3971",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "criterion": "subject",
+        "evidence_quality": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output is one sentence and includes both the value `xyzzy-42` and the evidence path `settings.txt:3`."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes the value `xyzzy-42` and cites `settings.txt` as the evidence path."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output names the evidence location as `settings.txt` and even includes `settings.txt:3`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports the exact value `xyzzy-42`."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00156345,
+        "cost_measured": true,
+        "tokens_total": 5341,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "return-contract-preserves-evidence::trial-005",
+      "case_digest": "f49dbed46a39b208",
+      "output_digest": "77765df9a96ff2c4",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "criterion": "subject",
+        "evidence_quality": "subject",
+        "exactness": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output is one sentence containing both the value and the evidence path."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes the value `xyzzy-42` and cites the evidence path `settings.txt:3`."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output names the evidence location as `settings.txt:3`."
+        },
+        "exactness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output reports the exact value `xyzzy-42`."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0028095,
+        "cost_measured": true,
+        "tokens_total": 5430,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "route-classifies-bug-to-recon::trial-001",
+      "case_digest": "efad32090ccc09b6",
+      "output_digest": "0c15498ecfc7e520",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "judge_only_dims": [
+        "evidence_quality"
+      ],
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies `recordPayment` writing to undeclared `ledger` as causing a `ReferenceError` and HTTP 500s."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies that `recordPayment` references an undeclared `ledger`, causing a `ReferenceError` and HTTP 500 on every webhook call."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly names `billing-webhook.js`, `recordPayment()`, and `ledger` as the root cause."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.007305900000000001,
+        "cost_measured": true,
+        "tokens_total": 13699,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "route-classifies-bug-to-recon::trial-002",
+      "case_digest": "5c7d1d057a38e187",
+      "output_digest": "54b2acfc40c7e1e1",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "judge_only_dims": [
+        "evidence_quality"
+      ],
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies `recordPayment` referencing an undeclared `ledger` as the root cause of the HTTP 500s."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies the undeclared/uninitialized `ledger` reference in `recordPayment()` as causing a `ReferenceError` and HTTP 500 on every webhook call."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The answer explicitly names `billing-webhook.js`, `recordPayment()`, and `ledger` as the defect source."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00720825,
+        "cost_measured": true,
+        "tokens_total": 13218,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "route-classifies-bug-to-recon::trial-003",
+      "case_digest": "e278b7eb90a3aed6",
+      "output_digest": "bc7c4067e8a0d3e2",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "judge_only_dims": [
+        "evidence_quality"
+      ],
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies `recordPayment` using an undeclared `ledger` as the root cause of the production HTTP 500s."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output correctly identifies that `recordPayment` references an undeclared `ledger`, causing a `ReferenceError` and HTTP 500 on every webhook call."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly names `billing-webhook.js`, `recordPayment`, and `ledger` as the fixture-specific defect."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0082629,
+        "cost_measured": true,
+        "tokens_total": 16075,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "route-classifies-bug-to-recon::trial-004",
+      "case_digest": "b240f70eabec2139",
+      "output_digest": "f7831c7f0a123af7",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "judge_only_dims": [
+        "evidence_quality"
+      ],
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies `recordPayment` using an undeclared `ledger` as the cause of the HTTP 500s."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies the undefined `ledger` reference in `recordPayment` as causing a `ReferenceError` and HTTP 500 on every webhook call."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly grounds the diagnosis in `billing-webhook.js`, `recordPayment()`, and `ledger`."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.006024000000000001,
+        "cost_measured": true,
+        "tokens_total": 10040,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "route-classifies-bug-to-recon::trial-005",
+      "case_digest": "df4e70b3fd71fee2",
+      "output_digest": "2d5ad886d6977b18",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "judge_only_dims": [
+        "evidence_quality"
+      ],
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies `recordPayment` writing to an undefined `ledger` as the root cause of the HTTP 500s."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly identifies that `recordPayment` references an undeclared/uninitialized `ledger`, causing a `ReferenceError` and HTTP 500 on every webhook call."
+        },
+        "evidence_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly grounds the answer in `billing-webhook.js`, `recordPayment()`, and `ledger`."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.007314000000000001,
+        "cost_measured": true,
+        "tokens_total": 13449,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-reaches-known-consensus::trial-001",
+      "case_digest": "0d657cee485f3455",
+      "output_digest": "ca95ccbf44804f67",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject",
+        "reason_quality": "subject"
+      },
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and identifies the nested quantifier as causing catastrophic backtracking."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and identifies the nested quantifier as causing catastrophic backtracking."
+        },
+        "reason_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly mentions the nested quantifier `(a+)+` and catastrophic backtracking on near-matches."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00700935,
+        "cost_measured": true,
+        "tokens_total": 7014,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-reaches-known-consensus::trial-002",
+      "case_digest": "cf995d33ac505fbc",
+      "output_digest": "877e54935cdcbc8c",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject",
+        "reason_quality": "subject"
+      },
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and states the nested quantifier can cause catastrophic backtracking."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and states the nested quantifier can cause catastrophic backtracking."
+        },
+        "reason_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly mentions the nested quantifier `(a+)+` and explains it can blow up on near-matches in backtracking regex engines."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0068331,
+        "cost_measured": true,
+        "tokens_total": 6984,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-reaches-known-consensus::trial-003",
+      "case_digest": "d95a98c74265a3fb",
+      "output_digest": "49ed1a38cea72e55",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject",
+        "reason_quality": "subject"
+      },
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and identifies nested greedy quantifiers causing catastrophic/exponential backtracking."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and states the nested greedy quantifiers can cause catastrophic/exponential backtracking."
+        },
+        "reason_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly mentions nested greedy quantifiers and catastrophic/exponential backtracking."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0054351,
+        "cost_measured": true,
+        "tokens_total": 6675,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-reaches-known-consensus::trial-004",
+      "case_digest": "be15cedad5be860c",
+      "output_digest": "703d83577065a828",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject",
+        "reason_quality": "subject"
+      },
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and states the nested quantifier can cause exponential backtracking."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output clearly concludes YES and explains the nested quantifier causes exponential backtracking on near-matches."
+        },
+        "reason_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly mentions the nested quantifier `(a+)+` and its exponential backtracking mechanism."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00765825,
+        "cost_measured": true,
+        "tokens_total": 6866,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-reaches-known-consensus::trial-005",
+      "case_digest": "7c668c5e617d05a5",
+      "output_digest": "84f94475882ed533",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "correctness": "subject",
+        "criterion": "subject",
+        "reason_quality": "subject"
+      },
+      "dims": {
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and correctly states the nested quantifiers can cause catastrophic backtracking."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly concludes YES and states the regex is vulnerable to catastrophic backtracking due to nested quantifiers."
+        },
+        "reason_quality": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly cites nested quantifiers and exponential backtracking on a near-match."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0050451,
+        "cost_measured": true,
+        "tokens_total": 6595,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-warns-on-same-model-voters::trial-001",
+      "case_digest": "d680e42be8f4abf1",
+      "output_digest": "cc96701cf6458d4e",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly warns that all voters share the same model and notes the risk of correlated same-model voting."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes YES answers stating that 2+2 equals 4."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes answers stating “YES” and correctly explains that 2+2 equals 4."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00178395,
+        "cost_measured": true,
+        "tokens_total": 5730,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-warns-on-same-model-voters::trial-002",
+      "case_digest": "a1c9348021923f3a",
+      "output_digest": "4387d49d603905a9",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly warns that all voters share the same model and mentions correlated same-model voting."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes YES and states that 2+2 equals 4."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes answers stating YES and explaining that 2+2 equals 4."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0017757,
+        "cost_measured": true,
+        "tokens_total": 5729,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-warns-on-same-model-voters::trial-003",
+      "case_digest": "85eb2b31df31522d",
+      "output_digest": "52b2a094657303f2",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly warns that all voters share the same model and notes correlated same-model voting risk."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes answers stating YES and that 2+2 equals 4."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes YES answers stating that 2+2 equals 4."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0031296000000000006,
+        "cost_measured": true,
+        "tokens_total": 5721,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-warns-on-same-model-voters::trial-004",
+      "case_digest": "17e29be853006d5e",
+      "output_digest": "07a9804afcd3c2f9",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly states that all voters share the same model and warns about correlated same-model voting."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes YES and states that 2+2 equals 4."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes YES answers stating that 2+2 equals 4."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.0031281,
+        "cost_measured": true,
+        "tokens_total": 5719,
+        "tokens_measured": true,
+        "steps": 2,
+        "tool_errors": 0
+      }
+    },
+    {
+      "case_id": "vote-warns-on-same-model-voters::trial-005",
+      "case_digest": "1bd9bf9d15bc88b3",
+      "output_digest": "7a1ed75828b0ffe8",
+      "deterministic_label": true,
+      "dim_label_sources": {
+        "contract_adherence": "subject",
+        "correctness": "subject",
+        "criterion": "subject"
+      },
+      "dims": {
+        "contract_adherence": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly warns that all voters share the same model and notes the risk of correlated same-model voting."
+        },
+        "correctness": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output includes YES answers stating that 2+2 equals 4."
+        },
+        "criterion": {
+          "verdict": true,
+          "score": 1.0,
+          "rationale": "The output explicitly answers YES and states that 2+2 equals 4."
+        }
+      },
+      "efficiency": {
+        "cost_usd": 0.00315435,
+        "cost_measured": true,
+        "tokens_total": 5729,
+        "tokens_measured": true,
         "steps": 2,
         "tool_errors": 0
       }
     }
   ],
-  "calibration_ref": null
+  "calibration_ref": null,
+  "measurement": {
+    "judge_observation_version": 1,
+    "subject_models": [
+      "openai-codex/gpt-5.4-mini"
+    ],
+    "intended_cases": [
+      "calibration-consensus-correct-answer",
+      "calibration-consensus-wrong-answer",
+      "calibration-known-value-correct",
+      "calibration-known-value-wrong",
+      "calibration-nonanswer-restates-task",
+      "calibration-pattern-dossier-smoothed",
+      "calibration-pattern-migration-unsupported",
+      "calibration-pattern-monitor-invented",
+      "calibration-session-cache-fabricated-defect",
+      "calibration-session-cache-partial-review",
+      "calibration-webhook-complete-review",
+      "calibration-webhook-partial-review",
+      "evaluate-loop-completes-with-gate::trial-001",
+      "evaluate-loop-completes-with-gate::trial-002",
+      "evaluate-loop-completes-with-gate::trial-003",
+      "evaluate-loop-completes-with-gate::trial-004",
+      "evaluate-loop-completes-with-gate::trial-005",
+      "recon-retrieves-known-value::trial-001",
+      "recon-retrieves-known-value::trial-002",
+      "recon-retrieves-known-value::trial-003",
+      "recon-retrieves-known-value::trial-004",
+      "recon-retrieves-known-value::trial-005",
+      "return-contract-preserves-evidence::trial-001",
+      "return-contract-preserves-evidence::trial-002",
+      "return-contract-preserves-evidence::trial-003",
+      "return-contract-preserves-evidence::trial-004",
+      "return-contract-preserves-evidence::trial-005",
+      "route-classifies-bug-to-recon::trial-001",
+      "route-classifies-bug-to-recon::trial-002",
+      "route-classifies-bug-to-recon::trial-003",
+      "route-classifies-bug-to-recon::trial-004",
+      "route-classifies-bug-to-recon::trial-005",
+      "vote-reaches-known-consensus::trial-001",
+      "vote-reaches-known-consensus::trial-002",
+      "vote-reaches-known-consensus::trial-003",
+      "vote-reaches-known-consensus::trial-004",
+      "vote-reaches-known-consensus::trial-005",
+      "vote-warns-on-same-model-voters::trial-001",
+      "vote-warns-on-same-model-voters::trial-002",
+      "vote-warns-on-same-model-voters::trial-003",
+      "vote-warns-on-same-model-voters::trial-004",
+      "vote-warns-on-same-model-voters::trial-005"
+    ]
+  }
 }
