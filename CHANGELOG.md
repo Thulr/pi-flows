@@ -8,6 +8,10 @@ that must agree are `package.json`, `PI_FLOWS_VERSION` in
 
 ## Unreleased
 
+- Nothing yet.
+
+## 0.9.0 - 2026-08-25
+
 ### Changed
 
 - The domain glossary now defines the terms the code was already leaning on.

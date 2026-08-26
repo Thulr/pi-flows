@@ -19,7 +19,7 @@ export type { FlowPreset, FlowPresetDiscovery, FlowPresetDiscoveryIssue, FlowPre
 export { ROSTER_CONFIG_FILE, THINKING_LEVELS, UNREADABLE_SCOPED_MODEL, USE_DEFAULT_MODEL } from "./roster-types.ts";
 export type { AvailableModel, ModelRoster, RosterAssignment, RosterConfig, RosterLayer, RosterOverride, ThinkingLevel } from "./roster-types.ts";
 
-export const PI_FLOWS_VERSION = "0.8.0";
+export const PI_FLOWS_VERSION = "0.9.0";
 export const MAX_PARALLEL_TASKS = 8;
 export const DEFAULT_CONCURRENCY = 4;
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 60 * 1000;
