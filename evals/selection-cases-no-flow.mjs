@@ -28,8 +28,8 @@ export const NO_FLOW_SELECTION_CASES = [
 		name: "package-version-no-flow",
 		task: "In package.json, what is the current package version? Answer with only the version string.",
 		expectFlow: false,
-		answerPattern: "\\b0\\.8\\.0\\b",
-		mock: { flowCalls: 0, answer: "0.8.0" },
+		answerPattern: "\\b0\\.9\\.0\\b",
+		mock: { flowCalls: 0, answer: "0.9.0" },
 		sourceExpectation: {
 			path: "package.json",
 			jsonPath: ["version"],
